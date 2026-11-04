@@ -272,3 +272,45 @@ func TestScopedModelsDeclaredListCannotOverrideCatalogVisibility(t *testing.T) {
 		t.Fatal("request admission bypassed catalog visibility")
 	}
 }
+
+// A model the upstream rejected for an account ("The 'gpt-5.5' model is not
+// supported when using Codex with a ChatGPT account") must not stay listed for
+// that account while the unsupported cooldown is active, or clients pick a model
+// that can only fail. Other accounts that still serve it keep it listed, and a
+// rate-limit cooldown keeps the list stable as before.
+func TestScopedModelsHidesModelWithActiveUnsupportedCooldown(t *testing.T) {
+	store := auth.NewStore(nil, nil, &database.SystemSettings{MaxConcurrency: 2})
+	first := &auth.Account{DBID: 1, AccessToken: "codex-1", PlanType: "plus"}
+	second := &auth.Account{DBID: 2, AccessToken: "codex-2", PlanType: "plus"}
+	store.AddAccount(first)
+	store.AddAccount(second)
+	handler := NewHandler(store, nil, nil, nil)
+	row := &database.APIKeyRow{ID: 31}
+	listed := func(id string) bool {
+		_, _, ok := scopedModelByID(listScopedModelsForTest(t, handler, row), id)
+		return ok
+	}
+	if !listed("gpt-5.5") || !listed("gpt-5.6-luna") {
+		t.Fatalf("baseline catalog must list gpt-5.5 and gpt-5.6-luna, got %+v", listScopedModelsForTest(t, handler, row))
+	}
+
+	until := time.Now().Add(time.Hour)
+	first.SetModelCooldownUntil("gpt-5.5", auth.ModelCooldownReasonUnsupported, until)
+	second.SetModelCooldownUntil("gpt-5.5", auth.ModelCooldownReasonUnsupported, until)
+	if listed("gpt-5.5") {
+		t.Fatal("gpt-5.5 is still listed although every account reports it unsupported")
+	}
+	if !listed("gpt-5.6-luna") {
+		t.Fatal("an unsupported cooldown on gpt-5.5 hid an unrelated model")
+	}
+
+	second.ClearModelCooldown("gpt-5.5")
+	if !listed("gpt-5.5") {
+		t.Fatal("gpt-5.5 must reappear while one account can still serve it")
+	}
+
+	second.SetModelCooldownUntil("gpt-5.5", "rate_limited", until)
+	if !listed("gpt-5.5") {
+		t.Fatal("a rate-limit cooldown must keep the model listed")
+	}
+}

@@ -241,6 +241,13 @@ func (h *Handler) scopedModelRecords(ctx context.Context, row *database.APIKeyRo
 				if item.ProOnly && !isSparkPlanCandidate(account.GetPlanType()) {
 					continue
 				}
+				// The upstream rejected this model for this account ("not supported
+				// when using Codex with a ChatGPT account") and the scheduler already
+				// skips it, so listing it would only send clients to a guaranteed 400.
+				// Transient cooldowns (rate limits) keep the list stable.
+				if cooldown, ok := account.ModelCooldownFor(item.ID); ok && cooldown.Reason == auth.ModelCooldownReasonUnsupported {
+					continue
+				}
 				addScopedModel(records, item.ID, modelBackingCodex, time.Time{}, false)
 				addTarget(item.ID)
 			}
