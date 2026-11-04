@@ -3,6 +3,7 @@ package config
 import (
 	"fmt"
 	"log"
+	"net/url"
 	"os"
 	"path/filepath"
 	"regexp"
@@ -47,13 +48,62 @@ func (d *DatabaseConfig) DSN() string {
 		sslMode = "disable"
 	}
 	dsn := fmt.Sprintf("host=%s port=%d user=%s password=%s dbname=%s sslmode=%s",
-		d.Host, d.Port, d.User, d.Password, d.DBName, sslMode)
+		quoteDSNValue(d.Host), d.Port, quoteDSNValue(d.User), quoteDSNValue(d.Password), quoteDSNValue(d.DBName), quoteDSNValue(sslMode))
 	if d.Schema != "" {
 		// 通过 PostgreSQL startup options 在连接启动时设置 search_path，覆盖连接池中的所有连接。
 		// schema 已在 Load() 阶段做白名单校验，此处可安全拼接。
 		dsn += fmt.Sprintf(" options='-c search_path=%s,public'", d.Schema)
 	}
 	return dsn
+}
+
+// quoteDSNValue quotes one keyword/value DSN value so a password with spaces,
+// quotes or backslashes (common in URL-decoded DATABASE_URL passwords) cannot
+// split into extra keywords.
+func quoteDSNValue(value string) string {
+	return "'" + strings.NewReplacer(`\`, `\\`, `'`, `\'`).Replace(value) + "'"
+}
+
+// applyDatabaseURL fills the PostgreSQL fields from a postgres:// or
+// postgresql:// connection string such as the one Neon or Render shows. Only
+// sslmode is read from the query string. Errors never echo the URL, because it
+// carries the password.
+func applyDatabaseURL(d *DatabaseConfig, raw string) error {
+	parsed, err := url.Parse(raw)
+	if err != nil {
+		return fmt.Errorf("DATABASE_URL is not a valid URL (expected postgresql://USER:PASSWORD@HOST[:PORT]/DBNAME?sslmode=require)")
+	}
+	switch strings.ToLower(parsed.Scheme) {
+	case "postgres", "postgresql":
+	default:
+		return fmt.Errorf("DATABASE_URL must start with postgres:// or postgresql://")
+	}
+	host := parsed.Hostname()
+	if host == "" {
+		return fmt.Errorf("DATABASE_URL has no host")
+	}
+	port := 5432
+	if value := parsed.Port(); value != "" {
+		p, err := strconv.Atoi(value)
+		if err != nil || p <= 0 || p > 65535 {
+			return fmt.Errorf("DATABASE_URL has an invalid port")
+		}
+		port = p
+	}
+	dbName := strings.TrimPrefix(parsed.Path, "/")
+	if dbName == "" {
+		return fmt.Errorf("DATABASE_URL has no database name")
+	}
+	d.Host, d.Port, d.DBName = host, port, dbName
+	d.User, d.Password = "", ""
+	if parsed.User != nil {
+		d.User = parsed.User.Username()
+		d.Password, _ = parsed.User.Password()
+	}
+	if sslMode := strings.TrimSpace(parsed.Query().Get("sslmode")); sslMode != "" {
+		d.SSLMode = sslMode
+	}
+	return nil
 }
 
 // Label 返回用于展示的数据库标签。
@@ -237,6 +287,17 @@ func Load(envPath string) (*Config, error) {
 	if v := os.Getenv("DATABASE_SSLMODE"); v != "" {
 		cfg.Database.SSLMode = v
 	}
+	// DATABASE_URL (postgresql://USER:PASSWORD@HOST[:PORT]/DBNAME?sslmode=...)
+	// configures PostgreSQL in one variable and wins over the split DATABASE_* ones.
+	if raw := strings.TrimSpace(os.Getenv("DATABASE_URL")); raw != "" {
+		if explicit := strings.TrimSpace(os.Getenv("DATABASE_DRIVER")); explicit != "" && normalizeDriver(explicit, "postgres") != "postgres" {
+			return nil, fmt.Errorf("DATABASE_URL 只用于 PostgreSQL，不能与 DATABASE_DRIVER=%s 同时设置", explicit)
+		}
+		cfg.Database.Driver = "postgres"
+		if err := applyDatabaseURL(&cfg.Database, raw); err != nil {
+			return nil, err
+		}
+	}
 
 	// 缓存配置
 	cfg.Cache.Driver = normalizeDriver(os.Getenv("CACHE_DRIVER"), "redis")
@@ -264,7 +325,7 @@ func Load(envPath string) (*Config, error) {
 		}
 	case "postgres":
 		if cfg.Database.Host == "" {
-			return nil, fmt.Errorf("必须通过 .env 或环境变量配置 PostgreSQL (DATABASE_HOST)")
+			return nil, fmt.Errorf("必须通过 .env 或环境变量配置 PostgreSQL (DATABASE_URL 或 DATABASE_HOST)")
 		}
 	default:
 		return nil, fmt.Errorf("不支持的数据库驱动: %s", cfg.Database.Driver)

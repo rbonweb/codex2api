@@ -2,7 +2,13 @@
 
 ## Unreleased
 
+### Features
+
+- **`DATABASE_URL` configures PostgreSQL in one variable.** A `postgres://` or `postgresql://` connection string, such as the one Neon or Render shows, can be pasted as is: host, port (default 5432), user, password and database come from the URL and `sslmode` from its query string. It wins over the split `DATABASE_*` variables, cannot be combined with `DATABASE_DRIVER=sqlite`, and configuration errors never echo the URL. The admin setup page shows only `host[:port]/name` from it.
+
 ### Fixes
+
+- **PostgreSQL passwords with spaces, quotes or backslashes connect.** The keyword/value DSN now quotes every value, so a password like `a b'c` is no longer split into extra keywords.
 
 - **Public Images API returns the exact size the caller asked for.** The Codex upstream treats `size` as a hint and chooses the image shape from the driver model's reading of the prompt, so a `1024x1024` request could come back `1536x1024` and a `1024x1536` portrait as `1312x1199`. `/v1/images/generations` and `/v1/images/edits` (JSON and multipart) now add an output directive with the exact pixels, orientation and aspect ratio to the upstream request, and finalize every image onto the requested canvas when `size` is an explicit `WIDTHxHEIGHT`. The default fit is `pad`, which keeps the whole image and never crops; `upscale_fit: "cover"` fills the canvas and crops the overflow; `strict_size: false` returns the upstream pixels unchanged. Requests with no `size` or `size: "auto"` behave as before, and Image Studio keeps its own `strict_size` / `upscale_fit` handling.
 

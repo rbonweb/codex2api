@@ -7,6 +7,7 @@ import (
 	"log"
 	"net"
 	"net/http"
+	"net/url"
 	"os"
 	"strings"
 	"sync"
@@ -195,6 +196,19 @@ func bootstrapPublicBaseURL(r *http.Request) string {
 func bootstrapDatabaseLocation(driver string) string {
 	if strings.EqualFold(driver, "sqlite") {
 		return strings.TrimSpace(os.Getenv("DATABASE_PATH"))
+	}
+	// DATABASE_URL wins over the split variables (config.Load); show only
+	// host[:port]/name from it, never the credentials.
+	if raw := strings.TrimSpace(os.Getenv("DATABASE_URL")); raw != "" {
+		parsed, err := url.Parse(raw)
+		if err != nil || parsed.Host == "" {
+			return ""
+		}
+		name := strings.TrimPrefix(parsed.Path, "/")
+		if name == "" {
+			return ""
+		}
+		return parsed.Host + "/" + name
 	}
 	host := strings.TrimSpace(os.Getenv("DATABASE_HOST"))
 	name := strings.TrimSpace(os.Getenv("DATABASE_NAME"))

@@ -191,6 +191,8 @@ GIN_MODE=release
 TZ=Asia/Shanghai
 ```
 
+需要数据在重新部署后保留时，改用外部 PostgreSQL（如 Neon）：删除 `DATABASE_DRIVER=sqlite` 与 `DATABASE_PATH`，设置 `DATABASE_URL=postgresql://USER:PASSWORD@HOST/DBNAME?sslmode=require`。Neon 请使用直连主机，不要用带 `-pooler` 的连接池主机：网关使用会话级 advisory lock，`DATABASE_SCHEMA` 也依赖启动参数设置 `search_path`，事务级连接池都不支持。
+
 Render Web Service 默认会通过 `PORT=10000` 暴露服务；本项目也会读取 `PORT`，但显式设置 `CODEX_PORT=10000` 更直观。
 
 ### 3. 配置自动部署最新镜像

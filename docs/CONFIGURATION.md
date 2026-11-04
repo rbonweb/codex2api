@@ -147,7 +147,8 @@ Antigravity 渠道的首绑 / Fresh 选号默认启用加权避险：候选账�
 | 变量 | 必填 | 默认值 | 说明 |
 |------|------|--------|------|
 | `DATABASE_DRIVER` | 是 | postgres | 固定值: postgres |
-| `DATABASE_HOST` | 是 | - | PostgreSQL 主机地址 |
+| `DATABASE_URL` | 否 | - | 完整连接串，如 `postgresql://USER:PASSWORD@HOST[:PORT]/DBNAME?sslmode=require`（可直接粘贴 Neon / Render 提供的连接串）。设置后优先于下面的拆分变量，查询串中只读取 `sslmode`；不能与 `DATABASE_DRIVER=sqlite` 同时使用 |
+| `DATABASE_HOST` | 是（未设置 `DATABASE_URL` 时） | - | PostgreSQL 主机地址 |
 | `DATABASE_PORT` | 否 | 5432 | PostgreSQL 端口 |
 | `DATABASE_USER` | 是 | - | PostgreSQL 用户名 |
 | `DATABASE_PASSWORD` | 是 | - | PostgreSQL 密码 |

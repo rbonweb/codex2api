@@ -272,6 +272,7 @@ Vite proxies `/api` and `/health` to the backend. During development, open `http
 | `ADMIN_SECRET` | Admin dashboard secret. When set, `/admin` prompts for authentication |
 | `DATABASE_DRIVER` | Database driver: `postgres` or `sqlite` |
 | `DATABASE_PATH` | SQLite database file path, used when `DATABASE_DRIVER=sqlite` |
+| `DATABASE_URL` | PostgreSQL connection string, e.g. `postgresql://USER:PASSWORD@HOST[:PORT]/DBNAME?sslmode=require` (paste a Neon or Render string as is). Wins over the split `DATABASE_*` variables; only `sslmode` is read from the query string |
 | `DATABASE_HOST` | PostgreSQL host |
 | `DATABASE_PORT` | PostgreSQL port, default `5432` |
 | `DATABASE_USER` | PostgreSQL user |
