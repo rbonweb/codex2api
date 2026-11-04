@@ -170,6 +170,8 @@ ghcr.io/james-6-23/codex2api:latest
 
 如果 GHCR Package 不是公开访问，需要先在 Render 的 Registry Credentials 中配置 GitHub Container Registry 凭据。
 
+**Fork 发布（rbonweb/codex2api）:** 每次推送到 `main`，`.github/workflows/fork-release.yml` 会打下一个补丁版本标签（取 fork 最新 `vX.Y.Z` 标签与 `CHANGELOG.md` 最新版本中较大者加一），并基于该标签构建公开多架构镜像 `ghcr.io/rbonweb/codex2api`（标签 `X.Y.Z`、`X.Y`、`vX.Y.Z`、`latest`）和带二进制的 GitHub Release。Render 镜像地址填 `ghcr.io/rbonweb/codex2api:latest` 跟随最新版本，或填 `ghcr.io/rbonweb/codex2api:X.Y.Z` 固定版本；只改 `docs/` 或 Markdown 不会触发发布。
+
 ### 2. 配置环境变量
 
 免费实例没有持久化磁盘，推荐 Demo 使用 SQLite + 内存缓存，并把可写目录放到 `/tmp`：

@@ -20,7 +20,8 @@ permissions:
   packages: write
 
 concurrency:
-  group: docker-image-${{ github.ref }}
+  # One group per version, so a newer fork release never cancels the image build of the previous one.
+  group: docker-image-${{ inputs.build_version || inputs.promote_digest || github.ref }}
   cancel-in-progress: true
 
 env:
@@ -73,7 +74,7 @@ jobs:
             type=semver,pattern={{version}},value=${{ inputs.build_version || github.ref_name }},enable=${{ inputs.build_version != '' || startsWith(github.ref, 'refs/tags/v') }}
             type=semver,pattern={{major}}.{{minor}},value=${{ inputs.build_version || github.ref_name }},enable=${{ inputs.build_version != '' || startsWith(github.ref, 'refs/tags/v') }}
             type=raw,value=${{ inputs.build_version }},enable=${{ github.event_name == 'workflow_dispatch' && inputs.build_version != '' }}
-            type=raw,value=latest,enable=${{ github.event_name != 'workflow_dispatch' || github.ref_name == github.event.repository.default_branch }}
+            type=raw,value=latest,enable=${{ github.event_name != 'workflow_dispatch' || github.ref_name == github.event.repository.default_branch || startsWith(github.ref, 'refs/tags/v') }}
 
       - name: Build and push Docker image
         if: ${{ inputs.promote_digest == '' }}

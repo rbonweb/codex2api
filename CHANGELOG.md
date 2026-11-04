@@ -1,5 +1,13 @@
 # Changelog
 
+## Unreleased
+
+### Fixes
+
+- **Public Images API returns the exact size the caller asked for.** The Codex upstream treats `size` as a hint and chooses the image shape from the driver model's reading of the prompt, so a `1024x1024` request could come back `1536x1024` and a `1024x1536` portrait as `1312x1199`. `/v1/images/generations` and `/v1/images/edits` (JSON and multipart) now add an output directive with the exact pixels, orientation and aspect ratio to the upstream request, and finalize every image onto the requested canvas when `size` is an explicit `WIDTHxHEIGHT`. The default fit is `pad`, which keeps the whole image and never crops; `upscale_fit: "cover"` fills the canvas and crops the overflow; `strict_size: false` returns the upstream pixels unchanged. Requests with no `size` or `size: "auto"` behave as before, and Image Studio keeps its own `strict_size` / `upscale_fit` handling.
+
+- **`/v1/models` stops listing models the upstream rejects for the key's accounts.** When the upstream answers 400 "The '<model>' model is not supported when using Codex with a ChatGPT account", the gateway already put that model on an unsupported cooldown for the account and routed around it, but the per-key model list kept showing it, so clients picked a model that could only fail. The list now skips a model for every account with an active unsupported cooldown; it stays listed while any account in the key's scope can still serve it, and rate-limit cooldowns keep the list stable as before.
+
 ## v3.1.3 - 2026-11-04
 
 ### Features

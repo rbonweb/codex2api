@@ -1,0 +1,70 @@
+# Publishes a release of this fork for every push to main: a vX.Y.Z tag, a public multi-arch image at ghcr.io/rbonweb/codex2api (tags X.Y.Z, X.Y and latest) and a GitHub release with the binaries. Render deploys the image by tag.
+#
+# Each push gets the next patch version after the higher of this fork's newest vX.Y.Z tag and the newest version in CHANGELOG.md (so a "Sync fork" that brings upstream v3.2.0 releases v3.2.1, never a lower number). A tag pushed with GITHUB_TOKEN starts no workflow, so this job dispatches Build Docker Image and Release for the tag itself; Deploy Render then follows Build Docker Image.
+name: Fork release
+
+on:
+  push:
+    branches: [main]
+    paths-ignore:
+      - 'docs/**'
+      - '**/*.md'
+  workflow_dispatch:
+
+permissions:
+  contents: write
+  actions: write
+
+concurrency:
+  group: fork-release
+  cancel-in-progress: false
+
+jobs:
+  release:
+    if: github.repository == 'rbonweb/codex2api'
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v5
+
+      - name: Tag the next version and start its image and release
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          set -euo pipefail
+          tags=$(git ls-remote --tags origin 'refs/tags/v*')
+
+          # A re-run for a commit that is already tagged reuses its tag instead of bumping again.
+          tag=$(awk -v sha="$GITHUB_SHA" '$1 == sha { sub("^refs/tags/", "", $2); sub("\\^\\{\\}$", "", $2); print $2 }' <<<"$tags" \
+            | { grep -E '^v[0-9]+\.[0-9]+\.[0-9]+$' || true; } | sort -V | tail -n1)
+
+          if [ -n "$tag" ]; then
+            echo "$GITHUB_SHA is already tagged $tag; publishing it again."
+          else
+            fork_latest=$(awk '{ print $2 }' <<<"$tags" | sed -n 's#^refs/tags/v\([0-9]\{1,\}\.[0-9]\{1,\}\.[0-9]\{1,\}\)$#\1#p' | sort -V | tail -n1)
+            changelog_latest=$({ grep -oE '^## v[0-9]+\.[0-9]+\.[0-9]+' CHANGELOG.md || true; } | head -n1 | sed 's/^## v//')
+            latest=$(printf '%s\n' "${fork_latest:-0.0.0}" "${changelog_latest:-0.0.0}" | sort -V | tail -n1)
+            IFS=. read -r major minor patch <<<"$latest"
+            tag="v$major.$minor.$((patch + 1))"
+            echo "Fork tag: v${fork_latest:-none}; changelog: v${changelog_latest:-none}; releasing $tag."
+
+            git config user.name "github-actions[bot]"
+            git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+            printf 'codex2api %s\n\nBuilt from %s at %s.\n' "$tag" "$GITHUB_REPOSITORY" "$GITHUB_SHA" > "$RUNNER_TEMP/notes"
+            git tag -a "$tag" -F "$RUNNER_TEMP/notes" "$GITHUB_SHA"
+            git push origin "refs/tags/$tag"
+          fi
+
+          # Both run on the tag ref, so the image and binaries are built from exactly the tagged commit.
+          version="${tag#v}"
+          gh workflow run docker-image.yml --ref "$tag" -f build_version="$tag"
+          if gh release view "$tag" >/dev/null 2>&1; then
+            echo "$tag already has a GitHub release."
+          else
+            gh workflow run release.yml --ref "$tag" -f tag="$tag"
+          fi
+          {
+            echo "### Released $tag"
+            echo
+            echo "- Image: \`ghcr.io/${GITHUB_REPOSITORY,,}:$version\` (also \`:latest\`)"
+            echo "- Release: https://github.com/$GITHUB_REPOSITORY/releases/tag/$tag"
+          } >> "$GITHUB_STEP_SUMMARY"
