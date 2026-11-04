@@ -94,6 +94,9 @@ func TestBuildAdminImageRequestsUseCompatibleUpstreamSizeForStrictCanvas(t *test
 			if req.Size != "1920x1080" {
 				t.Fatalf("requested final size mutated to %q", req.Size)
 			}
+			if strict := gjson.GetBytes(body, "strict_size"); !strict.Exists() || strict.Bool() {
+				t.Fatalf("studio must opt out of gateway exact sizing (it finalizes the canvas itself), strict_size = %s", strict.Raw)
+			}
 		})
 	}
 }

@@ -1265,7 +1265,9 @@ func (h *Handler) ImagesGenerations(c *gin.Context) {
 	}
 	tool = setDefaultImageToolSize(tool, defaultSize)
 
-	responsesBody := buildImagesResponsesRequest(promptForRequest, nil, tool)
+	requestedSize := explicitImageSize(gjson.GetBytes(rawBody, "size").String())
+	setImageExactSize(c, imageExactSizeFor(requestedSize, imageStrictSizeField(gjson.GetBytes(rawBody, "strict_size")), gjson.GetBytes(rawBody, "upscale_fit").String()))
+	responsesBody := addImageSizeDirective(buildImagesResponsesRequest(promptForRequest, nil, tool), requestedSize)
 	h.forwardImagesRequest(c, "/v1/images/generations", imageModel, requestModel, logEffectiveModel, responsesBody, responseFormat, "image_generation", stream)
 }
 
@@ -1389,7 +1391,9 @@ func (h *Handler) imagesEditsFromMultipart(c *gin.Context) {
 		return
 	}
 	tool := buildImagesEditToolFromForm(c, imageModel, maskDataURL)
-	responsesBody := buildImagesResponsesRequest(promptForRequest, images, tool)
+	requestedSize := explicitImageSize(c.PostForm("size"))
+	setImageExactSize(c, imageExactSizeFor(requestedSize, c.PostForm("strict_size"), c.PostForm("upscale_fit")))
+	responsesBody := addImageSizeDirective(buildImagesResponsesRequest(promptForRequest, images, tool), requestedSize)
 	h.forwardImagesRequest(c, "/v1/images/edits", imageModel, requestModel, logEffectiveModel, responsesBody, responseFormat, "image_edit", stream)
 }
 
@@ -1545,7 +1549,9 @@ func (h *Handler) imagesEditsFromJSON(c *gin.Context) {
 	}
 	tool = setDefaultImageToolSize(tool, defaultSize)
 
-	responsesBody := buildImagesResponsesRequest(promptForRequest, images, tool)
+	requestedSize := explicitImageSize(gjson.GetBytes(rawBody, "size").String())
+	setImageExactSize(c, imageExactSizeFor(requestedSize, imageStrictSizeField(gjson.GetBytes(rawBody, "strict_size")), gjson.GetBytes(rawBody, "upscale_fit").String()))
+	responsesBody := addImageSizeDirective(buildImagesResponsesRequest(promptForRequest, images, tool), requestedSize)
 	h.forwardImagesRequest(c, "/v1/images/edits", imageModel, requestModel, logEffectiveModel, responsesBody, responseFormat, "image_edit", stream)
 }
 
@@ -1651,7 +1657,7 @@ func (h *Handler) forwardImagesRequest(c *gin.Context, inboundEndpoint, requestM
 	if persister != nil {
 		urlFor = persister.buildURL
 	}
-	upscalePlan := imageUpscalePlanForRequest(requestModel, responsesBody)
+	upscalePlan := imageUpscalePlanForRequest(requestModel, responsesBody).withExactSize(imageExactSizeFromContext(c))
 
 	var replay *os.File
 	if pipeline := pipelineFromContext(c.Request.Context()); pipeline != nil {
@@ -2342,10 +2348,136 @@ const imageUpscaleTimeout = 3 * time.Minute
 type imageUpscalePlan struct {
 	Scale         string
 	RequestedSize string
+	Fit           string
 }
 
 func (p imageUpscalePlan) enabled() bool {
-	return p.Scale != ""
+	return p.Scale != "" || p.RequestedSize != ""
+}
+
+// imageExactSize is the caller's explicit WIDTHxHEIGHT promise for the public
+// Images API. The Codex upstream treats tools[].size as a hint and picks the
+// shape from its own reading of the prompt (a 1024x1024 request can come back
+// as 1536x1024, a 1024x1536 one as 1312x1199), so the gateway finalizes every
+// image onto the requested canvas. Size is empty when the caller sent no
+// physical size or opted out with strict_size=false.
+type imageExactSize struct {
+	Size string
+	Fit  string
+}
+
+const imageExactSizeContextKey = "codex2api.image_exact_size"
+
+// explicitImageSize returns a normalized WIDTHxHEIGHT when raw names a physical
+// size, and "" for empty, auto or malformed values.
+func explicitImageSize(raw string) string {
+	width, height, ok := imageupscale.ParseSize(raw)
+	if !ok {
+		return ""
+	}
+	return fmt.Sprintf("%dx%d", width, height)
+}
+
+// imageExactSizeFor builds the exact-size policy from the request fields:
+// strict_size defaults to true, upscale_fit accepts pad (default, never crops)
+// or cover (fills the canvas and crops the overflow).
+func imageExactSizeFor(size, strictRaw, fitRaw string) imageExactSize {
+	size = explicitImageSize(size)
+	if size == "" {
+		return imageExactSize{}
+	}
+	switch strings.ToLower(strings.TrimSpace(strictRaw)) {
+	case "false", "0", "off", "no":
+		return imageExactSize{}
+	}
+	fit := imageproc.ResizeFitPad
+	if strings.EqualFold(strings.TrimSpace(fitRaw), imageproc.ResizeFitCover) {
+		fit = imageproc.ResizeFitCover
+	}
+	return imageExactSize{Size: size, Fit: fit}
+}
+
+func setImageExactSize(c *gin.Context, exact imageExactSize) {
+	if c != nil && exact.Size != "" {
+		c.Set(imageExactSizeContextKey, exact)
+	}
+}
+
+func imageExactSizeFromContext(c *gin.Context) imageExactSize {
+	if c == nil {
+		return imageExactSize{}
+	}
+	value, ok := c.Get(imageExactSizeContextKey)
+	if !ok {
+		return imageExactSize{}
+	}
+	exact, _ := value.(imageExactSize)
+	return exact
+}
+
+// withExactSize turns an explicit size into an exact-canvas plan. Without one
+// the tier plan (or no plan) is returned unchanged, so strict_size=false keeps
+// the historical -2k/-4k behavior.
+func (p imageUpscalePlan) withExactSize(exact imageExactSize) imageUpscalePlan {
+	if exact.Size == "" {
+		return p
+	}
+	p.RequestedSize = exact.Size
+	p.Fit = exact.Fit
+	return p
+}
+
+// addImageSizeDirective tells the upstream driver model which canvas the caller
+// asked for. The upstream picks the image shape from the conversation rather
+// than from tools[].size, so without this a square or portrait request often
+// comes back landscape. The directive is a separate content part: the user's
+// prompt text stays untouched for logs, the gallery and prompt filters.
+func addImageSizeDirective(responsesBody []byte, size string) []byte {
+	width, height, ok := imageupscale.ParseSize(size)
+	if !ok {
+		return responsesBody
+	}
+	orientation := "square"
+	if width > height {
+		orientation = "landscape"
+	} else if height > width {
+		orientation = "portrait"
+	}
+	divisor := imageSizeGCD(width, height)
+	text := fmt.Sprintf("Output requirement: the image must be exactly %dx%d pixels, %s orientation, aspect ratio %d:%d. Call image_generation with size \"%dx%d\" and compose the whole subject inside this frame, with nothing important touching or cut off at the edges. Do not switch to another size or orientation.",
+		width, height, orientation, width/divisor, height/divisor, width, height)
+	part := []byte(`{"type":"input_text","text":""}`)
+	part, _ = sjson.SetBytes(part, "text", text)
+	out, err := sjson.SetRawBytes(responsesBody, "input.0.content.-1", part)
+	if err != nil {
+		return responsesBody
+	}
+	return out
+}
+
+func imageSizeGCD(a, b int) int {
+	for b != 0 {
+		a, b = b, a%b
+	}
+	if a <= 0 {
+		return 1
+	}
+	return a
+}
+
+// imageStrictSizeField reads strict_size from JSON as a bool or a string.
+func imageStrictSizeField(value gjson.Result) string {
+	switch value.Type {
+	case gjson.False:
+		return "false"
+	case gjson.True:
+		return "true"
+	case gjson.Number:
+		return value.Raw
+	case gjson.String:
+		return value.String()
+	}
+	return ""
 }
 
 // imageUpscalePlanForRequest 只对 -2k/-4k 别名生成计划;RequestedSize 取 tool
@@ -2379,7 +2511,7 @@ func applyImageUpscalePlan(ctx context.Context, plan imageUpscalePlan, results [
 			continue
 		}
 		upscaleCtx, cancel := context.WithTimeout(ctx, imageUpscaleTimeout)
-		upscaled, err := imageupscale.EnsureSize(upscaleCtx, data, plan.Scale, plan.RequestedSize)
+		upscaled, err := imageupscale.EnsureSizeWithFit(upscaleCtx, data, plan.Scale, plan.RequestedSize, plan.Fit)
 		cancel()
 		if err != nil {
 			log.Printf("images 超分失败,按上游基础分辨率返回 (scale=%s size=%s backend=%s): %v",

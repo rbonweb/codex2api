@@ -333,6 +333,15 @@ Images 入口的 2.5 token 计费区分文本输入、图片输入与各自缓�
 }
 ```
 
+**精确尺寸:** 上游 Codex 把 `size` 当作提示，图片形状由驱动模型根据提示词决定，可能返回与请求不同的宽高比（例如请求 `1024x1024` 返回 `1536x1024`）。当 `size` 为显式 `WIDTHxHEIGHT` 时，`/v1/images/generations` 与 `/v1/images/edits`（JSON 和 multipart）会在上游请求中附加目标像素、方向和宽高比说明，并把每张结果图定稿为请求的精确尺寸。
+
+| 参数 | 类型 | 默认 | 说明 |
+| --- | --- | --- | --- |
+| `strict_size` | bool | `true` | 设为 `false` 时原样返回上游像素，不做定稿 |
+| `upscale_fit` | string | `pad` | `pad` 保留整张图并居中补透明边，不裁切；`cover` 填满画布并裁掉溢出部分 |
+
+省略 `size` 或 `size: "auto"` 时行为不变。`-2k` / `-4k` 别名的超分照常执行，`upscale_fit` 同样生效。
+
 #### Grok 生图（grok-imagine 系列）
 
 同一个 `/v1/images/generations` / `/v1/images/edits` 端点也接受 Grok Imagine 模型，按模型名自动分派到 Grok 媒体上游（官方 REST），响应为标准 OpenAI Images 形状原样透传。

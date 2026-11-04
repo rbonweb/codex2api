@@ -1092,6 +1092,9 @@ func buildAdminImageEditRequest(req imageGenerationJobPayload) ([]byte, error) {
 	body["images"] = images
 	if upstreamSize := upstreamImageJobSize(req); upstreamSize != "" && upstreamSize != "auto" {
 		body["size"] = upstreamSize
+		// Image Studio finalizes the canvas itself (strict_size + upscale_fit),
+		// so the gateway must hand back the raw upstream image untouched.
+		body["strict_size"] = false
 	}
 	if req.Quality != "" && req.Quality != "auto" {
 		body["quality"] = req.Quality
@@ -1241,6 +1244,9 @@ func buildAdminImageGenerationRequest(req imageGenerationJobPayload) ([]byte, er
 	}
 	if upstreamSize := upstreamImageJobSize(req); upstreamSize != "" && upstreamSize != "auto" {
 		body["size"] = upstreamSize
+		// Image Studio finalizes the canvas itself (strict_size + upscale_fit),
+		// so the gateway must hand back the raw upstream image untouched.
+		body["strict_size"] = false
 	}
 	if req.Quality != "" && req.Quality != "auto" {
 		body["quality"] = req.Quality
