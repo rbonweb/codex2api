@@ -206,7 +206,7 @@ Render 的 image-backed 服务不会在 `latest` 标签更新后自动重新部�
 RENDER_DEPLOY_HOOK_URL=<Render Deploy Hook URL>
 ```
 
-之后 `.github/workflows/render-deploy.yml` 会在 `Build Docker Image` 工作流成功后自动请求该 Hook，让 Render 重新拉取 `ghcr.io/james-6-23/codex2api:latest` 并部署。
+之后 `Build Docker Image` 工作流推送镜像成功后，最后一步会自动请求该 Hook，让 Render 重新拉取服务所配置的镜像标签（如 `latest`）并部署；`.github/workflows/render-deploy.yml` 用于手动重新部署。
 
 也可以手动触发镜像构建工作流，镜像推送成功后会自动进入 Render 部署工作流：
 

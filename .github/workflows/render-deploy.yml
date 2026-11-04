@@ -1,11 +1,7 @@
 name: Deploy Render
 
+# Manual redeploy of the current image. Automatic deploys run as the last step of Build Docker Image, because a build dispatched by Fork release with GITHUB_TOKEN never triggers workflow_run.
 on:
-  workflow_run:
-    workflows:
-      - Build Docker Image
-    types:
-      - completed
   workflow_dispatch:
 
 permissions:
@@ -19,7 +15,6 @@ jobs:
   deploy:
     name: Trigger Render deploy hook
     runs-on: ubuntu-latest
-    if: ${{ github.event_name == 'workflow_dispatch' || github.event.workflow_run.conclusion == 'success' }}
     env:
       RENDER_DEPLOY_HOOK_URL: ${{ secrets.RENDER_DEPLOY_HOOK_URL }}
     steps:

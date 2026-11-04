@@ -104,3 +104,16 @@ jobs:
           docker buildx imagetools create \
             --tag "${REGISTRY}/${IMAGE_NAME}:latest" \
             "${REGISTRY}/${IMAGE_NAME}@${SOURCE_DIGEST}"
+
+      # Deploy from here rather than through a workflow_run chain: a build dispatched by Fork release with GITHUB_TOKEN never triggers workflow_run, so Deploy Render would not start. Render re-pulls the image tag its service is set to (latest).
+      - name: Trigger Render deploy
+        env:
+          RENDER_DEPLOY_HOOK_URL: ${{ secrets.RENDER_DEPLOY_HOOK_URL }}
+        run: |
+          set -euo pipefail
+          if [[ -z "$RENDER_DEPLOY_HOOK_URL" ]]; then
+            echo "RENDER_DEPLOY_HOOK_URL is not configured; skipping Render deploy."
+            exit 0
+          fi
+          curl --fail --silent --show-error --request POST "$RENDER_DEPLOY_HOOK_URL" >/dev/null
+          echo "Render deploy triggered."
