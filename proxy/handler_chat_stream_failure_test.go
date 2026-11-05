@@ -30,7 +30,6 @@ func newChatStreamServeTestHandler(t *testing.T, serve func(w http.ResponseWrite
 	t.Helper()
 	gin.SetMode(gin.TestMode)
 
-
 	var calls atomic.Int32
 	upstream := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
 		calls.Add(1)
