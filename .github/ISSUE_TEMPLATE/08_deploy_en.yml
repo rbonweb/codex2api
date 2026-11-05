@@ -13,7 +13,7 @@ body:
     attributes:
       label: Before I submit
       options:
-        - label: I read the deploy notes in [README](https://github.com/james-6-23/codex2api#documentation) and `docs/`
+        - label: I read the deploy notes in [README](https://github.com/codex2api/codex2api#documentation) and `docs/`
           required: true
         - label: I redacted secrets from the docker-compose / env / logs I'm pasting
           required: true

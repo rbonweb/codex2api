@@ -145,7 +145,7 @@ Run it as a full **PostgreSQL + Redis** production stack or as a single-containe
 Standard image mode:
 
 ```bash
-git clone https://github.com/james-6-23/codex2api.git
+git clone https://github.com/codex2api/codex2api.git
 cd codex2api
 cp .env.example .env
 docker compose pull
@@ -609,11 +609,11 @@ Join the group to discuss deployment, usage, and development questions.
 
 ## Star History
 
-<a href="https://star-history.dera.page/#james-6-23/codex2api&Date">
+<a href="https://star-history.dera.page/#codex2api/codex2api&Date">
   <picture>
-    <source media="(prefers-color-scheme: dark)" srcset="https://star-history.dera.page/svg?repos=james-6-23/codex2api&type=Date&theme=dark" />
-    <source media="(prefers-color-scheme: light)" srcset="https://star-history.dera.page/svg?repos=james-6-23/codex2api&type=Date" />
-    <img alt="Star History Chart" src="https://star-history.dera.page/svg?repos=james-6-23/codex2api&type=Date" />
+    <source media="(prefers-color-scheme: dark)" srcset="https://star-history.dera.page/svg?repos=codex2api/codex2api&type=Date&theme=dark" />
+    <source media="(prefers-color-scheme: light)" srcset="https://star-history.dera.page/svg?repos=codex2api/codex2api&type=Date" />
+    <img alt="Star History Chart" src="https://star-history.dera.page/svg?repos=codex2api/codex2api&type=Date" />
   </picture>
 </a>
 

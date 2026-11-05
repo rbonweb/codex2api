@@ -13,7 +13,7 @@ body:
     attributes:
       label: 提交前我已确认
       options:
-        - label: 我搜过 [已有 issues](https://github.com/james-6-23/codex2api/issues?q=is%3Aissue)，没看到类似的想法
+        - label: 我搜过 [已有 issues](https://github.com/codex2api/codex2api/issues?q=is%3Aissue)，没看到类似的想法
           required: true
 
   - type: textarea

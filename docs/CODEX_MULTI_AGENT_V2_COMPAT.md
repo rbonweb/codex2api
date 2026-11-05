@@ -227,8 +227,8 @@ OpenAI Codex：
 
 codex2api：
 
-- [Issue #342](https://github.com/james-6-23/codex2api/issues/342)：reserved `collaboration.spawn_agent` schema 报错
-- [Issue #741](https://github.com/james-6-23/codex2api/issues/741) / [PR #742](https://github.com/james-6-23/codex2api/pull/742)：Codex 客户端工具和历史兼容
+- [Issue #342](https://github.com/codex2api/codex2api/issues/342)：reserved `collaboration.spawn_agent` schema 报错
+- [Issue #741](https://github.com/codex2api/codex2api/issues/741) / [PR #742](https://github.com/codex2api/codex2api/pull/742)：Codex 客户端工具和历史兼容
 
 CLIProxyAPI（MIT）：
 

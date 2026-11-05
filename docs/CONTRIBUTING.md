@@ -29,7 +29,7 @@
 ```bash
 git clone https://github.com/YOUR_USERNAME/codex2api.git
 cd codex2api
-git remote add upstream https://github.com/james-6-23/codex2api.git
+git remote add upstream https://github.com/codex2api/codex2api.git
 ```
 
 2. **安装后端依赖**
@@ -410,8 +410,8 @@ git push origin v1.0.0
 
 ## 获取帮助
 
-- **GitHub Issues**: [提交问题](https://github.com/james-6-23/codex2api/issues)
-- **Discussions**: [参与讨论](https://github.com/james-6-23/codex2api/discussions)
+- **GitHub Issues**: [提交问题](https://github.com/codex2api/codex2api/issues)
+- **Discussions**: [参与讨论](https://github.com/codex2api/codex2api/discussions)
 
 ---
 

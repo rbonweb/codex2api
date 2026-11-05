@@ -31,7 +31,7 @@
 
 ```bash
 # 克隆仓库
-git clone https://github.com/james-6-23/codex2api.git
+git clone https://github.com/codex2api/codex2api.git
 cd codex2api
 
 # 配置环境
@@ -165,7 +165,7 @@ Render 可以直接运行 GHCR 中已经构建好的镜像，适合放一个公�
 在 Render Dashboard 中创建 `Web Service`，选择 `Existing Image`，镜像地址填写：
 
 ```text
-ghcr.io/james-6-23/codex2api:latest
+ghcr.io/codex2api/codex2api:latest
 ```
 
 如果 GHCR Package 不是公开访问，需要先在 Render 的 Registry Credentials 中配置 GitHub Container Registry 凭据。
@@ -410,7 +410,7 @@ version: '3.8'
 
 services:
   codex2api:
-    image: ghcr.io/james-6-23/codex2api:latest
+    image: ghcr.io/codex2api/codex2api:latest
     container_name: codex2api
     restart: unless-stopped
     env_file:

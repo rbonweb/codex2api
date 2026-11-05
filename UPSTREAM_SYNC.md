@@ -1,11 +1,11 @@
 # Upstream sync log
 
-This fork tracks [james-6-23/codex2api](https://github.com/james-6-23/codex2api) (`upstream`, branch `main`). This file records the last upstream commit reviewed and what was taken from it, so the next sync only has to look at newer commits.
+This fork tracks [codex2api/codex2api](https://github.com/codex2api/codex2api) (`upstream`, branch `main`). This file records the last upstream commit reviewed and what was taken from it, so the next sync only has to look at newer commits.
 
 ## How to check for new upstream commits
 
 ```bash
-git remote add upstream https://github.com/james-6-23/codex2api.git   # once
+git remote add upstream https://github.com/codex2api/codex2api.git   # once
 git fetch upstream main
 git log --oneline --no-merges <last reviewed commit>..upstream/main
 ```
