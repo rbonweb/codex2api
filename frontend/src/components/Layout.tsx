@@ -88,7 +88,7 @@ export default function Layout({ children }: PropsWithChildren) {
   const versionButtonRef = useRef<HTMLButtonElement | null>(null)
   const [versionPopoverPos, setVersionPopoverPos] = useState<{ top: number; left: number } | null>(null)
   const releaseURL = updateInfo?.release_url || (latestVersion
-    ? `https://github.com/james-6-23/codex2api/releases/tag/${encodeURIComponent(latestVersion)}`
+    ? `https://github.com/codex2api/codex2api/releases/tag/${encodeURIComponent(latestVersion)}`
     : undefined)
   const canApplyUpdate = hasUpdate && updateInfo?.has_update === true && updateInfo.supported !== false
   const updateUnavailableReason = updateInfo?.unsupported_reason
@@ -579,7 +579,7 @@ export default function Layout({ children }: PropsWithChildren) {
                   <Languages className="size-[18px]" />
                 </button>
                 <a
-                  href="https://github.com/james-6-23/codex2api"
+                  href="https://github.com/codex2api/codex2api"
                   target="_blank"
                   rel="noopener noreferrer"
                   className="flex items-center justify-center size-9 rounded-lg text-muted-foreground hover:text-foreground hover:bg-muted/70 transition-colors duration-150"

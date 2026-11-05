@@ -141,7 +141,7 @@
 **场景 1：尚未克隆仓库（一行远程拉起）**
 
 ```bash
-bash <(curl -sSL https://raw.githubusercontent.com/james-6-23/codex2api/main/deploy.sh)
+bash <(curl -sSL https://raw.githubusercontent.com/codex2api/codex2api/main/deploy.sh)
 ```
 
 脚本会自动检测当前目录是否是 `codex2api` 仓库，若不是则克隆到 `./codex2api`，进入目录后再执行部署。
@@ -149,7 +149,7 @@ bash <(curl -sSL https://raw.githubusercontent.com/james-6-23/codex2api/main/dep
 **场景 2：已经 `git clone` 到本地**
 
 ```bash
-git clone https://github.com/james-6-23/codex2api.git
+git clone https://github.com/codex2api/codex2api.git
 cd codex2api
 bash deploy.sh
 ```
@@ -167,7 +167,7 @@ bash deploy.sh
 
 | 变量 | 默认 | 说明 |
 | --- | --- | --- |
-| `CODEX2API_REPO_URL` | `https://github.com/james-6-23/codex2api.git` | 克隆使用的仓库地址 |
+| `CODEX2API_REPO_URL` | `https://github.com/codex2api/codex2api.git` | 克隆使用的仓库地址 |
 | `CODEX2API_REPO_BRANCH` | `main` | 克隆使用的分支 |
 | `CODEX2API_DIR_NAME` | `codex2api` | 克隆到本地的目录名 |
 | `CODEX2API_SKIP_GIT_PULL` | 空 | 设为 `1` 或 `true` 时跳过部署前自动拉取最新代码 |
@@ -187,7 +187,7 @@ bash deploy.sh
 标准镜像版：
 
 ```bash
-git clone https://github.com/james-6-23/codex2api.git
+git clone https://github.com/codex2api/codex2api.git
 cd codex2api
 cp .env.example .env
 docker compose pull
@@ -654,11 +654,11 @@ codex2api/
 
 ## Star History
 
-<a href="https://star-history.dera.page/#james-6-23/codex2api&Date">
+<a href="https://star-history.dera.page/#codex2api/codex2api&Date">
   <picture>
-    <source media="(prefers-color-scheme: dark)" srcset="https://star-history.dera.page/svg?repos=james-6-23/codex2api&type=Date&theme=dark" />
-    <source media="(prefers-color-scheme: light)" srcset="https://star-history.dera.page/svg?repos=james-6-23/codex2api&type=Date" />
-    <img alt="Star History Chart" src="https://star-history.dera.page/svg?repos=james-6-23/codex2api&type=Date" />
+    <source media="(prefers-color-scheme: dark)" srcset="https://star-history.dera.page/svg?repos=codex2api/codex2api&type=Date&theme=dark" />
+    <source media="(prefers-color-scheme: light)" srcset="https://star-history.dera.page/svg?repos=codex2api/codex2api&type=Date" />
+    <img alt="Star History Chart" src="https://star-history.dera.page/svg?repos=codex2api/codex2api&type=Date" />
   </picture>
 </a>
 
