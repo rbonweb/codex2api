@@ -95,7 +95,67 @@ func TestScriptTranscriptionLanguageCodes(t *testing.T) {
 	}
 	item := transcriptionLanguageItem("gu")
 	text, _ := item["content"].([]map[string]any)[0]["text"].(string)
-	if item["role"] != "developer" || !strings.Contains(text, "Gujarati") || !strings.Contains(text, "unless the user switches") {
+	if item["role"] != "developer" || !strings.Contains(text, "Gujarati script (ગુજરાતી), never in Devanagari or Urdu script") || !strings.Contains(text, "unless the user switches language") {
 		t.Errorf("language item = %v", item)
+	}
+}
+
+func TestScriptLanguageTable(t *testing.T) {
+	cases := []struct{ text, want string }{
+		{"नमस्ते", "hi"}, {"आज मौसम कैसा है", "hi"}, {"आज weather कैसा है", "hi"},
+		{"આજે હવામાન કેવું છે", "gu"}, {"আজ আবহাওয়া কেমন", "bn"}, {"ਅੱਜ ਮੌਸਮ ਕਿਵੇਂ ਹੈ", "pa"},
+		{"இன்று வானிலை எப்படி", "ta"}, {"ఈరోజు వాతావరణం ఎలా ఉంది", "te"}, {"ಇಂದು ಹವಾಮಾನ ಹೇಗಿದೆ", "kn"},
+		{"ഇന്ന് കാലാവസ്ഥ എങ്ങനെ", "ml"}, {"ଆଜି ପାଣିପାଗ କେମିତି", "or"}, {"අද කාලගුණය කොහොමද", "si"},
+		{"สวัสดี", "th"}, {"안녕하세요", "ko"}, {"こんにちは", "ja"}, {"カタカナ", "ja"}, {"今日はいい天気です", "ja"},
+		{"שלום", "he"}, {"Γειά σου", "el"}, {"გამარჯობა", "ka"}, {"Բարեւ", "hy"}, {"សួស្តី", "km"},
+		{"ສະບາຍດີ", "lo"}, {"မင်္ဂလာပါ", "my"}, {"ሰላም", "am"},
+		// Ambiguous or mostly other scripts: no answer from the script.
+		{"مرحبا", ""}, {"привет", ""}, {"hello", ""}, {"你好", ""}, {"12345 !?", ""}, {"", ""},
+		{"The meeting is at नमस्ते three", ""},
+	}
+	for _, tc := range cases {
+		if got := scriptLanguage(tc.text); got != tc.want {
+			t.Errorf("scriptLanguage(%q) = %q, want %q", tc.text, got, tc.want)
+		}
+	}
+}
+
+func TestLiveTranscriptLanguageFallsBackToScriptForShortText(t *testing.T) {
+	cases := []struct{ text, want string }{
+		{"नमस्ते", "hi"}, {"आज मौसम कैसा है", "hi"}, {"હેલો", "gu"}, {"こんにちは", "ja"},
+		{"Hello", ""}, {"hello there", ""},
+		{"Hello, can you please tell me what is the capital of India", "en"},
+	}
+	for _, tc := range cases {
+		if got := liveTranscriptLanguage(tc.text); got != tc.want {
+			t.Errorf("liveTranscriptLanguage(%q) = %q, want %q", tc.text, got, tc.want)
+		}
+	}
+}
+
+func TestTranscriptScriptReportsArabicUnderPinnedGujarati(t *testing.T) {
+	if got := transcriptScript("gu", "یہ اردو ہے"); got != "arab" {
+		t.Errorf("arabic under gu = %q", got)
+	}
+	for _, tc := range []struct{ lang, text string }{{"gu", "આજે હવામાન"}, {"gu", "આજે હવામાન कैसा"}, {"ur", "یہ اردو ہے"}, {"en", "یہ اردو ہے"}, {"gu", ""}} {
+		if got := transcriptScript(tc.lang, tc.text); got != "" {
+			t.Errorf("transcriptScript(%q, %q) = %q", tc.lang, tc.text, got)
+		}
+	}
+}
+
+func TestTranscriptionLanguageHintNamesScriptForEveryScriptLanguage(t *testing.T) {
+	for code, info := range languageScripts {
+		text := transcriptionLanguageText(code)
+		if !strings.Contains(text, info.native) || !strings.Contains(text, info.script+" script") || !strings.Contains(text, "unless the user switches language") {
+			t.Errorf("%s hint = %q", code, text)
+		}
+		event := transcriptionLanguageHintEvent(code)
+		if !strings.Contains(string(event), `"channel":"commentary"`) || !strings.Contains(string(event), `"type":"session.context.append"`) {
+			t.Errorf("%s hint event = %s", code, event)
+		}
+	}
+	if transcriptionLanguageHintEvent("en") != nil || !strings.Contains(transcriptionLanguageText("en"), "Reply in English") {
+		t.Error("English keeps the plain hint and has no quiet append")
 	}
 }

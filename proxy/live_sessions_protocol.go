@@ -7,10 +7,8 @@ import (
 	"strings"
 	"sync"
 	"time"
-	"unicode"
 	"unicode/utf8"
 
-	"github.com/abadojack/whatlanggo"
 	"github.com/tidwall/gjson"
 )
 
@@ -919,6 +917,9 @@ func (t *liveSessionTranslator) Upstream(raw []byte) liveUpstreamResult {
 		if dir == 0 && t.cfg != nil && t.cfg.Language != "" {
 			// The client named the language, so it is reported as given instead of the detector's guess.
 			event["language"] = t.cfg.Language
+			if script := transcriptScript(t.cfg.Language, t.heard[dir]); script != "" {
+				event["script"] = script
+			}
 		} else if lang := liveTranscriptLanguage(t.heard[dir]); lang != "" {
 			event["language"] = lang
 		}
@@ -1202,30 +1203,4 @@ func liveTrimTail(text string, max int) string {
 		cut++
 	}
 	return text[cut:]
-}
-
-// liveTranscriptLanguage detects the language of a transcript for any language the detector knows (about 84, no list of its own to limit them).
-// It returns the ISO 639-1 code, or the ISO 639-3 code when the language has no 639-1 code, and "" when the detector is not reliable or the text has fewer than 3 words.
-// Languages written without spaces (Chinese, Japanese, Thai and similar) count two letters as a word. Romanized text is detected by its letters, so romanized Hindi usually reads as English: this is a heuristic, which is why the field is an extension.
-func liveTranscriptLanguage(text string) string {
-	words, unspaced := len(strings.Fields(text)), 0
-	for _, r := range text {
-		if unicode.Is(unicode.Han, r) || unicode.Is(unicode.Hiragana, r) || unicode.Is(unicode.Katakana, r) || unicode.Is(unicode.Thai, r) || unicode.Is(unicode.Lao, r) || unicode.Is(unicode.Khmer, r) || unicode.Is(unicode.Myanmar, r) {
-			unspaced++
-		}
-	}
-	if unspaced/2 > words {
-		words = unspaced / 2
-	}
-	if words < 3 {
-		return ""
-	}
-	info := whatlanggo.Detect(text)
-	if !info.IsReliable() {
-		return ""
-	}
-	if code := info.Lang.Iso6391(); code != "" {
-		return code
-	}
-	return info.Lang.Iso6393()
 }

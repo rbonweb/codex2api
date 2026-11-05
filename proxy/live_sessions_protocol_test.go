@@ -658,7 +658,7 @@ func TestLiveSessionTranscriptLanguage(t *testing.T) {
 		{"Bonjour, pouvez-vous me dire quel temps il fait aujourd'hui à Paris", "fr"},
 		{"今日は東京の天気を教えてください", "ja"},
 		{"The capital", ""},
-		{"नमस्ते आज", ""},
+		{"नमस्ते आज", "hi"}, // short text: the script names the language
 		{"", ""},
 		{"  123 ... 45?", ""},
 	}
@@ -686,7 +686,8 @@ func TestLiveSessionTranscriptLanguageAccumulates(t *testing.T) {
 		t.Fatalf("accumulated delta = %s", last.Raw)
 	}
 	// The assistant direction has its own accumulator and starts empty.
-	if d := delta("output_transcript.added", " अभी"); d.Get("language").Exists() {
+	// Short Devanagari text is named by its script, not by the English the user side heard.
+	if d := delta("output_transcript.added", " अभी"); d.Get("language").String() != "hi" {
 		t.Fatalf("assistant delta inherited the user text: %s", d.Raw)
 	}
 	for _, word := range []string{" नमस्ते,", " आज", " मुंबई", " में", " मौसम", " कैसा", " है"} {
@@ -704,7 +705,8 @@ func TestLiveSessionTranscriptLanguageAccumulates(t *testing.T) {
 		t.Fatalf("assistant accumulator was reset by the user turn: %s", d.Raw)
 	}
 	tr.Upstream([]byte(`{"turn":{"role":"assistant","transcript":"x"},"type":"turn.done"}`))
-	if d := delta("output_transcript.added", " है"); d.Get("language").Exists() {
+	// A fresh accumulator holding only a short Latin word names no language; the old Hindi text would still read as Hindi.
+	if d := delta("output_transcript.added", " Hello"); d.Get("language").Exists() {
 		t.Fatalf("assistant accumulator not reset: %s", d.Raw)
 	}
 }
