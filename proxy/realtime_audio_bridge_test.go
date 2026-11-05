@@ -998,3 +998,127 @@ func TestRealtimeAudioInputReportsClosedTrackAfterSinkFailure(t *testing.T) {
 		}
 	}
 }
+
+func TestAudioBridgeDelegationCreatedBecomesExtensionEvent(t *testing.T) {
+	srv := newBridgeTestServer(t, true, true)
+	conn := srv.dial(t, "?model=gpt-realtime")
+	readBridgeUntil(t, conn, "session.created")
+	startBridgeCall(t, srv, conn)
+
+	srv.call.events <- []byte(`{"type":"delegation.created","offset_ms":1200,"item":{"id":"dlg_1","content":[{"type":"input_text","text":"look up "},{"type":"input_text","text":"the weather"}]}}`)
+	event := readBridgeUntil(t, conn, "session.delegation.created")
+	if gjson.GetBytes(event, "offset_ms").Int() != 1200 || gjson.GetBytes(event, "delegation.id").String() != "dlg_1" || gjson.GetBytes(event, "delegation.target").String() != "client" || gjson.GetBytes(event, "delegation.content").String() != "look up the weather" {
+		t.Fatalf("event = %s", event)
+	}
+}
+
+func TestAudioBridgeContextAppendExtensionEventsAndAcks(t *testing.T) {
+	srv := newBridgeTestServer(t, true, true)
+	conn := srv.dial(t, "?model=gpt-realtime")
+	readBridgeUntil(t, conn, "session.created")
+
+	// The first append creates the call and maps to a speakable delegation append.
+	writeBridgeEvent(t, conn, `{"event_id":"c1","type":"session.commentary.append","delegation_id":"dlg_1","content":"It is sunny."}`)
+	sent := takeBridgeSent(t, srv.call)
+	if gjson.GetBytes(sent, "type").String() != "delegation.context.append" || gjson.GetBytes(sent, "delegation_item_id").String() != "dlg_1" || gjson.GetBytes(sent, "channel").String() != "speakable" || gjson.GetBytes(sent, "content.0.text").String() != "It is sunny." {
+		t.Fatalf("commentary sideband = %s", sent)
+	}
+	if srv.opens.Load() != 1 {
+		t.Fatal("the append did not create the call")
+	}
+
+	writeBridgeEvent(t, conn, `{"event_id":"t1","type":"session.thinking.append","delegation_id":"dlg_1","content":[{"type":"text","text":"checking "},{"type":"text","text":"sources"}]}`)
+	sent = takeBridgeSent(t, srv.call)
+	if gjson.GetBytes(sent, "type").String() != "delegation.context.append" || gjson.GetBytes(sent, "channel").String() != "commentary" || gjson.GetBytes(sent, "content.0.text").String() != "checking sources" {
+		t.Fatalf("thinking sideband = %s", sent)
+	}
+	writeBridgeEvent(t, conn, `{"event_id":"t2","type":"session.thinking.append","content":"no delegation"}`)
+	sent = takeBridgeSent(t, srv.call)
+	if gjson.GetBytes(sent, "type").String() != "session.context.append" || gjson.GetBytes(sent, "channel").String() != "commentary" {
+		t.Fatalf("session-level thinking sideband = %s", sent)
+	}
+	writeBridgeEvent(t, conn, `{"event_id":"i1","type":"session.instructions.append","content":"Prefer metric units."}`)
+	sent = takeBridgeSent(t, srv.call)
+	if gjson.GetBytes(sent, "type").String() != "session.context.append" || gjson.GetBytes(sent, "channel").String() != "commentary" {
+		t.Fatalf("instructions sideband = %s", sent)
+	}
+	// A conversation item shares the session-level FIFO but has no public ack of its own.
+	writeBridgeEvent(t, conn, `{"type":"conversation.item.create","item":{"type":"message","role":"user","content":[{"type":"input_text","text":"note"}]}}`)
+	takeBridgeSent(t, srv.call)
+	readBridgeUntil(t, conn, "conversation.item.created")
+	writeBridgeEvent(t, conn, `{"event_id":"i2","type":"session.instructions.append","content":"Be brief."}`)
+	takeBridgeSent(t, srv.call)
+
+	// Session-level acks arrive in order: thinking t2, instructions i1, then the item (silent), then i2. Delegation acks are a separate FIFO.
+	srv.call.events <- []byte(`{"type":"delegation.context.appended","delegation_item_id":"dlg_1"}`)
+	srv.call.events <- []byte(`{"type":"session.context.appended"}`)
+	srv.call.events <- []byte(`{"type":"session.context.appended"}`)
+	srv.call.events <- []byte(`{"type":"session.context.appended"}`)
+	srv.call.events <- []byte(`{"type":"delegation.context.appended","delegation_item_id":"dlg_1"}`)
+	srv.call.events <- []byte(`{"type":"session.context.appended"}`)
+	for _, want := range [][2]string{
+		{"session.commentary.appended", "c1"},
+		{"session.thinking.appended", "t2"},
+		{"session.instructions.appended", "i1"},
+		{"session.thinking.appended", "t1"},
+		{"session.instructions.appended", "i2"},
+	} {
+		ack := readBridgeUntil(t, conn, want[0])
+		if got := gjson.GetBytes(ack, "client_event_id").String(); got != want[1] {
+			t.Fatalf("%s client_event_id = %q, want %q", want[0], got, want[1])
+		}
+	}
+}
+
+func TestAudioBridgeChunkedAppendIsAckedOnceOnTheLastChunk(t *testing.T) {
+	srv := newBridgeTestServer(t, true, true)
+	conn := srv.dial(t, "?model=gpt-realtime")
+	readBridgeUntil(t, conn, "session.created")
+
+	writeBridgeEvent(t, conn, `{"event_id":"big","type":"session.thinking.append","content":"`+strings.Repeat("a", 1200)+`"}`)
+	for i := 0; i < 3; i++ {
+		takeBridgeSent(t, srv.call)
+	}
+	writeBridgeEvent(t, conn, `{"event_id":"after","type":"session.thinking.append","content":"small"}`)
+	takeBridgeSent(t, srv.call)
+
+	for i := 0; i < 4; i++ {
+		srv.call.events <- []byte(`{"type":"session.context.appended"}`)
+	}
+	first := readBridgeUntil(t, conn, "session.thinking.appended")
+	second := readBridgeUntil(t, conn, "session.thinking.appended")
+	if gjson.GetBytes(first, "client_event_id").String() != "big" || gjson.GetBytes(second, "client_event_id").String() != "after" {
+		t.Fatalf("acks = %s then %s, want big then after", first, second)
+	}
+}
+
+func TestAudioBridgeContextAppendErrors(t *testing.T) {
+	srv := newBridgeTestServer(t, true, true)
+	conn := srv.dial(t, "?model=gpt-realtime")
+	readBridgeUntil(t, conn, "session.created")
+
+	writeBridgeEvent(t, conn, `{"event_id":"e1","type":"session.commentary.append"}`)
+	errEvent := readBridgeUntil(t, conn, "error")
+	if gjson.GetBytes(errEvent, "error.code").String() != "missing_required_parameter" || gjson.GetBytes(errEvent, "error.param").String() != "content" || gjson.GetBytes(errEvent, "error.client_event_id").String() != "e1" {
+		t.Fatalf("error = %s", errEvent)
+	}
+	writeBridgeEvent(t, conn, `{"type":"session.thinking.append","delegation_id":7,"content":"x"}`)
+	errEvent = readBridgeUntil(t, conn, "error")
+	if gjson.GetBytes(errEvent, "error.param").String() != "delegation_id" {
+		t.Fatalf("error = %s", errEvent)
+	}
+	if srv.opens.Load() != 0 {
+		t.Fatal("an invalid append created the call")
+	}
+}
+
+func TestAudioBridgeHandoffParamErrorUsesPublicShape(t *testing.T) {
+	srv := newBridgeTestServer(t, true, true)
+	conn := srv.dial(t, "?model=gpt-5.5")
+	readBridgeEvent(t, conn)
+	writeBridgeEvent(t, conn, `{"event_id":"h1","type":"session.update","session":{"output_modalities":["audio"],"foo":1}}`)
+	errEvent := readBridgeUntil(t, conn, "error")
+	if gjson.GetBytes(errEvent, "error.code").String() != "unknown_parameter" || gjson.GetBytes(errEvent, "error.param").String() != "session.foo" || gjson.GetBytes(errEvent, "error.client_event_id").String() != "h1" {
+		t.Fatalf("error = %s", errEvent)
+	}
+}

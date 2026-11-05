@@ -167,6 +167,8 @@ type realtimeAudioBridge struct {
 	mu     sync.Mutex
 	mapper *realtimeAudioMapper
 	cfg    realtimeAudioConfig
+	// acks holds the FIFO acknowledgement queues of context appends, keyed by delegation item id ("" for session-level appends). It reuses the GPT-Live translator's bookkeeping; only its acks and ack are used. Guarded by mu.
+	acks *liveSessionTranslator
 
 	// startMu serializes call creation (it is held for the whole upstream open); stateMu guards the fields below and is never held across I/O.
 	startMu sync.Mutex
@@ -190,6 +192,7 @@ func (h *Handler) runRealtimeAudioSession(c *gin.Context, conn *websocket.Conn, 
 		cancel: cancel,
 		mapper: newRealtimeAudioMapper(nil),
 		cfg:    cfg,
+		acks:   newLiveSessionTranslator(nil),
 	}
 	defer b.closeAll()
 
@@ -349,6 +352,7 @@ func (b *realtimeAudioBridge) pumpUpstream(ctx context.Context, call realtimeAud
 func (b *realtimeAudioBridge) forwardUpstream(raw []byte) bool {
 	b.mu.Lock()
 	mapped := b.mapper.MapUpstream(raw)
+	mapped = append(mapped, b.extensionEvents(raw)...)
 	textOnly := b.cfg.TextOnly
 	outRate := b.cfg.outputRate()
 	b.mu.Unlock()
@@ -369,6 +373,30 @@ func (b *realtimeAudioBridge) forwardUpstream(raw []byte) bool {
 		}
 	}
 	return true
+}
+
+// extensionEvents turns the internal delegation and context-append events into the gateway extension events: delegation.created becomes session.delegation.created, and the append acknowledgements become session.commentary.appended, session.thinking.appended or session.instructions.appended with the client_event_id of the matching append (first in, first out per delegation item id, session-level appends sharing the key ""). The caller holds b.mu.
+func (b *realtimeAudioBridge) extensionEvents(raw []byte) [][]byte {
+	switch gjson.GetBytes(raw, "type").String() {
+	case "delegation.created":
+		if event, ok := liveDelegationCreatedEvent(raw); ok {
+			return [][]byte{event}
+		}
+	case "delegation.context.appended":
+		return b.appendAck(gjson.GetBytes(raw, "delegation_item_id").String())
+	case "session.context.appended":
+		return b.appendAck("")
+	}
+	return nil
+}
+
+// appendAck pops the oldest outstanding append for key. Appends made on behalf of conversation.item.create queue an entry without an event type so the FIFO stays aligned; those produce no public event.
+func (b *realtimeAudioBridge) appendAck(key string) [][]byte {
+	ack := b.acks.ack(key)
+	if ack == nil || gjson.GetBytes(ack, "type").String() == "" {
+		return nil
+	}
+	return [][]byte{ack}
 }
 
 // endClient tells the client the Live call is over with a normal close, then bounds how long the read loop waits for the client's reply so the session unwinds.
@@ -489,24 +517,18 @@ func (b *realtimeAudioBridge) writeError(apiErr *api.APIError) {
 
 // writeParamError sends {"type":"error","error":{type,code,message,param,client_event_id}}.
 func (b *realtimeAudioBridge) writeParamError(code, param, message string) {
-	var paramValue, eventValue any
-	if param != "" {
-		paramValue = param
+	b.writeEvent(liveErrorEvent("invalid_request_error", code, message, param, b.eventID))
+}
+
+// writeRealtimeAudioError writes an API error to conn: one that names a session field goes out in the public shape with error.param and client_event_id, any other as the usual error event.
+func writeRealtimeAudioError(conn *websocket.Conn, apiErr *api.APIError, clientEventID string) {
+	if apiErr != nil {
+		if detail, ok := apiErr.Details.(realtimeAudioParamError); ok {
+			_ = writeResponsesWSMessage(conn, liveErrorEvent("invalid_request_error", string(apiErr.Code), apiErr.Message, detail.Param, clientEventID))
+			return
+		}
 	}
-	if b.eventID != "" {
-		eventValue = b.eventID
-	}
-	b.writeEvent(marshalRealtimeServerEvent(map[string]any{
-		"type":     "error",
-		"event_id": defaultRealtimeAudioID("event"),
-		"error": map[string]any{
-			"type":            "invalid_request_error",
-			"code":            code,
-			"message":         message,
-			"param":           paramValue,
-			"client_event_id": eventValue,
-		},
-	}))
+	_ = writeResponsesWSError(conn, apiErr)
 }
 
 // realtimeAudioResampleDelta converts the base64 PCM16 24 kHz delta of an output audio event to the client's output rate. An undecodable delta is passed through unchanged.
@@ -624,10 +646,27 @@ func (b *realtimeAudioBridge) handleClientEvent(raw []byte) {
 			b.writeError(apiErr)
 			return
 		}
-		if len(sideband) > 0 && !b.sendUpstream(sideband) {
-			return
+		if len(sideband) > 0 {
+			if !b.ensureCall() {
+				return
+			}
+			// Live acknowledges this append like any other; the placeholder keeps the FIFO aligned and produces no public event.
+			b.mu.Lock()
+			b.acks.acks[""] = append(b.acks.acks[""], &liveAck{remaining: 1})
+			b.mu.Unlock()
+			if !b.sendUpstream(sideband) {
+				return
+			}
 		}
 		b.writeEvent(ack)
+
+	case "session.commentary.append":
+		b.handleContextAppend(raw, "session.commentary.appended", "speakable", true)
+	case "session.thinking.append":
+		b.handleContextAppend(raw, "session.thinking.appended", "commentary", true)
+	case "session.instructions.append":
+		// Instructions are context for later turns, never spoken: always the session-level quiet channel.
+		b.handleContextAppend(raw, "session.instructions.appended", "commentary", false)
 
 	case "response.create":
 		// Upstream rejects parameters on response.create, so only the bare event is forwarded. It is forwarded even when turn_detection.create_response is false, because the client asked for it; the bridge itself never sends response.create, and Live still decides when to speak on its own turn detection.
@@ -690,5 +729,35 @@ func (b *realtimeAudioBridge) handleSessionUpdate(raw []byte) {
 			param = "session.audio.output.voice"
 		}
 		b.writeParamError("immutable_field_update", param, field+" cannot be updated after initialization.")
+	}
+}
+
+// handleContextAppend serves the extension events session.commentary.append (spoken), session.thinking.append (quiet) and session.instructions.append (quiet, session level). Like conversation.item.create they need the call, so they create it. The content is chunked, one internal append per chunk, and the matching acknowledgement is sent once the last chunk is acknowledged.
+func (b *realtimeAudioBridge) handleContextAppend(raw []byte, ackEvent, channel string, delegationAllowed bool) {
+	delegationID := ""
+	if delegationAllowed {
+		if d := gjson.GetBytes(raw, "delegation_id"); d.Exists() && d.Type != gjson.Null {
+			if d.Type != gjson.String {
+				b.writeParamError("invalid_value", "delegation_id", "delegation_id must be a string or null.")
+				return
+			}
+			delegationID = d.String()
+		}
+	}
+	events, appendErr := liveContextAppendEvents(delegationID, channel, gjson.GetBytes(raw, "content"))
+	if appendErr != nil {
+		b.writeParamError(appendErr.Code, appendErr.Param, appendErr.Message)
+		return
+	}
+	if !b.ensureCall() {
+		return
+	}
+	b.mu.Lock()
+	b.acks.acks[delegationID] = append(b.acks.acks[delegationID], &liveAck{event: ackEvent, clientEventID: b.eventID, remaining: len(events)})
+	b.mu.Unlock()
+	for _, event := range events {
+		if !b.sendUpstream(event) {
+			return
+		}
 	}
 }
