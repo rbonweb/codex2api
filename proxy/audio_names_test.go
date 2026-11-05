@@ -143,6 +143,17 @@ func TestLiveAudioSessionJSON(t *testing.T) {
 	}
 }
 
+func TestLiveTranscriptionSessionHasNoInitialItems(t *testing.T) {
+	raw := buildLiveTranscriptionSession(transcriptionInstructions + " The audio is in fr.")
+	got := gjson.ParseBytes(raw)
+	if got.Get("initial_items").Exists() {
+		t.Fatalf("transcription session must not carry initial_items: %s", raw)
+	}
+	if got.Get("instructions").String() != transcriptionInstructions+" The audio is in fr." || got.Get("model").String() != liveAudioDefaultModel || got.Get("delegation.type").String() != "client" {
+		t.Fatalf("transcription session = %s", raw)
+	}
+}
+
 func TestAudioNamesLiveSessionVoices(t *testing.T) {
 	public := []string{"marin", "quartz", "ripple", "vesper", "willow", "stone", "gleam", "meridian", "bossa", "tempo", "beacon", "delta", "cinder", "nuri", "juni", "flitz", "brise", "sillage", "nira", "harema", "shida", "noeul"}
 	if len(liveSessionVoiceAliases) != len(public) {

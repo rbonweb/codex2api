@@ -871,7 +871,7 @@ Realtime voices map to ChatGPT Live voices:
 
 ChatGPT Live voice names (`arbor`, `breeze`, `cove`, `ember`, `juniper`, `maple`, `sol`, `spruce`, `vale`) pass through unchanged. An empty or unknown voice becomes `cove`.
 
-Every audio model name maps to `gpt-live-1-codex`. The default instruction, used when `instructions` is empty, is "You are a helpful, concise voice assistant." On every audio call the effective instructions (including this default) also go upstream as a leading developer message, because ChatGPT Live does not apply the `instructions` field on its own.
+Every audio model name maps to `gpt-live-1-codex`. The default instruction, used when `instructions` is empty, is "You are a helpful, concise voice assistant." On every conversational audio call the effective instructions (including this default) also go upstream as a leading developer message, because ChatGPT Live does not apply the `instructions` field on its own.
 
 #### Limits
 
