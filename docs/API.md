@@ -909,7 +909,7 @@ Every audio model name maps to `gpt-live-1-codex`. The default instruction, used
 
 #### Limits
 
-- `POST /v1/audio/speech` is not available. ChatGPT Live answers each turn in its own words, and `session.context.append` adds context rather than a verbatim "say this" command, so no verbatim text-to-speech primitive is known.
+- `POST /v1/audio/speech` is a short, statement-only text-to-speech: see [Voices, limits and text-to-speech](#voices-limits-and-text-to-speech). Conversational calls still answer each turn in their own words.
 - The plain WebSocket voice endpoint `wss://…/v1/live` refuses voice for ChatGPT accounts ("Voice session access denied"), so the gateway always runs the upstream session over WebRTC.
 - Audio on the WebSocket path is pcm16 at 24 kHz or 16 kHz. WebRTC clients send and receive Opus on their own peer connection.
 
@@ -929,6 +929,84 @@ Every audio model name maps to `gpt-live-1-codex`. The default instruction, used
 - Set `audio.input.transcription.language` (on `/v1/live/sessions` `session.start`, as a gateway extension, and on `/v1/realtime`) to tell the model which language the user speaks. For `gu` the gateway converts Devanagari transcripts to Gujarati script; Urdu (Arabic script) output cannot be converted. See [Transcription language](#transcription-language).
 - The `language` field on transcript events comes from a gateway-side detector (whatlanggo, about 84 languages). It is left out when the detection is not reliable or the text has fewer than three words.
 - Test any other language, Gujarati included, before production.
+
+#### Voices, limits and text-to-speech
+
+##### Voices: `GET /v1/audio/voices`
+
+`GET /v1/live/voices`, `GET /audio/voices` and `GET /live/voices` return the same list. The list is generated from the gateway's voice tables, so it always matches the names the audio endpoints accept: the 10 OpenAI Realtime voices, the 22 public GPT-Live voices and the 9 native ChatGPT Live voices. Matching is case-insensitive.
+
+```bash
+curl https://your-gateway/v1/audio/voices -H "Authorization: Bearer $API_KEY"
+```
+
+```json
+{
+  "object": "list",
+  "data": [
+    {"id": "alloy", "object": "voice", "groups": ["openai"], "live_voice": "cove"},
+    {"id": "marin", "object": "voice", "groups": ["openai", "gpt-live"], "live_voice": "maple"},
+    {"id": "cove", "object": "voice", "groups": ["live"], "live_voice": "cove"}
+  ],
+  "defaults": {
+    "realtime": {"voice": "cove", "live_voice": "cove"},
+    "live_sessions": {"voice": "marin", "live_voice": "maple"}
+  }
+}
+```
+
+- `groups` says which family accepts the name: `openai` (Realtime and speech), `gpt-live` (the GPT-Live API) and `live` (native names, accepted everywhere). A name in several families maps to the same Live voice in all of them.
+- `live_voice` is the ChatGPT Live voice the call really uses. Only nine exist, so several names share one.
+- `defaults.realtime` is the voice `/v1/realtime`, `/v1/realtime/calls` and `/v1/audio/speech` use when the request names none. `defaults.live_sessions` is the default of `/v1/live/sessions`.
+- The voice is fixed for the whole call. ChatGPT Live answers a later change with `immutable_field_update` and the message "Voice cannot be updated after initialization.", and the voice stays as it was. Choose it when the call is created, or open a new call.
+
+##### Limits
+
+| Limit | Value |
+| --- | --- |
+| Call length | 1 hour per call. The gateway closes the call at the limit. |
+| Concurrent calls | About 2 per ChatGPT account. In testing, a third concurrent call on one account got 503. Spread load over several accounts. |
+| Per API key | Set per key in the admin: the `allow_live` switch (default on) and the key's `max_concurrency`, `rpm` and `rpd`. An open call holds one concurrency slot until it ends. |
+| Speech input | 1,000 characters per request, 400 above. |
+| Transcription input | 25 MiB and 120 seconds of audio. |
+
+##### Billing
+
+- The gateway does not charge per minute. Calls use the voice allowance of the ChatGPT plan behind the account.
+- Silence counts as call time for as long as the session is open. Close idle sessions.
+- `session.usage.updated` reports the open audio time of the call in `usage.seconds`.
+- Each call and its duration are logged in the gateway's usage records like any other request.
+
+##### Text-to-speech: `POST /v1/audio/speech`
+
+`POST /audio/speech` is the same endpoint without the `/v1` prefix. The request follows the OpenAI speech API.
+
+```bash
+curl https://your-gateway/v1/audio/speech \
+  -H "Authorization: Bearer $API_KEY" \
+  -H "Content-Type: application/json" \
+  -d '{"model":"gpt-4o-mini-tts","input":"The quick brown fox jumps over the lazy dog.","voice":"alloy","response_format":"wav"}' \
+  --output speech.wav
+```
+
+| Field | Required | Notes |
+| --- | --- | --- |
+| `input` | yes | The text to read. At most 1,000 characters, otherwise 400. |
+| `model` | no | `gpt-4o-mini-tts` (default), `tts-1` or `tts-1-hd`. All three are the same upstream voice. Other models return 400 `unsupported_value`. |
+| `voice` | no | Any name from the voices list. An unknown name returns 400 `unsupported_value`. Default `cove`. |
+| `response_format` | no | `wav` (default) or `pcm`. WAV is 24 kHz, mono, 16-bit. `pcm` is the same audio without the header (`audio/pcm`). `mp3`, `opus`, `aac` and `flac` return 400 `unsupported_value` and list the supported formats. |
+| `speed` | no | Only `1`. Any other value returns 400 `unsupported_value`. |
+| `instructions` | no | A speaking style, such as "Speak slowly." At most 1,000 characters. It goes into the developer message, and Live applies it on a best-effort basis. |
+| `stream_format` | no | Only `audio`. `sse` returns 400 `unsupported_value`. |
+
+How it works and what to expect:
+
+- The gateway opens one Live call whose developer message says "You are a text-to-speech engine. Read the user's text aloud exactly, word for word, then stop.", sends the text as `session.context.append` on the `speakable` channel, collects the reply audio until the assistant turn ends, trims the silence Live streams around it, and closes the call. The call-create `instructions` field alone is ignored upstream, which is why the developer message is used.
+- Plain statements are read word for word. Latency is about one second to the first sound, and the audio is produced at real time, so a 10-second sentence takes about 12 seconds.
+- Questions may be skipped. In testing, "What is the capital of France?" was acknowledged and never spoken, because Live treats it as something to answer. To reduce this, text that contains a question mark is wrapped in double quotation marks and the developer message adds that quoted text is read aloud and never answered. This is untested against the live upstream, so do not rely on it. Phrase text as statements when you can.
+- When no sound arrives within 12 seconds of sending the text, or the audio does not finish within 10 seconds plus 130 ms per character, the request returns 504 `upstream_timeout` with the message "the voice model did not read the text".
+- Use it for short text only. There is no streaming, no speed control and no MP3. For long or exact narration, use a dedicated text-to-speech service.
+- Successful responses carry `X-Codex2api-Live-Setup-Ms`. Upstream failures return 502, a missing `allow_live` returns 403, and builds without the `opus` tag answer 501 `audio_bridge_unavailable`.
 
 ### 5. List Models
 

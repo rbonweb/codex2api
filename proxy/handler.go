@@ -3398,6 +3398,9 @@ func (h *Handler) RegisterRoutes(r *gin.Engine) {
 
 	v1.POST("/realtime/calls", h.RealtimeCalls)
 	v1.POST("/audio/transcriptions", h.AudioTranscriptions)
+	v1.POST("/audio/speech", h.AudioSpeech)
+	v1.GET("/audio/voices", h.AudioVoices)
+	v1.GET("/live/voices", h.AudioVoices)
 
 	// 无前缀路由（兼容 base_url 已包含 /v1 的客户端）
 	r.POST("/chat/completions", auth, h.ChatCompletions)
@@ -3426,6 +3429,9 @@ func (h *Handler) RegisterRoutes(r *gin.Engine) {
 
 	r.POST("/realtime/calls", auth, h.RealtimeCalls)
 	r.POST("/audio/transcriptions", auth, h.AudioTranscriptions)
+	r.POST("/audio/speech", auth, h.AudioSpeech)
+	r.GET("/audio/voices", auth, h.AudioVoices)
+	r.GET("/live/voices", auth, h.AudioVoices)
 
 	codexDirect := r.Group("/backend-api/codex")
 	codexDirect.Use(auth)
