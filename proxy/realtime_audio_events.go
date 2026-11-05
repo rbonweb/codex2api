@@ -73,6 +73,11 @@ func (m *realtimeAudioMapper) UserItemID() string {
 	return m.pendingUserID
 }
 
+// LastItemID returns the id of the last completed item in the conversation, or an empty string before the first one.
+func (m *realtimeAudioMapper) LastItemID() string {
+	return m.lastItemID
+}
+
 // MapUpstream converts one ChatGPT Live sideband event into zero or more OpenAI Realtime events.
 // Invalid JSON and events without a mapping yield nil.
 func (m *realtimeAudioMapper) MapUpstream(raw []byte) [][]byte {
