@@ -3,7 +3,7 @@ package proxy
 import "testing"
 
 func TestToolInputCorrectorStats(t *testing.T) {
-	corrector := NewClaudeToolCorrector()
+	corrector := NewToolInputCorrector()
 
 	if stats := corrector.GetStats(); stats.TotalCorrected != 0 || len(stats.CorrectionsByTool) != 0 || len(stats.CorrectionsByReason) != 0 {
 		t.Fatalf("initial stats = %+v, want empty", stats)

@@ -285,12 +285,6 @@ func (h *Handler) sendNewAPIPromptCyberRestriction(c *gin.Context, cfg promptfil
 	writeNewAPIPolicyDecisionHeaders(c, metadata)
 	writePromptCyberRestrictionHeaders(c, restriction)
 	apiErr := promptCyberRestrictionAPIError(restriction, newAPIPolicyDecisionDetails(metadata))
-	if requestUsesAnthropicErrorEnvelope(c) {
-		c.JSON(http.StatusBadRequest, gin.H{"type": "error", "error": gin.H{
-			"type": string(apiErr.Type), "message": apiErr.Message, "details": apiErr.Details,
-		}})
-		return true
-	}
 	api.SendErrorWithStatus(c, apiErr, http.StatusBadRequest)
 	return true
 }
@@ -746,12 +740,6 @@ func (h *Handler) rejectLockedPromptConversation(c *gin.Context, cfg promptfilte
 	}
 	writePromptCyberRestrictionHeaders(c, restriction)
 	apiErr := promptCyberRestrictionAPIError(restriction, nil)
-	if requestUsesAnthropicErrorEnvelope(c) {
-		c.JSON(http.StatusBadRequest, gin.H{"type": "error", "error": gin.H{
-			"type": string(apiErr.Type), "message": apiErr.Message, "details": apiErr.Details,
-		}})
-		return true
-	}
 	api.SendErrorWithStatus(c, apiErr, http.StatusBadRequest)
 	return true
 }

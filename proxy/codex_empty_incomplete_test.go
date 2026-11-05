@@ -170,7 +170,7 @@ func TestEmptyIncompleteNonStreamBody(t *testing.T) {
 	if gjson.GetBytes(rewritten, "incomplete_details").Exists() {
 		t.Fatal("incomplete_details must be dropped")
 	}
-	failure, failed := protocolNonStreamFailure(GrokProtocolResponses, rewritten)
+	failure, failed := responsesNonStreamFailure(rewritten)
 	if !failed {
 		t.Fatal("rewritten body must be recognized as a non-stream failure")
 	}

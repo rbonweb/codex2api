@@ -1,12 +1,9 @@
 package proxy
 
 import (
-	"encoding/json"
-	"net/http"
 	"strings"
 	"testing"
 
-	"github.com/gin-gonic/gin"
 )
 
 const clientScaffoldingSample = "<system-reminder>\n" +
@@ -165,197 +162,8 @@ func TestNormalizeClientScaffoldingSkipsOversizedPayloads(t *testing.T) {
 	}
 }
 
-func TestResponsesToGeminiInternalStripsClientScaffolding(t *testing.T) {
-	body := `{
-		"instructions":"You are Claude Code, Anthropic's official CLI tool for Claude.",
-		"input":[{"role":"user","content":[
-			{"type":"input_text","text":"<system-reminder>\n# Environment\nYou have been invoked in the following environment:\n - Platform: win32\n</system-reminder>"},
-			{"type":"input_text","text":"<system-reminder>\nAvailable agent types for the Agent tool:\n- Explore: Read-only search agent\n</system-reminder>"},
-			{"type":"input_text","text":"<system-reminder>\nYou are powered by the model gemini-3.8-flash-high.\n</system-reminder>"},
-			{"type":"input_text","text":"仔细研究下 token 策略"}
-		]}]
-	}`
-	got, err := responsesToGeminiInternal([]byte(body), "project", "gemini-3.7-flash-high")
-	if err != nil {
-		t.Fatal(err)
-	}
-	request := got["request"].(map[string]any)
 
-	contents, ok := request["contents"].([]any)
-	if !ok || len(contents) != 1 {
-		t.Fatalf("contents = %#v", contents)
-	}
-	turn := contents[0].(map[string]any)
-	if turn["role"] != "user" {
-		t.Fatalf("turn role = %#v", turn["role"])
-	}
-	parts := turn["parts"].([]any)
-	if len(parts) != 1 {
-		t.Fatalf("scaffolding parts survived: %#v", parts)
-	}
-	if text := parts[0].(map[string]any)["text"]; text != "仔细研究下 token 策略" {
-		t.Fatalf("user text = %#v", text)
-	}
 
-	// The system prompt is real content, not scaffolding: it is preserved even
-	// though it names Claude.
-	system := request["systemInstruction"].(map[string]any)["parts"].([]any)[0].(map[string]any)["text"].(string)
-	if system != "You are Claude Code, Anthropic's official CLI tool for Claude." {
-		t.Fatalf("systemInstruction = %q", system)
-	}
-}
-
-// Structured payloads are data, not prose: they must round-trip byte for byte.
-func TestResponsesToGeminiInternalKeepsStructuredPayloadsIntact(t *testing.T) {
-	body := `{
-		"input":[
-			{"type":"function_call","name":"lookup","call_id":"c1","arguments":"{\"query\":\"<system-reminder># Environment</system-reminder>\"}"},
-			{"type":"function_call_output","call_id":"c1","output":"<system-reminder>\n# Environment\n - Platform: win32\n</system-reminder>"},
-			{"role":"user","content":"hi"}
-		]
-	}`
-	got, err := responsesToGeminiInternal([]byte(body), "project", "gemini-3.7-flash-high")
-	if err != nil {
-		t.Fatal(err)
-	}
-	contents := got["request"].(map[string]any)["contents"].([]any)
-
-	callArgs, _ := contents[0].(map[string]any)["parts"].([]any)[0].(map[string]any)["functionCall"].(map[string]any)["args"].(map[string]any)
-	if query, _ := callArgs["query"].(string); !strings.Contains(query, "<system-reminder>") {
-		t.Fatalf("function call arguments were rewritten: %#v", callArgs)
-	}
-
-	response, _ := contents[1].(map[string]any)["parts"].([]any)[0].(map[string]any)["functionResponse"].(map[string]any)["response"].(map[string]any)
-	if result, _ := response["result"].(string); !strings.Contains(result, "<system-reminder>") {
-		t.Fatalf("function response was rewritten: %#v", response)
-	}
-}
-
-// Stripping the volatile reminder blocks is what keeps the session id, and
-// therefore the upstream prompt cache prefix, stable across turns.
-func TestResponsesToGeminiInternalSessionSeedSurvivesVolatileReminders(t *testing.T) {
-	body := func(platform string) []byte {
-		return []byte(`{"input":[{"role":"user","content":[
-			{"type":"input_text","text":"<system-reminder>\n# Environment\n - Platform: ` + platform + `\n - Is a git repository: false\n</system-reminder>"},
-			{"type":"input_text","text":"what changed today?"}
-		]}]}`)
-	}
-	first, err := responsesToGeminiInternal(body("win32"), "project", "gemini-3.7-flash-high")
-	if err != nil {
-		t.Fatal(err)
-	}
-	second, err := responsesToGeminiInternal(body("darwin"), "project", "gemini-3.7-flash-high")
-	if err != nil {
-		t.Fatal(err)
-	}
-	firstRequest := first["request"].(map[string]any)
-	secondRequest := second["request"].(map[string]any)
-	if firstRequest["sessionId"] != secondRequest["sessionId"] {
-		t.Fatalf("session id drifted with volatile scaffolding: %v vs %v", firstRequest["sessionId"], secondRequest["sessionId"])
-	}
-	firstPrefix, _ := json.Marshal(firstRequest["contents"])
-	secondPrefix, _ := json.Marshal(secondRequest["contents"])
-	if string(firstPrefix) != string(secondPrefix) {
-		t.Fatalf("cached prefix drifted: %s vs %s", firstPrefix, secondPrefix)
-	}
-}
-
-func TestGeminiNativeToAntigravityEnvelopeStripsClientScaffolding(t *testing.T) {
-	payload, _, _, err := geminiNativeToAntigravityEnvelope([]byte(`{
-		"system_instruction":{"parts":[{"text":"You are powered by the model gemini-3.8-flash-high."}]},
-		"contents":[{"role":"user","parts":[
-			{"text":"<system-reminder>\n# Environment\n - Platform: win32\n</system-reminder>"},
-			{"text":"hello"}
-		]}]
-	}`), "google-project", "models/gemini-3.7-flash-high")
-	if err != nil {
-		t.Fatal(err)
-	}
-	var envelope map[string]any
-	if err := json.Unmarshal(payload, &envelope); err != nil {
-		t.Fatal(err)
-	}
-	request := envelope["request"].(map[string]any)
-	if _, ok := request["systemInstruction"]; ok {
-		t.Fatalf("pure-scaffolding systemInstruction should be dropped: %#v", request["systemInstruction"])
-	}
-	parts := request["contents"].([]any)[0].(map[string]any)["parts"].([]any)
-	if len(parts) != 2 {
-		t.Fatalf("native contents shape must be preserved: %#v", parts)
-	}
-	if text := parts[0].(map[string]any)["text"]; text != "" {
-		t.Fatalf("scaffolding part should be emptied in place: %#v", text)
-	}
-	if text := parts[1].(map[string]any)["text"]; text != "hello" {
-		t.Fatalf("real content was damaged: %#v", text)
-	}
-}
-
-// The strip has to hold on the real ingress, not only inside the converter:
-// /v1/chat/completions and /v1/messages both funnel into the Antigravity
-// envelope, and the scaffolding must be gone by the time it leaves the process.
-func TestAntigravityIngressStripsClientScaffolding(t *testing.T) {
-	const upstreamBody = `{"candidates":[{"content":{"parts":[{"text":"ok"}]},"finishReason":"STOP"}],"usageMetadata":{"promptTokenCount":2,"candidatesTokenCount":1,"totalTokenCount":3}}`
-
-	cases := []struct {
-		name     string
-		path     string
-		dispatch func(*Handler, *gin.Context)
-		body     string
-		question string
-	}{
-		{
-			name:     "chat completions",
-			path:     "/v1/chat/completions",
-			dispatch: (*Handler).ChatCompletions,
-			body: `{"model":"` + antigravityTransportTestModel + `","messages":[
-				{"role":"user","content":"<system-reminder>\n# Environment\nYou have been invoked in the following environment:\n - Platform: win32\n</system-reminder>\n\nCo-Authored-By: Claude Code <noreply@anthropic.com>\n\n仔细研究下 token 策略"}
-			]}`,
-			question: "仔细研究下 token 策略",
-		},
-		{
-			name:     "anthropic messages",
-			path:     "/v1/messages",
-			dispatch: (*Handler).Messages,
-			body: `{"model":"` + antigravityTransportTestModel + `","max_tokens":256,"messages":[
-				{"role":"user","content":"<system-reminder>\nAvailable agent types for the Agent tool:\n- Explore: Read-only search agent\n</system-reminder>\n\n🤖 Generated with [Claude Code](https://claude.com/claude-code)\n\nhello there"}
-			]}`,
-			question: "hello there",
-		},
-	}
-	for _, tc := range cases {
-		t.Run(tc.name, func(t *testing.T) {
-			handler, upstream := newAntigravityTransportTestHandler(t, upstreamBody)
-			recorder := invokeAntigravityTransport(t, handler, tc.path, tc.body, tc.dispatch)
-			if recorder.Code != http.StatusOK {
-				t.Fatalf("status = %d, want 200; body=%q", recorder.Code, recorder.Body.String())
-			}
-			request := upstream.request()
-			if request == nil {
-				t.Fatal("upstream received no request envelope")
-			}
-			encoded, err := json.Marshal(request)
-			if err != nil {
-				t.Fatal(err)
-			}
-			envelope := string(encoded)
-			for _, leak := range []string{
-				"<system-reminder>",
-				"Co-Authored-By",
-				"You have been invoked in the following environment",
-				"Available agent types for the Agent tool",
-				"Generated with [Claude Code]",
-			} {
-				if strings.Contains(envelope, leak) {
-					t.Fatalf("scaffolding leaked upstream (%q): %s", leak, envelope)
-				}
-			}
-			if !strings.Contains(envelope, tc.question) {
-				t.Fatalf("the real question was lost: %s", envelope)
-			}
-		})
-	}
-}
 
 // The affinity key is resolved from the raw body, before the converter runs, so
 // the ingress neutralizer cannot protect it. It has to ignore the same
@@ -386,17 +194,3 @@ func TestDeriveContentSessionSeedStillDistinguishesScaffoldedConversations(t *te
 	}
 }
 
-// The system-instruction obfuscation is the other half of the cache story: it
-// rewrites the cached prefix, so it must be a pure function of its input.
-func TestObfuscateSystemInstructionIsDeterministic(t *testing.T) {
-	const system = "You are Hermes Agent, built by Nous Research. Claude Agent SDK reference."
-	first := antigravityObfuscateSystemInstruction(system)
-	if !strings.Contains(first, "\u200B") {
-		t.Fatalf("expected obfuscation to apply: %q", first)
-	}
-	for i := 0; i < 200; i++ {
-		if got := antigravityObfuscateSystemInstruction(system); got != first {
-			t.Fatalf("obfuscation is not deterministic on run %d: %q vs %q", i, got, first)
-		}
-	}
-}

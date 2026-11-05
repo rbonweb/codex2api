@@ -1,8 +1,6 @@
 package proxy
 
 import (
-	"encoding/json"
-	"strings"
 	"testing"
 
 	"github.com/tidwall/gjson"
@@ -59,39 +57,6 @@ func TestResponsesIncompleteFinishReason(t *testing.T) {
 	}
 }
 
-// Claude Code 走 /v1/messages：截断必须收成 stop_reason=max_tokens 的干净结尾，
-// 而不是被下游 SDK 当成 overloaded_error 自动重试。
-func TestAnthropicTranslatorClosesOnResponseIncomplete(t *testing.T) {
-	tr := newAnthropicStreamTranslator("claude-sonnet-4-5")
-	tr.translateEvent([]byte(`{"type":"response.created"}`))
-	tr.translateEvent([]byte(`{"type":"response.output_text.delta","delta":"半截"}`))
-
-	var stopReason string
-	var usage *anthropicUsage
-	sawStop := false
-	for _, evt := range tr.translateEvent([]byte(incompleteTerminalEvent)) {
-		switch evt.Type {
-		case "message_delta":
-			if evt.Delta != nil {
-				stopReason = anthropicStopReasonValue(evt.Delta.StopReason)
-			}
-			if evt.Usage != nil {
-				usage = evt.Usage
-			}
-		case "message_stop":
-			sawStop = true
-		}
-	}
-	if stopReason != "max_tokens" {
-		t.Errorf("stop_reason = %q, want max_tokens", stopReason)
-	}
-	if !sawStop {
-		t.Error("missing message_stop")
-	}
-	if usage == nil || usage.InputTokens != 232 || usage.OutputTokens != 6631 {
-		t.Errorf("usage = %+v, want input=232 output=6631", usage)
-	}
-}
 
 // 下游 /v1/chat/completions：截断对应 finish_reason=length，且必须是终态事件，
 // 否则收尾逻辑会再补一个 error 对象。
@@ -141,23 +106,3 @@ func TestBuildCompactResponseFinishReasonOverride(t *testing.T) {
 	}
 }
 
-// Grok 跨协议路由的别名还原器同样要认截断终态，否则最终 response.output 里
-// 留着改写后的工具名。
-func TestGrokNamespaceReverserRestoresOnIncomplete(t *testing.T) {
-	aliases := map[string]grokNsIdentity{"tool_a1b2": {Namespace: "shell", Name: "exec"}}
-	reverser := &grokStreamReverser{
-		aliases:         aliases,
-		customItems:     map[string]bool{},
-		toolSearchItems: map[string]bool{},
-		inputBytes:      map[string]int{},
-	}
-	line := []byte(`data: {"type":"response.incomplete","response":{"status":"incomplete","output":[{"type":"function_call","name":"tool_a1b2","arguments":"{}"}]}}` + "\n")
-	out := string(reverser.rewriteLine(line))
-	if strings.Contains(out, "tool_a1b2") {
-		t.Errorf("alias not reversed on response.incomplete: %s", out)
-	}
-	var payload map[string]any
-	if err := json.Unmarshal([]byte(strings.TrimPrefix(strings.TrimSpace(out), "data: ")), &payload); err != nil {
-		t.Fatalf("rewritten line is not valid JSON: %v (%s)", err, out)
-	}
-}

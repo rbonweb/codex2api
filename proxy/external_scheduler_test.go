@@ -222,32 +222,6 @@ func TestPinnedResponsesForwardsRateLimitWithoutRetry(t *testing.T) {
 	}
 }
 
-func TestPinnedMessagesReportsUnknownAccountInAnthropicFormat(t *testing.T) {
-	handler, upstream, _ := newPinnedCodexHandler(t, nil, func(w http.ResponseWriter, _ *http.Request) {
-		writePinnedSuccessSSE(w)
-	})
-
-	recorder := httptest.NewRecorder()
-	handler.Messages(pinnedTestContext(recorder, "/v1/messages", `{"model":"gpt-5.5","max_tokens":16,"messages":[{"role":"user","content":"hello"}]}`, 7, 99))
-
-	body := recorder.Body.String()
-	if recorder.Code != http.StatusNotFound {
-		t.Fatalf("status = %d body = %s, want 404", recorder.Code, body)
-	}
-	if gjson.Get(body, "type").String() != "error" || gjson.Get(body, "error.type").String() != "not_found_error" ||
-		gjson.Get(body, "error.code").String() != "pinned_account_not_found" {
-		t.Fatalf("body = %s, want an Anthropic not_found_error with code pinned_account_not_found", body)
-	}
-	if got := recorder.Header().Get(pinnedAccountErrorHeader); got != "pinned_account_not_found" {
-		t.Fatalf("%s = %q, want pinned_account_not_found", pinnedAccountErrorHeader, got)
-	}
-	if got := recorder.Header().Get(PinnedAccountHeader); got != "" {
-		t.Fatalf("%s = %q, want unset when no account ran the request", PinnedAccountHeader, got)
-	}
-	if got := upstream.calls.Load(); got != 0 {
-		t.Fatalf("upstream calls = %d, want none", got)
-	}
-}
 
 // An account restricted to other API keys must be indistinguishable from a
 // missing one, so a key cannot probe the pool outside its scope.

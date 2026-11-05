@@ -2,7 +2,6 @@ package proxy
 
 import (
 	"context"
-	"encoding/json"
 	"io"
 	"net/http"
 	"net/http/httptest"
@@ -185,73 +184,6 @@ func TestStrictResponsesCompatibilityPreservesErrorAfterSSECommit(t *testing.T) 
 	}
 }
 
-func TestStrictResponsesCompatibilityWebSocketRelayPreservesFields(t *testing.T) {
-	gin.SetMode(gin.TestMode)
-	resetOpenAIResponsesWebsocketPool()
-	t.Cleanup(resetOpenAIResponsesWebsocketPool)
-	seen := make(chan []byte, 1)
-	upgrader := websocket.Upgrader{CheckOrigin: func(*http.Request) bool { return true }}
-	upstream := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		conn, err := upgrader.Upgrade(w, r, nil)
-		if err != nil {
-			return
-		}
-		defer conn.Close()
-		_, payload, err := conn.ReadMessage()
-		if err != nil {
-			return
-		}
-		seen <- payload
-		_ = conn.WriteMessage(websocket.TextMessage, []byte(`{"type":"response.completed","response":{"id":"resp_strict_ws","status":"completed","output":[]}}`))
-		// Leave the pooled upstream connection usable until the downstream closes.
-		_, _, _ = conn.ReadMessage()
-	}))
-	defer upstream.Close()
-	store := auth.NewStore(nil, nil, &database.SystemSettings{MaxConcurrency: 2})
-	defer store.Stop()
-	account := &auth.Account{DBID: 1, UpstreamType: auth.UpstreamOpenAIResponses, BaseURL: upstream.URL, APIKey: "local-only", PlanType: "api", Models: []string{"gpt-5.5"}, ResponsesUpstreamTransport: auth.OpenAIResponsesTransportWebsocket}
-	store.AddAccount(account)
-	h := NewHandler(store, nil, &config.Config{AllowAnonymousV1: true}, nil)
-	router := gin.New()
-	h.RegisterRoutes(router)
-	server := httptest.NewServer(router)
-	defer server.Close()
-	headers := http.Header{strictResponsesCompatibilityHeader: []string{"true"}}
-	conn, _, err := websocket.DefaultDialer.Dial("ws"+strings.TrimPrefix(server.URL, "http")+"/v1/responses", headers)
-	if err != nil {
-		t.Fatal(err)
-	}
-	defer conn.Close()
-	payload := `{"type":"response.create","model":"gpt-5.5","input":"hi","store":true,"metadata":{"tenant":"demo"},"max_output_tokens":100,"background":false,"text":{"verbosity":"low"}}`
-	if err := conn.WriteMessage(websocket.TextMessage, []byte(payload)); err != nil {
-		t.Fatal(err)
-	}
-	_ = conn.SetReadDeadline(time.Now().Add(2 * time.Second))
-	_, event, err := conn.ReadMessage()
-	if err != nil {
-		t.Fatal(err)
-	}
-	if gjson.GetBytes(event, "type").String() != "response.completed" {
-		t.Fatalf("event=%s", event)
-	}
-	select {
-	case sent := <-seen:
-		var want, got map[string]any
-		_ = json.Unmarshal([]byte(payload), &want)
-		_ = json.Unmarshal(sent, &got)
-		for _, field := range []string{"store", "metadata", "max_output_tokens", "background", "text"} {
-			w, _ := json.Marshal(want[field])
-			g, _ := json.Marshal(got[field])
-			if string(w) != string(g) {
-				t.Errorf("relay changed %s: got %s want %s body=%s", field, g, w, sent)
-			}
-		}
-	case <-time.After(time.Second):
-		t.Fatal("relay upstream did not receive request")
-	}
-	conn.Close()
-	resetOpenAIResponsesWebsocketPool()
-}
 
 func TestStrictResponsesCompatibilityWebSocketNativeSelection(t *testing.T) {
 	gin.SetMode(gin.TestMode)

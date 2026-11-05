@@ -4,7 +4,6 @@ import (
 	"encoding/json"
 	"strings"
 
-	"github.com/codex2api/auth"
 	"github.com/tidwall/gjson"
 	"github.com/tidwall/sjson"
 )
@@ -207,101 +206,6 @@ func (h *Handler) applyBaseModelMappingToBody(rawBody []byte, supportedModels []
 	return updatedBody, originalModel, effectiveModel, mappingApplied
 }
 
-// accountModelMappingTargetModels returns the concrete upstream models that an
-// account-level mapping may target.
-func accountModelMappingTargetModels(account *auth.Account) []string {
-	if account == nil {
-		return nil
-	}
-	return account.OpenAIResponsesModels()
-}
-
-func resolveAccountModelMapping(account *auth.Account, model string) (string, bool) {
-	model = strings.TrimSpace(model)
-	if account == nil || model == "" {
-		return model, false
-	}
-	accountModels := accountModelMappingTargetModels(account)
-	if len(accountModels) == 0 {
-		return model, false
-	}
-	mappedModel, ok := resolveConfiguredModelMapping(model, account.OpenAIResponsesModelMapping(), accountModels)
-	if !ok || mappedModel == "" || !modelIDInList(mappedModel, accountModels) {
-		return model, false
-	}
-	return mappedModel, true
-}
-
-func ResolveAccountModelMapping(account *auth.Account, model string) (string, bool) {
-	return resolveAccountModelMapping(account, model)
-}
-
-func resolveAccountModelMappingForCandidates(account *auth.Account, models ...string) (string, bool) {
-	seen := make(map[string]struct{}, len(models))
-	for _, model := range models {
-		model = strings.TrimSpace(model)
-		if model == "" {
-			continue
-		}
-		key := strings.ToLower(model)
-		if _, ok := seen[key]; ok {
-			continue
-		}
-		seen[key] = struct{}{}
-		if mappedModel, ok := resolveAccountModelMapping(account, model); ok && mappedModel != "" {
-			return mappedModel, true
-		}
-	}
-	return "", false
-}
-
-func accountModelMappingAliases(account *auth.Account) []string {
-	if account == nil {
-		return nil
-	}
-	accountModels := accountModelMappingTargetModels(account)
-	if len(accountModels) == 0 {
-		return nil
-	}
-	rules := parseModelMappingRules(account.OpenAIResponsesModelMapping())
-	if len(rules) == 0 {
-		return nil
-	}
-	aliases := make([]string, 0, len(rules))
-	for _, rule := range rules {
-		if rule.Wildcard {
-			continue
-		}
-		mappedModel, ok := resolveConfiguredModelMapping(rule.From, account.OpenAIResponsesModelMapping(), accountModels)
-		if !ok || mappedModel == "" || !relayAccountSupportsModel(account, mappedModel) {
-			continue
-		}
-		aliases = append(aliases, rule.From)
-	}
-	return aliases
-}
-
-func (h *Handler) applyAccountModelMappingToBody(rawBody []byte, account *auth.Account) ([]byte, string, bool) {
-	return h.applyAccountModelMappingToBodyForModels(rawBody, account)
-}
-
-func (h *Handler) applyAccountModelMappingToBodyForModels(rawBody []byte, account *auth.Account, modelCandidates ...string) ([]byte, string, bool) {
-	model := strings.TrimSpace(gjson.GetBytes(rawBody, "model").String())
-	if model == "" || !gjson.ValidBytes(rawBody) || account == nil {
-		return rawBody, model, false
-	}
-	modelCandidates = append(modelCandidates, model)
-	mappedModel, ok := resolveAccountModelMappingForCandidates(account, modelCandidates...)
-	if !ok || mappedModel == "" || strings.EqualFold(mappedModel, model) {
-		return rawBody, model, false
-	}
-	updatedBody, err := sjson.SetBytes(rawBody, "model", mappedModel)
-	if err != nil {
-		return rawBody, model, false
-	}
-	return updatedBody, mappedModel, true
-}
-
 func (h *Handler) resolveConfiguredRequestModel(model string, supportedModels []string) (string, bool) {
 	model = strings.TrimSpace(model)
 	if model == "" || h == nil || h.store == nil {
@@ -434,56 +338,6 @@ func normalizeCompactMappingTarget(model string) string {
 		return base
 	}
 	return model
-}
-
-// resolveAccountCompactModelMappingForCandidates 按候选顺序解析账号级映射：
-// 合成别名只匹配 compact 专用规则，真实名字走全部规则；命中目标统一去后缀。
-func resolveAccountCompactModelMappingForCandidates(account *auth.Account, candidates []compactMappingCandidate) (string, bool) {
-	if account == nil {
-		return "", false
-	}
-	accountModels := accountModelMappingTargetModels(account)
-	if len(accountModels) == 0 {
-		return "", false
-	}
-	rules := parseModelMappingRules(account.OpenAIResponsesModelMapping())
-	if len(rules) == 0 {
-		return "", false
-	}
-	scopedRules := compactAliasScopedRules(rules)
-	for _, candidate := range candidates {
-		candidateRules := rules
-		if candidate.synthetic {
-			candidateRules = scopedRules
-		}
-		mappedModel, ok := resolveModelMappingFromRules(candidate.model, candidateRules, accountModels)
-		if !ok || mappedModel == "" {
-			continue
-		}
-		mappedModel = normalizeCompactMappingTarget(mappedModel)
-		return mappedModel, true
-	}
-	return "", false
-}
-
-// applyAccountCompactModelMappingToBody 是 compact 链路的账号级映射改写：
-// 与 applyAccountModelMappingToBodyForModels 相同的语义，但候选带 synthetic
-// 标记且映射目标不允许携带 -openai-compact 后缀进入上游请求体。
-func (h *Handler) applyAccountCompactModelMappingToBody(rawBody []byte, account *auth.Account, modelCandidates ...string) ([]byte, string, bool) {
-	model := strings.TrimSpace(gjson.GetBytes(rawBody, "model").String())
-	if model == "" || !gjson.ValidBytes(rawBody) || account == nil {
-		return rawBody, model, false
-	}
-	candidates := compactMappingCandidates(append(modelCandidates, model)...)
-	mappedModel, ok := resolveAccountCompactModelMappingForCandidates(account, candidates)
-	if !ok || mappedModel == "" || strings.EqualFold(mappedModel, model) {
-		return rawBody, model, false
-	}
-	updatedBody, err := sjson.SetBytes(rawBody, "model", mappedModel)
-	if err != nil {
-		return rawBody, model, false
-	}
-	return updatedBody, mappedModel, true
 }
 
 // applyConfiguredCompactModelMappingToBody resolves the endpoint-qualified

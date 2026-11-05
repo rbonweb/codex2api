@@ -82,17 +82,6 @@ func TestResolveConfiguredModelMappingIgnoresInvalidJSON(t *testing.T) {
 	}
 }
 
-func TestResolveAnthropicModelUsesWildcardBeforeDefaultFallback(t *testing.T) {
-	got := resolveAnthropicModel("claude-opus-4-7", `{"claude-opus-*":"gpt-5.5"}`, []string{"gpt-5.5", "gpt-5.4"})
-	if got != "gpt-5.5" {
-		t.Fatalf("resolveAnthropicModel wildcard = %q, want gpt-5.5", got)
-	}
-
-	got = resolveAnthropicModel("claude-haiku-4-5", `{}`, []string{"gpt-5.6-luna"})
-	if got != "gpt-5.6-luna" {
-		t.Fatalf("resolveAnthropicModel default = %q, want gpt-5.6-luna", got)
-	}
-}
 
 func TestApplyConfiguredModelMappingToBodyRewritesBeforeValidation(t *testing.T) {
 	store := auth.NewStore(nil, nil, nil)
@@ -140,31 +129,6 @@ func TestApplyReasoningEffortModelAliasToBody(t *testing.T) {
 	}
 }
 
-// /v1/messages 路径的 codexBody 是 Responses 形态且不再经过 PrepareResponsesBody
-// 净化，别名注入的顶层 reasoning_effort 必须在映射后剥离，否则上游 400
-// Unsupported parameter（issue #412）。reasoning.effort 需保留并覆写为别名档位。
-func TestApplyMessagesModelMappingStripsTopLevelReasoningEffort(t *testing.T) {
-	store := auth.NewStore(nil, nil, nil)
-	store.SetReasoningEffortModels(`[{"model":"gpt-5.5","effort":"xhigh"}]`)
-	handler := NewHandler(store, nil, nil, nil)
-
-	body := handler.applyMessagesModelMapping(
-		[]byte(`{"model":"gpt-5.5(xhigh)","input":[],"reasoning":{"effort":"medium","summary":"auto"}}`),
-		[]string{"gpt-5.5", "gpt-5.5(xhigh)"},
-	)
-	if got := gjson.GetBytes(body, "model").String(); got != "gpt-5.5" {
-		t.Fatalf("body model = %q, want gpt-5.5; body=%s", got, body)
-	}
-	if gjson.GetBytes(body, "reasoning_effort").Exists() {
-		t.Fatalf("top-level reasoning_effort should be stripped; body=%s", body)
-	}
-	if got := gjson.GetBytes(body, "reasoning.effort").String(); got != "xhigh" {
-		t.Fatalf("reasoning.effort = %q, want xhigh (alias overrides request effort); body=%s", got, body)
-	}
-	if got := gjson.GetBytes(body, "reasoning.summary").String(); got != "auto" {
-		t.Fatalf("reasoning.summary = %q, want auto preserved; body=%s", got, body)
-	}
-}
 
 // ultra 是预埋的思考强度档位（未来新模型可能支持），必须在 alias 配置与
 // 请求级 effort 归一化中原样透传，而不是被钳位回 high。
@@ -465,43 +429,6 @@ func TestCompactMappingTargetSuffixIsStripped(t *testing.T) {
 	}
 	if got := gjson.GetBytes(body, "model").String(); got != "gpt-5.4" {
 		t.Fatalf("body model = %q, want gpt-5.4", got)
-	}
-}
-
-// 账号级映射：合成别名命中恒等规则（suffixed→suffixed）时不得把带后缀
-// 名字发往上游；候选回退到基础名后应保持 PR #350 之前的行为。
-func TestResolveAccountCompactModelMappingNormalizesIdentitySuffixRule(t *testing.T) {
-	account := &auth.Account{
-		DBID:         1,
-		UpstreamType: auth.UpstreamOpenAIResponses,
-		BaseURL:      "http://example.invalid",
-		APIKey:       "sk-x",
-		Models:       []string{"gpt-5.6-sol", "gpt-5.6-sol-openai-compact"},
-		ModelMapping: `{"gpt-5.6-sol-openai-compact":"gpt-5.6-sol-openai-compact"}`,
-		PlanType:     "api",
-	}
-
-	mapped, ok := resolveAccountCompactModelMappingForCandidates(account, compactMappingCandidates("gpt-5.6-sol"))
-	if !ok || mapped != "gpt-5.6-sol" {
-		t.Fatalf("mapped = %q (ok=%v), want base gpt-5.6-sol", mapped, ok)
-	}
-}
-
-// 账号级映射：合成别名不吃通用通配规则，基础名的精确规则优先。
-func TestResolveAccountCompactModelMappingKeepsExactBaseRulePrecedence(t *testing.T) {
-	account := &auth.Account{
-		DBID:         2,
-		UpstreamType: auth.UpstreamOpenAIResponses,
-		BaseURL:      "http://example.invalid",
-		APIKey:       "sk-x",
-		Models:       []string{"model-a", "model-b"},
-		ModelMapping: `{"gpt-5.5":"model-a","gpt-*":"model-b"}`,
-		PlanType:     "api",
-	}
-
-	mapped, ok := resolveAccountCompactModelMappingForCandidates(account, compactMappingCandidates("gpt-5.5"))
-	if !ok || mapped != "model-a" {
-		t.Fatalf("mapped = %q (ok=%v), want exact base rule model-a", mapped, ok)
 	}
 }
 

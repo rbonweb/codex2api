@@ -592,14 +592,6 @@ func (h *Handler) rejectRequiredNewAPIIdentity(c *gin.Context, cfg promptfilter.
 	return true
 }
 
-func requestUsesAnthropicErrorEnvelope(c *gin.Context) bool {
-	if c == nil || c.Request == nil || c.Request.URL == nil {
-		return false
-	}
-	path := strings.TrimSuffix(c.Request.URL.Path, "/")
-	return path == "/v1/messages" || path == "/v1/messages/count_tokens" || path == "/messages" || path == "/messages/count_tokens"
-}
-
 // VerifyNewAPIPolicyHandshake validates the exact signed identity headers used
 // by NewAPI without invoking an upstream model or recording an offense.
 func (h *Handler) VerifyNewAPIPolicyHandshake(c *gin.Context) {
