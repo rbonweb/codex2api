@@ -47,4 +47,3 @@ func selectNativeProjectorWithScope(protocol string, _ bool, isCodexResponses bo
 		return NewChatProjector()
 	}
 }
-

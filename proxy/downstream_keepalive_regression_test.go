@@ -2,21 +2,16 @@ package proxy
 
 import (
 	"context"
-	"database/sql"
 	"errors"
 	"io"
 	"net/http"
 	"net/http/httptest"
-	"path/filepath"
 	"strings"
 	"sync"
 	"testing"
 	"time"
 
-	"github.com/codex2api/auth"
-	"github.com/codex2api/config"
 	"github.com/codex2api/database"
-	"github.com/gin-gonic/gin"
 )
 
 // TestKeepaliveReadCancellationPreservesDrainBudget checks the stream pump,
@@ -76,101 +71,6 @@ func TestKeepaliveReadCancellationPreservesDrainBudget(t *testing.T) {
 	}
 }
 
-// TestClaudeDisabledKeepaliveSurvivesQuotaAdmission exercises the authenticated
-// Messages path, including the real quota store and Claude executor.
-func TestClaudeDisabledKeepaliveSurvivesQuotaAdmission(t *testing.T) {
-	previous := continuousRetryKeepaliveInterval
-	continuousRetryKeepaliveInterval = 5 * time.Millisecond
-	t.Cleanup(func() { continuousRetryKeepaliveInterval = previous })
-	original, _, _ := newModelQuotaTestHandler(t, 2, "", false)
-	store := auth.NewStore(original.db, nil, &database.SystemSettings{MaxConcurrency: 2, MaxRetries: 0})
-	t.Cleanup(store.Stop)
-	store.SetClaudeStreamKeepaliveEnabled(false)
-	account := &auth.Account{DBID: 67301, UpstreamType: auth.UpstreamClaude, ClaudeAuthKind: auth.ClaudeAuthKindAPIKey, AccessToken: "review-key", ClaudeBaseURL: "https://example.com", Status: auth.StatusReady}
-	store.AddAccount(account)
-	h := NewHandler(store, original.db, &config.Config{}, nil)
-	router := gin.New()
-	h.RegisterRoutes(router)
-	installClaudeBoundaryTransport(t, account, func(req *http.Request) (*http.Response, error) {
-		time.Sleep(40 * time.Millisecond)
-		return &http.Response{StatusCode: 200, Header: http.Header{"Content-Type": {"text/event-stream"}}, Body: io.NopCloser(strings.NewReader(claudeAPIKeyTestStream))}, nil
-	})
-	body := `{"model":"claude-sonnet-4-5","max_tokens":64,"stream":true,"messages":[{"role":"user","content":"hi"}]}`
-	response := performModelQuotaRequest(router, "/v1/messages", body)
-	if response.Code != 200 || !strings.Contains(response.Body.String(), "message_stop") {
-		t.Fatalf("request failed: status=%d body=%s", response.Code, response.Body.String())
-	}
-	if strings.Contains(response.Body.String(), "event: ping") || strings.Contains(response.Body.String(), ": keepalive") {
-		t.Fatalf("disabled Claude keepalive emitted heartbeat before upstream response: %q", response.Body.String())
-	}
-}
-
-// TestMessagesKeepalivePreservesPendingQuotaRejection holds a real SQLite
-// writer lock so heartbeat deadlines elapse before the exhausted quota is read.
-func TestMessagesKeepalivePreservesPendingQuotaRejection(t *testing.T) {
-	previous := continuousRetryKeepaliveInterval
-	continuousRetryKeepaliveInterval = 5 * time.Millisecond
-	t.Cleanup(func() { continuousRetryKeepaliveInterval = previous })
-	dbPath := filepath.Join(t.TempDir(), "locked-quota.db")
-	db, err := database.New("sqlite", dbPath)
-	if err != nil {
-		t.Fatal(err)
-	}
-	t.Cleanup(func() { _ = db.Close() })
-	keyID, err := db.InsertAPIKeyWithOptions(context.Background(), database.APIKeyInput{
-		Key: modelQuotaTestKey, Name: "review",
-		Limits: database.APIKeyLimits{ModelRequestLimits: []database.APIKeyModelRequestLimit{{Model: "gpt-6*", MaxRequests: 1}}},
-	})
-	if err != nil {
-		t.Fatal(err)
-	}
-	row, err := db.GetAPIKeyByID(context.Background(), keyID)
-	if err != nil {
-		t.Fatal(err)
-	}
-	store := auth.NewStore(db, nil, &database.SystemSettings{MaxConcurrency: 4, MaxRetries: 0, MaxRateLimitRetries: 0})
-	t.Cleanup(store.Stop)
-	store.AddAccount(&auth.Account{DBID: 1, UpstreamType: auth.UpstreamOpenAIResponses, BaseURL: "http://127.0.0.1:1", APIKey: "review", PlanType: "api", Models: []string{"gpt-6-astra"}})
-	h := NewHandler(store, db, &config.Config{}, nil)
-	hit, err := h.db.ConsumeAPIKeyModelRequest(context.Background(), row.ID, "review-exhaust-budget", "gpt-6-astra", row.Limits.ModelRequestLimits, time.Now())
-	if err != nil || hit != nil {
-		t.Fatalf("prime quota: %v %v", hit, err)
-	}
-	recorder := httptest.NewRecorder()
-	c, _ := gin.CreateTestContext(recorder)
-	c.Request = httptest.NewRequest(http.MethodPost, "/v1/messages", strings.NewReader(`{"model":"gpt-6-astra","max_tokens":64,"stream":true,"messages":[{"role":"user","content":"hi"}]}`))
-	c.Set(contextAPIKeyRow, row)
-	c.Set(contextAPIKeyID, row.ID)
-	h.attachAPIKeyModelRequestQuota(c, false)
-	raw, err := sql.Open("sqlite", dbPath)
-	if err != nil {
-		t.Fatal(err)
-	}
-	defer raw.Close()
-	conn, err := raw.Conn(context.Background())
-	if err != nil {
-		t.Fatal(err)
-	}
-	defer conn.Close()
-	if _, err := conn.ExecContext(context.Background(), "BEGIN IMMEDIATE"); err != nil {
-		t.Fatal(err)
-	}
-	unlocked := make(chan struct{})
-	go func() {
-		time.Sleep(60 * time.Millisecond)
-		_, unlockErr := conn.ExecContext(context.Background(), "ROLLBACK")
-		if unlockErr != nil {
-			t.Errorf("release SQLite write lock: %v", unlockErr)
-		}
-		close(unlocked)
-	}()
-	h.Messages(c)
-	<-unlocked
-	if recorder.Code != http.StatusTooManyRequests {
-		t.Fatalf("pending quota was already committed: status=%d body=%q", recorder.Code, recorder.Body.String())
-	}
-}
-
 type cancelOnContentWriter struct {
 	*httptest.ResponseRecorder
 	cancel                context.CancelFunc
@@ -201,20 +101,16 @@ func (w *cancelOnContentWriter) Write(p []byte) (int, error) {
 	return n, err
 }
 
-// TestDownstreamKeepaliveDrainsUsageAfterClientCancel covers native Responses,
-// relay Responses, and the Chat/Messages translators with downstream heartbeats.
+// TestDownstreamKeepaliveDrainsUsageAfterClientCancel covers native Responses and the Chat translator with downstream heartbeats.
 func TestDownstreamKeepaliveDrainsUsageAfterClientCancel(t *testing.T) {
 	previous := continuousRetryKeepaliveInterval
 	continuousRetryKeepaliveInterval = 5 * time.Millisecond
 	t.Cleanup(func() { continuousRetryKeepaliveInterval = previous })
 	for _, tc := range []struct {
 		name, path, body string
-		native           bool
 	}{
-		{"responses-relay", "/v1/responses", `{"model":"gpt-6-astra","input":"hi","stream":true}`, false},
-		{"responses-codex", "/v1/responses", `{"model":"gpt-6-astra","input":"hi","stream":true}`, true},
-		{"chat", "/v1/chat/completions", `{"model":"gpt-6-astra","messages":[{"role":"user","content":"hi"}],"stream":true}`, false},
-		{"messages", "/v1/messages", `{"model":"gpt-6-astra","max_tokens":64,"messages":[{"role":"user","content":"hi"}],"stream":true}`, false},
+		{"responses-codex", "/v1/responses", `{"model":"gpt-6-astra","input":"hi","stream":true}`},
+		{"chat", "/v1/chat/completions", `{"model":"gpt-6-astra","messages":[{"role":"user","content":"hi"}],"stream":true}`},
 	} {
 		for _, disconnect := range []string{"context-canceled", "heartbeat-write-failed"} {
 			t.Run(tc.name+"/"+disconnect, func(t *testing.T) {
@@ -228,12 +124,7 @@ func TestDownstreamKeepaliveDrainsUsageAfterClientCancel(t *testing.T) {
 					_, _ = io.WriteString(w, "data: {\"type\":\"response.completed\",\"response\":{\"id\":\"resp_review\",\"status\":\"completed\",\"usage\":{\"input_tokens\":1000,\"output_tokens\":40}}}\n\n")
 				}))
 				t.Cleanup(upstream.Close)
-				h, _, router := newModelQuotaTestHandler(t, 2, upstream.URL, tc.native)
-				if tc.native {
-					previousResin := resinCfg.Load()
-					t.Cleanup(func() { resinCfg.Store(previousResin) })
-					SetResinConfig(&ResinConfig{BaseURL: upstream.URL, PlatformName: "keepalive-test"})
-				}
+				h, _, router := newModelQuotaTestHandler(t, 2, upstream.URL)
 				clientCtx, cancel := context.WithCancel(context.Background())
 				defer cancel()
 				req := httptest.NewRequest(http.MethodPost, tc.path, strings.NewReader(tc.body)).WithContext(clientCtx)

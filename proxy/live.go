@@ -74,7 +74,7 @@ type liveCallRecord struct {
 }
 
 func liveAccountFilter(account *auth.Account) bool {
-	return account != nil && !account.IsRelayStyle()
+	return account != nil
 }
 
 func isLiveModelName(model string) bool {

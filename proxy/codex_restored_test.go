@@ -78,9 +78,6 @@ func TestBodySignalCompactFilters_CodexUpstream(t *testing.T) {
 	if !handler.storeHasAvailableCodexAccount() {
 		t.Fatal("pool with a codex account should report available")
 	}
-	if !excludeRelayAccountsFilter(nil)(codex) {
-		t.Fatal("codex account must pass the pinned filter")
-	}
 }
 
 func TestAccountCompactionDomain_CodexUpstream(t *testing.T) {

@@ -7,8 +7,6 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/tidwall/gjson"
-
 	"github.com/codex2api/auth"
 )
 
@@ -188,7 +186,6 @@ func TestFetchCodexModelsManifestUnifiedIdentityAlignsClientVersion(t *testing.T
 		}
 	})
 }
-
 
 func mustResolveCodexMaintenanceIdentity(t *testing.T, account *auth.Account, headers http.Header) CodexMaintenanceIdentity {
 	t.Helper()

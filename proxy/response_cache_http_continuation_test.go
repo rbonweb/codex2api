@@ -145,16 +145,11 @@ func TestResponsesHTTPOrdinaryContinuationBackendErrorAndRelayPassthrough(t *tes
 	}
 }
 
-func TestResponsesContinuationRelayFilterExcludesAdaptersWithoutNativeStorage(t *testing.T) {
-	filter := responsesContinuationRelayFilter(nil)
-	for _, upstream := range []string{"", auth.UpstreamGrok, auth.UpstreamAntigravity} {
-		account := &auth.Account{UpstreamType: upstream, AccessToken: "synthetic", APIKey: "synthetic", BaseURL: "https://example.invalid"}
-		if filter(account) {
-			t.Fatalf("adapter %q cannot resolve a missing native Responses parent", upstream)
+func TestResponsesContinuationUnavailableFilterRejectsEveryAccount(t *testing.T) {
+	account := &auth.Account{AccessToken: "synthetic"}
+	for _, inner := range []auth.AccountFilter{nil, func(*auth.Account) bool { return true }} {
+		if responsesContinuationUnavailableFilter(inner)(account) {
+			t.Fatal("an unresolved previous_response_id must not be admitted to any account")
 		}
-	}
-	account := &auth.Account{UpstreamType: auth.UpstreamOpenAIResponses, APIKey: "synthetic", BaseURL: "https://example.invalid"}
-	if !filter(account) || responsesContinuationRelayFilter(func(*auth.Account) bool { return false })(account) {
-		t.Fatal("native Responses relay fallback ignored its existing account filter")
 	}
 }

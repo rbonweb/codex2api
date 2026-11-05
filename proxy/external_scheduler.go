@@ -48,7 +48,6 @@ func (g modelRateLimitGate) blocks(account *auth.Account, model string) bool {
 	return bool(g) && model != "" && account.IsModelRateLimited(model)
 }
 
-
 func modelRateLimitGateFor(pin *pinnedAccountDispatch) modelRateLimitGate {
 	if pin != nil {
 		return ignoreModelRateLimits

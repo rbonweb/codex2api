@@ -107,55 +107,6 @@ func TestGateResponsesLiteForModel(t *testing.T) {
 	}
 }
 
-// 回归 issue「请求 gpt-5.5 报 This model is not supported when using
-// X-OpenAI-Internal-Codex-Responses-Lite」：下游对 lite 模型发信号，模型被网关
-// 改写成非 lite 模型后，信号必须在发出前剥离，而不是原样透传给上游触发 400。
-func TestOpenAIResponsesExecutorsStripLiteForKnownNonLiteModel(t *testing.T) {
-	resetLearnedResponsesLiteSupport(t)
-
-	type result struct {
-		path string
-		lite string
-	}
-	results := make(chan result, 2)
-	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		results <- result{path: r.URL.Path, lite: r.Header.Get(codexResponsesLiteHeader)}
-		w.Header().Set("Content-Type", "application/json")
-		_, _ = w.Write([]byte(`{"id":"resp_test"}`))
-	}))
-	t.Cleanup(server.Close)
-
-	account := &auth.Account{
-		DBID:         77,
-		UpstreamType: auth.UpstreamOpenAIResponses,
-		BaseURL:      server.URL,
-		APIKey:       "relay-token",
-	}
-	downstreamHeaders := make(http.Header)
-	downstreamHeaders.Set(codexResponsesLiteHeader, "true")
-
-	resp, err := ExecuteOpenAIResponsesRequest(context.Background(), account, []byte(`{"model":"gpt-5.5"}`), "", downstreamHeaders)
-	if err != nil {
-		t.Fatalf("ExecuteOpenAIResponsesRequest() error = %v", err)
-	}
-	resp.Body.Close()
-
-	resp, err = ExecuteOpenAIResponsesCompactRequest(context.Background(), account, []byte(`{"model":"gpt-5.5"}`), "", downstreamHeaders)
-	if err != nil {
-		t.Fatalf("ExecuteOpenAIResponsesCompactRequest() error = %v", err)
-	}
-	resp.Body.Close()
-
-	for range 2 {
-		got := <-results
-		if got.lite != "" {
-			t.Fatalf("%s forwarded %s = %q for non-lite model, want stripped", got.path, codexResponsesLiteHeader, got.lite)
-		}
-	}
-	if got := downstreamHeaders.Get(codexResponsesLiteHeader); got != "true" {
-		t.Fatalf("caller headers were mutated: %q", got)
-	}
-}
 
 // stubWebsocketExecute 桩掉 WS 执行器并捕获帧体/握手头，t.Cleanup 自动还原。
 func stubWebsocketExecute(t *testing.T, capturedBody *[]byte, capturedHeaders *http.Header) {

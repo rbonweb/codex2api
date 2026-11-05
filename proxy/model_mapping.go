@@ -206,9 +206,6 @@ func (h *Handler) applyBaseModelMappingToBody(rawBody []byte, supportedModels []
 	return updatedBody, originalModel, effectiveModel, mappingApplied
 }
 
-
-
-
 func (h *Handler) resolveConfiguredRequestModel(model string, supportedModels []string) (string, bool) {
 	model = strings.TrimSpace(model)
 	if model == "" || h == nil || h.store == nil {

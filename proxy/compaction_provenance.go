@@ -64,16 +64,6 @@ func withCompactionAffinity(ctx context.Context, affinity compactionAffinityReso
 	return context.WithValue(ctx, compactionAffinityContextKey{}, affinity)
 }
 
-func grokCompactionDigestsForAccount(ctx context.Context, account *auth.Account) compactionProvenanceDigests {
-	if ctx == nil || account == nil || !account.IsGrokAPI() {
-		return nil
-	}
-	affinity, ok := ctx.Value(compactionAffinityContextKey{}).(compactionAffinityResolution)
-	if !ok || !affinity.Known || affinity.CompatibilityDomain != accountCompactionDomain(account) {
-		return nil
-	}
-	return affinity.KnownDigests
-}
 
 func compactionContentDigest(encryptedContent string) string {
 	sum := sha256.Sum256([]byte(encryptedContent))

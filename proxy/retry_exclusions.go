@@ -592,15 +592,6 @@ func (h *Handler) nextRetryAccountWithGuard(ctx context.Context, affinityKey str
 		if ctx.Err() != nil {
 			return nil, "", auth.SessionAffinityGuard{}, ctx.Err()
 		}
-		// 配额硬门禁（Spec §6.2 #2、验收 #38）：候选集合全部因 Antigravity 配额耗尽被
-		// 阻断时，以类型化原因直接上浮，交给 schedulerSelectionAPIError 映射 429 +
-		// Retry-After。可信 resetAt 常在数小时之后，进入
-		// waitForRetryAccountAvailableWithGuard 的排队等待只会白耗本次请求的重试预算。
-		// 混合原因（部分配额、部分容量 / 冷却 / 鉴权）不满足「全部因配额阻断」，
-		// 仍走既有排队与 503 路径。
-		if quotaErr := h.store.AntigravityQuotaGateExhaustion(affinityKey, apiKeyID, exclude, filter, preserveBinding, opts.Model); quotaErr != nil {
-			return nil, "", auth.SessionAffinityGuard{}, quotaErr
-		}
 		h.store.TriggerDispatchStateReconcileAsync()
 		// When this request's own soft/transient exclusions are all that stand
 		// between it and a candidate, no release or wakeup can satisfy a queue

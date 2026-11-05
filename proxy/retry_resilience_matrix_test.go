@@ -335,12 +335,6 @@ func TestImageRetryCapOnlyYieldsToSelectedContinuousPolicy(t *testing.T) {
 	if !shouldRetryImageStreamError(streamErr, &generalRetries, 0, maxImageAttempts-1, maxImageAttempts, policy) {
 		t.Fatal("selected continuous image failure did not bypass the ordinary attempt cap")
 	}
-	if !retryAllowedByEndpointCap(maxGrokMediaAttempts-1, maxGrokMediaAttempts, true) {
-		t.Fatal("selected continuous Grok media failure did not bypass the ordinary attempt cap")
-	}
-	if retryAllowedByEndpointCap(maxGrokMediaAttempts-1, maxGrokMediaAttempts, false) {
-		t.Fatal("ordinary Grok media retry bypassed the endpoint attempt cap")
-	}
 }
 
 func TestUnlimitedResponseFailedSuppressionBoundaries(t *testing.T) {
@@ -574,7 +568,6 @@ func TestContinuousRetryCatchAllDoesNotReplaySuccessfulNonStreamingResponses(t *
 	}{
 		{name: "responses", path: "/v1/responses", body: `{"model":"gpt-4.1-direct","input":"hello","stream":false}`, invoke: (*Handler).Responses},
 		{name: "chat completions", path: "/v1/chat/completions", body: `{"model":"gpt-4.1-direct","messages":[{"role":"user","content":"hello"}]}`, invoke: (*Handler).ChatCompletions},
-		{name: "anthropic messages", path: "/v1/messages", body: `{"model":"gpt-4.1-direct","max_tokens":128,"messages":[{"role":"user","content":"hello"}]}`, invoke: (*Handler).Messages},
 	}
 
 	for _, tc := range tests {
@@ -635,7 +628,6 @@ func TestContinuousRetryNonStreamingErrorEventCannotBeOverriddenByCompleted(t *t
 	}{
 		{name: "responses", path: "/v1/responses", body: `{"model":"gpt-4.1-direct","input":"hello","stream":false}`, invoke: (*Handler).Responses},
 		{name: "chat completions", path: "/v1/chat/completions", body: `{"model":"gpt-4.1-direct","messages":[{"role":"user","content":"hello"}]}`, invoke: (*Handler).ChatCompletions},
-		{name: "anthropic messages", path: "/v1/messages", body: `{"model":"gpt-4.1-direct","max_tokens":128,"messages":[{"role":"user","content":"hello"}]}`, invoke: (*Handler).Messages},
 	}
 
 	for _, tc := range tests {

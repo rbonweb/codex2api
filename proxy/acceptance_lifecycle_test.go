@@ -30,7 +30,7 @@ import (
 )
 
 // Helper: 构建具备指定 upstream 的测试 Handler、Store 与 Account
-func setupLifecycleTestHandler(t *testing.T, upstreamURL string, upstreamType string, model string) (*Handler, *auth.Store, *auth.Account) {
+func setupLifecycleTestHandler(t *testing.T, upstreamURL string, model string) (*Handler, *auth.Store, *auth.Account) {
 	t.Helper()
 
 	// 保证装载合法的最小输出失控防护配置，并于退出时重置状态
@@ -50,55 +50,16 @@ func setupLifecycleTestHandler(t *testing.T, upstreamURL string, upstreamType st
 	t.Cleanup(store.Stop)
 
 	account := &auth.Account{
-		DBID:                       101,
-		UpstreamType:               upstreamType,
-		Status:                     auth.StatusReady,
-		HealthTier:                 auth.HealthTierHealthy,
-		BaseURL:                    upstreamURL,
-		APIKey:                     "sk-lifecycle-test-key",
-		AccessToken:                "at-lifecycle-test-token",
-		PlanType:                   "plus",
-		AccountID:                  "acct-lifecycle-101",
-		Models:                     []string{model},
-		ResponsesUpstreamTransport: auth.OpenAIResponsesTransportHTTP,
+		DBID:        101,
+		Status:      auth.StatusReady,
+		HealthTier:  auth.HealthTierHealthy,
+		AccessToken: "at-lifecycle-test-token",
+		PlanType:    "plus",
+		AccountID:   "acct-lifecycle-101",
+		Models:      []string{model},
 	}
-
-	if upstreamType == auth.UpstreamClaude {
-		account.ClaudeAuthKind = auth.ClaudeAuthKindAPIKey
-		account.ClaudeBaseURL = upstreamURL
-		account.AccessToken = "sk-ant-test-key"
-	}
-
-	if upstreamType == auth.UpstreamAntigravity {
-		account.AntigravityProjectID = "test-project-101"
-		account.AccessToken = "test-antigravity-token"
-		account.APIKey = ""
-		account.Models = []string{"gemini-3.7-flash-tiered", "gemini-3.7-flash-low", model}
-	}
-
-	if upstreamType == auth.UpstreamGrok {
-		account.BaseURL = upstreamURL + "/v1"
-		account.APIKey = "xai-test-key"
-		now := time.Now()
-		account.SetGrokRoutingState(auth.GrokRoutingState{
-			Models: []auth.GrokModelRoute{
-				{
-					ModelID:    model,
-					BaseURL:    upstreamURL + "/v1",
-					APIBackend: auth.GrokProtocolChatCompletions,
-				},
-			},
-			Capabilities: []auth.GrokProtocolCapability{
-				{
-					ModelID:    model,
-					Origin:     upstreamURL + "/v1",
-					Protocol:   auth.GrokProtocolChatCompletions,
-					Status:     auth.GrokCapabilityOK,
-					ExpiresAt:  now.Add(time.Hour),
-					ObservedAt: now,
-				},
-			},
-		})
+	if strings.HasPrefix(upstreamURL, "http://") {
+		codexRestoredUseResin(t, upstreamURL)
 	}
 
 	store.AddAccount(account)
@@ -124,24 +85,22 @@ func TestAcceptanceScenario12_FullProtocolCoverageMatrix(t *testing.T) {
 	runawayText := strings.Repeat(pattern, 500)
 
 	matrix := []struct {
-		name         string
-		endpoint     string
-		routePath    string
-		upstreamType string
-		model        string
-		stream       bool
-		reqBody      string
-		mockHandler  http.HandlerFunc
-		invoke       func(h *Handler, c *gin.Context)
+		name        string
+		endpoint    string
+		routePath   string
+		model       string
+		stream      bool
+		reqBody     string
+		mockHandler http.HandlerFunc
+		invoke      func(h *Handler, c *gin.Context)
 	}{
 		{
-			name:         "ResponsesHTTP_Stream_SSE",
-			endpoint:     "/v1/responses",
-			routePath:    "/v1/responses",
-			upstreamType: auth.UpstreamOpenAIResponses,
-			model:        "gpt-5.5",
-			stream:       true,
-			reqBody:      `{"model":"gpt-5.5","stream":true,"input":"test"}`,
+			name:      "ResponsesHTTP_Stream_SSE",
+			endpoint:  "/v1/responses",
+			routePath: "/v1/responses",
+			model:     "gpt-5.5",
+			stream:    true,
+			reqBody:   `{"model":"gpt-5.5","stream":true,"input":"test"}`,
 			mockHandler: func(w http.ResponseWriter, r *http.Request) {
 				w.Header().Set("Content-Type", "text/event-stream")
 				flusher := w.(http.Flusher)
@@ -151,13 +110,12 @@ func TestAcceptanceScenario12_FullProtocolCoverageMatrix(t *testing.T) {
 			invoke: func(h *Handler, c *gin.Context) { h.Responses(c) },
 		},
 		{
-			name:         "ResponsesHTTP_NonStream_JSON",
-			endpoint:     "/v1/responses",
-			routePath:    "/v1/responses",
-			upstreamType: auth.UpstreamOpenAIResponses,
-			model:        "gpt-5.5",
-			stream:       false,
-			reqBody:      `{"model":"gpt-5.5","stream":false,"input":"test"}`,
+			name:      "ResponsesHTTP_NonStream_JSON",
+			endpoint:  "/v1/responses",
+			routePath: "/v1/responses",
+			model:     "gpt-5.5",
+			stream:    false,
+			reqBody:   `{"model":"gpt-5.5","stream":false,"input":"test"}`,
 			mockHandler: func(w http.ResponseWriter, r *http.Request) {
 				w.Header().Set("Content-Type", "application/json")
 				resp := map[string]any{
@@ -178,13 +136,12 @@ func TestAcceptanceScenario12_FullProtocolCoverageMatrix(t *testing.T) {
 			invoke: func(h *Handler, c *gin.Context) { h.Responses(c) },
 		},
 		{
-			name:         "ChatCompletions_Stream_SSE_ResponsesUpstream",
-			endpoint:     "/v1/chat/completions",
-			routePath:    "/v1/chat/completions",
-			upstreamType: auth.UpstreamOpenAIResponses,
-			model:        "gpt-5.5",
-			stream:       true,
-			reqBody:      `{"model":"gpt-5.5","stream":true,"messages":[{"role":"user","content":"hi"}]}`,
+			name:      "ChatCompletions_Stream_SSE_ResponsesUpstream",
+			endpoint:  "/v1/chat/completions",
+			routePath: "/v1/chat/completions",
+			model:     "gpt-5.5",
+			stream:    true,
+			reqBody:   `{"model":"gpt-5.5","stream":true,"messages":[{"role":"user","content":"hi"}]}`,
 			mockHandler: func(w http.ResponseWriter, r *http.Request) {
 				w.Header().Set("Content-Type", "text/event-stream")
 				flusher := w.(http.Flusher)
@@ -198,13 +155,12 @@ func TestAcceptanceScenario12_FullProtocolCoverageMatrix(t *testing.T) {
 			invoke: func(h *Handler, c *gin.Context) { h.ChatCompletions(c) },
 		},
 		{
-			name:         "ChatCompletions_NonStream_JSON_ResponsesUpstream",
-			endpoint:     "/v1/chat/completions",
-			routePath:    "/v1/chat/completions",
-			upstreamType: auth.UpstreamOpenAIResponses,
-			model:        "gpt-5.5",
-			stream:       false,
-			reqBody:      `{"model":"gpt-5.5","stream":false,"messages":[{"role":"user","content":"hi"}]}`,
+			name:      "ChatCompletions_NonStream_JSON_ResponsesUpstream",
+			endpoint:  "/v1/chat/completions",
+			routePath: "/v1/chat/completions",
+			model:     "gpt-5.5",
+			stream:    false,
+			reqBody:   `{"model":"gpt-5.5","stream":false,"messages":[{"role":"user","content":"hi"}]}`,
 			mockHandler: func(w http.ResponseWriter, r *http.Request) {
 				w.Header().Set("Content-Type", "text/event-stream")
 				flusher := w.(http.Flusher)
@@ -215,13 +171,12 @@ func TestAcceptanceScenario12_FullProtocolCoverageMatrix(t *testing.T) {
 			invoke: func(h *Handler, c *gin.Context) { h.ChatCompletions(c) },
 		},
 		{
-			name:         "Grok_Native_ChatCompletions_Stream",
-			endpoint:     "/v1/chat/completions",
-			routePath:    "/v1/chat/completions",
-			upstreamType: auth.UpstreamGrok,
-			model:        "grok-beta",
-			stream:       true,
-			reqBody:      `{"model":"grok-beta","stream":true,"messages":[{"role":"user","content":"hi"}]}`,
+			name:      "Grok_Native_ChatCompletions_Stream",
+			endpoint:  "/v1/chat/completions",
+			routePath: "/v1/chat/completions",
+			model:     "grok-beta",
+			stream:    true,
+			reqBody:   `{"model":"grok-beta","stream":true,"messages":[{"role":"user","content":"hi"}]}`,
 			mockHandler: func(w http.ResponseWriter, r *http.Request) {
 				// C12: 区分 Native Grok chat 返回标准的 chat.completion.chunk
 				w.Header().Set("Content-Type", "text/event-stream")
@@ -236,92 +191,6 @@ func TestAcceptanceScenario12_FullProtocolCoverageMatrix(t *testing.T) {
 			},
 			invoke: func(h *Handler, c *gin.Context) { h.ChatCompletions(c) },
 		},
-		{
-			name:         "AnthropicMessages_Stream_SSE",
-			endpoint:     "/v1/messages",
-			routePath:    "/v1/messages",
-			upstreamType: auth.UpstreamClaude,
-			model:        "claude-3-7-sonnet",
-			stream:       true,
-			reqBody:      `{"model":"claude-3-7-sonnet","stream":true,"max_tokens":1024,"messages":[{"role":"user","content":"hi"}]}`,
-			mockHandler: func(w http.ResponseWriter, r *http.Request) {
-				w.Header().Set("Content-Type", "text/event-stream; charset=utf-8")
-				flusher := w.(http.Flusher)
-				_, _ = io.WriteString(w, "event: message_start\ndata: {\"type\":\"message_start\",\"message\":{\"id\":\"msg_1\",\"type\":\"message\",\"role\":\"assistant\"}}\n\n")
-				_, _ = io.WriteString(w, "event: content_block_start\ndata: {\"type\":\"content_block_start\",\"index\":0,\"content_block\":{\"type\":\"text\",\"text\":\"\"}}\n\n")
-				flusher.Flush()
-				_, _ = io.WriteString(w, "event: content_block_delta\ndata: "+`{"type":"content_block_delta","index":0,"delta":{"type":"text_delta","text":"`+runawayText+`"}}`+"\n\n")
-				flusher.Flush()
-				select {
-				case <-r.Context().Done():
-				case <-time.After(2 * time.Second):
-				}
-			},
-			invoke: func(h *Handler, c *gin.Context) { h.Messages(c) },
-		},
-		{
-			name:         "AnthropicMessages_NonStream_JSON",
-			endpoint:     "/v1/messages",
-			routePath:    "/v1/messages",
-			upstreamType: auth.UpstreamClaude,
-			model:        "claude-3-7-sonnet",
-			stream:       false,
-			reqBody:      `{"model":"claude-3-7-sonnet","stream":false,"max_tokens":1024,"messages":[{"role":"user","content":"hi"}]}`,
-			mockHandler: func(w http.ResponseWriter, r *http.Request) {
-				w.Header().Set("Content-Type", "application/json")
-				resp := map[string]any{
-					"id":   "msg_1",
-					"type": "message",
-					"role": "assistant",
-					"content": []any{
-						map[string]any{"type": "text", "text": runawayText},
-					},
-				}
-				_ = json.NewEncoder(w).Encode(resp)
-			},
-			invoke: func(h *Handler, c *gin.Context) { h.Messages(c) },
-		},
-		{
-			name:         "GeminiNative_StreamGenerateContent_AntigravityOAuth",
-			endpoint:     "/v1beta/models/gemini-3.7-flash-low:streamGenerateContent?alt=sse",
-			routePath:    "/v1beta/models/*action",
-			upstreamType: auth.UpstreamAntigravity,
-			model:        "gemini-3.7-flash-low",
-			stream:       true,
-			reqBody:      `{"contents":[{"role":"user","parts":[{"text":"hi"}]}]}`,
-			mockHandler: func(w http.ResponseWriter, r *http.Request) {
-				w.Header().Set("Content-Type", "text/event-stream")
-				flusher := w.(http.Flusher)
-				resp := `{"candidates":[{"content":{"role":"model","parts":[{"text":"` + runawayText + `"}]}}]}`
-				_, _ = io.WriteString(w, "data: "+resp+"\n\n")
-				flusher.Flush()
-			},
-			invoke: func(h *Handler, c *gin.Context) { h.GeminiModelsAction(c) },
-		},
-		{
-			name:         "GeminiNative_NonStream_GenerateContent_AntigravityOAuth",
-			endpoint:     "/v1beta/models/gemini-3.7-flash-low:generateContent",
-			routePath:    "/v1beta/models/*action",
-			upstreamType: auth.UpstreamAntigravity,
-			model:        "gemini-3.7-flash-low",
-			stream:       false,
-			reqBody:      `{"contents":[{"role":"user","parts":[{"text":"hi"}]}]}`,
-			mockHandler: func(w http.ResponseWriter, r *http.Request) {
-				w.Header().Set("Content-Type", "application/json")
-				resp := map[string]any{
-					"candidates": []any{
-						map[string]any{
-							"content": map[string]any{
-								"role":  "model",
-								"parts": []any{map[string]any{"text": runawayText}},
-							},
-						},
-					},
-				}
-				_ = json.NewEncoder(w).Encode(resp)
-			},
-			invoke: func(h *Handler, c *gin.Context) { h.GeminiModelsAction(c) },
-		},
 	}
 
 	for _, tc := range matrix {
@@ -333,13 +202,7 @@ func TestAcceptanceScenario12_FullProtocolCoverageMatrix(t *testing.T) {
 			}))
 			defer upstream.Close()
 
-			if tc.upstreamType == auth.UpstreamAntigravity {
-				previous := antigravityOAuthEndpointBases
-				antigravityOAuthEndpointBases = []string{upstream.URL}
-				t.Cleanup(func() { antigravityOAuthEndpointBases = previous })
-			}
-
-			handler, _, _ := setupLifecycleTestHandler(t, upstream.URL, tc.upstreamType, tc.model)
+			handler, _, _ := setupLifecycleTestHandler(t, upstream.URL, tc.model)
 
 			router := gin.New()
 			router.POST(tc.routePath, func(c *gin.Context) {
@@ -424,7 +287,7 @@ func TestAcceptanceScenario12_WebSocketMatrix(t *testing.T) {
 		}, nil
 	}
 
-	handler, store, account := setupLifecycleTestHandler(t, "https://upstream.example", "", "gpt-5.5")
+	handler, store, account := setupLifecycleTestHandler(t, "https://upstream.example", "gpt-5.5")
 	account.ResponsesUpstreamTransport = auth.OpenAIResponsesTransportHTTP
 	store.SetCodexModelMapping(`{"client-ws-alias":"gpt-5.5"}`)
 
@@ -544,7 +407,7 @@ func TestResponsesWebSocketGuardTripSkipsBufferedFlush(t *testing.T) {
 		}, nil
 	}
 
-	handler, store, account := setupLifecycleTestHandler(t, "https://upstream.example", "", "gpt-5.5")
+	handler, store, account := setupLifecycleTestHandler(t, "https://upstream.example", "gpt-5.5")
 	account.ResponsesUpstreamTransport = auth.OpenAIResponsesTransportHTTP
 	store.SetCodexModelMapping(`{"client-ws-alias":"gpt-5.5"}`)
 	// 开启输出过滤缓冲，让 guard 命中前的合法 delta 停留在 outputBuffer 中；
@@ -610,7 +473,7 @@ func TestResponsesWebSocketGuardTripWithPendingInterruptDropsFailedFrame(t *test
 		}, nil
 	}
 
-	handler, store, account := setupLifecycleTestHandler(t, "https://upstream.example", "", "gpt-5.5")
+	handler, store, account := setupLifecycleTestHandler(t, "https://upstream.example", "gpt-5.5")
 	account.ResponsesUpstreamTransport = auth.OpenAIResponsesTransportHTTP
 	store.SetCodexModelMapping(`{"client-ws-alias":"gpt-5.5"}`)
 
@@ -776,7 +639,7 @@ func TestAcceptanceScenario13_HitBeforeProvenanceAndReplaySink(t *testing.T) {
 	}))
 	defer upstream.Close()
 
-	handler, store, account := setupLifecycleTestHandler(t, upstream.URL, auth.UpstreamOpenAIResponses, "gpt-5.5")
+	handler, store, account := setupLifecycleTestHandler(t, upstream.URL, "gpt-5.5")
 	// 开启 continuous retry 策略，使重试逻辑活跃
 	store.SetContinuousRetryPolicy(database.ContinuousRetryPolicy{
 		Enabled:    true,
@@ -845,7 +708,7 @@ func TestAcceptanceScenario14_ImmediateCancelNo5sDrain(t *testing.T) {
 	}))
 	defer upstream.Close()
 
-	handler, _, _ := setupLifecycleTestHandler(t, upstream.URL, auth.UpstreamOpenAIResponses, "gpt-5.5")
+	handler, _, _ := setupLifecycleTestHandler(t, upstream.URL, "gpt-5.5")
 
 	rec := httptest.NewRecorder()
 	c, _ := gin.CreateTestContext(rec)
@@ -1155,7 +1018,7 @@ func TestAcceptanceScenario16_RecoveryBlockedCallsExactlyOne(t *testing.T) {
 			}))
 			defer upstream.Close()
 
-			handler, store, _ := setupLifecycleTestHandler(t, upstream.URL, auth.UpstreamOpenAIResponses, "gpt-5.5")
+			handler, store, _ := setupLifecycleTestHandler(t, upstream.URL, "gpt-5.5")
 			store.SetContinuousRetryPolicy(tc.policy)
 			if tc.setup != nil {
 				tc.setup(handler, store, upstream.URL)
@@ -1205,7 +1068,7 @@ func TestAcceptanceScenario17_ProtocolTerminalEnvelopes(t *testing.T) {
 		}))
 		defer upstream.Close()
 
-		handler, _, _ := setupLifecycleTestHandler(t, upstream.URL, auth.UpstreamOpenAIResponses, "gpt-5.5")
+		handler, _, _ := setupLifecycleTestHandler(t, upstream.URL, "gpt-5.5")
 		rec := httptest.NewRecorder()
 		c, _ := gin.CreateTestContext(rec)
 		c.Request = httptest.NewRequest(http.MethodPost, "/v1/chat/completions", strings.NewReader(`{"model":"gpt-5.5","stream":true,"messages":[{"role":"user","content":"hi"}]}`))
@@ -1218,30 +1081,6 @@ func TestAcceptanceScenario17_ProtocolTerminalEnvelopes(t *testing.T) {
 		}
 		if strings.Contains(chatStr, `"stop"`) {
 			t.Fatalf("Chat stream terminal contains illegal stop finish_reason: %s", chatStr)
-		}
-	})
-
-	// 3. Anthropic Messages 真实流式已提交场景：严禁带有 message_stop
-	t.Run("Anthropic_Committed_Stream_No_MessageStop", func(t *testing.T) {
-		upstream := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-			w.Header().Set("Content-Type", "text/event-stream")
-			flusher := w.(http.Flusher)
-			runaway := strings.Repeat("claude_runaway_repeat_", 500)
-			_, _ = io.WriteString(w, "event: content_block_delta\ndata: "+`{"type":"content_block_delta","index":0,"delta":{"type":"text_delta","text":"`+runaway+`"}}`+"\n\n")
-			flusher.Flush()
-		}))
-		defer upstream.Close()
-
-		handler, _, _ := setupLifecycleTestHandler(t, upstream.URL, auth.UpstreamClaude, "claude-3-7-sonnet")
-		rec := httptest.NewRecorder()
-		c, _ := gin.CreateTestContext(rec)
-		c.Request = httptest.NewRequest(http.MethodPost, "/v1/messages", strings.NewReader(`{"model":"claude-3-7-sonnet","stream":true,"max_tokens":1024,"messages":[{"role":"user","content":"hi"}]}`))
-		c.Request.Header.Set("Content-Type", "application/json")
-
-		handler.Messages(c)
-		anthropicStr := rec.Body.String()
-		if strings.Contains(anthropicStr, "message_stop") {
-			t.Fatalf("Anthropic stream terminal contains illegal message_stop: %s", anthropicStr)
 		}
 	})
 
@@ -1428,7 +1267,7 @@ func TestAcceptanceScenario19_ZeroPenaltyAndNoCacheUsageFabrication(t *testing.T
 	}))
 	defer upstream.Close()
 
-	handler, store, account := setupLifecycleTestHandler(t, upstream.URL, auth.UpstreamOpenAIResponses, "gpt-5.5")
+	handler, store, account := setupLifecycleTestHandler(t, upstream.URL, "gpt-5.5")
 
 	// 1. 实验组：发起真实 Responses 流式请求，使 guard 真实命中
 	recGuard := httptest.NewRecorder()
@@ -1538,7 +1377,7 @@ func TestAcceptanceScenario20_ConcurrentRequestsAndLeaseIsolation(t *testing.T) 
 	}))
 	defer upstream.Close()
 
-	handler, store, _ := setupLifecycleTestHandler(t, upstream.URL, auth.UpstreamOpenAIResponses, "gpt-5.5")
+	handler, store, _ := setupLifecycleTestHandler(t, upstream.URL, "gpt-5.5")
 	store.SetCodexModelMapping(`{"client-ws-alias":"gpt-5.5"}`)
 
 	router := gin.New()

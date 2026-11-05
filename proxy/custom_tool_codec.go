@@ -7,9 +7,6 @@ import (
 	"github.com/tidwall/gjson"
 )
 
-
-
-
 // Custom input is opaque text, even when that text happens to be valid JSON.
 type customToolCallData struct {
 	Name  string `json:"name,omitempty"`

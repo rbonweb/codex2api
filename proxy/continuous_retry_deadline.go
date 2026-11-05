@@ -330,8 +330,6 @@ const (
 	continuousRetryProtocolOpenAI continuousRetryHTTPProtocol = iota
 	continuousRetryProtocolResponses
 	continuousRetryProtocolChat
-	continuousRetryProtocolAnthropic
-	continuousRetryProtocolGemini
 )
 
 func installContinuousRetryHTTPDeadline(c *gin.Context, policy database.ContinuousRetryPolicy, protocol continuousRetryHTTPProtocol) func() {

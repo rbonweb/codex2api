@@ -1,14 +1,10 @@
 package proxy
 
 import (
-	"bytes"
 	"errors"
-	"io"
-	"net/http"
 	"net/http/httptest"
 	"strings"
 	"testing"
-	"time"
 
 	"github.com/gin-gonic/gin"
 	"github.com/tidwall/gjson"

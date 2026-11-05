@@ -547,7 +547,6 @@ func readSSEStreamWithContinuousRetryKeepalive(ctx context.Context, body io.Read
 	})
 }
 
-
 // waitWithContinuousRetryKeepalive waits in short chunks only after a request
 // has entered the unlimited retry path. It keeps the write on the handler
 // goroutine, so it never races normal stream output. A failed heartbeat is a
@@ -687,40 +686,6 @@ func writeCommittedChatRetryError(c *gin.Context, message string) bool {
 	return true
 }
 
-func writeCommittedAnthropicRetryError(c *gin.Context, errorType, message string) bool {
-	if !retryKeepaliveCommitted(c) {
-		if c != nil && c.Request != nil && !claimContinuousRetryTerminal(c, continuousRetryProtocolAnthropic) {
-			return true
-		}
-		return false
-	}
-	timedOut := c.Request != nil && continuousRetryDeadlineExceeded(c.Request.Context())
-	if !timedOut && c.Request != nil && !claimContinuousRetrySuccessContext(c.Request.Context()) {
-		timedOut = true
-	}
-	if c.Request != nil && c.Request.Context().Err() != nil && !timedOut {
-		return true
-	}
-	if timedOut {
-		c.Set(continuousRetryTimeoutWrittenKey, true)
-		if failure, ok := continuousRetryLastFailure(c.Request.Context()); ok {
-			writeContinuousRetryLastFailure(c, continuousRetryProtocolAnthropic, failure)
-			return true
-		}
-		errorType = "api_error"
-		message = continuousRetryTimeoutMessage
-	}
-	payload, _ := json.Marshal(gin.H{
-		"type":  "error",
-		"error": gin.H{"type": errorType, "message": message},
-	})
-	_, _ = c.Writer.WriteString("event: error\ndata: " + string(payload) + "\n\n")
-	if flusher, ok := c.Writer.(http.Flusher); ok {
-		flusher.Flush()
-	}
-	return true
-}
-
 // Replay can fail before a retry heartbeat commits HTTP. These helpers write a
 // protocol terminal to the real writer in either state: normal JSON after SSE
 // would corrupt the stream, while silence would look like success.
@@ -773,30 +738,6 @@ func writeContinuousRetryLocalChatError(c *gin.Context) bool {
 		},
 	})
 	_, _ = c.Writer.WriteString("data: " + string(payload) + "\n\n")
-	if flusher, ok := c.Writer.(http.Flusher); ok {
-		flusher.Flush()
-	}
-	return true
-}
-
-func writeContinuousRetryLocalAnthropicError(c *gin.Context) bool {
-	if c == nil || c.Writer == nil {
-		return false
-	}
-	if c.Request != nil && c.Request.Context().Err() != nil {
-		return true
-	}
-	if !c.Writer.Written() {
-		c.Status(http.StatusInternalServerError)
-	}
-	payload, _ := json.Marshal(gin.H{
-		"type": "error",
-		"error": gin.H{
-			"type":    "api_error",
-			"message": continuousRetryLocalFailureMessage,
-		},
-	})
-	_, _ = c.Writer.WriteString("event: error\ndata: " + string(payload) + "\n\n")
 	if flusher, ok := c.Writer.(http.Flusher); ok {
 		flusher.Flush()
 	}

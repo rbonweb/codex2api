@@ -116,7 +116,7 @@ func (e *poolEntry) expiredByAge(now int64, maxAge time.Duration) bool {
 
 var clientPool sync.Map // map[string]*poolEntry, key = accountID|proxyURL|transportMode
 
- // map[accountID|baseURL]struct{}
+// map[accountID|baseURL]struct{}
 
 // clientPoolTTL 未使用超过此时间的 Client 将被淘汰
 const clientPoolTTL = 5 * time.Minute
@@ -834,7 +834,6 @@ func ExecuteRequest(ctx context.Context, account *auth.Account, requestBody []by
 	return resp, nil
 }
 
-
 func isCodexAccessRestrictedResponse(resp *http.Response) bool {
 	if resp == nil || resp.StatusCode != http.StatusForbidden || resp.Body == nil {
 		return false
@@ -864,7 +863,6 @@ func isCodexAccessRestrictedResponse(resp *http.Response) bool {
 		strings.Contains(msg, "codex client") ||
 		strings.Contains(msg, "codex 客户端")
 }
-
 
 // ExecuteCompactRequest 向 Codex 上游发送 /responses/compact 请求（非流式压缩接口）
 func ExecuteCompactRequest(ctx context.Context, account *auth.Account, requestBody []byte, sessionID string, proxyOverride string, apiKey string, deviceCfg *DeviceProfileConfig, headers http.Header) (upstreamResponse *http.Response, upstreamErr error) {

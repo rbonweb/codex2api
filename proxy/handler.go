@@ -447,11 +447,6 @@ func requestUpstreamChannel(c *gin.Context) string {
 	return row.Limits.ResolveUpstreamChannel()
 }
 
-
-
-
-
-
 func accountFilterForResponsesModel(model string, allowCodexAccounts bool) auth.AccountFilter {
 	return accountFilterForResponsesModelWithOriginal(model, model, allowCodexAccounts)
 }
@@ -512,7 +507,6 @@ func modelIDInList(model string, models []string) bool {
 	}
 	return false
 }
-
 
 func (h *Handler) modelValidator(supportedModels []string) api.ValidationRule {
 	validModels := make(map[string]bool, len(supportedModels))
@@ -711,11 +705,6 @@ func usageLogErrorMessageImpl(statusCode int, body []byte, trustedText bool) str
 	parts = append(parts, message)
 	return security.SafeTruncate(security.SanitizeLog(strings.Join(parts, " · ")), 600)
 }
-
-
-
-
-
 
 // NewHandler 创建处理器
 func NewHandler(store *auth.Store, db *database.DB, cfg *config.Config, deviceCfg *DeviceProfileConfig) *Handler {
@@ -937,20 +926,6 @@ func (h *Handler) logUsage(input *database.UsageLogInput) {
 	// 过载熔断统计（仅 Codex 渠道，需在渠道固化之后）。
 	h.noteOverloadOutcome(input)
 	_ = h.db.InsertUsageLog(context.Background(), input)
-}
-
-func (h *Handler) populateUsageCredentialGeneration(input *database.UsageLogInput) {
-	if input == nil || input.CredentialGeneration != 0 {
-		return
-	}
-	if h == nil || h.store == nil || input.AccountID <= 0 {
-		return
-	}
-	account := h.store.FindByID(input.AccountID)
-	if account == nil || !account.IsGrokAPI() {
-		return
-	}
-	input.CredentialGeneration = account.GetCredentialGeneration()
 }
 
 func populateAPIKeyMetaFromContext(c *gin.Context, input *database.UsageLogInput) {
@@ -1349,7 +1324,6 @@ func (h *Handler) storeHasAvailableCodexAccount() bool {
 	}
 	return false
 }
-
 
 // responsesContinuationUnavailableFilter rejects every account: no local snapshot exists for the previous_response_id, and no upstream keeps one for us, so the request must end with the context-unavailable error.
 func responsesContinuationUnavailableFilter(auth.AccountFilter) auth.AccountFilter {
@@ -3678,7 +3652,6 @@ func (h *Handler) Responses(c *gin.Context) {
 		if quotaFailover {
 			downstreamHeaders.Del(codexTurnStateHeader)
 		}
-
 
 		upstreamSessionID := resolveUpstreamSessionID(apiKeyID, sessionIdentity.upstreamSeed, sessionIdentity.explicitUpstreamID, useWebsocket)
 		// 上游使用与客户端解耦的 context：客户端中途断开时仍能继续读完
