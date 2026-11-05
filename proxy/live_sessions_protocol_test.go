@@ -396,12 +396,12 @@ func TestLiveSessionUpstreamMappings(t *testing.T) {
 
 	in := tr.Upstream([]byte(`{"end_ms":21400,"item":{"id":"item_1","text":", can","type":"input_transcript"},"start_ms":21200,"type":"input_transcript.added"}`))
 	got := gjson.ParseBytes(in.Client[0])
-	if got.Get("type").String() != "session.input_transcript.delta" || got.Get("delta").String() != ", can" || got.Get("start_ms").Int() != 21200 || got.Get("end_ms").Int() != 21400 || got.Get("language").String() != "en" {
+	if got.Get("type").String() != "session.input_transcript.delta" || got.Get("delta").String() != ", can" || got.Get("start_ms").Int() != 21200 || got.Get("end_ms").Int() != 21400 || got.Get("language").Exists() {
 		t.Fatalf("input transcript = %s", in.Client[0])
 	}
-	out := tr.Upstream([]byte(`{"end_ms":24200,"item":{"id":"item_2","text":" अभी मुंबई","type":"output_transcript"},"start_ms":24000,"type":"output_transcript.added"}`))
+	out := tr.Upstream([]byte(`{"end_ms":24200,"item":{"id":"item_2","text":" The capital","type":"output_transcript"},"start_ms":24000,"type":"output_transcript.added"}`))
 	got = gjson.ParseBytes(out.Client[0])
-	if got.Get("type").String() != "session.output_transcript.delta" || got.Get("delta").String() != " अभी मुंबई" || got.Get("language").String() != "hi" {
+	if got.Get("type").String() != "session.output_transcript.delta" || got.Get("delta").String() != " The capital" || got.Get("language").Exists() {
 		t.Fatalf("output transcript = %s", out.Client[0])
 	}
 	mixed := tr.Upstream([]byte(`{"end_ms":2,"item":{"text":"42 ...","type":"input_transcript"},"start_ms":1,"type":"input_transcript.added"}`))
@@ -622,18 +622,58 @@ func TestLiveSessionClosedShape(t *testing.T) {
 func TestLiveSessionTranscriptLanguage(t *testing.T) {
 	tests := []struct{ text, want string }{
 		{"नमस्ते, आज मुंबई में मौसम कैसा है", "hi"},
-		{"હેલો, આજે હવામાન કેવું છે", "gu"},
-		{"Open Safari and search weather in Mumbai", "en"},
-		{"हेलो, can you", ""},
+		{"હું આજે મુંબઈમાં હવામાન જોવા માંગુ છું", "gu"},
+		{"Hello, can you please tell me what is the capital of India", "en"},
+		{"Bonjour, pouvez-vous me dire quel temps il fait aujourd'hui à Paris", "fr"},
+		{"今日は東京の天気を教えてください", "ja"},
+		{"The capital", ""},
+		{"नमस्ते आज", ""},
 		{"", ""},
 		{"  123 ... 45?", ""},
-		{"१२ नमस्ते 3", "hi"},
-		{"Hello 你好", ""},
-		{" It's 31 degrees.", "en"},
 	}
 	for _, tt := range tests {
 		if got := liveTranscriptLanguage(tt.text); got != tt.want {
 			t.Errorf("liveTranscriptLanguage(%q) = %q, want %q", tt.text, got, tt.want)
 		}
+	}
+}
+
+func TestLiveSessionTranscriptLanguageAccumulates(t *testing.T) {
+	tr, _ := liveTestStarted(t, `{}`)
+	delta := func(typ, text string) gjson.Result {
+		r := tr.Upstream([]byte(`{"type":"` + typ + `","item":{"text":"` + text + `"},"start_ms":1,"end_ms":2}`))
+		return gjson.ParseBytes(r.Client[0])
+	}
+	var last gjson.Result
+	for i, word := range []string{"Hello,", " can", " you", " please", " tell", " me", " what", " is", " the", " capital", " of", " India"} {
+		last = delta("input_transcript.added", word)
+		if i < 2 && last.Get("language").Exists() {
+			t.Errorf("language on fragment %d: %s", i, last.Raw)
+		}
+	}
+	if last.Get("language").String() != "en" {
+		t.Fatalf("accumulated delta = %s", last.Raw)
+	}
+	// The assistant direction has its own accumulator and starts empty.
+	if d := delta("output_transcript.added", " अभी"); d.Get("language").Exists() {
+		t.Fatalf("assistant delta inherited the user text: %s", d.Raw)
+	}
+	for _, word := range []string{" नमस्ते,", " आज", " मुंबई", " में", " मौसम", " कैसा", " है"} {
+		last = delta("output_transcript.added", word)
+	}
+	if last.Get("language").String() != "hi" {
+		t.Fatalf("assistant delta = %s", last.Raw)
+	}
+	// turn.done resets only its own role.
+	tr.Upstream([]byte(`{"turn":{"role":"user","transcript":"x"},"type":"turn.done"}`))
+	if d := delta("input_transcript.added", " Hello"); d.Get("language").Exists() {
+		t.Fatalf("user accumulator not reset: %s", d.Raw)
+	}
+	if d := delta("output_transcript.added", " है"); d.Get("language").String() != "hi" {
+		t.Fatalf("assistant accumulator was reset by the user turn: %s", d.Raw)
+	}
+	tr.Upstream([]byte(`{"turn":{"role":"assistant","transcript":"x"},"type":"turn.done"}`))
+	if d := delta("output_transcript.added", " है"); d.Get("language").Exists() {
+		t.Fatalf("assistant accumulator not reset: %s", d.Raw)
 	}
 }
