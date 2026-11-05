@@ -312,3 +312,29 @@ func TestAudioBridgeClientDelegationFlowFromATextFirstConnection(t *testing.T) {
 		t.Fatalf("acks = %s %s", first, second)
 	}
 }
+
+func TestRealtimeAudioMapperReportsHindiFromScriptAndArabicScriptUnderGujarati(t *testing.T) {
+	m := newRealtimeAudioMapper(nil)
+	events := mapVoiceEvents(m,
+		`{"item":{"text":"नमस्ते"},"type":"input_transcript.added"}`,
+		`{"turn":{"id":"u1","role":"user","transcript":"आज मौसम कैसा है"},"type":"turn.done"}`,
+	)
+	if d := findVoiceEvent(events, "conversation.item.input_audio_transcription.delta"); d.Get("language").String() != "hi" {
+		t.Errorf("short Hindi delta = %s", d.Raw)
+	}
+	if c := findVoiceEvent(events, "conversation.item.input_audio_transcription.completed"); c.Get("language").String() != "hi" || c.Get("script").Exists() {
+		t.Errorf("Hindi completed = %s", c.Raw)
+	}
+
+	gu := newRealtimeAudioMapper(nil)
+	gu.SetTranscriptionLanguage("gu")
+	events = mapVoiceEvents(gu,
+		`{"item":{"text":"یہ اردو"},"type":"input_transcript.added"}`,
+		`{"turn":{"id":"u2","role":"user","transcript":"یہ اردو ہے"},"type":"turn.done"}`,
+	)
+	d := findVoiceEvent(events, "conversation.item.input_audio_transcription.delta")
+	c := findVoiceEvent(events, "conversation.item.input_audio_transcription.completed")
+	if d.Get("delta").String() != "یہ اردو" || d.Get("language").String() != "gu" || d.Get("script").String() != "arab" || c.Get("transcript").String() != "یہ اردو ہے" || c.Get("language").String() != "gu" || c.Get("script").String() != "arab" {
+		t.Errorf("arabic under gu: delta=%s completed=%s", d.Raw, c.Raw)
+	}
+}

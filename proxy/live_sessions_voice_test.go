@@ -100,9 +100,9 @@ func TestLiveSessionLanguageOnInputTranscripts(t *testing.T) {
 	if g := gjson.ParseBytes(short.Client[0]); g.Get("language").String() != "gu" || g.Get("delta").String() != "હાઁ" {
 		t.Fatalf("short delta = %s", short.Client[0])
 	}
-	// Output transcripts are neither converted nor labelled with the input language.
+	// Output transcripts are neither converted nor labelled with the input language: the detected one (here from the script) is reported.
 	out := tr.Upstream([]byte(`{"item":{"text":"नमस्ते","type":"output_transcript"},"type":"output_transcript.added"}`))
-	if g := gjson.ParseBytes(out.Client[0]); g.Get("delta").String() != "नमस्ते" || g.Get("language").Exists() {
+	if g := gjson.ParseBytes(out.Client[0]); g.Get("delta").String() != "नमस्ते" || g.Get("language").String() != "hi" {
 		t.Fatalf("output delta = %s", out.Client[0])
 	}
 	// Another language is reported as given and the script is left alone.
@@ -297,5 +297,20 @@ func TestLiveSessionsWSTranscriptionLanguageReachesTheCallAndTheTranscripts(t *t
 	delta := liveWSReadUntil(t, conn, "session.input_transcript.delta")
 	if gjson.GetBytes(delta, "delta").String() != "નમસ્તે આપ" || gjson.GetBytes(delta, "language").String() != "gu" {
 		t.Fatalf("delta = %s", delta)
+	}
+}
+
+func TestLiveSessionPinnedGujaratiReportsArabicScript(t *testing.T) {
+	tr, _ := liveTestStarted(t, `{"audio":{"input":{"transcription":{"language":"gu"}}}}`)
+	r := tr.Upstream([]byte(`{"item":{"text":"یہ اردو","type":"input_transcript"},"type":"input_transcript.added"}`))
+	g := gjson.ParseBytes(r.Client[0])
+	if g.Get("delta").String() != "یہ اردو" || g.Get("language").String() != "gu" || g.Get("script").String() != "arab" {
+		t.Fatalf("arabic delta = %s", r.Client[0])
+	}
+	// Gujarati and converted Devanagari carry no script field (a fresh session: the turn's accumulator is empty).
+	tr, _ = liveTestStarted(t, `{"audio":{"input":{"transcription":{"language":"gu"}}}}`)
+	ok := tr.Upstream([]byte(`{"item":{"text":" आप","type":"input_transcript"},"type":"input_transcript.added"}`))
+	if gjson.ParseBytes(ok.Client[0]).Get("script").Exists() {
+		t.Fatalf("script on %s", ok.Client[0])
 	}
 }
