@@ -1,11 +1,6 @@
 import type { EndpointSpec, ParameterSpec } from "./docsContent";
-import type { DocsLocale } from "./quickStartTools";
 
-export function addEndpointDetails(
-  endpoint: EndpointSpec,
-  locale: DocsLocale,
-): EndpointSpec {
-  const c = (zh: string, en: string) => (locale === "zh" ? zh : en);
+export function addEndpointDetails(endpoint: EndpointSpec): EndpointSpec {
   const p = (
     name: string,
     type: string,
@@ -17,47 +12,32 @@ export function addEndpointDetails(
     "model",
     "string",
     true,
-    c(
-      "使用当前 /v1/models 中且密钥有权调用的模型。",
-      "Use a model available to your key in /v1/models.",
-    ),
+    "Use a model available to your key in /v1/models.",
   );
   const stream = p(
     "stream",
     "boolean",
     false,
-    c(
-      "true 返回 SSE；false 返回普通 JSON。",
-      "true returns SSE; false returns JSON.",
-    ),
+    "true returns SSE; false returns JSON.",
     "false",
   );
   const tier = p(
     "service_tier",
     "string",
     false,
-    c(
-      "Codex: fast → priority；ultrafast 保留；default/auto 不指定档位。",
-      "Codex: fast maps to priority; ultrafast is retained; default/auto do not force a tier.",
-    ),
+    "Codex: fast maps to priority; ultrafast is retained; default/auto do not force a tier.",
   );
   const input = p(
     "input",
     "string | array",
     true,
-    c(
-      "输入文本或带 role/content 的历史项；续轮保留工具项。",
-      "Text or history items with role/content; preserve tool items on later turns.",
-    ),
+    "Text or history items with role/content; preserve tool items on later turns.",
   );
   const messages = p(
     "messages",
     "array",
     true,
-    c(
-      "对话历史，包含 role 与 content。",
-      "Conversation history with role and content.",
-    ),
+    "Conversation history with role and content.",
   );
   const params: Record<string, ParameterSpec[]> = {
     "api-responses": [
@@ -68,38 +48,26 @@ export function addEndpointDetails(
         "reasoning.effort",
         "string",
         false,
-        c(
-          "none/minimal/low/medium/high/xhigh/ultra；max 按模型支持归一。",
-          "none/minimal/low/medium/high/xhigh/ultra; max is normalized by model capability.",
-        ),
+        "none/minimal/low/medium/high/xhigh/ultra; max is normalized by model capability.",
       ),
       tier,
       p(
         "previous_response_id",
         "string",
         false,
-        c(
-          "同一密钥范围内的上一响应 ID，依赖可恢复的上下文。",
-          "Previous response ID in the same key scope; requires recoverable context.",
-        ),
+        "Previous response ID in the same key scope; requires recoverable context.",
       ),
       p(
         "tools",
         "array",
         false,
-        c(
-          "函数、custom 或支持的内置工具。",
-          "Functions, custom tools or supported built-in tools.",
-        ),
+        "Functions, custom tools or supported built-in tools.",
       ),
       p(
         "text.format",
         "object",
         false,
-        c(
-          "结构化输出格式；例如 type=json_schema。",
-          "Structured output format, such as type=json_schema.",
-        ),
+        "Structured output format, such as type=json_schema.",
       ),
     ],
     "api-chat": [
@@ -110,29 +78,20 @@ export function addEndpointDetails(
         "reasoning_effort",
         "string",
         false,
-        c(
-          "Chat 顶层思考强度，按模型支持归一。",
-          "Top-level Chat reasoning effort, normalized by model capability.",
-        ),
+        "Top-level Chat reasoning effort, normalized by model capability.",
       ),
       tier,
       p(
         "tools",
         "array",
         false,
-        c(
-          "函数或 custom 工具；结果用 tool_call_id 配对。",
-          "Function/custom tools; pair results using tool_call_id.",
-        ),
+        "Function/custom tools; pair results using tool_call_id.",
       ),
       p(
         "response_format",
         "object",
         false,
-        c(
-          "JSON 或 JSON Schema 输出约束。",
-          "JSON or JSON Schema output constraints.",
-        ),
+        "JSON or JSON Schema output constraints.",
       ),
     ],
     "api-images-gen": [
@@ -140,83 +99,51 @@ export function addEndpointDetails(
         "model",
         "string",
         false,
-        c(
-          "gpt-image-2 或 gpt-image-2.5-flare/sunburst。",
-          "gpt-image-2 or gpt-image-2.5-flare/sunburst.",
-        ),
+        "gpt-image-2 or gpt-image-2.5-flare/sunburst.",
         "gpt-image-2",
       ),
-      p("prompt", "string", true, c("图片描述。", "Image prompt.")),
+      p("prompt", "string", true, "Image prompt."),
       p(
         "size",
         "string",
         false,
-        c(
-          "宽x高；支持模型档位别名 -2k/-4k。",
-          "WIDTHxHEIGHT; gateway aliases -2k/-4k select size tiers.",
-        ),
+        "WIDTHxHEIGHT; gateway aliases -2k/-4k select size tiers.",
       ),
       p(
         "quality",
         "string",
         false,
-        c(
-          "2.5: auto/low/medium/high/xhigh/max；旧型号按其能力选择。",
-          "2.5: auto/low/medium/high/xhigh/max; use supported levels for older models.",
-        ),
+        "2.5: auto/low/medium/high/xhigh/max; use supported levels for older models.",
       ),
       p("output_format", "string", false, "png / jpeg / webp"),
       p(
         "response_format",
         "string",
         false,
-        c(
-          "b64_json 或 url。配置对象存储时 url 返回限时链接，否则为 data URL。",
-          "b64_json or url. With object storage, url is a temporary link; otherwise it is a data URL.",
-        ),
+        "b64_json or url. With object storage, url is a temporary link; otherwise it is a data URL.",
         "b64_json",
       ),
     ],
     "api-images-edit": [
-      p(
-        "model",
-        "string",
-        false,
-        c("可用的图片模型。", "An available image model."),
-        "gpt-image-2",
-      ),
-      p(
-        "prompt",
-        "string",
-        true,
-        c("描述需要修改的内容。", "Describe the desired edit."),
-      ),
+      p("model", "string", false, "An available image model.", "gpt-image-2"),
+      p("prompt", "string", true, "Describe the desired edit."),
       p(
         "images[].image_url",
         "string",
         true,
-        c(
-          "JSON 图片 URL 或 data URL；multipart 改用 image/image[] 文件字段。",
-          "JSON image URL or data URL; multipart uses image/image[] files instead.",
-        ),
+        "JSON image URL or data URL; multipart uses image/image[] files instead.",
       ),
       p(
         "mask.image_url",
         "string",
         false,
-        c(
-          "可选遮罩，仅 gpt-image 系列支持；multipart 使用 mask 文件。",
-          "Optional mask for gpt-image models; multipart uses a mask file.",
-        ),
+        "Optional mask for gpt-image models; multipart uses a mask file.",
       ),
       p(
         "size / quality / output_format",
         "string",
         false,
-        c(
-          "与图片生成参数相同，按模型能力选择。",
-          "As in image generation; choose values supported by the model.",
-        ),
+        "As in image generation; choose values supported by the model.",
       ),
     ],
   };
@@ -228,11 +155,7 @@ export function addEndpointDetails(
   };
 }
 
-export function buildExtraEndpoints(
-  baseUrl: string,
-  locale: DocsLocale,
-): EndpointSpec[] {
-  const c = (zh: string, en: string) => (locale === "zh" ? zh : en);
+export function buildExtraEndpoints(baseUrl: string): EndpointSpec[] {
   const json = (v: unknown) => JSON.stringify(v, null, 2);
   const param = (
     name: string,
@@ -258,44 +181,26 @@ export function buildExtraEndpoints(
       category: "media",
       method: "POST",
       path: "/v1/images/jobs",
-      title: c("创建异步图片任务", "Create an async image job"),
-      description: c(
-        "任务进入后台队列，返回 202。仅接受后台创建的 API Key；input_images 非空时执行图片编辑。",
+      title: "Create an async image job",
+      description:
         "Queues a background job and returns 202. Requires a dashboard-created API key; non-empty input_images selects editing.",
-      ),
       defaultBody: json(imageJob),
       curl: post("/v1/images/jobs", imageJob),
       parameters: [
-        param(
-          "prompt",
-          "string",
-          true,
-          c(
-            "图片描述，最多 8000 字符。",
-            "Image prompt, up to 8000 characters.",
-          ),
-        ),
+        param("prompt", "string", true, "Image prompt, up to 8000 characters."),
         param(
           "model / size / quality",
           "string",
           false,
-          c("图片模型及生成参数。", "Image model and generation options."),
+          "Image model and generation options.",
         ),
         param(
           "input_images",
           "string[]",
           false,
-          c(
-            "编辑源图 URL 或 data URL。",
-            "Source image URLs or data URLs for editing.",
-          ),
+          "Source image URLs or data URLs for editing.",
         ),
-        param(
-          "n",
-          "integer",
-          false,
-          c("输出数量，默认 1。", "Output count, default 1."),
-        ),
+        param("n", "integer", false, "Output count, default 1."),
       ],
       responses: [
         {
@@ -311,19 +216,12 @@ export function buildExtraEndpoints(
       category: "media",
       method: "GET",
       path: "/v1/images/jobs/:id",
-      title: c("查询图片任务", "Get an image job"),
-      description: c(
-        "替换 :id 为 job.id，使用同一 API Key。根据 queued/running/succeeded/failed 判断状态；成功后使用 job.assets[].proxy_url 下载图片，相对路径按本服务地址解析；失败时查看 error_message。",
+      title: "Get an image job",
+      description:
         "Replace :id with job.id and use the creating API key. Inspect queued/running/succeeded/failed. Download successful assets using job.assets[].proxy_url, resolving relative paths against this service URL; inspect error_message on failure.",
-      ),
       curl: get("/v1/images/jobs/42"),
       parameters: [
-        param(
-          "id",
-          "path integer",
-          true,
-          c("创建响应中的 job.id。", "job.id from the create response."),
-        ),
+        param("id", "path integer", true, "job.id from the create response."),
       ],
       responses: [
         {
@@ -359,11 +257,9 @@ export function buildExtraEndpoints(
       category: "advanced",
       method: "POST",
       path: "/v1/responses/input_tokens",
-      title: c("Responses Token 估算", "Estimate Responses tokens"),
-      description: c(
-        "仅做本地字符估算，不调用上游、不消耗账号额度。用于客户端兼容探测，不是精确 tokenizer，也不是最终计费依据。",
+      title: "Estimate Responses tokens",
+      description:
         "A local character-based estimate without upstream calls or account quota consumption. For compatibility probes, not an exact tokenizer or billing measurement.",
-      ),
       curl: post("/v1/responses/input_tokens", inputTokensBody),
       defaultBody: json(inputTokensBody),
       responses: [{ code: 200, body: json({ input_tokens: 32 }) }],
@@ -373,11 +269,9 @@ export function buildExtraEndpoints(
       category: "advanced",
       method: "POST",
       path: "/v1/responses/compact",
-      title: c("压缩 Responses 上下文", "Compact Responses context"),
-      description: c(
-        "提交完整必需历史，获得可供后续请求携带的压缩项。保留返回的 output 项及不透明字段；能力由所选模型和渠道决定。",
+      title: "Compact Responses context",
+      description:
         "Submit the complete required history to receive compaction items for later requests. Preserve output items and opaque fields; support depends on model and channel.",
-      ),
       curl: post("/v1/responses/compact", {
         model: "gpt-5.5",
         input: [{ role: "user", content: "Summarize this conversation." }],
@@ -389,7 +283,7 @@ export function buildExtraEndpoints(
       responses: [
         {
           code: 200,
-          label: c("结构示意", "Shape example"),
+          label: "Shape example",
           body: json({
             object: "response.compaction",
             output: [{ type: "compaction", encrypted_content: "..." }],
@@ -403,11 +297,9 @@ export function buildExtraEndpoints(
       method: "GET",
       path: "/v1/responses",
       transport: "websocket",
-      title: c("Responses WebSocket", "Responses WebSocket"),
-      description: c(
-        "使用支持自定义认证头的 WebSocket 客户端。连接后发送 response.create，读取增量及终止事件；上下文不可恢复时需重发完整历史。",
+      title: "Responses WebSocket",
+      description:
         "Use a WebSocket client supporting authentication headers. Send response.create after connecting, then read delta and terminal events. Resend full history if continuation is unavailable.",
-      ),
       curl: `# WebSocket URL: ${baseUrl.replace(/^http/, "ws")}/v1/responses\n# Header: Authorization: Bearer YOUR_API_KEY\n# Send this frame after the connection opens:\n${json({ type: "response.create", model: "gpt-5.5", input: [{ role: "user", content: "Hello" }] })}`,
       responses: [
         {

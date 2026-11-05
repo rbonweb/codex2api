@@ -3,18 +3,10 @@ import { Search, X, ArrowUpRight, BookOpen, ChevronRight } from "lucide-react";
 import { CodeBlock } from "./EndpointDoc";
 import { searchDocEntries, type DocEntry } from "./docsNavigation";
 import type { GuideSpec } from "./docsGuides";
-import type { DocsLocale } from "./quickStartTools";
 
-export function DocsSearch({
-  entries,
-  locale,
-}: {
-  entries: DocEntry[];
-  locale: DocsLocale;
-}) {
+export function DocsSearch({ entries }: { entries: DocEntry[] }) {
   const [query, setQuery] = useState("");
   const [focused, setFocused] = useState(false);
-  const zh = locale === "zh";
   const results = searchDocEntries(query, entries);
   return (
     <div
@@ -27,12 +19,8 @@ export function DocsSearch({
       <Search className="size-4 shrink-0 text-muted-foreground" />
       <input
         type="search"
-        aria-label={zh ? "搜索文档" : "Search documentation"}
-        placeholder={
-          zh
-            ? "搜索接口、参数或错误码…"
-            : "Search endpoints, parameters or errors…"
-        }
+        aria-label="Search documentation"
+        placeholder={"Search endpoints, parameters or errors…"}
         value={query}
         onFocus={() => setFocused(true)}
         onChange={(e) => setQuery(e.target.value)}
@@ -52,7 +40,7 @@ export function DocsSearch({
       {query && (
         <button
           type="button"
-          aria-label={zh ? "清除搜索" : "Clear search"}
+          aria-label="Clear search"
           onClick={() => setQuery("")}
         >
           <X className="size-4" />
@@ -61,9 +49,7 @@ export function DocsSearch({
       {focused && query.trim() && (
         <div className="docs-search-results">
           <div className="docs-search-count" role="status">
-            {zh
-              ? `找到 ${results.length} 项${results.length === 20 ? "（最多显示 20 项）" : ""}`
-              : `${results.length} results${results.length === 20 ? " (showing up to 20)" : ""}`}
+            {`${results.length} results${results.length === 20 ? " (showing up to 20)" : ""}`}
           </div>
           {results.length ? (
             results.map((entry) => (
@@ -83,11 +69,7 @@ export function DocsSearch({
               </a>
             ))
           ) : (
-            <p>
-              {zh
-                ? "试试模型名、/v1 路径、429 或上下文。"
-                : "Try a model, /v1 path, 429 or context."}
-            </p>
+            <p>Try a model, /v1 path, 429 or context.</p>
           )}
         </div>
       )}
@@ -97,11 +79,9 @@ export function DocsSearch({
 
 export function GuideArticle({
   guide,
-  locale,
   activeId,
 }: {
   guide: GuideSpec;
-  locale: DocsLocale;
   activeId: string;
 }) {
   const [expanded, setExpanded] = useState(activeId === guide.id);
@@ -123,7 +103,7 @@ export function GuideArticle({
           aria-controls={`${guide.id}-body`}
           onClick={() => setExpanded(!expanded)}
           className="docs-disclosure"
-          aria-label={`${expanded ? (locale === "zh" ? "收起" : "Collapse") : locale === "zh" ? "展开" : "Expand"} ${guide.title}`}
+          aria-label={`${expanded ? "Collapse" : "Expand"} ${guide.title}`}
         >
           <ChevronRight className={`size-4 ${expanded ? "rotate-90" : ""}`} />
         </button>
