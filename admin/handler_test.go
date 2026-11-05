@@ -12,7 +12,6 @@ import (
 	"net/http/httptest"
 	"os"
 	"path/filepath"
-	"slices"
 	"strings"
 	"sync/atomic"
 	"testing"
@@ -130,71 +129,6 @@ func TestSummarizeDashboardAccountsMatchesAccountPageBuckets(t *testing.T) {
 	}
 }
 
-func TestSummarizeDashboardAccountsIncludesClaudeChannel(t *testing.T) {
-	row := &database.AccountRow{ID: 99, Status: "active", Enabled: true, Credentials: map[string]interface{}{"upstream_type": auth.UpstreamClaude}}
-	acc := &auth.Account{DBID: 99, UpstreamType: auth.UpstreamClaude, AccessToken: "claude", Status: auth.StatusReady, UsagePercent7dValid: true}
-	_, channels := summarizeDashboardAccounts([]*database.AccountRow{row}, []*auth.Account{acc})
-	got, ok := channels[database.UpstreamChannelClaude]
-	if !ok {
-		t.Fatalf("dashboard channels missing Claude: %#v", channels)
-	}
-	if got.total != 1 || got.normal != 1 {
-		t.Fatalf("Claude dashboard counts = %+v, want total=1 normal=1", got)
-	}
-}
-
-func TestSummarizeDashboardAccountsTreatsSuccessfulClaudeProbeWithoutQuotaHeadersAsSampled(t *testing.T) {
-	row := &database.AccountRow{ID: 100, Status: "active", Enabled: true, Credentials: map[string]interface{}{
-		"upstream_type":                      auth.UpstreamClaude,
-		auth.ClaudeUsageProbeAtCredentialKey: "2026-08-29T05:00:00Z",
-	}}
-	acc := &auth.Account{DBID: 100, UpstreamType: auth.UpstreamClaude, AccessToken: "claude", Status: auth.StatusReady}
-	got, channels := summarizeDashboardAccounts([]*database.AccountRow{row}, []*auth.Account{acc})
-	if got.normal != 1 || got.rateLimited != 0 || got.abnormal != 0 {
-		t.Fatalf("dashboard counts = %+v, want successful Claude probe counted as normal", got)
-	}
-	if channels[database.UpstreamChannelClaude].normal != 1 {
-		t.Fatalf("Claude channel counts = %+v", channels[database.UpstreamChannelClaude])
-	}
-}
-
-func TestClaudeChannelModelsReturnsAccountCatalog(t *testing.T) {
-	store := auth.NewStore(nil, nil, nil)
-	defer store.Stop()
-	store.AddAccount(&auth.Account{DBID: 100, UpstreamType: auth.UpstreamClaude, AccessToken: "claude", Models: []string{"claude-sonnet-4-5", "claude-opus-4-5"}})
-	h := &Handler{store: store}
-	models := h.claudeChannelModels()
-	if len(models) != 2 || !slices.Contains(models, "claude-sonnet-4-5") || !slices.Contains(models, "claude-opus-4-5") {
-		t.Fatalf("Claude model catalog = %v, want account models", models)
-	}
-}
-
-func TestClaudeAvailableChannelModelsFiltersDisabledAndModelCooldown(t *testing.T) {
-	store := auth.NewStore(nil, nil, nil)
-	defer store.Stop()
-	enabled := &auth.Account{
-		DBID:         101,
-		UpstreamType: auth.UpstreamClaude,
-		AccessToken:  "claude-enabled",
-		Models:       []string{"claude-fable-5", "claude-sonnet-5"},
-	}
-	enabled.SetModelCooldownUntil("claude-fable-5", "credits_required", time.Now().Add(time.Hour))
-	disabled := &auth.Account{
-		DBID:         102,
-		UpstreamType: auth.UpstreamClaude,
-		AccessToken:  "claude-disabled",
-		Models:       []string{"claude-fable-5"},
-	}
-	atomic.StoreInt32(&disabled.DispatchPaused, 1)
-	store.AddAccount(enabled)
-	store.AddAccount(disabled)
-	h := &Handler{store: store}
-	models := h.claudeAvailableChannelModels()
-	if len(models) != 1 || models[0] != "claude-sonnet-5" {
-		t.Fatalf("request-facing Claude models = %v, want only enabled cooldown-free model", models)
-	}
-}
-
 // 积分顶着限流的账号 RuntimeStatus 仍是 rate_limited（用量窗口客观上打满了），
 // 但它照常参与调度，仪表盘该把它算进「可用」而不是「限流」。
 func TestSummarizeDashboardAccountsCountsCreditBackedAsNormal(t *testing.T) {
@@ -237,46 +171,16 @@ func TestSummarizeDashboardAccountsExcludesUnsampledFromAvailable(t *testing.T) 
 	rows := []*database.AccountRow{
 		{ID: 1, Status: "active", Enabled: true},
 		{ID: 2, Status: "active", Enabled: true},
-		{ID: 3, Status: "active", Enabled: true, Credentials: map[string]interface{}{"upstream_type": auth.UpstreamGrok}},
-		{ID: 4, Status: "active", Enabled: true, Credentials: map[string]interface{}{"upstream_type": auth.UpstreamOpenAIResponses}},
 	}
 	sampled := &auth.Account{DBID: 1, Status: auth.StatusReady, AccessToken: "at-1", UsagePercent7d: 12, UsagePercent7dValid: true}
 	unsampled := &auth.Account{DBID: 2, Status: auth.StatusReady, AccessToken: "at-2"}
-	grok := &auth.Account{DBID: 3, Status: auth.StatusReady, AccessToken: "at-3", UpstreamType: auth.UpstreamGrok}
-	responses := &auth.Account{DBID: 4, Status: auth.StatusReady, APIKey: "sk-test", BaseURL: "https://relay.example", UpstreamType: auth.UpstreamOpenAIResponses}
 
-	got, channels := summarizeDashboardAccounts(rows, []*auth.Account{sampled, unsampled, grok, responses})
-	if got.total != 4 || got.normal != 3 || got.rateLimited != 0 || got.abnormal != 0 {
-		t.Fatalf("counts = %+v, want total=4 normal=3 rateLimited=0 abnormal=0", got)
+	got, channels := summarizeDashboardAccounts(rows, []*auth.Account{sampled, unsampled})
+	if got.total != 2 || got.normal != 1 || got.rateLimited != 0 || got.abnormal != 0 {
+		t.Fatalf("counts = %+v, want total=2 normal=1 rateLimited=0 abnormal=0", got)
 	}
-	if channels[database.UpstreamChannelCodex].normal != 2 || channels[database.UpstreamChannelGrok].normal != 1 {
+	if channels[database.UpstreamChannelCodex].normal != 1 {
 		t.Fatalf("channel counts = %+v", channels)
-	}
-}
-
-func TestSummarizeDashboardAccountsUsesAntigravityControlPlaneStatus(t *testing.T) {
-	rows := []*database.AccountRow{
-		{ID: 1, Status: "active", Enabled: true, Credentials: map[string]interface{}{
-			"upstream_type": auth.UpstreamAntigravity,
-			"refresh_token": "refresh-1",
-		}},
-		{ID: 2, Status: "active", Enabled: true, Credentials: map[string]interface{}{
-			"upstream_type":          auth.UpstreamAntigravity,
-			"refresh_token":          "refresh-2",
-			"antigravity_sync_error": "quota sync failed",
-		}},
-	}
-	runtimeAccounts := []*auth.Account{
-		{DBID: 1, Status: auth.StatusReady, AccessToken: "access-1", UpstreamType: auth.UpstreamAntigravity},
-		{DBID: 2, Status: auth.StatusReady, AccessToken: "access-2", UpstreamType: auth.UpstreamAntigravity},
-	}
-	got, channels := summarizeDashboardAccounts(rows, runtimeAccounts)
-	if got.total != 2 || got.normal != 1 || got.abnormal != 1 {
-		t.Fatalf("counts = %+v, want total=2 normal=1 abnormal=1", got)
-	}
-	channel := channels[database.UpstreamChannelAntigravity]
-	if channel.total != 2 || channel.normal != 1 || channel.abnormal != 1 {
-		t.Fatalf("Antigravity channel counts = %+v", channel)
 	}
 }
 
@@ -3383,8 +3287,7 @@ func TestExportAccountsIncludesATOnly(t *testing.T) {
 	}
 }
 
-// TestExportAccountsChannelScoped Codex 账号页导出必须能按渠道过滤:不带 channel
-// 时 Grok 账号会混进 codex 命名的导出文件(issue: 选 3 个 codex 导出得到 5 个)。
+// TestExportAccountsChannelScoped Codex 账号页导出按 channel=codex 过滤。
 func TestExportAccountsChannelScoped(t *testing.T) {
 	gin.SetMode(gin.TestMode)
 
@@ -3399,18 +3302,6 @@ func TestExportAccountsChannelScoped(t *testing.T) {
 		"access_token": "at_codex",
 	}); err != nil {
 		t.Fatalf("update codex credentials: %v", err)
-	}
-
-	grokID, err := db.InsertAccount(context.Background(), "grok-account", "", "")
-	if err != nil {
-		t.Fatalf("insert grok account: %v", err)
-	}
-	if err := db.UpdateCredentials(context.Background(), grokID, map[string]interface{}{
-		"email":         "grok@example.com",
-		"upstream_type": "grok",
-		"api_key":       "xai-test-key",
-	}); err != nil {
-		t.Fatalf("update grok credentials: %v", err)
 	}
 
 	handler := &Handler{db: db}
@@ -3435,14 +3326,9 @@ func TestExportAccountsChannelScoped(t *testing.T) {
 		t.Fatalf("channel=codex entries = %v, want only the codex account", codexOnly)
 	}
 
-	grokOnly := export("filter=all&channel=grok")
-	if len(grokOnly) != 1 || grokOnly[0]["email"] != "grok@example.com" {
-		t.Fatalf("channel=grok entries = %v, want only the grok account", grokOnly)
-	}
-
 	// 缺省仍导出全部渠道:远程迁移依赖全量语义。
-	if all := export("filter=all"); len(all) != 2 {
-		t.Fatalf("default export entries = %d, want 2", len(all))
+	if all := export("filter=all"); len(all) != 1 {
+		t.Fatalf("default export entries = %d, want 1", len(all))
 	}
 }
 
