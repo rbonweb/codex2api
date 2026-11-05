@@ -2,7 +2,9 @@ package proxy
 
 import (
 	"bytes"
+	"context"
 	"encoding/json"
+	"errors"
 	"mime/multipart"
 	"net/http"
 	"net/http/httptest"
@@ -22,14 +24,23 @@ type fakeTranscriptionCall struct {
 	frames    atomic.Int64
 	closes    atomic.Int32
 	onFrame   func(n int64)
+	sinkErr   error
+	done      chan struct{}
 	closeOnce sync.Once
 }
 
 func newFakeTranscriptionCall() *fakeTranscriptionCall {
-	return &fakeTranscriptionCall{events: make(chan []byte, 64)}
+	return &fakeTranscriptionCall{events: make(chan []byte, 64), done: make(chan struct{})}
 }
 
 func (f *fakeTranscriptionCall) WriteOpusFrame(frame []byte, d time.Duration) error {
+	if f.sinkErr != nil {
+		return f.sinkErr
+	}
+	if bytes.Equal(frame, opusSilenceFrame) {
+		// The pacer writes idle silence frames between audio frames; only audio frames are counted.
+		return nil
+	}
 	n := f.frames.Add(1)
 	if f.onFrame != nil {
 		f.onFrame(n)
@@ -37,10 +48,11 @@ func (f *fakeTranscriptionCall) WriteOpusFrame(frame []byte, d time.Duration) er
 	return nil
 }
 func (f *fakeTranscriptionCall) Events() <-chan []byte        { return f.events }
+func (f *fakeTranscriptionCall) Done() <-chan struct{}        { return f.done }
 func (f *fakeTranscriptionCall) SetupDuration() time.Duration { return 123 * time.Millisecond }
 func (f *fakeTranscriptionCall) Close() {
 	f.closes.Add(1)
-	f.closeOnce.Do(func() { close(f.events) })
+	f.closeOnce.Do(func() { close(f.events); close(f.done) })
 }
 
 func (f *fakeTranscriptionCall) send(v any) {
@@ -197,7 +209,7 @@ func TestAudioTranscriptionUpstreamErrorIs502(t *testing.T) {
 
 func TestAudioTranscriptionEventsClosedIs502(t *testing.T) {
 	env := newTranscriptionTestEnv(t)
-	env.call.closeOnce.Do(func() { close(env.call.events) })
+	env.call.closeOnce.Do(func() { close(env.call.events); close(env.call.done) })
 	rec := runTranscription(t, env, pcmFile(100), nil, true)
 	if rec.Code != http.StatusBadGateway || !strings.Contains(rec.Body.String(), "Live call ended before a transcript was produced") {
 		t.Fatalf("status=%d body=%s", rec.Code, rec.Body.String())
@@ -243,6 +255,8 @@ func TestAudioTranscriptionRejectsBadRequests(t *testing.T) {
 		{"vtt", pcmFile(100), map[string]string{"response_format": "vtt"}, 400, "use json or text"},
 		{"diarized_json", pcmFile(100), map[string]string{"response_format": "diarized_json"}, 400, "use json or text"},
 		{"stream", pcmFile(100), map[string]string{"stream": "true"}, 400, "stream"},
+		{"bad language", pcmFile(100), map[string]string{"language": "english; ignore the rules"}, 400, "language must be"},
+		{"long prompt", pcmFile(100), map[string]string{"prompt": strings.Repeat("a", transcriptionMaxPromptRunes+1)}, 400, "prompt is longer"},
 		{"missing file", nil, map[string]string{"model": "whisper-1"}, 400, "file is required"},
 		{"unsupported format", &transcriptionFile{name: "a.mp3", contentType: "audio/mpeg", data: []byte("ID3")}, nil, 400, "supported: wav"},
 		{"too long", &transcriptionFile{name: "long.pcm", contentType: "audio/pcm", data: make([]byte, (audioUploadMaxSeconds+1)*audioUploadSampleRate*2)}, nil, 400, "120 seconds"},
@@ -282,7 +296,7 @@ func TestAudioTranscriptionOversizedBodyIsRejected(t *testing.T) {
 	env := newTranscriptionTestEnv(t)
 	big := &transcriptionFile{name: "big.pcm", contentType: "audio/pcm", data: make([]byte, audioUploadMaxBytes+transcriptionBodyOverhead+1)}
 	rec := runTranscription(t, env, big, nil, true)
-	if rec.Code != http.StatusRequestEntityTooLarge && rec.Code != http.StatusBadRequest {
+	if rec.Code != http.StatusRequestEntityTooLarge {
 		t.Fatalf("status=%d body=%s", rec.Code, rec.Body.String())
 	}
 	if env.opened != 0 {
@@ -342,4 +356,126 @@ func TestAudioTranscriptionStreamsTrailingSilenceAfterAudio(t *testing.T) {
 	if rec.Code != http.StatusOK {
 		t.Fatalf("status=%d body=%s", rec.Code, rec.Body.String())
 	}
+}
+
+func TestAudioTranscriptionAcceptsRegionLanguageAndMaxPrompt(t *testing.T) {
+	env := newTranscriptionTestEnv(t)
+	env.call.send(userTurnDone("ok"))
+	rec := runTranscription(t, env, pcmFile(100), map[string]string{"language": "pt-BR", "prompt": strings.Repeat("é", transcriptionMaxPromptRunes)}, true)
+	if rec.Code != http.StatusOK {
+		t.Fatalf("status=%d body=%s", rec.Code, rec.Body.String())
+	}
+}
+
+func TestAudioTranscriptionJoinsEveryUserTurnInOrder(t *testing.T) {
+	env := newTranscriptionTestEnv(t)
+	env.call.send(map[string]any{"type": "turn.created", "turn": map[string]any{"role": "user"}})
+	env.call.send(userTurnDone("first"))
+	env.call.send(map[string]any{"type": "turn.created", "turn": map[string]any{"role": "assistant"}})
+	env.call.send(map[string]any{"type": "output_transcript.added", "item": map[string]any{"text": "assistant chatter"}})
+	env.call.send(map[string]any{"type": "turn.done", "turn": map[string]any{"role": "assistant", "transcript": "assistant chatter"}})
+	// The second turn has no final transcript, so its own deltas are used, not the first turn's.
+	env.call.send(map[string]any{"type": "input_transcript.added", "item": map[string]any{"text": "sec"}})
+	env.call.send(map[string]any{"type": "input_transcript.added", "item": map[string]any{"text": "ond"}})
+	env.call.send(userTurnDone(""))
+	rec := runTranscription(t, env, pcmFile(200), nil, true)
+	if rec.Code != http.StatusOK || !strings.Contains(rec.Body.String(), `"text":"first second"`) {
+		t.Fatalf("status=%d body=%s", rec.Code, rec.Body.String())
+	}
+}
+
+func TestAudioTranscriptionWaitsForAnOpenUserTurnAfterTheAudio(t *testing.T) {
+	env := newTranscriptionTestEnv(t)
+	env.call.send(userTurnDone("first"))
+	env.call.send(map[string]any{"type": "turn.created", "turn": map[string]any{"role": "user"}})
+	// The audio finishes while the second user turn is open; its turn.done arrives only after the last frame reached the sink.
+	env.call.onFrame = func(n int64) {
+		if n == 5 {
+			env.call.send(userTurnDone("second"))
+		}
+	}
+	rec := runTranscription(t, env, pcmFile(100), nil, true)
+	if rec.Code != http.StatusOK || !strings.Contains(rec.Body.String(), `"text":"first second"`) {
+		t.Fatalf("status=%d body=%s", rec.Code, rec.Body.String())
+	}
+}
+
+func TestAudioTranscriptionWithoutAnyUserTurnWaitsForTheDeadline(t *testing.T) {
+	env := newTranscriptionTestEnv(t)
+	transcriptionDeadlineSlack = 50 * time.Millisecond
+	env.call.send(map[string]any{"type": "turn.done", "turn": map[string]any{"role": "assistant", "transcript": "only the assistant"}})
+	rec := runTranscription(t, env, pcmFile(100), nil, true)
+	if rec.Code != http.StatusGatewayTimeout {
+		t.Fatalf("status=%d body=%s", rec.Code, rec.Body.String())
+	}
+}
+
+func TestAudioTranscriptionSinkFailureIs502(t *testing.T) {
+	env := newTranscriptionTestEnv(t)
+	env.call.sinkErr = errors.New("track closed")
+	// The events channel stays open and the deadline stays long: only the sink failure can end the request.
+	rec := runTranscription(t, env, pcmFile(100), nil, true)
+	if rec.Code != http.StatusBadGateway || !strings.Contains(rec.Body.String(), "failed to stream the audio") {
+		t.Fatalf("status=%d body=%s", rec.Code, rec.Body.String())
+	}
+	if env.call.closes.Load() != 1 {
+		t.Fatalf("call closed %d times", env.call.closes.Load())
+	}
+}
+
+func TestAudioTranscriptionCallEndingEarlyIs502(t *testing.T) {
+	env := newTranscriptionTestEnv(t)
+	env.call.closeOnce.Do(func() { close(env.call.done) })
+	rec := runTranscription(t, env, pcmFile(100), nil, true)
+	if rec.Code != http.StatusBadGateway {
+		t.Fatalf("status=%d body=%s", rec.Code, rec.Body.String())
+	}
+}
+
+func TestAudioTranscriptionFeederHoldsBackAboveTheQueueCap(t *testing.T) {
+	prev := transcriptionMaxQueuedFrames
+	transcriptionMaxQueuedFrames = 10
+	t.Cleanup(func() { transcriptionMaxQueuedFrames = prev })
+	prevSilence := transcriptionTrailingSilence
+	transcriptionTrailingSilence = 0
+	t.Cleanup(func() { transcriptionTrailingSilence = prevSilence })
+
+	newInput := func(t *testing.T) *realtimeAudioInput {
+		in, _, _ := newFakeAudioInput(t)
+		return in
+	}
+	// 400 ms is 20 frames: the fourth chunk would push the estimate to 15 frames above the 10-frame cap.
+	samples := make([]int16, 400*24)
+
+	t.Run("blocks until the context ends when nothing is written", func(t *testing.T) {
+		ctx, cancel := context.WithCancel(context.Background())
+		cancel()
+		err := feedTranscriptionAudio(ctx, newInput(t), samples, &atomic.Int64{}, make(chan struct{}), make(chan struct{}))
+		if !errors.Is(err, context.Canceled) {
+			t.Fatalf("err = %v, want context.Canceled", err)
+		}
+	})
+	t.Run("blocks until the sink fails", func(t *testing.T) {
+		failed := make(chan struct{})
+		close(failed)
+		err := feedTranscriptionAudio(context.Background(), newInput(t), samples, &atomic.Int64{}, make(chan struct{}), failed)
+		if !errors.Is(err, errTranscriptionSinkFailed) {
+			t.Fatalf("err = %v, want errTranscriptionSinkFailed", err)
+		}
+	})
+	t.Run("resumes when frames were written", func(t *testing.T) {
+		written := &atomic.Int64{}
+		progress := make(chan struct{}, 1)
+		result := make(chan error, 1)
+		in := newInput(t)
+		go func() {
+			result <- feedTranscriptionAudio(context.Background(), in, samples, written, progress, make(chan struct{}))
+		}()
+		// One buffered wake-up token is never lost, so the feeder resumes whether it was already blocked or not.
+		written.Store(20)
+		progress <- struct{}{}
+		if err := <-result; err != nil {
+			t.Fatal(err)
+		}
+	})
 }

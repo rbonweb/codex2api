@@ -7,10 +7,13 @@ import (
 	"fmt"
 	"io"
 	"net/http"
+	"regexp"
 	"strconv"
 	"strings"
+	"sync"
 	"sync/atomic"
 	"time"
+	"unicode/utf8"
 
 	"github.com/codex2api/api"
 	"github.com/gin-gonic/gin"
@@ -20,8 +23,8 @@ import (
 const (
 	transcriptionDefaultModel = "gpt-4o-transcribe"
 	transcriptionChunkMillis  = 100
-	// transcriptionMaxQueuedFrames keeps the feeder below the pacer cap (audioPacerMaxFrames) so a 120 s upload never overflows it.
-	transcriptionMaxQueuedFrames = audioPacerMaxFrames / 2
+	// transcriptionMaxPromptRunes caps the prompt that is folded into the session instructions.
+	transcriptionMaxPromptRunes = 1000
 	// transcriptionFormMemory is how much of the multipart body stays in memory before it spills to disk.
 	transcriptionFormMemory = 8 << 20
 	// transcriptionBodyOverhead is the room above the audio cap for the other multipart fields and framing.
@@ -32,6 +35,12 @@ const (
 
 // transcriptionModels are the OpenAI transcription model names the endpoint accepts; every one is served by the same Live call.
 var transcriptionModels = []string{"gpt-4o-transcribe", "gpt-4o-mini-transcribe", "whisper-1"}
+
+// transcriptionMaxQueuedFrames keeps the feeder below the pacer cap (audioPacerMaxFrames) so a 120 s upload never overflows it. Tests lower it.
+var transcriptionMaxQueuedFrames int64 = audioPacerMaxFrames / 2
+
+// transcriptionLanguagePattern accepts an ISO 639 code with an optional region or script suffix, such as en, fra or pt-BR.
+var transcriptionLanguagePattern = regexp.MustCompile(`^[a-zA-Z]{2,3}(-[a-zA-Z0-9]{2,8})?$`)
 
 // transcriptionTrailingSilence is the silence streamed after the audio so the Live call detects the end of the user turn.
 var transcriptionTrailingSilence = 1500 * time.Millisecond
@@ -46,6 +55,7 @@ const transcriptionPaceNote = "real time (1x)"
 type transcriptionCall interface {
 	WriteOpusFrame(frame []byte, d time.Duration) error
 	Events() <-chan []byte
+	Done() <-chan struct{}
 	SetupDuration() time.Duration
 	Close()
 }
@@ -111,10 +121,16 @@ func (h *Handler) AudioTranscriptions(c *gin.Context) {
 	ctx, cancel := context.WithTimeout(c.Request.Context(), audioDuration+transcriptionDeadlineSlack)
 	defer cancel()
 
+	// written counts every frame the pacer wrote, idle silence frames included, so the queue estimate in the feeder runs a few frames low at the start. The hold-back margin is far larger than that.
 	written := &atomic.Int64{}
 	progress := make(chan struct{}, 1)
+	sinkFailed := make(chan struct{})
+	var sinkOnce sync.Once
 	input, err := newRealtimeAudioInput(func(frame []byte, d time.Duration) error {
 		err := call.WriteOpusFrame(frame, d)
+		if err != nil {
+			sinkOnce.Do(func() { close(sinkFailed) })
+		}
 		written.Add(1)
 		select {
 		case progress <- struct{}{}:
@@ -129,19 +145,24 @@ func (h *Handler) AudioTranscriptions(c *gin.Context) {
 	defer input.Close()
 	input.Start(ctx)
 
+	// feedDone gets nil once all the audio and the trailing silence were written to the call, or the failure that stopped the feeder.
 	feedDone := make(chan error, 1)
 	feedExited := make(chan struct{})
 	feedCtx, stopFeed := context.WithCancel(ctx)
 	go func() {
 		defer close(feedExited)
-		feedDone <- feedTranscriptionAudio(feedCtx, input, samples, written, progress)
+		err := feedTranscriptionAudio(feedCtx, input, samples, written, progress, sinkFailed)
+		if err == nil {
+			err = input.WaitDrained(feedCtx)
+		}
+		feedDone <- err
 	}()
 	defer func() {
 		stopFeed()
 		<-feedExited
 	}()
 
-	text, status, err := readTranscript(ctx, call.Events(), feedDone)
+	text, status, err := readTranscript(ctx, call.Events(), call.Done(), feedDone, sinkFailed)
 	if err != nil {
 		transcriptionError(c, status, err.Error())
 		return
@@ -154,9 +175,12 @@ func (h *Handler) AudioTranscriptions(c *gin.Context) {
 	c.JSON(http.StatusOK, gin.H{"text": text})
 }
 
+var errTranscriptionSinkFailed = errors.New("failed to stream the audio to the Live call")
+
 // feedTranscriptionAudio queues the samples in 100 ms chunks, then the trailing silence, then commits.
 // It holds back while more than transcriptionMaxQueuedFrames frames wait for the pacer, so a 120 s upload never overflows the pacer cap.
-func feedTranscriptionAudio(ctx context.Context, input *realtimeAudioInput, samples []int16, written *atomic.Int64, progress <-chan struct{}) error {
+// sinkFailed ends the hold-back wait with errTranscriptionSinkFailed because a dead sink drains nothing.
+func feedTranscriptionAudio(ctx context.Context, input *realtimeAudioInput, samples []int16, written *atomic.Int64, progress <-chan struct{}, sinkFailed <-chan struct{}) error {
 	chunkSamples := audioUploadSampleRate * transcriptionChunkMillis / 1000
 	silenceSamples := int(transcriptionTrailingSilence * audioUploadSampleRate / time.Second)
 	var fed int64
@@ -164,6 +188,8 @@ func feedTranscriptionAudio(ctx context.Context, input *realtimeAudioInput, samp
 		for fed*2/opusFrameSamples-written.Load() > transcriptionMaxQueuedFrames {
 			select {
 			case <-progress:
+			case <-sinkFailed:
+				return errTranscriptionSinkFailed
 			case <-ctx.Done():
 				return ctx.Err()
 			}
@@ -188,12 +214,61 @@ func feedTranscriptionAudio(ctx context.Context, input *realtimeAudioInput, samp
 	return input.Commit()
 }
 
-// readTranscript waits for the user turn transcript on the Live call's events.
-// It returns the text, or the HTTP status and error to answer with.
-// feedDone carries a failure of the audio feeder; a clean finish is ignored and the wait goes on for the transcript.
-func readTranscript(ctx context.Context, events <-chan []byte, feedDone <-chan error) (string, int, error) {
-	var heard strings.Builder
-	feed := feedDone
+// transcriptCollector follows the user turns of a Live call and joins their transcripts in order.
+type transcriptCollector struct {
+	parts    []string
+	heard    strings.Builder
+	userOpen bool
+	userSeen bool
+}
+
+// handle applies one sideband event. A non-nil error is an upstream error event.
+func (t *transcriptCollector) handle(raw []byte) error {
+	root := gjson.ParseBytes(raw)
+	switch root.Get("type").String() {
+	case "turn.created":
+		if realtimeAudioTurnRole(root) == "user" {
+			t.userOpen, t.userSeen = true, true
+		}
+	case "input_transcript.added":
+		t.userOpen, t.userSeen = true, true
+		t.heard.WriteString(realtimeAudioString(root, "item.text", "delta", "text"))
+	case "turn.done":
+		if realtimeAudioTurnRole(root) != "user" {
+			return nil
+		}
+		text := strings.TrimSpace(realtimeAudioString(root, "turn.transcript", "transcript"))
+		if text == "" {
+			text = strings.TrimSpace(t.heard.String())
+		}
+		t.heard.Reset()
+		t.userOpen, t.userSeen = false, true
+		if text != "" {
+			t.parts = append(t.parts, text)
+		}
+	case "error":
+		return errors.New(transcriptionUpstreamMessage(root))
+	}
+	return nil
+}
+
+// complete reports whether the audio is fully written, at least one user turn was seen and none is still open.
+func (t *transcriptCollector) complete(feedFinished bool) bool {
+	return feedFinished && t.userSeen && !t.userOpen
+}
+
+func (t *transcriptCollector) text() string { return strings.Join(t.parts, " ") }
+
+// readTranscript collects the user turn transcripts of the Live call.
+// It returns once the feeder has finished (all audio and the trailing silence written) and no user turn is open, so speech after a pause inside the upload is not dropped.
+// feedDone carries nil when the feeder finished, or the failure that stopped it. sinkFailed closing, the events closing or the call ending early are 502. The ctx deadline is 504.
+func readTranscript(ctx context.Context, events <-chan []byte, callDone <-chan struct{}, feedDone <-chan error, sinkFailed <-chan struct{}) (string, int, error) {
+	var (
+		collector    transcriptCollector
+		feedFinished bool
+		feed         = feedDone
+	)
+	endedEarly := errors.New("Live call ended before a transcript was produced")
 	for {
 		select {
 		case <-ctx.Done():
@@ -201,30 +276,49 @@ func readTranscript(ctx context.Context, events <-chan []byte, feedDone <-chan e
 				return "", http.StatusGatewayTimeout, errors.New("timed out waiting for the transcript")
 			}
 			return "", http.StatusServiceUnavailable, errors.New("Request canceled")
+		case <-sinkFailed:
+			return "", http.StatusBadGateway, errTranscriptionSinkFailed
 		case err := <-feed:
-			if err != nil && ctx.Err() == nil {
-				return "", http.StatusBadGateway, fmt.Errorf("failed to stream the audio to the Live call: %w", err)
-			}
-			feed = nil
-		case raw, ok := <-events:
-			if !ok {
-				return "", http.StatusBadGateway, errors.New("Live call ended before a transcript was produced")
-			}
-			root := gjson.ParseBytes(raw)
-			switch root.Get("type").String() {
-			case "input_transcript.added":
-				heard.WriteString(realtimeAudioString(root, "item.text", "delta", "text"))
-			case "turn.done":
-				if realtimeAudioTurnRole(root) != "user" {
+			if err != nil {
+				if ctx.Err() != nil {
 					continue
 				}
-				text := strings.TrimSpace(realtimeAudioString(root, "turn.transcript", "transcript"))
-				if text == "" {
-					text = strings.TrimSpace(heard.String())
+				if errors.Is(err, errTranscriptionSinkFailed) {
+					return "", http.StatusBadGateway, err
 				}
-				return text, http.StatusOK, nil
-			case "error":
-				return "", http.StatusBadGateway, errors.New(transcriptionUpstreamMessage(root))
+				return "", http.StatusBadGateway, fmt.Errorf("%w: %v", errTranscriptionSinkFailed, err)
+			}
+			feed, feedFinished = nil, true
+			if collector.complete(feedFinished) {
+				return collector.text(), http.StatusOK, nil
+			}
+		case <-callDone:
+			// The call ended: events that were already buffered may still hold the transcript.
+			for {
+				select {
+				case raw, ok := <-events:
+					if !ok {
+						return "", http.StatusBadGateway, endedEarly
+					}
+					if err := collector.handle(raw); err != nil {
+						return "", http.StatusBadGateway, err
+					}
+					if collector.complete(feedFinished) {
+						return collector.text(), http.StatusOK, nil
+					}
+				default:
+					return "", http.StatusBadGateway, endedEarly
+				}
+			}
+		case raw, ok := <-events:
+			if !ok {
+				return "", http.StatusBadGateway, endedEarly
+			}
+			if err := collector.handle(raw); err != nil {
+				return "", http.StatusBadGateway, err
+			}
+			if collector.complete(feedFinished) {
+				return collector.text(), http.StatusOK, nil
 			}
 		}
 	}
@@ -281,6 +375,12 @@ func parseTranscriptionRequest(c *gin.Context) (*transcriptionRequest, int, erro
 		return nil, http.StatusBadRequest, errors.New("model gpt-4o-transcribe-diarize is not supported; speaker diarization is not available")
 	default:
 		return nil, http.StatusBadRequest, fmt.Errorf("model %s is not supported; use one of %s", req.model, strings.Join(transcriptionModels, ", "))
+	}
+	if req.language != "" && !transcriptionLanguagePattern.MatchString(req.language) {
+		return nil, http.StatusBadRequest, errors.New("language must be an ISO language code such as en, fr or pt-BR")
+	}
+	if utf8.RuneCountInString(req.prompt) > transcriptionMaxPromptRunes {
+		return nil, http.StatusBadRequest, fmt.Errorf("prompt is longer than %d characters", transcriptionMaxPromptRunes)
 	}
 	switch req.format {
 	case "":
