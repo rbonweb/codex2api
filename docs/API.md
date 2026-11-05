@@ -584,9 +584,10 @@ The response is `201` with `{"session":{"id":"<call id>"},"transport":{"type":"w
 | --- | --- |
 | `model` | `gpt-live-1` (default), `gpt-live-1-codex`, or a realtime or live model name such as `gpt-realtime` or `gpt-live-*`. Other names return `unsupported_value`. Every name runs `gpt-live-1-codex` upstream. |
 | `instructions` | System instructions, at most 16,384 tokens (estimated as bytes / 4). Fixed after `session.start`. When empty, none are sent upstream. When set, the gateway also sends them upstream as a leading developer message, because ChatGPT Live does not apply the `instructions` field on its own. |
-| `input` | Conversation history as message items: `type`, `role` (`user`, `assistant`, `developer` or `system`) and `content` text parts. At most 128 items (127 when `instructions` is set, since the instructions take one item) and 8,192 tokens, otherwise `invalid_value`. |
+| `input` | Conversation history as message items: `type`, `role` (`user`, `assistant`, `developer` or `system`) and `content` text parts. At most 128 items and 8,192 tokens, otherwise `invalid_value`. The gateway sends `instructions` as one more item and the transcription language as another, so the limit is 127 with one of them set and 126 with both. |
 | `audio.format` | `{"type","rate"}`, WebSocket only. See [Audio formats](#audio-formats). WebRTC negotiates the format in the SDP, so this field returns `unsupported_value` there. |
-| `audio.output.voice` | A public voice name from the table below. Default `marin`. Unknown names return `unsupported_value`. |
+| `audio.output.voice` | A public voice name from the table below. Default `marin`. Unknown names return `unsupported_value`. The voice is fixed when the session starts: ChatGPT Live answers a later change with `immutable_field_update` ("Voice cannot be updated after initialization."), so open a new session to change it. |
+| `audio.input.transcription.language` | Gateway extension, in the shape of OpenAI Realtime GA. An ISO 639-1 code such as `gu`, `hi` or `en` (any case, stored in lower case); anything else returns `invalid_value`. See [Transcription language](#transcription-language). |
 | `delegation` | `type` must be `client`. `acknowledgement` is `auto` (default) or `none`, a gateway extension. `acknowledgement_delay_ms` is an integer of 0 or more, echoed back and not acted on. `responses` returns `unsupported_value`. |
 | `store` | A boolean. Accepted and echoed in `session.started`. |
 
@@ -625,10 +626,13 @@ An append whose `content` is longer than 500 bytes is split into chunks without 
 
 | Server event | Payload and notes |
 | --- | --- |
-| `session.started` | `session`: the effective public session with `id`, `model`, `instructions`, `audio.format`, `audio.output.voice`, `delegation` and `store`. Client events sent before it are queued (up to 256) and delivered in order. |
+| `session.started` | `session`: the effective public session with `id`, `model`, `instructions`, `audio.format`, `audio.output.voice`, `audio.input.transcription.language` (when set), `delegation` and `store`. Client events sent before it are queued (up to 256) and delivered in order. |
 | `session.output_audio.delta` | `delta`: base64 reply audio in the session format. WebSocket only. |
-| `session.input_transcript.delta` | `delta`, `start_ms`, `end_ms`, and `language` when the detector is reliable (see [Languages](#languages)). |
+| `session.input_transcript.delta` | `delta`, `start_ms`, `end_ms`, and `language`: the transcription language when the session names one, otherwise the detector's answer when it is reliable (see [Languages](#languages)). |
 | `session.output_transcript.delta` | The same fields for the reply. |
+| `session.input_audio.speech_started` | `audio_start_ms`. Gateway extension. The user started speaking. See [Speech and interruption events](#speech-and-interruption-events). |
+| `session.input_audio.speech_stopped` | `audio_end_ms`. Gateway extension. The user stopped speaking. |
+| `session.output_audio.interrupted` | `turn_id` (when known). Gateway extension. The user spoke over the assistant and the reply was cut. Drop the reply audio you have queued. |
 | `session.delegation.created` | `offset_ms` and `delegation` with `id`, `type` (`delegation`), `target` (`client`) and `content`, the text of the request. Gateway extension. |
 | `session.commentary.appended`, `session.thinking.appended`, `session.instructions.appended` | Acks for the matching append, with `client_event_id` when the client sent an `event_id`. |
 | `session.input_audio.muted`, `session.input_audio.unmuted` | Acks for mute and unmute. |
@@ -638,12 +642,36 @@ An append whose `content` is longer than 500 bytes is split into chunks without 
 
 Close reasons are `close_requested` (the client sent `session.close`), `remote_hangup` (Live ended the call), `expired` (the one-hour limit) and `connection_lost` (the client's connection dropped).
 
+##### Speech and interruption events
+
+ChatGPT Live sends no speech event. Its first user word arrives about 1.5 seconds after the user started speaking and the end of the user turn about 2 seconds after the last word, so a client that wants a push-to-talk indicator or a quick "stop the speaker" needs a faster signal. The gateway adds three extension events.
+
+- **WebSocket sessions.** The gateway hears the audio, so it runs an energy voice detector on it. `session.input_audio.speech_started {audio_start_ms}` is sent once about 100 ms of speech has crossed an adaptive threshold, and `session.input_audio.speech_stopped {audio_end_ms}` after about 500 ms of silence. The times are milliseconds of audio the client has sent, counted from its first `session.input_audio.append`. The threshold is the larger of a fixed floor (about -41 dBFS) and three times the room noise the detector has been tracking, so steady background noise does not trigger it. Audio sent while the session is muted is not analysed, and `session.input_audio.mute` ends an open speech segment with `speech_stopped`.
+- **WebRTC attach sideband.** The gateway never sees the audio, so it derives the same events from Live's user turns: `speech_started` from the user `turn.created` and `speech_stopped` from the user `turn.done`, both with `"source":"upstream"` and times on the session clock. They are late by the 1.5 and 2 seconds above. On a WebSocket session the same upstream events fill in only for a turn the detector did not hear, for example speech too quiet for the threshold, and then carry `"source":"upstream"` too, so a client never sees a start or stop twice.
+- **Interruption.** `session.output_audio.interrupted {turn_id}` is sent when Live shows a barge-in: a user turn starts while an assistant turn is open, or an assistant turn ends in the same moment a user turn starts (Live reports no explicit interrupt, and cuts its own reply when the user speaks over it). `turn_id` is Live's id of the cut assistant turn. It works on both transports. Stop playing the reply audio you have buffered when you receive it.
+
+The detector is a heuristic: music, a loud fan or the assistant's own voice leaking into the microphone can start a segment. Use echo cancellation on the client.
+
+##### Transcription language
+
+`session.audio.input.transcription.language` tells the gateway which language the user speaks. When it is set:
+
+- The gateway adds one developer message to the call, after the instructions one: "The user speaks Gujarati (gu). Reply in Gujarati unless the user switches to another language." The reply language then follows the user.
+- Every `session.input_transcript.delta` carries `language` with that code instead of the detector's guess.
+- For `gu`, Devanagari characters in input transcripts are converted to Gujarati script. ChatGPT Live transcribes Gujarati speech in Devanagari; the two Unicode blocks are laid out in parallel, so letters, vowel signs, nukta, om and digits shift by 0x180 into the Gujarati block. Only code points that exist in the Gujarati block move. The danda signs, Devanagari letters with no Gujarati letter (such as the short E and the precomposed nukta letters), Latin text and everything else stay as they are. The conversion applies to input transcripts only and is a character mapping, not a transliteration of Hindi words into Gujarati spelling.
+- Arabic-script output (Urdu, for `ur`) cannot be converted this way. It is reported as Live transcribes it, with `language` set to the code you named.
+
+
 ##### Audio formats
 
 - `audio/pcm` at 24 kHz (default) or 16 kHz: 16-bit little-endian mono.
 - `audio/pcmu` and `audio/pcma`: G.711 mu-law and A-law at 8 kHz.
 
 The format applies to input and output. It is set in `session.start` only.
+
+##### Delegation timing
+
+`session.commentary.append` sent while Live is still speaking its "On it" filler is queued, not dropped: the filler finishes first and the result is spoken after it, lightly paraphrased, in the same or the next assistant turn (measured live: a result sent the instant `session.delegation.created` arrived was spoken about 600 ms after the filler ended). Set `delegation.acknowledgement` to `none` to skip the filler.
 
 ##### Voices
 
@@ -756,7 +784,7 @@ The sideband is the WebSocket at `GET /v1/live/<call_id>`. Authenticate with the
 Audio is selected in one of two ways:
 
 - The URL names an audio model, for example `/v1/realtime?model=gpt-realtime`. The connection starts as an audio session.
-- The first `session.update` sent before any turn has run sets `output_modalities` (or `modalities`) to include `audio`. The connection then switches to an audio session and receives `session.updated`. A `session.update` that asks for audio after a text turn has run does not switch the connection, so open a new one.
+- The first `session.update` sent before any turn has run asks for audio: `output_modalities` (or `modalities`) includes `audio`, `model` is an audio model, `delegation` is set, or `audio.output` is present. The connection then switches to an audio session and receives `session.updated`. A client delegation exists only on the audio bridge, so a `session.update` that carries just `delegation:{"type":"client"}` switches too; before this rule such an update was echoed back by the text path and `session.delegation.created` never arrived. A `session.update` that asks for audio after a text turn has run does not switch the connection, so open a new one.
 
 Audio model names (case-insensitive, trimmed):
 
@@ -770,7 +798,7 @@ Client events:
 
 | Client event | Behaviour |
 | --- | --- |
-| `session.update` | Before the call exists (the first audio, item or `response.create`), applies `instructions`, `voice` or `audio.output.voice`, `model`, `output_modalities` and `delegation`. After it exists, `instructions` and `voice` return `immutable_field_update` and the session keeps the original values. `model` is recorded but the upstream always runs `gpt-live-1-codex`. Replies `session.updated`. |
+| `session.update` | Before the call exists (the first audio, item or `response.create`), applies `instructions`, `voice` or `audio.output.voice`, `model`, `output_modalities`, `delegation` and `audio.input.transcription.language`. After it exists, `instructions`, `voice` and the transcription language return `immutable_field_update` and the session keeps the original values. The voice is fixed at call creation because ChatGPT Live refuses a change ("Voice cannot be updated after initialization."). `model` is recorded but the upstream always runs `gpt-live-1-codex`. Replies `session.updated`. |
 | `input_audio_buffer.append` | Queues base64 pcm16 audio. It is resampled to 48 kHz, encoded as Opus in 20 ms frames and sent at real-time pace. |
 | `input_audio_buffer.commit` | Flushes the partial 20 ms frame only. The upstream runs its own turn detection (server-side VAD), so a commit does not start a response. Replies `input_audio_buffer.committed`. |
 | `input_audio_buffer.clear` | Drops audio that is queued but not yet sent. Replies `input_audio_buffer.cleared`. |
@@ -790,10 +818,14 @@ Server events, mapped from the ChatGPT Live sideband:
 | `session.output_audio.delta` | `response.output_audio.delta` (base64 pcm16, 24 kHz) |
 | `output_transcript.added` | `response.output_audio_transcript.delta` |
 | `turn.done` (assistant) | `response.output_audio.done`, `response.output_audio_transcript.done`, `response.content_part.done`, `response.output_item.done`, `response.done` |
-| `turn.created` (user) | `conversation.item.created`, `input_audio_buffer.speech_started` |
-| `input_transcript.added` | `conversation.item.input_audio_transcription.delta` |
-| `turn.done` (user) | `input_audio_buffer.speech_stopped`, `conversation.item.input_audio_transcription.completed` |
+| `turn.created` (user) | `conversation.item.created`, and `input_audio_buffer.speech_started` only for a turn the gateway's own detector did not hear |
+| `input_transcript.added` | `conversation.item.input_audio_transcription.delta` with `language` |
+| `turn.done` (user) | `conversation.item.input_audio_transcription.completed` with `language`, and `input_audio_buffer.speech_stopped` only for a turn the detector did not hear |
+| the gateway's voice detector on `input_audio_buffer.append` | `input_audio_buffer.speech_started {audio_start_ms, item_id}` after about 100 ms of speech and `input_audio_buffer.speech_stopped {audio_end_ms, item_id}` after about 500 ms of silence |
+| a user turn over an open assistant turn | `response.output_audio.interrupted {response_id, item_id}`, then `response.done` with `status: "cancelled"` and `status_details.reason: "turn_detected"` for the cut response |
 | `error` | `error` |
+
+`input_audio_buffer.speech_started` and `speech_stopped` follow OpenAI Realtime GA (`audio_start_ms`, `audio_end_ms`, `item_id`). Live sends no speech event of its own, so the gateway detects speech in the audio it receives (see [Speech and interruption events](#speech-and-interruption-events) for how the detector works); the events arrive about 1.5 and 2 seconds earlier than the ones derived from Live's user turns, which now only fill in for speech the detector missed. `audio_start_ms` and `audio_end_ms` count milliseconds of audio received on the connection. `language` on the input transcription events is a gateway extension: the transcription language when the session names one, otherwise the detector's answer when it is reliable. `response.output_audio.interrupted` is a gateway extension (OpenAI Realtime GA signals a barge-in only with a cancelled `response.done` and, on WebRTC, `output_audio_buffer.cleared`); drop the reply audio you have queued when you receive it. A cancelled `response.done` is sent when the interruption is seen before Live ends the cut turn; when Live ends the turn first, the response was already reported as completed and `response.output_audio.interrupted` names it.
 
 Text-only output: `output_modalities: ["text"]` drops `response.output_audio.delta` and `response.output_audio.done`. Transcript events become `response.output_text.delta` and `response.output_text.done` (the done event carries `text`). The input stays audio.
 
@@ -809,6 +841,8 @@ Voice agents should use the [GPT-Live API](#gpt-live-api-v1livesessions) instead
 - The URL takes `instructions`, `voice` and `delegation` query parameters next to `model`. `delegation=none` turns off Live's spoken filler acknowledgement. Any other `delegation` value returns 400 `unsupported_value` before the upgrade. A later `session.update` sent before the call exists overrides them.
 - `conversation.item.create` text is quiet context on the `commentary` channel. Live may use it but never speaks it.
 - The delegation extension events work here too: `session.delegation.created`, `session.commentary.append`, `session.thinking.append`, `session.instructions.append` and their acks, with the same shapes as the GPT-Live API.
+- `audio.input.transcription.language` (or the legacy `input_audio_transcription.language`) takes an ISO 639-1 code and works as described in [Transcription language](#transcription-language): a developer message at call creation, the code on every input transcription event, and Devanagari converted to Gujarati script for `gu`. The model and prompt of the transcription block are accepted and ignored.
+- Speech events and interruption: see the server events table above. Commentary sent while Live is speaking its "On it" filler is queued and spoken after it.
 - Unknown session field names return `unknown_parameter` with the dotted path. Realtime fields the bridge cannot act on, such as `tools` and `temperature`, are accepted and ignored.
 
 #### Transcriptions: `POST /v1/audio/transcriptions`
@@ -875,7 +909,7 @@ Every audio model name maps to `gpt-live-1-codex`. The default instruction, used
 
 #### Limits
 
-- `POST /v1/audio/speech` is not available. ChatGPT Live answers each turn in its own words, and `session.context.append` adds context rather than a verbatim "say this" command, so no verbatim text-to-speech primitive is known.
+- `POST /v1/audio/speech` is a short, statement-only text-to-speech: see [Voices, limits and text-to-speech](#voices-limits-and-text-to-speech). Conversational calls still answer each turn in their own words.
 - The plain WebSocket voice endpoint `wss://…/v1/live` refuses voice for ChatGPT accounts ("Voice session access denied"), so the gateway always runs the upstream session over WebRTC.
 - Audio on the WebSocket path is pcm16 at 24 kHz or 16 kHz. WebRTC clients send and receive Opus on their own peer connection.
 
@@ -892,8 +926,87 @@ Every audio model name maps to `gpt-live-1-codex`. The default instruction, used
 - OpenAI publishes no complete list of languages for ChatGPT voice or `gpt-live-1`. It names dedicated voices for English, Brazilian Portuguese, French, German, Hindi, Japanese, Korean and Mexican Spanish. Azure describes `gpt-live-1` as "multilingual across 10 languages" without naming them.
 - `/v1/audio/transcriptions` follows Whisper-family coverage, about 98 languages. Accuracy varies by language.
 - Tested through this gateway: English, Indian English and Hindi. Hindi is transcribed in Devanagari.
+- Set `audio.input.transcription.language` (on `/v1/live/sessions` `session.start`, as a gateway extension, and on `/v1/realtime`) to tell the model which language the user speaks. For `gu` the gateway converts Devanagari transcripts to Gujarati script; Urdu (Arabic script) output cannot be converted. See [Transcription language](#transcription-language).
 - The `language` field on transcript events comes from a gateway-side detector (whatlanggo, about 84 languages). It is left out when the detection is not reliable or the text has fewer than three words.
 - Test any other language, Gujarati included, before production.
+
+#### Voices, limits and text-to-speech
+
+##### Voices: `GET /v1/audio/voices`
+
+`GET /v1/live/voices`, `GET /audio/voices` and `GET /live/voices` return the same list. The list is generated from the gateway's voice tables, so it always matches the names the audio endpoints accept: the 10 OpenAI Realtime voices, the 22 public GPT-Live voices and the 9 native ChatGPT Live voices. Matching is case-insensitive.
+
+```bash
+curl https://your-gateway/v1/audio/voices -H "Authorization: Bearer $API_KEY"
+```
+
+```json
+{
+  "object": "list",
+  "data": [
+    {"id": "alloy", "object": "voice", "groups": ["openai"], "live_voice": "cove"},
+    {"id": "marin", "object": "voice", "groups": ["openai", "gpt-live"], "live_voice": "maple"},
+    {"id": "cove", "object": "voice", "groups": ["live"], "live_voice": "cove"}
+  ],
+  "defaults": {
+    "realtime": {"voice": "cove", "live_voice": "cove"},
+    "live_sessions": {"voice": "marin", "live_voice": "maple"}
+  }
+}
+```
+
+- `groups` says which family accepts the name: `openai` (Realtime and speech), `gpt-live` (the GPT-Live API) and `live` (native names, accepted everywhere). A name in several families maps to the same Live voice in all of them.
+- `live_voice` is the ChatGPT Live voice the call really uses. Only nine exist, so several names share one.
+- `defaults.realtime` is the voice `/v1/realtime`, `/v1/realtime/calls` and `/v1/audio/speech` use when the request names none. `defaults.live_sessions` is the default of `/v1/live/sessions`.
+- The voice is fixed for the whole call. ChatGPT Live answers a later change with `immutable_field_update` and the message "Voice cannot be updated after initialization.", and the voice stays as it was. Choose it when the call is created, or open a new call.
+
+##### Limits
+
+| Limit | Value |
+| --- | --- |
+| Call length | 1 hour per call. The gateway closes the call at the limit. |
+| Concurrent calls | About 2 per ChatGPT account. In testing, a third concurrent call on one account got 503. Spread load over several accounts. |
+| Per API key | Set per key in the admin: the `allow_live` switch (default on) and the key's `max_concurrency`, `rpm` and `rpd`. An open call holds one concurrency slot until it ends. |
+| Speech input | 1,000 characters per request, 400 above. |
+| Transcription input | 25 MiB and 120 seconds of audio. |
+
+##### Billing
+
+- The gateway does not charge per minute. Calls use the voice allowance of the ChatGPT plan behind the account.
+- Silence counts as call time for as long as the session is open. Close idle sessions.
+- `session.usage.updated` reports the open audio time of the call in `usage.seconds`.
+- Each call and its duration are logged in the gateway's usage records like any other request.
+
+##### Text-to-speech: `POST /v1/audio/speech`
+
+`POST /audio/speech` is the same endpoint without the `/v1` prefix. The request follows the OpenAI speech API.
+
+```bash
+curl https://your-gateway/v1/audio/speech \
+  -H "Authorization: Bearer $API_KEY" \
+  -H "Content-Type: application/json" \
+  -d '{"model":"gpt-4o-mini-tts","input":"The quick brown fox jumps over the lazy dog.","voice":"alloy","response_format":"wav"}' \
+  --output speech.wav
+```
+
+| Field | Required | Notes |
+| --- | --- | --- |
+| `input` | yes | The text to read. At most 1,000 characters, otherwise 400. |
+| `model` | no | `gpt-4o-mini-tts` (default), `tts-1` or `tts-1-hd`. All three are the same upstream voice. Other models return 400 `unsupported_value`. |
+| `voice` | no | Any name from the voices list. An unknown name returns 400 `unsupported_value`. Default `cove`. |
+| `response_format` | no | `wav` (default) or `pcm`. WAV is 24 kHz, mono, 16-bit. `pcm` is the same audio without the header (`audio/pcm`). `mp3`, `opus`, `aac` and `flac` return 400 `unsupported_value` and list the supported formats. |
+| `speed` | no | Only `1`. Any other value returns 400 `unsupported_value`. |
+| `instructions` | no | A speaking style, such as "Speak slowly." At most 1,000 characters. It goes into the developer message, and Live applies it on a best-effort basis. |
+| `stream_format` | no | Only `audio`. `sse` returns 400 `unsupported_value`. |
+
+How it works and what to expect:
+
+- The gateway opens one Live call whose developer message says "You are a text-to-speech engine. Read the user's text aloud exactly, word for word, then stop.", sends the text as `session.context.append` on the `speakable` channel, collects the reply audio until the assistant turn ends, trims the silence Live streams around it, and closes the call. The call-create `instructions` field alone is ignored upstream, which is why the developer message is used.
+- Plain statements are read word for word. Latency is about one second to the first sound, and the audio is produced at real time, so a 10-second sentence takes about 12 seconds.
+- Questions may be skipped. In testing, "What is the capital of France?" was acknowledged and never spoken, because Live treats it as something to answer. To reduce this, text that contains a question mark is wrapped in double quotation marks and the developer message adds that quoted text is read aloud and never answered. This is untested against the live upstream, so do not rely on it. Phrase text as statements when you can.
+- When no sound arrives within 12 seconds of sending the text, or the audio does not finish within 10 seconds plus 130 ms per character, the request returns 504 `upstream_timeout` with the message "the voice model did not read the text".
+- Use it for short text only. There is no streaming, no speed control and no MP3. For long or exact narration, use a dedicated text-to-speech service.
+- Successful responses carry `X-Codex2api-Live-Setup-Ms`. Upstream failures return 502, a missing `allow_live` returns 403, and builds without the `opus` tag answer 501 `audio_bridge_unavailable`.
 
 ### 5. List Models
 

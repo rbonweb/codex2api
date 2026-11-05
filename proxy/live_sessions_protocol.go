@@ -44,6 +44,7 @@ type liveSessionConfig struct {
 	FormatRate   int               // 24000 | 16000 | 8000
 	AckFiller    bool              // internal delegation.ack_filler
 	AckDelayMS   int               // accepted acknowledgement_delay_ms, echoed only
+	Language     string            // gateway extension audio.input.transcription.language, an ISO 639-1 code in lower case, "" when unset
 	InitialItems []json.RawMessage // internal initial_items
 	Store        *bool
 }
@@ -136,8 +137,24 @@ func parseLiveSessionObject(session gjson.Result, clientEventID string) (*liveSe
 		if !audio.IsObject() {
 			return fail("invalid_value", "session.audio", "session.audio must be an object.")
 		}
-		if e := liveUnknownKeys(audio, "session.audio", []string{"format", "output"}, clientEventID); e != nil {
+		if e := liveUnknownKeys(audio, "session.audio", []string{"format", "output", "input"}, clientEventID); e != nil {
 			return nil, e
+		}
+		if in := audio.Get("input"); !liveAbsent(in) {
+			if !in.IsObject() {
+				return fail("invalid_value", "session.audio.input", "session.audio.input must be an object.")
+			}
+			if e := liveUnknownKeys(in, "session.audio.input", []string{"transcription"}, clientEventID); e != nil {
+				return nil, e
+			}
+			if tr := in.Get("transcription"); !liveAbsent(tr) {
+				if !tr.IsObject() {
+					return fail("invalid_value", "session.audio.input.transcription", "session.audio.input.transcription must be an object.")
+				}
+				if e := liveUnknownKeys(tr, "session.audio.input.transcription", []string{"language"}, clientEventID); e != nil {
+					return nil, e
+				}
+			}
 		}
 		if f := audio.Get("format"); !liveAbsent(f) {
 			if !f.IsObject() {
@@ -267,9 +284,21 @@ func parseLiveSessionObject(session gjson.Result, clientEventID string) (*liveSe
 		}
 	}
 
+	// transcription language (gateway extension, the shape of OpenAI Realtime GA audio.input.transcription.language)
+	if l := audio.Get("input.transcription.language"); !liveAbsent(l) {
+		if l.Type != gjson.String {
+			return fail("invalid_value", "session.audio.input.transcription.language", "session.audio.input.transcription.language must be a string.")
+		}
+		code, ok := normalizeTranscriptionLanguage(l.String())
+		if !ok {
+			return fail("invalid_value", "session.audio.input.transcription.language", "session.audio.input.transcription.language must be an ISO 639-1 code such as en, hi or gu.")
+		}
+		cfg.Language = code
+	}
+
 	// input history
 	if v := session.Get("input"); !liveAbsent(v) {
-		items, e := liveConvertInput(v, cfg.Instructions, clientEventID)
+		items, e := liveConvertInput(v, cfg.Instructions, cfg.Language, clientEventID)
 		if e != nil {
 			return nil, e
 		}
@@ -328,8 +357,8 @@ func parseLiveSessionObject(session gjson.Result, clientEventID string) (*liveSe
 
 // liveConvertInput turns the public input history into internal initial_items.
 // Internal roles are user, assistant and developer (Codex sends all three); the public system role maps to developer.
-// With instructions set, the gateway prepends one developer message of its own, so the input may hold one item fewer than liveSessionMaxInputItems.
-func liveConvertInput(input gjson.Result, instructions string, clientEventID string) ([]json.RawMessage, *liveSessionError) {
+// The gateway prepends one developer message of its own for the instructions and one for the transcription language when they are set, so the input may hold that many items fewer than liveSessionMaxInputItems.
+func liveConvertInput(input gjson.Result, instructions, language string, clientEventID string) ([]json.RawMessage, *liveSessionError) {
 	fail := func(code, param, msg string) ([]json.RawMessage, *liveSessionError) {
 		return nil, newLiveSessionError(code, param, msg, clientEventID)
 	}
@@ -338,12 +367,21 @@ func liveConvertInput(input gjson.Result, instructions string, clientEventID str
 	}
 	entries := input.Array()
 	maxItems := liveSessionMaxInputItems
+	var reserved []string
 	if instructions != "" {
 		maxItems--
+		reserved = append(reserved, "session.instructions")
+	}
+	if language != "" {
+		maxItems--
+		reserved = append(reserved, "session.audio.input.transcription.language")
 	}
 	if len(entries) > maxItems {
-		if instructions != "" {
+		if len(reserved) == 1 && instructions != "" {
 			return fail("invalid_value", "session.input", "session.input has more than 127 items when session.instructions is set, because the instructions are sent as one more item.")
+		}
+		if len(reserved) > 0 {
+			return fail("invalid_value", "session.input", "session.input has more than "+liveItoa(maxItems)+" items when "+strings.Join(reserved, " and ")+" is set, because the gateway sends "+strings.Join(reserved, " and ")+" as "+liveItoa(len(reserved))+" more item(s).")
 		}
 		return fail("invalid_value", "session.input", "session.input has more than 128 items.")
 	}
@@ -449,6 +487,7 @@ func liveItoa(n int) string {
 }
 
 // UpstreamSession is the internal call-create session: {model:"gpt-live-1-codex", instructions, audio:{output:{voice}}, delegation:{type:"client", ack_filler:false only when disabled}, initial_items (when any)}.
+// The transcription language, when set, adds one more developer message after the instructions one.
 // Non-empty instructions are delivered twice: in the instructions field and as a developer message that leads initial_items, before the client's input, because ChatGPT Live does not apply the instructions field on its own (proven live on 2026-11-05).
 // Empty instructions are left out of both: a call without them is proven to work and stays silent until the user speaks.
 func (cfg *liveSessionConfig) UpstreamSession() json.RawMessage {
@@ -467,6 +506,9 @@ func (cfg *liveSessionConfig) UpstreamSession() json.RawMessage {
 	items := make([]any, 0, len(cfg.InitialItems)+1)
 	if cfg.Instructions != "" {
 		items = append(items, liveInstructionsItem(cfg.Instructions))
+	}
+	if cfg.Language != "" {
+		items = append(items, transcriptionLanguageItem(cfg.Language))
 	}
 	for _, item := range cfg.InitialItems {
 		items = append(items, item)
@@ -497,6 +539,9 @@ func (cfg *liveSessionConfig) PublicSession(id string) map[string]any {
 			"acknowledgement_delay_ms": cfg.AckDelayMS,
 			"acknowledgement":          ack,
 		},
+	}
+	if cfg.Language != "" {
+		session["audio"].(map[string]any)["input"] = map[string]any{"transcription": map[string]any{"language": cfg.Language}}
 	}
 	if cfg.Store != nil {
 		session["store"] = *cfg.Store
@@ -536,10 +581,36 @@ type liveSessionTranslator struct {
 	timing    [2]liveTiming
 	turnDir   map[string]int // turn id -> 0 user, 1 assistant, for the role-less turn.delta
 	ackSeq    int
+	barge     *audioBargeIn
+	speech    audioSpeechTracker
+	// fixScript converts input transcripts to the script of the transcription language (Gujarati); nil leaves them as they are.
+	fixScript func(string) string
 }
 
 func newLiveSessionTranslator(cfg *liveSessionConfig) *liveSessionTranslator {
-	return &liveSessionTranslator{cfg: cfg, now: time.Now, acks: map[string][]*liveAck{}, turnDir: map[string]int{}}
+	t := &liveSessionTranslator{cfg: cfg, now: time.Now, acks: map[string][]*liveAck{}, turnDir: map[string]int{}}
+	t.barge = newAudioBargeIn(func() time.Time { return t.now() })
+	if cfg != nil {
+		t.fixScript = transcriptionScriptFix(cfg.Language)
+	}
+	return t
+}
+
+// Speech turns the detector's changes on the client's audio into session.input_audio.speech_started {audio_start_ms} and session.input_audio.speech_stopped {audio_end_ms}; the times count milliseconds of audio the client has sent. The detector reports them well before ChatGPT Live does, so the upstream turn events add nothing for a turn the detector saw.
+func (t *liveSessionTranslator) Speech(events []audioSpeechEvent) [][]byte {
+	t.mu.Lock()
+	defer t.mu.Unlock()
+	var out [][]byte
+	for _, ev := range events {
+		t.speech.Detector(ev)
+		typ, key := "session.input_audio.speech_stopped", "audio_end_ms"
+		if ev.Started {
+			typ, key = "session.input_audio.speech_started", "audio_start_ms"
+		}
+		raw, _ := json.Marshal(map[string]any{"type": typ, key: ev.MS})
+		out = append(out, raw)
+	}
+	return out
 }
 
 // liveClientResult is what one public client event asks the transport to do.
@@ -829,6 +900,8 @@ func (t *liveSessionTranslator) Upstream(raw []byte) liveUpstreamResult {
 		dir, typ := 0, "session.input_transcript.delta"
 		if root.Get("type").String() == "output_transcript.added" {
 			dir, typ = 1, "session.output_transcript.delta"
+		} else if t.fixScript != nil {
+			delta = t.fixScript(delta)
 		}
 		event := map[string]any{"type": typ, "delta": delta, "start_ms": root.Get("start_ms").Int(), "end_ms": root.Get("end_ms").Int()}
 		// An added event without timings takes the latest ones reported for the same role by turn.created or turn.delta.
@@ -843,17 +916,28 @@ func (t *liveSessionTranslator) Upstream(raw []byte) liveUpstreamResult {
 		// Deltas are word fragments, too short to identify a language, so the detector reads the accumulated text of the current turn (the last 200 bytes of it, for this direction only).
 		// The language is put on every delta from the moment the detector is reliable; the accumulator is reset when the turn of that role ends.
 		t.heard[dir] = liveTrimTail(t.heard[dir]+delta, liveLanguageWindow)
-		if lang := liveTranscriptLanguage(t.heard[dir]); lang != "" {
+		if dir == 0 && t.cfg != nil && t.cfg.Language != "" {
+			// The client named the language, so it is reported as given instead of the detector's guess.
+			event["language"] = t.cfg.Language
+		} else if lang := liveTranscriptLanguage(t.heard[dir]); lang != "" {
 			event["language"] = lang
 		}
 		emit(event)
 
 	case "turn.created":
-		if dir, ok := liveTurnDir(realtimeAudioTurnRole(root)); ok {
+		role := realtimeAudioTurnRole(root)
+		if dir, ok := liveTurnDir(role); ok {
 			if id := root.Get("turn.id").String(); id != "" {
 				t.turnDir[id] = dir
 			}
 			t.noteTiming(dir, root.Get("turn.start_ms"), root.Get("turn.end_ms"))
+		}
+		if role == "user" && t.speech.TurnCreated() {
+			// No detector saw this speech (a WebRTC attach, or too quiet): report the start from the upstream turn, on the session clock.
+			emit(map[string]any{"type": "session.input_audio.speech_started", "audio_start_ms": root.Get("turn.start_ms").Int(), "source": "upstream"})
+		}
+		if turnID, interrupted := t.barge.Turn("created", role, root.Get("turn.id").String()); interrupted {
+			emit(liveInterruptedEvent(turnID))
 		}
 
 	case "turn.delta":
@@ -863,9 +947,16 @@ func (t *liveSessionTranslator) Upstream(raw []byte) liveUpstreamResult {
 		}
 
 	case "turn.done":
-		if dir, ok := liveTurnDir(realtimeAudioTurnRole(root)); ok {
+		role := realtimeAudioTurnRole(root)
+		if dir, ok := liveTurnDir(role); ok {
 			t.heard[dir], t.timing[dir] = "", liveTiming{}
 			delete(t.turnDir, root.Get("turn.id").String())
+		}
+		if role == "user" && t.speech.TurnDone() {
+			emit(map[string]any{"type": "session.input_audio.speech_stopped", "audio_end_ms": root.Get("turn.end_ms").Int(), "source": "upstream"})
+		}
+		if turnID, interrupted := t.barge.Turn("done", role, root.Get("turn.id").String()); interrupted {
+			emit(liveInterruptedEvent(turnID))
 		}
 
 	case "delegation.created":
@@ -906,6 +997,15 @@ func (t *liveSessionTranslator) Upstream(raw []byte) liveUpstreamResult {
 		res.Client = append(res.Client, liveErrorEvent(liveFirstString(e, "type"), code, message, param, clientEventID))
 	}
 	return res
+}
+
+// liveInterruptedEvent is the gateway extension session.output_audio.interrupted: the user spoke over the assistant, so the assistant reply was cut. The client should drop the reply audio it has queued. turn_id is the upstream id of the cut assistant turn.
+func liveInterruptedEvent(turnID string) map[string]any {
+	event := map[string]any{"type": "session.output_audio.interrupted"}
+	if turnID != "" {
+		event["turn_id"] = turnID
+	}
+	return event
 }
 
 func liveFirstString(root gjson.Result, paths ...string) string {

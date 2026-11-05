@@ -13,6 +13,7 @@ import (
 	"github.com/codex2api/security"
 	"github.com/gin-gonic/gin"
 	"github.com/gorilla/websocket"
+	"github.com/tidwall/gjson"
 )
 
 // liveSessionStartTimeout is how long a client has to send session.start after the upgrade.
@@ -87,6 +88,9 @@ type liveWSSession struct {
 	decoder    *clientAudioDecoder
 	encoder    *clientAudioEncoder
 	input      *realtimeAudioInput
+	// vad watches the client's input audio for speech start and stop. Only the client loop touches it. muted mirrors session.input_audio.mute, during which the audio is neither analysed nor sent.
+	vad   *audioVAD
+	muted bool
 
 	end       chan string
 	loopDone  chan struct{}
@@ -149,6 +153,7 @@ func (s *liveWSSession) run() {
 	s.translator = newLiveSessionTranslator(cfg)
 	s.call, s.input = call, input
 	s.decoder, s.encoder = newClientAudioDecoder(format), newClientAudioEncoder(format)
+	s.vad = newAudioVAD()
 	input.Start(s.ctx)
 
 	// Whatever way the session ends, the input, the call and the goroutines are released.
@@ -336,6 +341,18 @@ func (s *liveWSSession) handleClientEvent(raw []byte) bool {
 	if res.Close {
 		s.closeSeen = true
 	}
+	var speech [][]byte
+	switch gjson.GetBytes(raw, "type").String() {
+	case "session.input_audio.mute":
+		s.muted = true
+		// Audio stops here, so an open speech segment ends now.
+		if ev, ok := s.vad.Reset(); ok {
+			speech = s.translator.Speech([]audioSpeechEvent{ev})
+		}
+	case "session.input_audio.unmute":
+		s.muted = false
+	}
+	res.Client = append(res.Client, speech...)
 	for _, event := range res.Client {
 		if !s.writeLocked(event) {
 			s.mu.Unlock()
@@ -355,6 +372,16 @@ func (s *liveWSSession) handleClientEvent(raw []byte) bool {
 				s.mu.Lock()
 				s.writeLocked(liveErrorEvent("", "invalid_value", "The audio could not be processed: "+err.Error(), "audio", ""))
 				s.mu.Unlock()
+			} else if !s.muted {
+				if events := s.translator.Speech(s.vad.Process(pcm)); len(events) > 0 {
+					s.mu.Lock()
+					for _, event := range events {
+						if !s.writeLocked(event) {
+							break
+						}
+					}
+					s.mu.Unlock()
+				}
 			}
 		}
 	}

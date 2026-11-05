@@ -101,16 +101,21 @@ func liveInstructionsItem(instructions string) map[string]any {
 // buildLiveAudioSession returns the session.update body sent to ChatGPT Live when a conversational call is created (/v1/realtime and /v1/realtime/calls).
 // The effective instructions (the default when the client gave none) go in the instructions field and as the only initial_items developer message.
 func buildLiveAudioSession(model, voice, instructions string) json.RawMessage {
-	return buildLiveAudioSessionWith(model, voice, instructions, true)
+	return buildLiveAudioSessionWith(model, voice, instructions, "", true)
+}
+
+// buildLiveAudioSessionForLanguage is buildLiveAudioSession with the transcription language: a non-empty ISO 639-1 code adds one developer message saying the user speaks that language and replies should use it unless the user switches.
+func buildLiveAudioSessionForLanguage(model, voice, instructions, language string) json.RawMessage {
+	return buildLiveAudioSessionWith(model, voice, instructions, language, true)
 }
 
 // buildLiveTranscriptionSession is the call-create session for /v1/audio/transcriptions: the instructions field only, with no developer item.
 // A developer item carrying the stay-silent text stops ChatGPT Live from completing the user turn, so the transcript times out (live QA, 2026-11-05).
 func buildLiveTranscriptionSession(instructions string) json.RawMessage {
-	return buildLiveAudioSessionWith(liveAudioDefaultModel, "", instructions, false)
+	return buildLiveAudioSessionWith(liveAudioDefaultModel, "", instructions, "", false)
 }
 
-func buildLiveAudioSessionWith(model, voice, instructions string, instructionsItem bool) json.RawMessage {
+func buildLiveAudioSessionWith(model, voice, instructions, language string, instructionsItem bool) json.RawMessage {
 	if strings.TrimSpace(instructions) == "" {
 		instructions = liveAudioDefaultInstructions
 	}
@@ -123,7 +128,11 @@ func buildLiveAudioSessionWith(model, voice, instructions string, instructionsIt
 		"delegation": map[string]any{"type": "client"},
 	}
 	if instructionsItem {
-		session["initial_items"] = []any{liveInstructionsItem(instructions)}
+		items := []any{liveInstructionsItem(instructions)}
+		if language != "" {
+			items = append(items, transcriptionLanguageItem(language))
+		}
+		session["initial_items"] = items
 	}
 	raw, _ := json.Marshal(session)
 	return raw

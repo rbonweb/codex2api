@@ -20,6 +20,8 @@ type realtimeAudioConfig struct {
 	OutputRate int
 	// DelegationNoAck asks Live not to speak a filler acknowledgement while a client delegation runs (delegation.acknowledgement "none").
 	DelegationNoAck bool
+	// TranscriptionLanguage is audio.input.transcription.language (ISO 639-1, lower case): the language the user speaks. It is reported on every input transcript, adds one developer message at call creation and, for Gujarati, converts Devanagari transcripts to Gujarati script.
+	TranscriptionLanguage string
 	// NoCreateResponse records turn_detection.create_response:false. Live still decides when to speak, so it only changes what the session object reports; the bridge never sends response.create on its own, and a client response.create is forwarded either way.
 	NoCreateResponse bool
 }
@@ -118,6 +120,8 @@ type realtimeAudioResponse struct {
 	id         string
 	itemID     string
 	transcript string
+	// interrupted is set when the user spoke over the response: it then ends as cancelled with reason turn_detected.
+	interrupted bool
 }
 
 // realtimeAudioUserItem tracks the user item that is currently being transcribed.
@@ -137,6 +141,15 @@ type realtimeAudioMapper struct {
 	user          realtimeAudioUserItem
 	pendingUserID string
 	lastItemID    string
+
+	// lastResponseID and lastResponseItemID name the response that ended last, for an interruption reported after its turn.done.
+	lastResponseID     string
+	lastResponseItemID string
+	barge              *audioBargeIn
+	speech             audioSpeechTracker
+	// language is the transcription language the client named ("" detects it); fixScript converts input transcripts to its script.
+	language  string
+	fixScript func(string) string
 }
 
 // newRealtimeAudioMapper creates a mapper; a nil newID uses defaultRealtimeAudioID.
@@ -144,7 +157,38 @@ func newRealtimeAudioMapper(newID func(prefix string) string) *realtimeAudioMapp
 	if newID == nil {
 		newID = defaultRealtimeAudioID
 	}
-	return &realtimeAudioMapper{newID: newID}
+	return &realtimeAudioMapper{newID: newID, barge: newAudioBargeIn(nil)}
+}
+
+// SetTranscriptionLanguage fixes the language reported on input transcripts and the script they are converted to.
+func (m *realtimeAudioMapper) SetTranscriptionLanguage(code string) {
+	m.language, m.fixScript = code, transcriptionScriptFix(code)
+}
+
+// Speech turns the detector's changes on the client's audio into input_audio_buffer.speech_started and input_audio_buffer.speech_stopped with the item the speech will belong to. They come well before the ones derived from the upstream turn events, which then stay silent for a turn the detector saw.
+func (m *realtimeAudioMapper) Speech(events []audioSpeechEvent) [][]byte {
+	var out [][]byte
+	for _, ev := range events {
+		m.speech.Detector(ev)
+		payload := map[string]any{"type": "input_audio_buffer.speech_stopped", "audio_end_ms": ev.MS, "item_id": m.UserItemID(), "event_id": m.newID("event")}
+		if ev.Started {
+			payload["type"] = "input_audio_buffer.speech_started"
+			delete(payload, "audio_end_ms")
+			payload["audio_start_ms"] = ev.MS
+		}
+		out = append(out, marshalRealtimeServerEvent(payload))
+	}
+	return out
+}
+
+// interrupt reports that the user spoke over the assistant: the open response ends as cancelled, and the extension event response.output_audio.interrupted names the response (the last one when it already ended).
+func (m *realtimeAudioMapper) interrupt(emit func(map[string]any)) {
+	responseID, itemID := m.lastResponseID, m.lastResponseItemID
+	if m.assistant.open {
+		m.assistant.interrupted = true
+		responseID, itemID = m.assistant.id, m.assistant.itemID
+	}
+	emit(map[string]any{"type": "response.output_audio.interrupted", "response_id": responseID, "item_id": itemID})
 }
 
 // defaultRealtimeAudioID returns prefix plus a random UUID without dashes, cut to 24 characters.
@@ -192,15 +236,20 @@ func (m *realtimeAudioMapper) MapUpstream(raw []byte) [][]byte {
 
 	switch root.Get("type").String() {
 	case "turn.created":
-		switch realtimeAudioTurnRole(root) {
+		role := realtimeAudioTurnRole(root)
+		switch role {
 		case "assistant":
 			m.openResponse(emit)
 		case "user":
 			m.openUserItem(emit)
-			if !m.user.speechStarted {
+			// A turn the detector did not hear is reported from the upstream event, on the session clock.
+			if m.speech.TurnCreated() {
 				m.user.speechStarted = true
-				emit(map[string]any{"type": "input_audio_buffer.speech_started", "item_id": m.user.id, "audio_start_ms": 0})
+				emit(map[string]any{"type": "input_audio_buffer.speech_started", "item_id": m.user.id, "audio_start_ms": root.Get("turn.start_ms").Int()})
 			}
+		}
+		if _, interrupted := m.barge.Turn("created", role, root.Get("turn.id").String()); interrupted {
+			m.interrupt(emit)
 		}
 
 	case "session.output_audio.delta", "output_audio.delta":
@@ -228,28 +277,48 @@ func (m *realtimeAudioMapper) MapUpstream(raw []byte) [][]byte {
 		m.assistant.transcript += delta
 
 	case "turn.done":
-		switch realtimeAudioTurnRole(root) {
+		role := realtimeAudioTurnRole(root)
+		switch role {
 		case "assistant":
 			m.closeResponse(emit, root)
 		case "user":
 			m.closeUserItem(emit, root)
 		}
+		if _, interrupted := m.barge.Turn("done", role, root.Get("turn.id").String()); interrupted {
+			m.interrupt(emit)
+		}
 
 	case "input_transcript.added":
 		m.openUserItem(emit)
 		delta := realtimeAudioString(root, "item.text", "delta", "text")
-		emit(map[string]any{
+		if m.fixScript != nil {
+			delta = m.fixScript(delta)
+		}
+		m.user.transcript += delta
+		event := map[string]any{
 			"type":          "conversation.item.input_audio_transcription.delta",
 			"item_id":       m.user.id,
 			"content_index": 0,
 			"delta":         delta,
-		})
-		m.user.transcript += delta
+		}
+		// Gateway extension: language is the one the client named, or the detector's guess on the transcript so far.
+		if lang := m.transcriptLanguage(m.user.transcript); lang != "" {
+			event["language"] = lang
+		}
+		emit(event)
 
 	case "error":
 		m.mapError(emit, root)
 	}
 	return out
+}
+
+// transcriptLanguage returns the language to report for an input transcript: the configured one, else the detector's answer on the last 200 bytes (empty when it is not reliable).
+func (m *realtimeAudioMapper) transcriptLanguage(transcript string) string {
+	if m.language != "" {
+		return m.language
+	}
+	return liveTranscriptLanguage(liveTrimTail(transcript, liveLanguageWindow))
 }
 
 // realtimeAudioTurnRole reads the speaker of a turn from turn.role, falling back to the top-level role.
@@ -322,12 +391,16 @@ func (m *realtimeAudioMapper) closeResponse(emit func(map[string]any), turn gjso
 	}
 	responseID := m.assistant.id
 	itemID := m.assistant.itemID
+	status, itemStatus := "completed", "completed"
+	if m.assistant.interrupted {
+		status, itemStatus = "cancelled", "incomplete"
+	}
 	item := map[string]any{
 		"id":     itemID,
 		"object": "realtime.item",
 		"type":   "message",
 		"role":   "assistant",
-		"status": "completed",
+		"status": itemStatus,
 		"content": []any{
 			map[string]any{"type": "output_audio", "transcript": transcript},
 		},
@@ -362,17 +435,19 @@ func (m *realtimeAudioMapper) closeResponse(emit func(map[string]any), turn gjso
 		"output_index": 0,
 		"item":         item,
 	})
-	emit(map[string]any{
-		"type": "response.done",
-		"response": map[string]any{
-			"id":     responseID,
-			"object": "realtime.response",
-			"status": "completed",
-			"output": []any{item},
-		},
-	})
+	response := map[string]any{
+		"id":     responseID,
+		"object": "realtime.response",
+		"status": status,
+		"output": []any{item},
+	}
+	if status == "cancelled" {
+		response["status_details"] = map[string]any{"type": "cancelled", "reason": "turn_detected"}
+	}
+	emit(map[string]any{"type": "response.done", "response": response})
 
 	m.lastItemID = itemID
+	m.lastResponseID, m.lastResponseItemID = responseID, itemID
 	m.assistant = realtimeAudioResponse{}
 }
 
@@ -407,19 +482,26 @@ func (m *realtimeAudioMapper) openUserItem(emit func(map[string]any)) {
 func (m *realtimeAudioMapper) closeUserItem(emit func(map[string]any), turn gjson.Result) {
 	m.openUserItem(emit)
 	transcript := turn.Get("turn.transcript").String()
+	if m.fixScript != nil {
+		transcript = m.fixScript(transcript)
+	}
 	if transcript == "" {
 		transcript = m.user.transcript
 	}
 	itemID := m.user.id
-	if m.user.speechStarted {
-		emit(map[string]any{"type": "input_audio_buffer.speech_stopped", "item_id": itemID, "audio_end_ms": 0})
+	if m.speech.TurnDone() {
+		emit(map[string]any{"type": "input_audio_buffer.speech_stopped", "item_id": itemID, "audio_end_ms": turn.Get("turn.end_ms").Int()})
 	}
-	emit(map[string]any{
+	completed := map[string]any{
 		"type":          "conversation.item.input_audio_transcription.completed",
 		"item_id":       itemID,
 		"content_index": 0,
 		"transcript":    transcript,
-	})
+	}
+	if lang := m.transcriptLanguage(transcript); lang != "" {
+		completed["language"] = lang
+	}
+	emit(completed)
 
 	m.lastItemID = itemID
 	m.user = realtimeAudioUserItem{}
@@ -497,6 +579,9 @@ func realtimeAudioSessionObject(cfg *realtimeAudioConfig, id string) map[string]
 		},
 		"delegation": delegation,
 	}
+	if cfg.TranscriptionLanguage != "" {
+		session["audio"].(map[string]any)["input"].(map[string]any)["transcription"] = map[string]any{"language": cfg.TranscriptionLanguage}
+	}
 	if id != "" {
 		session["id"] = id
 	}
@@ -572,6 +657,26 @@ func realtimeAudioApplyDelegation(session gjson.Result, next *realtimeAudioConfi
 	return nil
 }
 
+// realtimeAudioApplyTranscription reads the transcription language: audio.input.transcription.language (OpenAI Realtime GA) or the legacy input_audio_transcription.language, an ISO 639-1 code. null clears it. The model and prompt of the transcription block are tolerated and ignored.
+func realtimeAudioApplyTranscription(session gjson.Result, next *realtimeAudioConfig) *api.APIError {
+	for _, path := range []string{"input_audio_transcription.language", "audio.input.transcription.language"} {
+		value := session.Get(path)
+		if !value.Exists() {
+			continue
+		}
+		if value.Type == gjson.Null {
+			next.TranscriptionLanguage = ""
+			continue
+		}
+		code, ok := normalizeTranscriptionLanguage(value.String())
+		if value.Type != gjson.String || !ok {
+			return realtimeAudioFieldError("invalid_value", "session."+path, "The transcription language must be an ISO 639-1 code such as en, hi or gu.")
+		}
+		next.TranscriptionLanguage = code
+	}
+	return nil
+}
+
 // realtimeAudioApplyTurnDetection records turn_detection.create_response. Live runs its own voice activity detection, so the rest of turn_detection is tolerated and ignored.
 func realtimeAudioApplyTurnDetection(session gjson.Result, next *realtimeAudioConfig) *api.APIError {
 	for _, path := range []string{"turn_detection", "audio.input.turn_detection"} {
@@ -602,12 +707,13 @@ func applyRealtimeAudioSessionUpdate(cfg *realtimeAudioConfig, raw []byte) (side
 	}
 	// Validate everything on a copy so a rejected update changes nothing.
 	next := *cfg
-	for _, apply := range []func(gjson.Result, *realtimeAudioConfig) *api.APIError{realtimeAudioApplyFormats, realtimeAudioApplyDelegation, realtimeAudioApplyTurnDetection} {
+	for _, apply := range []func(gjson.Result, *realtimeAudioConfig) *api.APIError{realtimeAudioApplyFormats, realtimeAudioApplyDelegation, realtimeAudioApplyTranscription, realtimeAudioApplyTurnDetection} {
 		if apiErr = apply(session, &next); apiErr != nil {
 			return nil, nil, apiErr
 		}
 	}
 	cfg.InputRate, cfg.OutputRate, cfg.DelegationNoAck, cfg.NoCreateResponse = next.InputRate, next.OutputRate, next.DelegationNoAck, next.NoCreateResponse
+	cfg.TranscriptionLanguage = next.TranscriptionLanguage
 
 	voiceChanged := false
 	if voice := session.Get("audio.output.voice"); voice.Exists() {

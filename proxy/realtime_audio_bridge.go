@@ -5,6 +5,7 @@ import (
 	"encoding/base64"
 	"encoding/json"
 	"errors"
+	"fmt"
 	"net/http"
 	"strconv"
 	"strings"
@@ -142,13 +143,27 @@ func (h *Handler) runRealtimeAudioHandoff(c *gin.Context, conn *websocket.Conn, 
 	h.runRealtimeAudioSession(c, conn, ctx, cancel, cfg, ack)
 }
 
-// realtimeAudioHandoff decides whether a text-session client event hands the connection to the audio bridge: a session.update whose modalities contain audio. Only the model and instructions carry over from the text session; its tools, tool_choice, queued conversation items and history are dropped, because a ChatGPT Live call has no equivalent and the audio session starts a fresh conversation. ok is true when it does; apiErr is set when the update itself is invalid, and the connection then stays on the text path. The returned ack is the session.updated event for the audio session.
+// realtimeSessionWantsAudio reports whether a session.update asks for an audio session: audio in the modalities, an audio model name, a client delegation or an audio output block. A client delegation only exists on the audio bridge, and the Realtime GA default modality of an audio model is audio, so none of them is a text session even when output_modalities is left out. (Before this check a session.update with only delegation:{type:"client"} was echoed back by the text path and never reached the bridge, so session.delegation.created could not come.)
+func realtimeSessionWantsAudio(session gjson.Result) bool {
+	if realtimeModalitiesContainAudio(session.Get("output_modalities")) || realtimeModalitiesContainAudio(session.Get("modalities")) {
+		return true
+	}
+	if delegation := session.Get("delegation"); delegation.Exists() && delegation.Type != gjson.Null {
+		return true
+	}
+	if audio := session.Get("audio"); audio.IsObject() && audio.Get("output").Exists() {
+		return true
+	}
+	return isRealtimeAudioModel(session.Get("model").String())
+}
+
+// realtimeAudioHandoff decides whether a text-session client event hands the connection to the audio bridge: a session.update that asks for an audio session (see realtimeSessionWantsAudio). Only the model and instructions carry over from the text session; its tools, tool_choice, queued conversation items and history are dropped, because a ChatGPT Live call has no equivalent and the audio session starts a fresh conversation. ok is true when it does; apiErr is set when the update itself is invalid, and the connection then stays on the text path. The returned ack is the session.updated event for the audio session.
 func realtimeAudioHandoff(state *realtimeTextSession, raw []byte) (cfg realtimeAudioConfig, ack []byte, apiErr *api.APIError, ok bool) {
 	if gjson.GetBytes(raw, "type").String() != "session.update" {
 		return cfg, nil, nil, false
 	}
 	session := gjson.GetBytes(raw, "session")
-	if !session.IsObject() || !(realtimeModalitiesContainAudio(session.Get("output_modalities")) || realtimeModalitiesContainAudio(session.Get("modalities"))) {
+	if !session.IsObject() || !realtimeSessionWantsAudio(session) {
 		return cfg, nil, nil, false
 	}
 	cfg = realtimeAudioConfig{Model: mapRealtimeModelToLive(state.Model), Instructions: state.Instructions}
@@ -174,6 +189,8 @@ type realtimeAudioBridge struct {
 	inDecRate  int
 	outEnc     *clientAudioEncoder
 	outEncRate int
+	// vad watches the 24 kHz input audio for speech start and stop; only the client loop touches it.
+	vad *audioVAD
 
 	// startMu serializes call creation (it is held for the whole upstream open); stateMu guards the fields below and is never held across I/O.
 	startMu sync.Mutex
@@ -198,7 +215,9 @@ func (h *Handler) runRealtimeAudioSession(c *gin.Context, conn *websocket.Conn, 
 		mapper: newRealtimeAudioMapper(nil),
 		cfg:    cfg,
 		acks:   newLiveSessionTranslator(nil),
+		vad:    newAudioVAD(),
 	}
+	b.mapper.SetTranscriptionLanguage(cfg.TranscriptionLanguage)
 	defer b.closeAll()
 
 	first := ack
@@ -258,9 +277,10 @@ func (b *realtimeAudioBridge) ensureCall() bool {
 	}
 	b.mu.Lock()
 	cfg := b.cfg
+	b.mapper.SetTranscriptionLanguage(cfg.TranscriptionLanguage)
 	b.mu.Unlock()
 
-	session := buildLiveAudioSession(cfg.Model, cfg.Voice, cfg.Instructions)
+	session := buildLiveAudioSessionForLanguage(cfg.Model, cfg.Voice, cfg.Instructions, cfg.TranscriptionLanguage)
 	if cfg.DelegationNoAck {
 		// Client delegation without Live's spoken filler acknowledgement.
 		if withoutAck, err := sjson.SetBytes(session, "delegation.ack_filler", false); err == nil {
@@ -562,7 +582,7 @@ func realtimeAudioResampleDelta(event []byte, enc *clientAudioEncoder) ([]byte, 
 	return out, true
 }
 
-// appendClientAudio decodes one input_audio_buffer.append payload, converts it to 24 kHz with the session's stateful decoder when the client sends 16 kHz, and feeds the input pipeline.
+// appendClientAudio decodes one input_audio_buffer.append payload, converts it to 24 kHz with the session's stateful decoder when the client sends 16 kHz, feeds the input pipeline and runs the speech detector on it. The detector's changes go to the client as input_audio_buffer.speech_started and input_audio_buffer.speech_stopped.
 func (b *realtimeAudioBridge) appendClientAudio(input *realtimeAudioInput, b64 string) error {
 	b.mu.Lock()
 	rate := b.cfg.inputRate()
@@ -574,18 +594,34 @@ func (b *realtimeAudioBridge) appendClientAudio(input *realtimeAudioInput, b64 s
 		dec = b.inDec
 	}
 	b.mu.Unlock()
-	if dec == nil {
-		return input.AppendBase64(b64)
-	}
 	pcm, err := base64.StdEncoding.DecodeString(b64)
 	if err != nil {
-		return err
+		return fmt.Errorf("decode base64 audio: %w", err)
 	}
-	converted := dec.Decode(pcm)
-	if len(converted) == 0 {
+	if dec != nil {
+		pcm = dec.Decode(pcm)
+	}
+	if len(pcm) == 0 {
 		return nil
 	}
-	return input.AppendPCM16(converted)
+	if err := input.AppendPCM16(pcm); err != nil {
+		return err
+	}
+	b.emitSpeech(b.vad.Process(pcm))
+	return nil
+}
+
+// emitSpeech writes the speech events the detector reported.
+func (b *realtimeAudioBridge) emitSpeech(events []audioSpeechEvent) {
+	if len(events) == 0 {
+		return
+	}
+	b.mu.Lock()
+	out := b.mapper.Speech(events)
+	b.mu.Unlock()
+	for _, event := range out {
+		b.writeEvent(event)
+	}
 }
 
 func (b *realtimeAudioBridge) writeEvent(event []byte) {
@@ -656,6 +692,10 @@ func (b *realtimeAudioBridge) handleClientEvent(raw []byte) {
 		if input := b.liveInput(); input != nil {
 			input.Clear()
 		}
+		// The cleared audio is gone, so an open speech segment ends with it.
+		if ev, ok := b.vad.Reset(); ok {
+			b.emitSpeech([]audioSpeechEvent{ev})
+		}
 		b.writeEvent(marshalRealtimeServerEvent(map[string]any{
 			"type":     "input_audio_buffer.cleared",
 			"event_id": defaultRealtimeAudioID("event"),
@@ -723,6 +763,10 @@ func (b *realtimeAudioBridge) handleSessionUpdate(raw []byte) {
 			refused = append(refused, "Voice")
 			next.Voice = b.cfg.Voice
 		}
+		if next.TranscriptionLanguage != b.cfg.TranscriptionLanguage {
+			refused = append(refused, "Transcription language")
+			next.TranscriptionLanguage = b.cfg.TranscriptionLanguage
+		}
 		if next.DelegationNoAck != b.cfg.DelegationNoAck {
 			refused = append(refused, "Delegation acknowledgement")
 			next.DelegationNoAck = b.cfg.DelegationNoAck
@@ -753,6 +797,8 @@ func (b *realtimeAudioBridge) handleSessionUpdate(raw []byte) {
 			param = "session.audio.output.voice"
 		case "Delegation acknowledgement":
 			param = "session.delegation.acknowledgement"
+		case "Transcription language":
+			param = "session.audio.input.transcription.language"
 		}
 		b.writeParamError("immutable_field_update", param, field+" cannot be updated after initialization.")
 	}
