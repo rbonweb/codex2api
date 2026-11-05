@@ -74,7 +74,6 @@ func TestContinuousRetryLocalProtocolErrorsDoNotRequireCommittedWriter(t *testin
 	}{
 		{name: "responses", write: writeContinuousRetryLocalResponsesError, want: `"type":"response.failed"`},
 		{name: "chat", write: writeContinuousRetryLocalChatError, want: `"type":"server_error"`},
-		{name: "messages", write: writeContinuousRetryLocalAnthropicError, want: `"type":"api_error"`},
 	}
 	for _, tc := range tests {
 		t.Run(tc.name, func(t *testing.T) {
@@ -169,37 +168,6 @@ func newContinuousRetryLocalNativeStore(t *testing.T, upstreamURL string) (*auth
 	return store, account
 }
 
-func newContinuousRetryLocalRelayStore(t *testing.T, upstreamURL string) (*auth.Store, *auth.Account) {
-	t.Helper()
-	store := newOpenAIResponsesRelayStore(upstreamURL)
-	t.Cleanup(store.Stop)
-	return store, store.FindByID(1)
-}
-
-func newContinuousRetryLocalGrokNativeStore(t *testing.T, upstreamURL string, protocol GrokProtocol) (*auth.Store, *auth.Account) {
-	t.Helper()
-	store := auth.NewStore(nil, nil, &database.SystemSettings{
-		MaxConcurrency: 1, TestConcurrency: 1, TestModel: "grok-4.5", MaxRetries: 0, MaxRateLimitRetries: 0,
-	})
-	t.Cleanup(store.Stop)
-	baseURL := strings.TrimRight(upstreamURL, "/") + "/v1"
-	account := &auth.Account{
-		DBID: 1, UpstreamType: auth.UpstreamGrok, APIKey: "test-grok-key", BaseURL: baseURL,
-		Models: []string{"grok-4.5"}, PlanType: "api",
-	}
-	account.SetGrokRoutingState(auth.GrokRoutingState{
-		Models: []auth.GrokModelRoute{{
-			ModelID: "grok-4.5", BaseURL: baseURL, APIBackend: protocol,
-		}},
-		Capabilities: []auth.GrokProtocolCapability{{
-			ModelID: "grok-4.5", Origin: baseURL, Protocol: protocol,
-			Status: auth.GrokCapabilityOK, ObservedAt: time.Now(), ExpiresAt: time.Now().Add(time.Hour),
-		}},
-	})
-	store.AddAccount(account)
-	return store, account
-}
-
 func seedContinuousRetryLocalHealth(account *auth.Account) {
 	account.Mu().Lock()
 	account.SuccessStreak = 4
@@ -242,14 +210,6 @@ func TestContinuousRetryReplayLimitFailureTerminatesEveryHTTPSSEProtocolLocally(
 
 	tests := []continuousRetryLocalEndpointCase{
 		{
-			name: "relay responses", path: "/v1/responses",
-			body:          `{"model":"gpt-4.1-direct","input":"hello","stream":true}`,
-			wantMarkers:   []string{`"type":"response.failed"`, `"type":"server_error"`, `"code":"internal_error"`},
-			forbidMarkers: []string{"private-local-partial", `"type":"response.completed"`},
-			invoke:        func(h *Handler, c *gin.Context) { h.Responses(c) },
-			newStore:      newContinuousRetryLocalRelayStore,
-		},
-		{
 			name: "native responses", path: "/v1/responses",
 			body:          `{"model":"gpt-5.5","input":"hello","stream":true}`,
 			wantMarkers:   []string{`"type":"response.failed"`, `"type":"server_error"`, `"code":"internal_error"`},
@@ -263,14 +223,6 @@ func TestContinuousRetryReplayLimitFailureTerminatesEveryHTTPSSEProtocolLocally(
 			wantMarkers:   []string{`"type":"server_error"`, `"code":"internal_error"`},
 			forbidMarkers: []string{"private-local-partial", "data: [DONE]", `"finish_reason":"stop"`},
 			invoke:        func(h *Handler, c *gin.Context) { h.ChatCompletions(c) },
-			newStore:      newContinuousRetryLocalNativeStore,
-		},
-		{
-			name: "anthropic messages", path: "/v1/messages",
-			body:          `{"model":"claude-opus-4-6","max_tokens":128,"messages":[{"role":"user","content":"hello"}],"stream":true}`,
-			wantMarkers:   []string{"event: error", `"type":"api_error"`},
-			forbidMarkers: []string{"private-local-partial", "message_stop"},
-			invoke:        func(h *Handler, c *gin.Context) { h.Messages(c) },
 			newStore:      newContinuousRetryLocalNativeStore,
 		},
 	}
@@ -323,7 +275,7 @@ func TestContinuousRetryReplayCommitFailurePreservesExistingState(t *testing.T) 
 	upstream, calls := newContinuousRetryLocalSSEServer(t, http.Header{
 		codexTurnStateHeader: []string{"local-commit-turn-state"},
 	})
-	store, account := newContinuousRetryLocalRelayStore(t, upstream.URL)
+	store, account := newContinuousRetryLocalNativeStore(t, upstream.URL)
 	seedContinuousRetryLocalHealth(account)
 	handler := NewHandler(store, nil, &config.Config{AllowAnonymousV1: true}, nil)
 	runtimeCache := cache.NewMemory(1)
@@ -339,7 +291,7 @@ func TestContinuousRetryReplayCommitFailurePreservesExistingState(t *testing.T) 
 	}
 
 	tc := continuousRetryLocalEndpointCase{
-		path: "/v1/responses", body: `{"model":"gpt-4.1-direct","input":"hello","stream":true}`,
+		path: "/v1/responses", body: `{"model":"gpt-5.5","input":"hello","stream":true}`,
 		invoke: func(h *Handler, c *gin.Context) { h.Responses(c) },
 	}
 	body := []byte(tc.body)
@@ -388,14 +340,14 @@ func TestContinuousRetryReplayWriteFailurePreservesExistingAffinity(t *testing.T
 	ApplyRuntimeSettings(settings)
 
 	upstream, calls := newContinuousRetryLocalSSEServer(t, nil)
-	store, account := newContinuousRetryLocalRelayStore(t, upstream.URL)
+	store, account := newContinuousRetryLocalNativeStore(t, upstream.URL)
 	seedContinuousRetryLocalHealth(account)
 	handler := NewHandler(store, nil, &config.Config{AllowAnonymousV1: true}, nil)
 	handler.continuousRetryReplayFactory = func() *continuousRetryReplay {
 		return newContinuousRetryReplayWithLimits(0, 1)
 	}
 	tc := continuousRetryLocalEndpointCase{
-		path: "/v1/responses", body: `{"model":"gpt-4.1-direct","input":"hello","stream":true}`,
+		path: "/v1/responses", body: `{"model":"gpt-5.5","input":"hello","stream":true}`,
 		invoke: func(h *Handler, c *gin.Context) { h.Responses(c) },
 	}
 	body := []byte(tc.body)
@@ -426,10 +378,10 @@ func TestContinuousRetrySuccessfulReplayBindsCommittedWinner(t *testing.T) {
 	ApplyRuntimeSettings(settings)
 
 	upstream, calls := newContinuousRetryLocalSSEServer(t, nil)
-	store, account := newContinuousRetryLocalRelayStore(t, upstream.URL)
+	store, account := newContinuousRetryLocalNativeStore(t, upstream.URL)
 	handler := NewHandler(store, nil, &config.Config{AllowAnonymousV1: true}, nil)
 	tc := continuousRetryLocalEndpointCase{
-		path: "/v1/responses", body: `{"model":"gpt-4.1-direct","input":"hello","stream":true}`,
+		path: "/v1/responses", body: `{"model":"gpt-5.5","input":"hello","stream":true}`,
 		invoke: func(h *Handler, c *gin.Context) { h.Responses(c) },
 	}
 	recorder, affinityKey := continuousRetryLocalRequest(t, tc, handler)
@@ -503,11 +455,6 @@ func TestContinuousRetryBufferedStickyTransportRetryKeepsSameAccount(t *testing.
 			body:   `{"model":"gpt-5.5","messages":[{"role":"user","content":"hello"}],"stream":true}`,
 			invoke: func(h *Handler, c *gin.Context) { h.ChatCompletions(c) },
 		},
-		{
-			name: "anthropic messages", path: "/v1/messages",
-			body:   `{"model":"claude-opus-4-6","max_tokens":128,"messages":[{"role":"user","content":"hello"}],"stream":true}`,
-			invoke: func(h *Handler, c *gin.Context) { h.Messages(c) },
-		},
 	}
 
 	for _, tc := range tests {
@@ -529,110 +476,6 @@ func TestContinuousRetryBufferedStickyTransportRetryKeepsSameAccount(t *testing.
 				t.Fatalf("committed sticky winner affinity = account %d ok=%v, attempts=%v", boundID, ok, scenario.accountIDs)
 			}
 		})
-	}
-}
-
-func TestContinuousRetryDisabledMessagesStickyTransportRetryRotatesAccounts(t *testing.T) {
-	gin.SetMode(gin.TestMode)
-	previousSettings := CurrentRuntimeSettings()
-	t.Cleanup(func() { ApplyRuntimeSettings(previousSettings) })
-	settings := previousSettings
-	settings.CodexForceWebsocket = true
-	settings.ContinuousRetryPolicy = database.ContinuousRetryPolicy{}
-	ApplyRuntimeSettings(settings)
-
-	store, scenario := newContinuousRetryNativeTransportScenario(t)
-	handler := NewHandler(store, nil, &config.Config{AllowAnonymousV1: true}, nil)
-	tc := continuousRetryLocalEndpointCase{
-		path:   "/v1/messages",
-		body:   `{"model":"claude-opus-4-6","max_tokens":128,"messages":[{"role":"user","content":"hello"}],"stream":true}`,
-		invoke: func(h *Handler, c *gin.Context) { h.Messages(c) },
-	}
-
-	recorder, affinityKey := continuousRetryLocalRequest(t, tc, handler)
-	if scenario.calls.Load() != 2 || len(scenario.accountIDs) != 2 {
-		t.Fatalf("transport attempts = calls %d accounts %v; body=%q", scenario.calls.Load(), scenario.accountIDs, recorder.Body.String())
-	}
-	if scenario.accountIDs[0] == scenario.accountIDs[1] {
-		t.Fatalf("policy-disabled retry stayed on the failed account: %v", scenario.accountIDs)
-	}
-	if recorder.Code != http.StatusOK || !strings.Contains(recorder.Body.String(), "sticky-success") {
-		t.Fatalf("rotated retry response = status %d body %q", recorder.Code, recorder.Body.String())
-	}
-	if boundID, ok := store.SessionAffinityAccountID(affinityKey); !ok || boundID != scenario.accountIDs[1] {
-		t.Fatalf("rotated winner affinity = account %d ok=%v, attempts=%v", boundID, ok, scenario.accountIDs)
-	}
-}
-
-func TestContinuousRetryBufferedRelayTransportRetryKeepsSameAccount(t *testing.T) {
-	gin.SetMode(gin.TestMode)
-	previousSettings := CurrentRuntimeSettings()
-	t.Cleanup(func() { ApplyRuntimeSettings(previousSettings) })
-	settings := previousSettings
-	settings.CodexForceWebsocket = false
-	settings.ContinuousRetryPolicy = database.ContinuousRetryPolicy{
-		Enabled:    true,
-		Categories: []string{database.ContinuousRetryCategoryResponseFailed},
-	}
-	ApplyRuntimeSettings(settings)
-
-	var calls atomic.Int32
-	authorizations := make(chan string, 4)
-	upstream := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		authorizations <- r.Header.Get("Authorization")
-		if calls.Add(1) == 1 {
-			hijacker, ok := w.(http.Hijacker)
-			if !ok {
-				t.Error("test upstream does not support connection hijacking")
-				return
-			}
-			conn, _, err := hijacker.Hijack()
-			if err != nil {
-				t.Errorf("hijack first transport attempt: %v", err)
-				return
-			}
-			_ = conn.Close()
-			return
-		}
-		w.Header().Set("Content-Type", "text/event-stream")
-		_, _ = io.WriteString(w,
-			"data: {\"type\":\"response.output_text.delta\",\"delta\":\"relay-sticky-success\"}\n\n"+
-				"data: {\"type\":\"response.completed\",\"response\":{\"id\":\"resp_relay_sticky\",\"status\":\"completed\",\"output\":[],\"usage\":{\"input_tokens\":1,\"output_tokens\":1,\"total_tokens\":2}}}\n\n",
-		)
-	}))
-	t.Cleanup(upstream.Close)
-
-	store := auth.NewStore(nil, nil, &database.SystemSettings{
-		MaxConcurrency: 2, TestConcurrency: 1, TestModel: "gpt-4.1-direct", MaxRetries: 1, MaxRateLimitRetries: 0,
-	})
-	t.Cleanup(store.Stop)
-	store.SetRetryIntervalMS(0)
-	store.SetTransportRetryPolicy(transportRetryPolicySticky)
-	for id, key := range []string{"test-relay-key-one", "test-relay-key-two"} {
-		store.AddAccount(&auth.Account{
-			DBID: int64(id + 1), UpstreamType: auth.UpstreamOpenAIResponses,
-			BaseURL: upstream.URL, APIKey: key, Models: []string{"gpt-4.1-direct"}, PlanType: "api",
-		})
-	}
-	handler := NewHandler(store, nil, &config.Config{AllowAnonymousV1: true}, nil)
-	tc := continuousRetryLocalEndpointCase{
-		path: "/v1/responses", body: `{"model":"gpt-4.1-direct","input":"hello","stream":true}`,
-		invoke: func(h *Handler, c *gin.Context) { h.Responses(c) },
-	}
-	recorder, affinityKey := continuousRetryLocalRequest(t, tc, handler)
-	if calls.Load() != 2 {
-		t.Fatalf("relay transport attempts = %d, want 2; body=%q", calls.Load(), recorder.Body.String())
-	}
-	firstAuthorization := <-authorizations
-	secondAuthorization := <-authorizations
-	if firstAuthorization == "" || firstAuthorization != secondAuthorization {
-		t.Fatalf("buffered relay sticky retry changed account credentials: first=%q second=%q", firstAuthorization, secondAuthorization)
-	}
-	if recorder.Code != http.StatusOK || !strings.Contains(recorder.Body.String(), "relay-sticky-success") {
-		t.Fatalf("relay sticky retry response = status %d body %q", recorder.Code, recorder.Body.String())
-	}
-	if _, ok := store.SessionAffinityAccountID(affinityKey); !ok {
-		t.Fatal("relay sticky winner did not leave a committed affinity binding")
 	}
 }
 
@@ -670,129 +513,6 @@ func TestContinuousRetryCapacityShedRetainsPendingAffinity(t *testing.T) {
 	}
 	if boundID, ok := store.SessionAffinityAccountID("capacity-local"); !ok || boundID != account.ID() {
 		t.Fatalf("capacity retry lost same-account affinity: account=%d ok=%v", boundID, ok)
-	}
-}
-
-func TestContinuousRetryGrokNativeReplayLimitIsLocalAcrossProtocols(t *testing.T) {
-	gin.SetMode(gin.TestMode)
-	enableCatchAllContinuousRetry(t)
-	settings := CurrentRuntimeSettings()
-	settings.CodexForceWebsocket = false
-	ApplyRuntimeSettings(settings)
-	resetResponseCacheStateForTest(defaultResponseCacheConfig())
-
-	tests := []struct {
-		name          string
-		protocol      GrokProtocol
-		path          string
-		body          string
-		upstreamPath  string
-		upstreamSSE   string
-		wantMarkers   []string
-		forbidMarkers []string
-		invoke        func(*Handler, *gin.Context)
-	}{
-		{
-			name: "responses", protocol: GrokProtocolResponses, path: "/v1/responses",
-			body:         `{"model":"grok-4.5","input":"hello","stream":true}`,
-			upstreamPath: "/v1/responses",
-			upstreamSSE: "data: {\"type\":\"response.created\",\"response\":{\"id\":\"resp_grok_local\"}}\n\n" +
-				"data: {\"type\":\"response.output_text.delta\",\"delta\":\"private-grok-partial\"}\n\n" +
-				"data: {\"type\":\"response.completed\",\"response\":{\"id\":\"resp_grok_local\",\"status\":\"completed\",\"output\":[],\"usage\":{\"input_tokens\":1,\"output_tokens\":1,\"total_tokens\":2}}}\n\n",
-			wantMarkers:   []string{`"type":"response.failed"`, `"type":"server_error"`, `"code":"internal_error"`},
-			forbidMarkers: []string{"private-grok-partial", `"type":"response.completed"`},
-			invoke:        func(h *Handler, c *gin.Context) { h.Responses(c) },
-		},
-		{
-			name: "chat completions", protocol: GrokProtocolChatCompletions, path: "/v1/chat/completions",
-			body:         `{"model":"grok-4.5","messages":[{"role":"user","content":"hello"}],"stream":true}`,
-			upstreamPath: "/v1/chat/completions",
-			upstreamSSE: "data: {\"id\":\"chatcmpl_grok_local\",\"object\":\"chat.completion.chunk\",\"choices\":[{\"index\":0,\"delta\":{\"role\":\"assistant\"},\"finish_reason\":null}]}\n\n" +
-				"data: {\"id\":\"chatcmpl_grok_local\",\"object\":\"chat.completion.chunk\",\"choices\":[{\"index\":0,\"delta\":{\"content\":\"private-grok-partial\"},\"finish_reason\":null}]}\n\n" +
-				"data: {\"id\":\"chatcmpl_grok_local\",\"object\":\"chat.completion.chunk\",\"choices\":[{\"index\":0,\"delta\":{},\"finish_reason\":\"stop\"}]}\n\n" +
-				"data: [DONE]\n\n",
-			wantMarkers:   []string{`"type":"server_error"`, `"code":"internal_error"`},
-			forbidMarkers: []string{"private-grok-partial", "data: [DONE]", `"finish_reason":"stop"`},
-			invoke:        func(h *Handler, c *gin.Context) { h.ChatCompletions(c) },
-		},
-		{
-			name: "anthropic messages", protocol: GrokProtocolMessages, path: "/v1/messages",
-			body:         `{"model":"grok-4.5","max_tokens":128,"messages":[{"role":"user","content":"hello"}],"stream":true}`,
-			upstreamPath: "/v1/messages",
-			upstreamSSE: "event: message_start\ndata: {\"type\":\"message_start\",\"message\":{\"id\":\"msg_grok_local\",\"type\":\"message\",\"role\":\"assistant\",\"content\":[]}}\n\n" +
-				"event: content_block_delta\ndata: {\"type\":\"content_block_delta\",\"index\":0,\"delta\":{\"type\":\"text_delta\",\"text\":\"private-grok-partial\"}}\n\n" +
-				"event: message_stop\ndata: {\"type\":\"message_stop\"}\n\n",
-			wantMarkers:   []string{"event: error", `"type":"api_error"`},
-			forbidMarkers: []string{"private-grok-partial", "event: message_stop"},
-			invoke:        func(h *Handler, c *gin.Context) { h.Messages(c) },
-		},
-	}
-
-	for _, tc := range tests {
-		t.Run(tc.name, func(t *testing.T) {
-			var calls atomic.Int32
-			seenPaths := make(chan string, 1)
-			upstream := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-				calls.Add(1)
-				seenPaths <- r.URL.Path
-				w.Header().Set("Content-Type", "text/event-stream")
-				_, _ = io.WriteString(w, tc.upstreamSSE)
-			}))
-			t.Cleanup(upstream.Close)
-			store, account := newContinuousRetryLocalGrokNativeStore(t, upstream.URL, tc.protocol)
-			seedContinuousRetryLocalHealth(account)
-			handler := NewHandler(store, nil, &config.Config{AllowAnonymousV1: true}, nil)
-			handler.SetRuntimeCache(cache.NewMemory(1))
-			handler.continuousRetryReplayFactory = func() *continuousRetryReplay {
-				return newContinuousRetryReplayWithLimits(0, 1)
-			}
-
-			recorder := httptest.NewRecorder()
-			ctx, _ := gin.CreateTestContext(recorder)
-			requestBody := []byte(tc.body)
-			ctx.Request = httptest.NewRequest(http.MethodPost, tc.path, bytes.NewReader(requestBody))
-			ctx.Request.Header.Set("Content-Type", "application/json")
-			ctx.Request.Header.Set("X-Codex2API-Affinity-Key", "local-grok-native-"+string(tc.protocol))
-			affinityKey := sessionAffinityKey(resolveRequestSessionIdentity(ctx.Request.Header, requestBody).affinityID, 0)
-			codexTurnStateOrigins.Delete(affinityKey)
-			t.Cleanup(func() { codexTurnStateOrigins.Delete(affinityKey) })
-			tc.invoke(handler, ctx)
-
-			body := recorder.Body.String()
-			if calls.Load() != 1 {
-				t.Fatalf("Grok native upstream calls = %d, want exactly one; body=%q", calls.Load(), body)
-			}
-			seenPath := <-seenPaths
-			if seenPath != tc.upstreamPath {
-				t.Fatalf("Grok native upstream = calls %d path %q, want one %q; body=%q", calls.Load(), seenPath, tc.upstreamPath, body)
-			}
-			if recorder.Code != http.StatusInternalServerError || !strings.Contains(body, continuousRetryLocalFailureMessage) {
-				t.Fatalf("Grok native local terminal = status %d body %q", recorder.Code, body)
-			}
-			for _, marker := range tc.wantMarkers {
-				if !strings.Contains(body, marker) {
-					t.Fatalf("Grok native local terminal missing %q: %q", marker, body)
-				}
-			}
-			for _, marker := range tc.forbidMarkers {
-				if strings.Contains(body, marker) {
-					t.Fatalf("Grok native private output or success terminal %q leaked: %q", marker, body)
-				}
-			}
-			if boundID, ok := store.SessionAffinityAccountID(affinityKey); ok {
-				t.Fatalf("Grok native local failure created affinity binding to account %d", boundID)
-			}
-			if _, ok := codexTurnStateOrigins.Load(affinityKey); ok {
-				t.Fatal("Grok native local failure recorded turn-state provenance")
-			}
-			if got := getResponseCache(responseCacheOwner(0), "resp_grok_local"); len(got) != 0 {
-				t.Fatalf("Grok native local failure cached completed response: %s", got)
-			}
-			if account.HasActiveCooldown() || account.IsModelRateLimited("grok-4.5") {
-				t.Fatal("Grok native local failure changed account cooldown state")
-			}
-			assertContinuousRetryLocalHealthUnchanged(t, account)
-		})
 	}
 }
 

@@ -378,26 +378,16 @@ func writeContinuousRetryTimeoutResponse(c *gin.Context, protocol continuousRetr
 		writeContinuousRetryLastFailure(c, protocol, failure)
 		return true
 	}
-	if protocol == continuousRetryProtocolGemini {
-		writeGeminiNativeError(c, http.StatusGatewayTimeout, continuousRetryTimeoutMessage)
-		return true
-	}
 	if retryKeepaliveCommitted(c) {
 		switch protocol {
 		case continuousRetryProtocolResponses:
 			return writeCommittedResponsesRetryError(c, continuousRetryTimeoutMessage)
 		case continuousRetryProtocolChat:
 			return writeCommittedChatRetryError(c, continuousRetryTimeoutMessage)
-		case continuousRetryProtocolAnthropic:
-			return writeCommittedAnthropicRetryError(c, "api_error", continuousRetryTimeoutMessage)
 		}
 		return true
 	}
 	if c.Writer != nil && c.Writer.Written() {
-		return true
-	}
-	if protocol == continuousRetryProtocolAnthropic {
-		c.JSON(http.StatusGatewayTimeout, gin.H{"type": "error", "error": gin.H{"type": "api_error", "message": continuousRetryTimeoutMessage}})
 		return true
 	}
 	c.JSON(http.StatusGatewayTimeout, ErrUpstreamTimeout(errContinuousRetryDeadlineExceeded).ToGinH())
@@ -413,17 +403,10 @@ func writeContinuousRetryLastFailure(c *gin.Context, protocol continuousRetryHTT
 	if message == "" {
 		message = fmt.Sprintf("Upstream returned HTTP %d", status)
 	}
-	if protocol == continuousRetryProtocolGemini {
-		writeGeminiNativeError(c, status, message)
-		return
-	}
 	code := fmt.Sprintf("upstream_%d", status)
 	if retryKeepaliveCommitted(c) {
 		var payload []byte
 		switch protocol {
-		case continuousRetryProtocolAnthropic:
-			payload, _ = json.Marshal(gin.H{"type": "error", "error": gin.H{"type": mapHTTPStatusToAnthropicError(status), "message": message}})
-			_, _ = c.Writer.WriteString("event: error\ndata: " + string(payload) + "\n\n")
 		case continuousRetryProtocolChat:
 			payload, _ = json.Marshal(gin.H{"error": gin.H{"message": message, "type": ErrorTypeUpstreamError, "code": code}})
 			_, _ = c.Writer.WriteString("data: " + string(payload) + "\n\n")
@@ -434,10 +417,6 @@ func writeContinuousRetryLastFailure(c *gin.Context, protocol continuousRetryHTT
 		if flusher, ok := c.Writer.(http.Flusher); ok {
 			flusher.Flush()
 		}
-		return
-	}
-	if protocol == continuousRetryProtocolAnthropic {
-		c.JSON(status, gin.H{"type": "error", "error": gin.H{"type": mapHTTPStatusToAnthropicError(status), "message": message}})
 		return
 	}
 	if len(failure.body) > 0 && json.Valid(failure.body) {

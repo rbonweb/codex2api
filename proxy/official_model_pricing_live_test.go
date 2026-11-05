@@ -56,15 +56,13 @@ func TestLiveOfficialPricingSyncIsolated(t *testing.T) {
 			"gpt-5.6-luna",
 			"gpt-5.5",
 			"gpt-5.4",
-			"grok-4.6",
 		},
 		IncludeOpenAI: true,
-		IncludeGrok:   true,
 	})
 	if err != nil {
 		t.Fatalf("live official pricing sync: %v", err)
 	}
-	if result.Fetched != 9 || result.Applied != 8 || result.Skipped != 1 {
+	if result.Fetched != 8 || result.Applied != 7 || result.Skipped != 1 {
 		t.Fatalf("unexpected live sync result: %+v", result)
 	}
 	if len(result.Missing) != 0 || len(result.Warnings) != 0 || len(result.Fallbacks) != 0 {
@@ -99,7 +97,6 @@ func TestLiveOfficialPricingSyncIsolated(t *testing.T) {
 	assertRates("gpt-5.6-sol", overrides["gpt-5.6-sol"], [12]float64{4, 0.4, 20, 8, 0.8, 40, 8, 0.8, 30, 16, 1.6, 60})
 	assertRates("gpt-5.6-terra", overrides["gpt-5.6-terra"], [12]float64{2, 0.2, 12, 4, 0.4, 24, 4, 0.4, 18, 8, 0.8, 36})
 	assertRates("gpt-5.6-luna", overrides["gpt-5.6-luna"], [12]float64{0.2, 0.02, 1.2, 0.4, 0.04, 2.4, 0.4, 0.04, 1.8, 0.8, 0.08, 3.6})
-	assertRates("grok-4.6", overrides["grok-4.6"], [12]float64{2, 0.5, 6, 0, 0, 0, 4, 1, 12, 0, 0, 0})
 
 	assertCost := func(name string, got, want float64) {
 		t.Helper()
@@ -111,12 +108,6 @@ func TestLiveOfficialPricingSyncIsolated(t *testing.T) {
 	assertCost("Codex Fast", database.CalculateCost(100_000, 1_000_000, 0, "gpt-5.6-sol", "fast"), 40.8)
 	assertCost("Codex long Fast", database.CalculateCost(1_000_000, 1_000_000, 0, "gpt-5.6-sol", "fast"), 76)
 	assertCost("Codex cached Fast", database.CalculateCost(100_000, 0, 100_000, "gpt-5.6-sol", "fast"), 0.08)
-	assertCost("Grok standard", database.CalculateCost(100_000, 1_000_000, 0, "grok-4.6", "standard"), 6.2)
-	grokLong := database.CalculateCostBreakdown(200_001, 1_000_000, 0, "grok-4.6", "standard")
-	if !grokLong.LongContext || grokLong.LongContextThreshold != 200000 {
-		t.Fatalf("Grok long-context threshold not applied: %+v", grokLong)
-	}
-	assertCost("Grok long", grokLong.TotalCost, 12.800004)
 
 	afterLogs, err := db.ListRecentUsageLogs(ctx, 10)
 	if err != nil || len(afterLogs) != 0 {

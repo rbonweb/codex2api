@@ -38,45 +38,6 @@ func TestParseOpenAIOfficialPricingHTMLIncludesFastAndLongContext(t *testing.T) 
 	}
 }
 
-func TestParseXAIOfficialPricingHTML(t *testing.T) {
-	body := []byte(`
-<section data-pricing-tier="standard"><table><thead><tr><th>Model</th><th>Context</th><th>Input / 1M tokens</th><th>Cached input / 1M tokens</th><th>Output / 1M tokens</th></tr></thead><tbody>
-<tr><td>grok-4.6 (&lt; 200k prompt tokens)</td><td>500k</td><td>$2.00</td><td>$0.50</td><td>$6.00</td></tr>
-<tr><td>grok-4.6 (≥ 200k prompt tokens)</td><td>500k</td><td>$4.00</td><td>$1.00</td><td>$12.00</td></tr>
-<tr><td>grok-4.5 (&lt; 200k prompt tokens)</td><td>500k</td><td>$2.00</td><td>$0.30</td><td>$6.00</td></tr>
-<tr><td>grok-4.5 (≥ 200k prompt tokens)</td><td>500k</td><td>$4.00</td><td>$0.60</td><td>$12.00</td></tr>
-</tbody></table></section>
-`)
-	all, err := ParseXAIOfficialPricingHTML(body)
-	if err != nil {
-		t.Fatalf("parse xAI official pricing: %v", err)
-	}
-	got := all["grok-4.6"]
-	if got.Input != 2 || got.CachedInput != 0.5 || got.Output != 6 ||
-		got.InputLong != 4 || got.CachedInputLong != 1 || got.OutputLong != 12 ||
-		got.LongContextThresholdTokens != 200000 {
-		t.Fatalf("xAI prices = %+v", got)
-	}
-}
-
-func TestParseAnthropicOfficialPricingHTMLIncludesCacheWriteAndRead(t *testing.T) {
-	body := []byte(`<table><tr><th>Model</th><th>Input</th><th>5m Cache Write</th><th>1h Cache Write</th><th>Cache Read</th><th>Output</th></tr>
-<tr><td>Claude Fable 5.1</td><td>$10 / MTok</td><td>$12.50 / MTok</td><td>$20 / MTok</td><td>$0.25 / MTok</td><td>$50 / MTok</td></tr>
-<tr><td>Claude Fable 5</td><td>$10 / MTok</td><td>$12.50 / MTok</td><td>$20 / MTok</td><td>$1 / MTok</td><td>$50 / MTok</td></tr></table>`)
-	got, err := ParseAnthropicOfficialPricingHTML(body)
-	if err != nil {
-		t.Fatalf("ParseAnthropicOfficialPricingHTML: %v", err)
-	}
-	fable51 := got["claude-fable-5-1"]
-	if fable51.Input != 10 || fable51.CachedInput != 0.25 || fable51.CacheWrite5m != 12.5 || fable51.CacheWrite1h != 20 || fable51.Output != 50 {
-		t.Fatalf("Fable 5.1 pricing = %+v", fable51)
-	}
-	fable5 := got["claude-fable-5"]
-	if fable5.Input != 10 || fable5.CachedInput != 1 || fable5.CacheWrite5m != 12.5 || fable5.CacheWrite1h != 20 || fable5.Output != 50 {
-		t.Fatalf("Fable 5 pricing = %+v", fable5)
-	}
-}
-
 // 2026-10: OpenAI moved output before cached input and added 30m / 12h write
 // columns. Fixed positions read output as cached input and the 30m write as
 // output (gpt-6-astra synced as output 12.5, cached 50); columns must be read
