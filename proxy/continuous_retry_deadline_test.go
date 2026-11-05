@@ -529,19 +529,18 @@ func TestResponsesCompactContinuousRetryDeadlineReturnsLatestFailureAndReleasesS
 		RetryIntervalMS:     0,
 	})
 	defer store.Stop()
+	codexRestoredUseResin(t, upstream.URL)
 	account := &auth.Account{
-		DBID:         1,
-		UpstreamType: auth.UpstreamOpenAIResponses,
-		BaseURL:      upstream.URL,
-		APIKey:       "test-direct-key",
-		Models:       []string{"gpt-4.1-direct"},
-		PlanType:     "api",
-		Status:       auth.StatusReady,
+		DBID:        1,
+		AccessToken: "at-1",
+		AccountID:   "acct-1",
+		PlanType:    "pro",
+		Status:      auth.StatusReady,
 	}
 	store.AddAccount(account)
 	handler := NewHandler(store, nil, nil, nil)
 
-	body := []byte(`{"model":"gpt-4.1-direct","input":"hello"}`)
+	body := []byte(`{"model":"gpt-5.5","input":"hello"}`)
 	req := httptest.NewRequest(http.MethodPost, "/v1/responses/compact", bytes.NewReader(body))
 	req.Header.Set("Content-Type", "application/json")
 	req.Header.Set("Session_id", "deadline-affinity-test")

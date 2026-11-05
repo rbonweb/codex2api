@@ -35,14 +35,9 @@ func TestNextRetryAccountReentersLoopAfterReconcile(t *testing.T) {
 	ctx := context.Background()
 	store, db := newReconcileReentryStore(t, "retry-reconcile-reentry.db")
 
-	accountID, err := db.InsertOpenAIResponsesAccount(ctx, "reentry-endpoint", map[string]interface{}{
-		"upstream_type": auth.UpstreamOpenAIResponses,
-		"base_url":      "https://healthy.example",
-		"api_key":       "sk-reentry",
-		"models":        []string{"gpt-5.6"},
-	}, "")
+	accountID, err := db.InsertATAccount(ctx, "reentry-endpoint", "at-reentry", "")
 	if err != nil {
-		t.Fatalf("InsertOpenAIResponsesAccount: %v", err)
+		t.Fatalf("InsertATAccount: %v", err)
 	}
 
 	handler := &Handler{store: store}
