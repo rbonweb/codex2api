@@ -257,7 +257,29 @@ func (t *transcriptCollector) complete(feedFinished bool) bool {
 	return feedFinished && t.userSeen && !t.userOpen
 }
 
-func (t *transcriptCollector) text() string { return strings.Join(t.parts, " ") }
+func (t *transcriptCollector) text() string { return joinTranscriptTurns(t.parts) }
+
+// joinTranscriptTurns joins user turn transcripts with one space, trimming each turn and leaving no space before a turn that starts with closing punctuation.
+// Both response formats use this one result.
+func joinTranscriptTurns(turns []string) string {
+	var out strings.Builder
+	for _, turn := range turns {
+		turn = strings.TrimSpace(turn)
+		if turn == "" {
+			continue
+		}
+		if out.Len() > 0 {
+			if first, _ := utf8.DecodeRuneInString(turn); !strings.ContainsRune(transcriptionNoSpaceBefore, first) {
+				out.WriteByte(' ')
+			}
+		}
+		out.WriteString(turn)
+	}
+	return out.String()
+}
+
+// transcriptionNoSpaceBefore lists the punctuation that attaches to the previous word: sentence marks and closing quotes or brackets.
+const transcriptionNoSpaceBefore = ".,;:!?…)]}»”’\"'"
 
 // readTranscript collects the user turn transcripts of the Live call.
 // It returns once the feeder has finished (all audio and the trailing silence written) and no user turn is open, so speech after a pause inside the upload is not dropped.
