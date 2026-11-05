@@ -530,7 +530,7 @@ func (db *DB) attachAPIKeyAccountGroups(ctx context.Context, items []APIKeyAccou
 }
 
 // emailFromCredentialsJSON 从账号 credentials JSON 文本里取展示用邮箱；
-// email 缺省时回落到 base_url（覆盖 openai_responses 直连账号的展示需要）。
+// email 缺省时回落到 base_url。
 func emailFromCredentialsJSON(raw string) string {
 	if raw == "" {
 		return ""
@@ -680,7 +680,7 @@ type APIKeySelfLogFilter struct {
 	Status string
 	// Stream: stream | sync;空表示不限。
 	Stream string
-	// Channel: codex | grok | antigravity | claude;空表示不限。
+	// Channel: codex;空表示不限。
 	Channel string
 }
 

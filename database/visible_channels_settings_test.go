@@ -12,10 +12,10 @@ func TestNormalizeVisibleChannels(t *testing.T) {
 		in   []string
 		want []string
 	}{
-		{"nil means everything visible", nil, []string{"codex", "claude", "antigravity", "grok"}},
+		{"nil means everything visible", nil, []string{"codex"}},
 		{"empty list keeps the fallback", []string{}, []string{"codex"}},
-		{"fallback is added when missing", []string{"grok"}, []string{"codex", "grok"}},
-		{"unknown, blank and duplicate entries are dropped and order is canonical", []string{" Grok ", "", "claude", "grok", "openai"}, []string{"codex", "claude", "grok"}},
+		{"fallback is added when missing", []string{"other"}, []string{"codex"}},
+		{"unknown, blank and duplicate entries are dropped and order is canonical", []string{" Codex ", "", "claude", "codex", "grok"}, []string{"codex"}},
 	}
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
