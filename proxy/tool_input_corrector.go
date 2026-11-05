@@ -14,16 +14,11 @@ type ToolInputCorrectionStats struct {
 }
 
 // ToolInputCorrector applies narrow, tool-specific compatibility fixes to
-// upstream function_call arguments before Claude Code validates tool inputs.
+// upstream function_call arguments before the client validates tool inputs.
 type ToolInputCorrector struct {
 	mu    sync.RWMutex
 	stats ToolInputCorrectionStats
 }
-
-// ClaudeToolCorrector is a Claude Code-oriented alias for ToolInputCorrector.
-// It mirrors sub2api's centralized corrector pattern while keeping the more
-// explicit tool-input name available to existing call sites and tests.
-type ClaudeToolCorrector = ToolInputCorrector
 
 // NewToolInputCorrector creates a tool input corrector with empty stats.
 func NewToolInputCorrector() *ToolInputCorrector {
@@ -35,15 +30,10 @@ func NewToolInputCorrector() *ToolInputCorrector {
 	}
 }
 
-// NewClaudeToolCorrector creates a Claude tool corrector with empty stats.
-func NewClaudeToolCorrector() *ClaudeToolCorrector {
-	return NewToolInputCorrector()
-}
-
-var defaultClaudeToolCorrector = NewClaudeToolCorrector()
+var defaultToolInputCorrector = NewToolInputCorrector()
 
 // CorrectToolInputJSON cleans a tool arguments JSON object. It deliberately
-// handles only known Claude Code compatibility issues; empty strings and nulls
+// handles only known client compatibility issues; empty strings and nulls
 // can be meaningful for many tools and must not be removed generically.
 func (c *ToolInputCorrector) CorrectToolInputJSON(toolName string, raw string) (string, bool) {
 	raw = strings.TrimSpace(raw)
@@ -154,7 +144,7 @@ func hasNonEmptyJSONString(raw json.RawMessage) bool {
 // sanitizeToolInputJSON preserves the existing call-site contract while routing
 // corrections through the centralized ToolInputCorrector.
 func sanitizeToolInputJSON(toolName string, raw string) string {
-	if cleaned, corrected := defaultClaudeToolCorrector.CorrectToolInputJSON(toolName, raw); corrected {
+	if cleaned, corrected := defaultToolInputCorrector.CorrectToolInputJSON(toolName, raw); corrected {
 		return cleaned
 	}
 	return strings.TrimSpace(raw)

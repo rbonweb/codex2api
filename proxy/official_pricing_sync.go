@@ -14,9 +14,6 @@ import (
 
 const (
 	OfficialOpenAIPricingURL    = "https://developers.openai.com/api/docs/pricing"
-	OfficialXAIPricingURL       = "https://docs.x.ai/developers/pricing"
-	OfficialXAIModelsURL        = "https://docs.x.ai/developers/models"
-	OfficialAnthropicPricingURL = "https://platform.claude.com/docs/en/about-claude/pricing"
 	officialPricingTimeout      = 20 * time.Second
 	officialPricingBodyLimit    = 4 << 20
 )
@@ -25,8 +22,6 @@ const (
 type OfficialPricingSyncOptions struct {
 	Models        []string
 	IncludeOpenAI bool
-	IncludeGrok   bool
-	IncludeClaude bool
 }
 
 // OfficialPricingSyncResult 包含有效价格数、覆盖更新数、缺价模型及参考来源。
