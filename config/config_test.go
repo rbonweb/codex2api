@@ -34,13 +34,13 @@ func TestLoadDefaultsToPostgresAndRedis(t *testing.T) {
 		t.Setenv(key, "")
 	}
 
-	// 不设置 DATABASE_DRIVER / CACHE_DRIVER，只提供各自默认驱动所需的最小参数。
+	// Do not set DATABASE_DRIVER / CACHE_DRIVER; only provide the minimum parameters that each default driver needs.
 	t.Setenv("DATABASE_HOST", "postgres")
 	t.Setenv("REDIS_ADDR", "redis:6379")
 
 	cfg, err := Load("__not_exists__.env")
 	if err != nil {
-		t.Fatalf("Load() 返回错误: %v", err)
+		t.Fatalf("Load() returned an error: %v", err)
 	}
 
 	if got := cfg.Database.Driver; got != "postgres" {
@@ -98,7 +98,7 @@ func TestLoadAllowsExplicitSQLiteAndMemory(t *testing.T) {
 
 	cfg, err := Load("__not_exists__.env")
 	if err != nil {
-		t.Fatalf("Load() 返回错误: %v", err)
+		t.Fatalf("Load() returned an error: %v", err)
 	}
 
 	if got := cfg.Database.Driver; got != "sqlite" {
@@ -144,7 +144,7 @@ func TestLoadReadsAdminSecretFromEnv(t *testing.T) {
 
 	cfg, err := Load("__not_exists__.env")
 	if err != nil {
-		t.Fatalf("Load() 返回错误: %v", err)
+		t.Fatalf("Load() returned an error: %v", err)
 	}
 
 	if got := cfg.AdminSecret; got != "from-env-secret" {
@@ -184,7 +184,7 @@ func TestLoadReadsMaxRequestBodySizeFromEnv(t *testing.T) {
 
 	cfg, err := Load("__not_exists__.env")
 	if err != nil {
-		t.Fatalf("Load() 返回错误: %v", err)
+		t.Fatalf("Load() returned an error: %v", err)
 	}
 
 	if got := cfg.MaxRequestBodySize; got != 64*1024*1024 {
@@ -201,7 +201,7 @@ func TestLoadParsesTrustedProxiesEnv(t *testing.T) {
 
 	cfg, err := Load("__not_exists__.env")
 	if err != nil {
-		t.Fatalf("Load() 返回错误: %v", err)
+		t.Fatalf("Load() returned an error: %v", err)
 	}
 	if got := strings.Join(cfg.TrustedProxies, ","); got != "10.0.0.0/8,172.16.0.0/12,192.168.1.10" {
 		t.Fatalf("TrustedProxies = %q", got)
@@ -217,7 +217,7 @@ func TestLoadCanDisableTrustedProxies(t *testing.T) {
 
 	cfg, err := Load("__not_exists__.env")
 	if err != nil {
-		t.Fatalf("Load() 返回错误: %v", err)
+		t.Fatalf("Load() returned an error: %v", err)
 	}
 	if cfg.TrustedProxies != nil {
 		t.Fatalf("TrustedProxies = %#v, want nil", cfg.TrustedProxies)
@@ -234,7 +234,7 @@ func TestLoadDefaultsCodexUpstreamTransportToHTTP(t *testing.T) {
 
 	cfg, err := Load("__not_exists__.env")
 	if err != nil {
-		t.Fatalf("Load() 返回错误: %v", err)
+		t.Fatalf("Load() returned an error: %v", err)
 	}
 	if got := cfg.CodexUpstreamTransport; got != "http" {
 		t.Fatalf("CodexUpstreamTransport = %q, want http", got)
@@ -254,7 +254,7 @@ func TestLoadHonorsCodexUpstreamTransportWS(t *testing.T) {
 
 	cfg, err := Load("__not_exists__.env")
 	if err != nil {
-		t.Fatalf("Load() 返回错误: %v", err)
+		t.Fatalf("Load() returned an error: %v", err)
 	}
 	if got := cfg.CodexUpstreamTransport; got != "ws" {
 		t.Fatalf("CodexUpstreamTransport = %q, want ws", got)
@@ -274,7 +274,7 @@ func TestLoadKeepsLegacyUseWebsocketCompatibility(t *testing.T) {
 
 	cfg, err := Load("__not_exists__.env")
 	if err != nil {
-		t.Fatalf("Load() 返回错误: %v", err)
+		t.Fatalf("Load() returned an error: %v", err)
 	}
 	if got := cfg.CodexUpstreamTransport; got != "ws" {
 		t.Fatalf("CodexUpstreamTransport = %q, want ws", got)
@@ -320,7 +320,7 @@ func TestLoadReadsRedisTLSSettings(t *testing.T) {
 
 	cfg, err := Load("__not_exists__.env")
 	if err != nil {
-		t.Fatalf("Load() 返回错误: %v", err)
+		t.Fatalf("Load() returned an error: %v", err)
 	}
 
 	if got := cfg.Cache.Redis.Addr; got != "rediss://default:url-pass@example.upstash.io:6379/2" {
@@ -353,14 +353,14 @@ func TestLoadAcceptsValidDatabaseSchema(t *testing.T) {
 
 	cfg, err := Load("__not_exists__.env")
 	if err != nil {
-		t.Fatalf("Load() 返回错误: %v", err)
+		t.Fatalf("Load() returned an error: %v", err)
 	}
 	if got := cfg.Database.Schema; got != "codex2api" {
 		t.Fatalf("Database.Schema = %q, want codex2api", got)
 	}
 	dsn := cfg.Database.DSN()
 	if !strings.Contains(dsn, "options='-c search_path=codex2api,public'") {
-		t.Fatalf("DSN 未包含 search_path 选项: %s", dsn)
+		t.Fatalf("DSN does not include the search_path option: %s", dsn)
 	}
 }
 
@@ -382,7 +382,7 @@ func TestLoadRejectsInvalidDatabaseSchema(t *testing.T) {
 			t.Setenv("REDIS_ADDR", "redis:6379")
 
 			if _, err := Load("__not_exists__.env"); err == nil {
-				t.Fatalf("非法 schema %q 应当被拒绝，但 Load() 通过了", name)
+				t.Fatalf("invalid schema %q should be rejected, but Load() accepted it", name)
 			}
 		})
 	}
@@ -399,28 +399,28 @@ func TestDSNOmitsSchemaWhenEmpty(t *testing.T) {
 		SSLMode:  "disable",
 	}
 	if got := d.DSN(); strings.Contains(got, "search_path") {
-		t.Fatalf("空 schema 时 DSN 不应包含 search_path: %s", got)
+		t.Fatalf("with an empty schema the DSN should not include search_path: %s", got)
 	}
 }
 
-// issue #498: .env 里的 TZ 必须作用于 time.Local,否则自然日限额按宿主机时区重置。
+// issue #498: the TZ in .env must apply to time.Local, otherwise the daily quota resets by the host time zone.
 func TestLoadAppliesTimezoneFromEnvFile(t *testing.T) {
 	origLocal := time.Local
 	t.Cleanup(func() { time.Local = origLocal })
-	t.Setenv("TZ", "") // 注册测试结束后的恢复
+	t.Setenv("TZ", "") // registers the restore after the test ends
 	if err := os.Unsetenv("TZ"); err != nil {
-		t.Fatalf("Unsetenv(TZ) 失败: %v", err)
+		t.Fatalf("Unsetenv(TZ) failed: %v", err)
 	}
 	t.Setenv("DATABASE_HOST", "postgres")
 	t.Setenv("REDIS_ADDR", "redis:6379")
 
 	envPath := filepath.Join(t.TempDir(), ".env")
 	if err := os.WriteFile(envPath, []byte("TZ=America/Chicago\n"), 0o600); err != nil {
-		t.Fatalf("写临时 .env 失败: %v", err)
+		t.Fatalf("failed to write temporary .env: %v", err)
 	}
 
 	if _, err := Load(envPath); err != nil {
-		t.Fatalf("Load() 返回错误: %v", err)
+		t.Fatalf("Load() returned an error: %v", err)
 	}
 	if got := time.Local.String(); got != "America/Chicago" {
 		t.Fatalf("time.Local = %q, want %q", got, "America/Chicago")
@@ -445,6 +445,6 @@ func TestApplyTimezoneKeepsLocalOnInvalidTZ(t *testing.T) {
 
 	applyTimezone()
 	if time.Local != origLocal {
-		t.Fatalf("非法 TZ 不应改动 time.Local, got %q", time.Local)
+		t.Fatalf("an invalid TZ should not change time.Local, got %q", time.Local)
 	}
 }

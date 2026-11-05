@@ -569,9 +569,9 @@ func (s *DurableResponseContextStore) sweepLoop(interval time.Duration) {
 		case <-ticker.C:
 			s.flushTouches()
 			if expired, evicted, err := s.Sweep(time.Now()); err != nil {
-				log.Printf("持久化 response context 清理失败: %v", err)
+				log.Printf("failed to clean up persisted response context: %v", err)
 			} else if expired > 0 || evicted > 0 {
-				log.Printf("持久化 response context 清理: expired=%d evicted=%d", expired, evicted)
+				log.Printf("persisted response context cleanup: expired=%d evicted=%d", expired, evicted)
 			}
 		}
 	}

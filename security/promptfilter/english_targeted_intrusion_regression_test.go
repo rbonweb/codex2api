@@ -2,15 +2,15 @@ package promptfilter
 
 import "testing"
 
-// 英文定向入侵请求必须与中文等价表述获得同样的终局拦截。
+// English targeted-intrusion requests must receive the same final-rule block as their Chinese equivalents.
 //
-// 缺口来源(对抗性基线实测):targetedNetworkTargetPattern 要求地址前出现
-// target / url / ip / 目标 这类标签词。中文锚点写作"目标 URL：1.2.3.4"因此命中,
-// 而英文惯用的介词式表述"against 1.2.3.4"是裸地址、无标签词,导致三个必需条件
-// 的合取失败,与锚点语义完全等价的英文请求仅得 signal-only 20 分被放行。
+// Source of the gap (measured by the adversarial baseline): targetedNetworkTargetPattern requires a target label word before the address,
+// such as target / url / ip. The Chinese anchor, written as "target URL: 1.2.3.4", therefore matches,
+// but the English prepositional form "against 1.2.3.4" is a bare address with no label word, so the conjunction of the three required conditions
+// fails, and an English request fully equivalent in meaning to the anchor scores only 20 signal-only points and is allowed.
 //
-// 这一层是会话锁的前置条件:会话锁只能在"首次命中"之后封死后续变形,首次命中
-// 本身漏掉,请求就会直达上游并产生真实的 cyber_policy 封号信号。
+// This layer is the precondition for the session lock: the session lock can only block later variants after a "first hit", and the first hit
+// itself being missed means the request reaches upstream and produces a real cyber_policy account-suspension signal.
 func TestEnglishTargetedIntrusionIsBlockedLikeChineseEquivalent(t *testing.T) {
 	cfg := recommendedEnabledConfig()
 
@@ -40,16 +40,16 @@ func TestEnglishTargetedIntrusionIsBlockedLikeChineseEquivalent(t *testing.T) {
 		t.Run(tc.name, func(t *testing.T) {
 			verdict := InspectText(tc.text, cfg)
 			if verdict.Action != ActionBlock || !verdictHasMatch(verdict, "targeted_operational_intrusion_request") {
-				t.Fatalf("英文定向入侵请求未被终局拦截: %+v", verdict)
+				t.Fatalf("English targeted-intrusion request was not blocked by the final rule: %+v", verdict)
 			}
 		})
 	}
 }
 
-// 中文介词式裸地址与英文是同一类缺口:目标识别原先只认"目标 URL：1.2.3.4"这种
-// 标签写法,而"对 1.2.3.4 执行渗透测试"是极其自然的中文表述,却因为缺少标签词
-// 而漏过。注意第一个用例**没有任何授权声明**,是纯恶意请求,说明这与授权开关
-// 无关,是独立的召回缺口。
+// A Chinese prepositional bare address has the same kind of gap as English: target detection originally recognized only the labelled form "target URL: 1.2.3.4"
+// while "run a penetration test against 1.2.3.4" is a very natural phrasing in Chinese, yet it was missed for lack of a label word
+// and was missed. Note that the first case has **no authorization claim at all**; it is a purely malicious request, which shows this is unrelated to the authorization switch
+// it is a separate recall gap.
 func TestChinesePrepositionTargetedIntrusionIsBlocked(t *testing.T) {
 	cfg := recommendedEnabledConfig()
 
@@ -71,19 +71,19 @@ func TestChinesePrepositionTargetedIntrusionIsBlocked(t *testing.T) {
 		t.Run(tc.name, func(t *testing.T) {
 			verdict := InspectText(tc.text, cfg)
 			if verdict.Action != ActionBlock || !verdictHasMatch(verdict, "targeted_operational_intrusion_request") {
-				t.Fatalf("中文介词式定向入侵请求未被终局拦截: %+v", verdict)
+				t.Fatalf("prepositional-style Chinese targeted-intrusion request was not blocked by the final rule: %+v", verdict)
 			}
 		})
 	}
 }
 
-// 放宽 target 识别不得引入误报。介词式地址只在 IP 与显式 URL 上生效,
-// 裸域名形态(含 main.go / package.json 这类文件名)不参与,"仅提及地址"
-// 的场景必须保持放行。
+// Relaxing target detection must not add false positives. The prepositional address applies only to IPs and explicit URLs,
+// and bare-domain forms (including file names such as main.go / package.json) do not take part; "merely mentioning an address"
+// scenarios must stay allowed.
 //
-// 注意:"声明式授权"不在本测试范围内——它是否豁免由
-// Advanced.Enforcement.AuthorizedPentestAllowed 决定,见
-// authorized_pentest_switch_test.go。
+// Note: "declared authorization" is outside the scope of this test; whether it is exempt is decided by
+// Advanced.Enforcement.AuthorizedPentestAllowed, see
+// authorized_pentest_switch_test.go.
 func TestWidenedTargetRecognitionDoesNotFalsePositive(t *testing.T) {
 	cfg := recommendedEnabledConfig()
 
@@ -109,16 +109,16 @@ func TestWidenedTargetRecognitionDoesNotFalsePositive(t *testing.T) {
 		t.Run(tc.name, func(t *testing.T) {
 			verdict := InspectText(tc.text, cfg)
 			if verdictHasMatch(verdict, "targeted_operational_intrusion_request") {
-				t.Fatalf("正常/已授权请求被误判为定向入侵: %+v", verdict)
+				t.Fatalf("normal or authorized request was misjudged as targeted intrusion: %+v", verdict)
 			}
 		})
 	}
 }
 
-// 介词分支("on/at/against 1.2.3.4")放宽了 target 识别,而 terminal 命中在
-// LocalSevereStrikeEnabled 下会累计封号。常见运维/防御语句往往同时含介词与
-// IP/URL,但没有攻击意图动词,绝不能被 block —— 否则直接误封正常用户。
-// 既有误报语料是在旧的窄 target pattern 下编写的,未覆盖这一新面。
+// The prepositional branch ("on/at/against 1.2.3.4") relaxes target detection, while a terminal hit under
+// LocalSevereStrikeEnabled accumulates account suspensions. Common ops/defense sentences often contain both a preposition and
+// an IP/URL but no attack-intent verb, and must never be blocked; otherwise normal users would be banned directly.
+// The existing false-positive corpus was written under the old narrow target pattern and does not cover this new surface.
 func TestPrepositionTargetWideningDoesNotBlockOpsTraffic(t *testing.T) {
 	cfg := recommendedEnabledConfig()
 
@@ -136,7 +136,7 @@ func TestPrepositionTargetWideningDoesNotBlockOpsTraffic(t *testing.T) {
 	}
 	for _, text := range benign {
 		if verdict := InspectText(text, cfg); verdict.Action == ActionBlock {
-			t.Errorf("正常运维语句被拦截(将导致误封号): %q -> matched=%s", text, MatchesJSON(verdict.Matched))
+			t.Errorf("benign ops statement was blocked (this would cause a false account ban): %q -> matched=%s", text, MatchesJSON(verdict.Matched))
 		}
 	}
 }

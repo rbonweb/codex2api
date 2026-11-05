@@ -35,8 +35,8 @@ type memoryLeaseEntry struct {
 	expiresAt time.Time
 }
 
-// MemoryTokenCache 为单机轻量部署提供进程内 token 缓存和刷新锁。
-// 重启后缓存丢失属于预期行为。
+// MemoryTokenCache provides an in-process token cache and refresh locks for lightweight single-host deployments.
+// Losing the cache on restart is expected behavior.
 type MemoryTokenCache struct {
 	mu        sync.RWMutex
 	tokens    map[int64]memoryTokenEntry
@@ -50,7 +50,7 @@ type MemoryTokenCache struct {
 
 var _ RuntimeOwnerStore = (*MemoryTokenCache)(nil)
 
-// NewMemory 创建内存缓存实现。
+// NewMemory creates the in-memory cache implementation.
 func NewMemory(poolSize int) TokenCache {
 	if poolSize <= 0 {
 		poolSize = 1
@@ -64,12 +64,12 @@ func NewMemory(poolSize int) TokenCache {
 		runtime:   make(map[string]memoryRuntimeEntry),
 		poolSize:  poolSize,
 	}
-	// 启动后台定时清理过期 token 和过期锁，防止已删除账号的条目永驻内存
+	// Start a background timer that clears expired tokens and expired locks, so entries of deleted accounts do not stay in memory forever
 	go tc.cleanupLoop()
 	return tc
 }
 
-// cleanupLoop 每 60 秒清理一次过期 token 和过期锁
+// cleanupLoop clears expired tokens and expired locks every 60 seconds
 func (tc *MemoryTokenCache) cleanupLoop() {
 	ticker := time.NewTicker(60 * time.Second)
 	defer ticker.Stop()
@@ -157,7 +157,7 @@ func (tc *MemoryTokenCache) GetAccessToken(ctx context.Context, accountID int64)
 		return "", nil
 	}
 	if !entry.expiresAt.IsZero() && time.Now().After(entry.expiresAt) {
-		// 同步删除过期条目，避免删除刚刷新的 token
+		// Delete expired entries synchronously, so a token that was just refreshed is not deleted
 		tc.mu.Lock()
 		current, ok := tc.tokens[accountID]
 		if ok && current == entry && !current.expiresAt.IsZero() && time.Now().After(current.expiresAt) {
@@ -177,7 +177,7 @@ func (tc *MemoryTokenCache) SetAccessToken(ctx context.Context, accountID int64,
 	if ttl > 0 {
 		expiresAt = time.Now().Add(ttl)
 	} else if ttl < 0 {
-		// 负数 TTL 表示已经过期，直接设置为过去的时间
+		// A negative TTL means already expired, so set the time to the past directly
 		expiresAt = time.Now().Add(ttl)
 	}
 	tc.tokens[accountID] = memoryTokenEntry{
@@ -291,7 +291,7 @@ func (tc *MemoryTokenCache) WaitForRefreshComplete(ctx context.Context, accountI
 		}
 	}
 
-	return "", fmt.Errorf("等待刷新超时")
+	return "", fmt.Errorf("timed out waiting for refresh")
 }
 
 func (tc *MemoryTokenCache) SetSessionAffinity(ctx context.Context, key string, binding SessionAffinityBinding, ttl time.Duration) error {
@@ -519,8 +519,8 @@ func (tc *MemoryTokenCache) CompareAndDeleteRuntimeOwner(ctx context.Context, na
 	return true, nil
 }
 
-// IncrRuntimeCounters 在单锁内累加计数器。计数器以 JSON 对象存在 runtime 表里，
-// 语义与 Redis 的 HINCRBYFLOAT 一致，但只对本进程可见。
+// IncrRuntimeCounters adds to the counters under a single lock. The counters are stored as a JSON object in the runtime table,
+// with the same semantics as Redis HINCRBYFLOAT, but visible only to this process.
 func (tc *MemoryTokenCache) IncrRuntimeCounters(ctx context.Context, namespace string, key string, deltas map[string]float64, ttl time.Duration) error {
 	mapKey := runtimeMapKey(namespace, key)
 	if mapKey == "" || len(deltas) == 0 {
@@ -566,5 +566,5 @@ func (tc *MemoryTokenCache) GetRuntimeCounters(ctx context.Context, namespace st
 	return counters, nil
 }
 
-// SharedAcrossInstances 报告进程内内存缓存不跨实例共享。
+// SharedAcrossInstances reports that the in-process memory cache is not shared across instances.
 func (tc *MemoryTokenCache) SharedAcrossInstances() bool { return false }

@@ -15,28 +15,28 @@ import (
 	"github.com/aws/aws-sdk-go-v2/service/s3"
 )
 
-// S3Backend 适配任意 S3-compatible 对象存储：AWS S3、Cloudflare R2、MinIO、阿里云 OSS、
-// 腾讯云 COS、Backblaze B2、华为 OBS、七牛 Kodo 等。
+// S3Backend adapts any S3-compatible object storage: AWS S3, Cloudflare R2, MinIO, Alibaba Cloud OSS,
+// Tencent Cloud COS, Backblaze B2, Huawei OBS, Qiniu Kodo and others.
 //
-// ref 形态固定为 "s3://<bucket>/<key>"。bucket 与配置一致；key 含 prefix。
+// The ref form is fixed as "s3://<bucket>/<key>". The bucket matches the configuration; the key includes the prefix.
 type S3Backend struct {
 	client *s3.Client
 	bucket string
 	prefix string
 }
 
-// NewS3Backend 按 cfg 构造客户端。Region 留空时默认 "auto"（兼容 R2）。
+// NewS3Backend builds a client from cfg. When Region is empty it defaults to "auto" (compatible with R2).
 //
-// 兼容性处理：
-//   - SwapComputePayloadSHA256ForUnsignedPayloadMiddleware：避免对 PUT 体计算 SHA256，
-//     绕开阿里云 OSS / 腾讯云 COS 等服务的签名差异。
-//   - RequestChecksumCalculationWhenRequired：仅在协议要求时计算校验和，
-//     避免新版 SDK 默认开启的 CRC64 与旧 S3 实现不兼容。
-//   - UsePathStyle：MinIO、部分自建 / 早期 S3 服务必需。
+// Compatibility handling:
+//   - SwapComputePayloadSHA256ForUnsignedPayloadMiddleware: avoids computing SHA256 over the PUT body,
+//     working around signing differences in services such as Alibaba Cloud OSS and Tencent Cloud COS.
+//   - RequestChecksumCalculationWhenRequired: computes checksums only when the protocol requires them,
+//     so the CRC64 that newer SDKs enable by default does not break older S3 implementations.
+//   - UsePathStyle: required for MinIO and some self-hosted or early S3 services.
 func NewS3Backend(cfg Config) (*S3Backend, error) {
 	cfg = cfg.Normalize()
 	if cfg.Bucket == "" {
-		return nil, fmt.Errorf("imagestore.s3: 缺少 bucket")
+		return nil, fmt.Errorf("imagestore.s3: bucket is missing")
 	}
 
 	region := cfg.Region
@@ -51,7 +51,7 @@ func NewS3Backend(cfg Config) (*S3Backend, error) {
 		),
 	)
 	if err != nil {
-		return nil, fmt.Errorf("加载 AWS 配置失败: %w", err)
+		return nil, fmt.Errorf("failed to load AWS config: %w", err)
 	}
 
 	client := s3.NewFromConfig(awsCfg, func(o *s3.Options) {
@@ -69,13 +69,13 @@ func NewS3Backend(cfg Config) (*S3Backend, error) {
 	return &S3Backend{client: client, bucket: cfg.Bucket, prefix: cfg.Prefix}, nil
 }
 
-// Name 实现 Backend。
+// Name implements Backend.
 func (b *S3Backend) Name() string { return BackendS3 }
 
-// Save 上传一个对象。返回 "s3://bucket/key" 形态的 ref。
+// Save uploads one object. It returns a ref in the form "s3://bucket/key".
 func (b *S3Backend) Save(ctx context.Context, key string, data []byte, mime string) (string, error) {
 	if strings.TrimSpace(key) == "" {
-		return "", fmt.Errorf("imagestore.s3: key 为空")
+		return "", fmt.Errorf("imagestore.s3: key is empty")
 	}
 	fullKey := b.prefix + key
 	contentType := mime
@@ -94,7 +94,7 @@ func (b *S3Backend) Save(ctx context.Context, key string, data []byte, mime stri
 	return buildS3Ref(b.bucket, fullKey), nil
 }
 
-// Open 拉取对象内容流。size 来自 Content-Length（若可用）。
+// Open fetches the object content as a stream. size comes from Content-Length when available.
 func (b *S3Backend) Open(ctx context.Context, ref string) (io.ReadCloser, int64, error) {
 	bucket, key, err := parseS3Ref(ref)
 	if err != nil {
@@ -117,7 +117,7 @@ func (b *S3Backend) Open(ctx context.Context, ref string) (io.ReadCloser, int64,
 	return out.Body, size, nil
 }
 
-// Read 一次性读出全部内容。
+// Read reads all content at once.
 func (b *S3Backend) Read(ctx context.Context, ref string) ([]byte, error) {
 	rc, _, err := b.Open(ctx, ref)
 	if err != nil {
@@ -127,7 +127,7 @@ func (b *S3Backend) Read(ctx context.Context, ref string) ([]byte, error) {
 	return io.ReadAll(rc)
 }
 
-// Delete 删除对象。
+// Delete deletes the object.
 func (b *S3Backend) Delete(ctx context.Context, ref string) error {
 	bucket, key, err := parseS3Ref(ref)
 	if err != nil {
@@ -146,7 +146,7 @@ func (b *S3Backend) Delete(ctx context.Context, ref string) error {
 	return nil
 }
 
-// HeadBucket 提供探活：用于设置页"测试连接"按钮。
+// HeadBucket provides a liveness check, used by the "test connection" button on the settings page.
 func (b *S3Backend) HeadBucket(ctx context.Context) error {
 	_, err := b.client.HeadBucket(ctx, &s3.HeadBucketInput{Bucket: &b.bucket})
 	if err != nil {
@@ -155,10 +155,10 @@ func (b *S3Backend) HeadBucket(ctx context.Context) error {
 	return nil
 }
 
-// PresignGetURL 为一个 ref 生成带过期时间的预签名 GET 直链。
+// PresignGetURL generates a presigned GET direct link with an expiry time for one ref.
 //
-// 签名在本地完成、不发起网络请求，因此可在无网环境下单测。适配私有桶：
-// 拿到链接的一方可在 ttl 内直接 GET 下载，无需公开读权限。
+// The signature is computed locally without making a network request, so it can be unit-tested offline. It works with private buckets:
+// whoever holds the link can GET the object directly within the ttl, without public read permission.
 func (b *S3Backend) PresignGetURL(ctx context.Context, ref string, ttl time.Duration) (string, error) {
 	bucket, key, err := parseS3Ref(ref)
 	if err != nil {
@@ -188,12 +188,12 @@ func buildS3Ref(bucket, key string) string {
 func parseS3Ref(ref string) (bucket, key string, err error) {
 	ref = strings.TrimSpace(ref)
 	if !strings.HasPrefix(ref, s3RefScheme) {
-		return "", "", fmt.Errorf("imagestore.s3: 非 S3 ref: %s", ref)
+		return "", "", fmt.Errorf("imagestore.s3: not an S3 ref: %s", ref)
 	}
 	rest := strings.TrimPrefix(ref, s3RefScheme)
 	idx := strings.IndexByte(rest, '/')
 	if idx <= 0 || idx == len(rest)-1 {
-		return "", "", fmt.Errorf("imagestore.s3: 非法 ref: %s", ref)
+		return "", "", fmt.Errorf("imagestore.s3: invalid ref: %s", ref)
 	}
 	return rest[:idx], rest[idx+1:], nil
 }

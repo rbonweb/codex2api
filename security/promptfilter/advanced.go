@@ -135,38 +135,38 @@ type NewAPIConfig struct {
 type EnforcementConfig struct {
 	TerminalCategories   []string `json:"terminal_categories"`
 	TerminalBypassModels []string `json:"terminal_bypass_models"`
-	// ApprovalReviewModels 是可信的 Codex 自动审批(Guardian)请求模型。只有请求模型
-	// 在此列表、且请求通过封闭模板结构校验时,审批请求里的父会话记录才按不可信
-	// 证据处理而不再当作用户输入拦截;待审批动作仍同步审计。
+	// ApprovalReviewModels lists the trusted Codex auto-approval (Guardian) request models. Only when the request model
+	// is in this list and the request passes the closed template structure check are the parent-session records in the approval request handled as untrusted
+	// evidence rather than blocked as user input; the pending approval action is still audited synchronously.
 	//
-	// 模板可以伪造,所以只应放入专用审批模型,或确认只用于审批的模型。自定义
-	// provider 走 API Key 鉴权时 Codex 会改用 gpt-5.6-luna 或父会话模型发起审批,
-	// 需要在此显式加入。空列表表示不识别审批模板。
+	// Templates can be forged, so only add dedicated approval models, or models confirmed to be used only for approval. Custom
+	// providers using API-key auth make Codex switch to gpt-5.6-luna or the parent session model to start approvals,
+	// so they must be added here explicitly. An empty list means no approval template is recognized.
 	ApprovalReviewModels     []string `json:"approval_review_models"`
 	LocalBlockMessage        string   `json:"local_block_message,omitempty"`
 	ConversationLockEnabled  bool     `json:"conversation_lock_enabled"`
 	ConversationLockTTLHours int      `json:"conversation_lock_ttl_hours"`
 	UserCyberCooldownMinutes int      `json:"user_cyber_cooldown_minutes"`
 	CYBStrikeEnabled         bool     `json:"cyb_strike_enabled"`
-	// LocalSevereStrikeEnabled 决定本地判定的**最高置信度**严重违规
-	// (当前用户直接发出 + 敏感意图 + 终局 strict/category 命中)是否累计到
-	// NewAPI 用户身上,从而触发 NewAPI 侧的 CYB 累计与自动封号。
+	// LocalSevereStrikeEnabled decides whether the **highest-confidence** local severe violation
+	// (sent directly by the current user + sensitive intent + a final strict/category hit) counts toward
+	// the NewAPI user, which triggers the NewAPI-side CYB count and automatic account suspension.
 	//
-	// 打开(默认)时,严重违规无需先到达上游产生真实 cyber_policy,即可在本地
-	// 扼杀的同时把一次 strike 记到人;会话锁保证同一会话不重复累计。误封面被
-	// 收敛到最高置信度那一档:低置信度拦截、工具输出、历史上下文都不累计。
+	// When on (default), a severe violation is stopped locally without first reaching upstream and producing a real cyber_policy,
+	// and a strike is recorded against the person at the same time; the session lock ensures one session is not counted twice. False positives are
+	// narrowed to the highest-confidence tier: low-confidence blocks, tool output and history context are not counted.
 	//
-	// 关闭时,本地严重违规仍被拦截,但不再记 strike——拦截与封号解耦。
+	// When off, local severe violations are still blocked, but no strike is recorded; blocking and account suspension are decoupled.
 	LocalSevereStrikeEnabled bool `json:"local_severe_strike_enabled"`
-	// AuthorizedPentestAllowed 决定是否承认请求里的"声明式授权"
-	// ("我有书面授权"、"我自己的服务器"、"with permission")。
+	// AuthorizedPentestAllowed decides whether to honor the "declared authorization" in the request
+	// ("I have written authorization", "my own server", "with permission").
 	//
-	// 授权声明是无法验证的自述:开启时,攻击者只要加一句就能让定向入侵终局规则
-	// 失效(实测 score 100 -> 20 放行)。关闭(默认)时这类声明不再具有豁免效力,
-	// 与 review.go 中 "Authorization is evidence, not an assumption" 的既定策略
-	// 保持一致。
+	// An authorization claim is an unverifiable self-description: when on, an attacker only needs to add one sentence to make the targeted-intrusion final rule
+	// stop applying (measured: score 100 -> 20, allowed). When off (default), such claims no longer carry exemption,
+	// consistent with the established policy "Authorization is evidence, not an assumption" in review.go.
+	// Keep it consistent.
 	//
-	// 仅当部署确实承载已授权渗透测试业务时才开启。
+	// Turn this on only when the deployment actually serves authorized penetration-testing work.
 	AuthorizedPentestAllowed bool `json:"authorized_pentest_allowed"`
 }
 

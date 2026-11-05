@@ -73,16 +73,16 @@ type PatternConfig struct {
 	AllPatterns     []string `json:"all_patterns,omitempty"`
 	AnyPatterns     []string `json:"any_patterns,omitempty"`
 	ExcludePatterns []string `json:"exclude_patterns,omitempty"`
-	// AuthorizationExcludePatterns 是"声明式授权"豁免条件,只在
-	// Advanced.Enforcement.AuthorizedPentestAllowed 打开时才并入 ExcludePatterns。
-	// 与普通排除条件分开存放,使"是否承认无法验证的授权自述"成为显式的部署策略,
-	// 而不是硬编码在规则里的隐含行为。
+	// AuthorizationExcludePatterns is the "declarative authorization" exemption condition, applied only
+	// when Advanced.Enforcement.AuthorizedPentestAllowed is on, merged into ExcludePatterns.
+	// It is stored apart from the regular exclusion conditions, so that "whether to accept unverifiable authorization claims" becomes an explicit deployment policy,
+	// rather than an implicit behavior hard-coded in the rules.
 	AuthorizationExcludePatterns []string `json:"authorization_exclude_patterns,omitempty"`
 	MinMatches                   int      `json:"min_matches,omitempty"`
 }
 
-// resolveAuthorizationExcludes 依据部署策略决定声明式授权是否具有豁免效力。
-// 返回的 PatternConfig 始终持有独立的切片,避免污染进程级的 defaultPatternConfigs。
+// resolveAuthorizationExcludes decides, based on the deployment policy, whether declarative authorization has exemption effect.
+// The returned PatternConfig always holds its own slice, to avoid polluting the process-level defaultPatternConfigs.
 func resolveAuthorizationExcludes(pattern PatternConfig, allowed bool) PatternConfig {
 	if len(pattern.AuthorizationExcludePatterns) == 0 {
 		return pattern
@@ -653,21 +653,21 @@ func Inspect(body []byte, endpoint string, cfg Config) Verdict {
 	return InspectText(text, cfg)
 }
 
-// RequiresRequestText 判断当前配置下是否真的需要从请求正文提取文本。
-// 本地 filter 主开关开启后，启用的外部 review 会审核每一个可提取的当前用户
-// 输入，不再以本地 warn/block 作为触发条件。risk 只读取聚合分数与身份、
-// newapi 只塑形已拦截响应；所有正文能力仍受同一个主开关控制。
+// RequiresRequestText reports whether the current config really needs text extracted from the request body.
+// Once the local filter master switch is on, enabled external reviews check every extractable current user
+// input, and no longer use local warn/block as the trigger. risk only reads the aggregated score and identity,
+// newapi only shapes blocked responses; all body capabilities are still controlled by the same master switch.
 //
-// 全部相关能力关闭时返回 false，调用方应在提取正文前直接放行，避免对大请求体
-// (曾达 16MB) 做无效的 JSON 遍历/UTF-8 解码 (issue #417)。
+// Returns false when all related capabilities are off; callers should allow the request before extracting the body, to avoid
+// (once reached 16MB) running useless JSON traversal/UTF-8 decoding (issue #417).
 func RequiresRequestText(cfg Config) bool {
 	return cfg.Enabled
 }
 
 func InspectText(text string, cfg Config) Verdict {
 	cfg = NormalizeConfig(cfg)
-	// 关闭或空文本时提前返回，避开 Preview 与全量 UTF-8 计数——大文本上这两步
-	// 本身也可观测 (issue #417)。
+	// Return early when off or the text is empty, skipping Preview and the full UTF-8 count; on large text these two steps
+	// are themselves observable too (issue #417).
 	if !cfg.Enabled || strings.TrimSpace(text) == "" {
 		return Verdict{
 			Enabled:   cfg.Enabled,

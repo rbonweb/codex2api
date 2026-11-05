@@ -34,8 +34,8 @@ func TestParseProxyURLCleanFormats(t *testing.T) {
 	}
 }
 
-// issue #293: 代理密码含 # / ? 等保留字符，new URL / url.Parse 会直接报错。
-// ParseProxyURL 应通过 userinfo 百分号编码正确解出主机与凭据。
+// issue #293: a proxy password with reserved characters such as # / ? makes new URL / url.Parse fail outright.
+// ParseProxyURL should correctly extract the host and credentials through percent-encoded userinfo.
 func TestParseProxyURLSpecialCharPassword(t *testing.T) {
 	cases := []struct {
 		name     string
@@ -69,11 +69,11 @@ func TestParseProxyURLSpecialCharPassword(t *testing.T) {
 func TestParseProxyURLRejectsInvalid(t *testing.T) {
 	cases := []string{
 		"",
-		"1.2.3.4:1080",                    // 缺 scheme
-		"ftp://1.2.3.4:1080",              // 不支持的 scheme
-		"socks4://1.2.3.4:1080",           // 不支持的 scheme
-		"socks5://user:pass@1.2.3.4:99999", // 端口越界
-		"socks5://",                        // 缺主机
+		"1.2.3.4:1080",                     // missing scheme
+		"ftp://1.2.3.4:1080",               // unsupported scheme
+		"socks4://1.2.3.4:1080",            // unsupported scheme
+		"socks5://user:pass@1.2.3.4:99999", // port out of range
+		"socks5://",                        // missing host
 	}
 	for _, raw := range cases {
 		t.Run(raw, func(t *testing.T) {

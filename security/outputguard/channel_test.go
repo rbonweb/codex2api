@@ -9,7 +9,7 @@ import (
 )
 
 func TestChannelGuardHighwaterGrowthAndScanBudget(t *testing.T) {
-	// 工具 channel: maxBytes = 256 KiB (262144), scanBudget = 2 * 256 KiB = 512 KiB
+	// tool channel: maxBytes = 256 KiB (262144), scanBudget = 2 * 256 KiB = 512 KiB
 	cg := NewChannelGuard("call_1", KindToolArguments, 262144, 4096)
 
 	// Append 64 KiB of non-repeating data
@@ -36,10 +36,10 @@ func TestChannelGuardHighwaterGrowthAndScanBudget(t *testing.T) {
 	}
 }
 
-// Spec §9.1 Case 8a: 耗尽扫描预算后变体快照超额拦截
+// Spec §9.1 Case 8a: a variant snapshot that exceeds the budget is blocked after the scan budget is exhausted
 func TestChannelGuardCase8a_ScanBudgetExhaustionAndVariantRejection(t *testing.T) {
 	cg := NewChannelGuard("call_1", KindToolArguments, 262144, 4096)
-	// 以 256 次 1 KiB delta 耗尽 256 KiB 扫描预算 (剩余 256 KiB)
+	// 256 deltas of 1 KiB exhaust the 256 KiB scan budget (256 KiB remaining)
 	chunk := make([]byte, 1024)
 	r2 := rand.New(rand.NewSource(20002))
 	r2.Read(chunk)
@@ -58,7 +58,7 @@ func TestChannelGuardCase8a_ScanBudgetExhaustionAndVariantRejection(t *testing.T
 		t.Fatalf("remaining scan budget want 262144, got %d", cg.RemainingScanBudget())
 	}
 
-	// 首个 256 KiB 白名单终态快照到达 (arguments.done)，尚无 baseline hash，cost = 256 KiB
+	// The first 256 KiB allowlisted terminal snapshot arrives (arguments.done); there is no baseline hash yet, cost = 256 KiB
 	growth, cost, skipRepetition, err := cg.CheckSnapshot(fullParam, "arguments.done")
 	if err != nil {
 		t.Fatalf("arguments.done snapshot error: %v", err)
@@ -74,7 +74,7 @@ func TestChannelGuardCase8a_ScanBudgetExhaustionAndVariantRejection(t *testing.T
 		t.Fatalf("remaining scan budget want 0, got %d", cg.RemainingScanBudget())
 	}
 
-	// 紧接着收到修改了 1 个字节的 256 KiB 变体快照 (item.done)
+	// Immediately after, a 256 KiB variant snapshot with 1 byte changed arrives (item.done)
 	variantParam := bytes.Clone(fullParam)
 	variantParam[65536] ^= 0xFF
 
@@ -87,7 +87,7 @@ func TestChannelGuardCase8a_ScanBudgetExhaustionAndVariantRejection(t *testing.T
 	}
 }
 
-// Spec §9.1 Case 8b: 合法终态链零计费放行与无资格拒绝
+// Spec §9.1 Case 8b: a legal terminal chain passes at zero cost, and ineligible calls are rejected
 func TestChannelGuardCase8b_TerminalChainZeroCostAndExhaustion(t *testing.T) {
 	cg := NewChannelGuard("call_1", KindToolArguments, 262144, 4096)
 	fullParam := make([]byte, 262144)
@@ -97,11 +97,11 @@ func TestChannelGuardCase8b_TerminalChainZeroCostAndExhaustion(t *testing.T) {
 	growth, cost, _ := cg.CheckAppend(fullParam)
 	_ = cg.CommitAppend(fullParam, growth, cost)
 
-	// arguments.done 消耗最后 256 KiB 扫描预算并建立 baseline hash
+	// arguments.done consumes the last 256 KiB of the scan budget and establishes the baseline hash
 	growth, cost, _, _ = cg.CheckSnapshot(fullParam, "arguments.done")
 	_ = cg.CommitSnapshot(fullParam, growth, cost, "arguments.done")
 
-	// item.done 具备资格且 Hash 完全一致 -> cost = 0, skipRepetition = true
+	// item.done is eligible and the hash matches exactly -> cost = 0, skipRepetition = true
 	growth, cost, skipRepetition, err := cg.CheckSnapshot(fullParam, "item.done")
 	if err != nil {
 		t.Fatalf("item.done snapshot error: %v", err)
@@ -111,7 +111,7 @@ func TestChannelGuardCase8b_TerminalChainZeroCostAndExhaustion(t *testing.T) {
 	}
 	_ = cg.CommitSnapshot(fullParam, growth, cost, "item.done")
 
-	// response.completed 同样具备资格且 Hash 一致 -> cost = 0
+	// response.completed is likewise eligible and the hash matches -> cost = 0
 	growth, cost, skipRepetition, err = cg.CheckSnapshot(fullParam, "response.completed")
 	if err != nil {
 		t.Fatalf("response.completed snapshot error: %v", err)
@@ -121,14 +121,14 @@ func TestChannelGuardCase8b_TerminalChainZeroCostAndExhaustion(t *testing.T) {
 	}
 	_ = cg.CommitSnapshot(fullParam, growth, cost, "response.completed")
 
-	// 重发同类型 response.completed -> 失去资格，走 cost = 256 KiB，因剩余扫描预算为 0 被拦截
+	// Resending the same type response.completed -> loses eligibility and takes cost = 256 KiB; it is blocked because the remaining scan budget is 0
 	_, _, _, err = cg.CheckSnapshot(fullParam, "response.completed")
 	if err != ErrScanBudgetExhausted {
 		t.Fatalf("duplicate response.completed: want ErrScanBudgetExhausted, got %v", err)
 	}
 }
 
-// Spec §9.1 Case 8c: 非白名单普通快照绝不建立 baseline
+// Spec §9.1 Case 8c: an ordinary non-allowlisted snapshot never establishes a baseline
 func TestChannelGuardCase8c_NonTerminalSnapshotCannotEstablishBaseline(t *testing.T) {
 	cg := NewChannelGuard("c_text", KindText, 2097152, 4096)
 	snap := []byte("intermediate full snapshot text")
@@ -141,7 +141,7 @@ func TestChannelGuardCase8c_NonTerminalSnapshotCannotEstablishBaseline(t *testin
 	}
 	_ = cg.CommitSnapshot(snap, growth, cost, "unknown_or_intermediate_type")
 
-	// 确认 hasBaselineHash 仍为 false，未建立 baseline
+	// Confirm hasBaselineHash is still false; no baseline was established
 	if cg.hasBaselineHash {
 		t.Fatalf("expected hasBaselineHash=false for non-terminal snapshot, got true")
 	}
@@ -149,7 +149,7 @@ func TestChannelGuardCase8c_NonTerminalSnapshotCannotEstablishBaseline(t *testin
 
 func TestChannelGuardHashMismatchDiscardsQuotaAndChargesFullCost(t *testing.T) {
 	cg := NewChannelGuard("c_tool", KindToolArguments, 262144, 4096)
-	data1 := bytes.Repeat([]byte("hello world "), 100) // 1200 字节
+	data1 := bytes.Repeat([]byte("hello world "), 100) // 1200 bytes
 	growth, cost, _, _ := cg.CheckSnapshot(data1, "arguments.done")
 	_ = cg.CommitSnapshot(data1, growth, cost, "arguments.done")
 
@@ -157,8 +157,8 @@ func TestChannelGuardHashMismatchDiscardsQuotaAndChargesFullCost(t *testing.T) {
 		t.Fatalf("expected baseline hash created")
 	}
 
-	// 紧接着发送篡改变体快照
-	data2 := bytes.Repeat([]byte("corrupted data!"), 80) // 1200 字节
+	// Immediately send a tampered variant snapshot
+	data2 := bytes.Repeat([]byte("corrupted data!"), 80) // 1200 bytes
 	growth, cost, skip, err := cg.CheckSnapshot(data2, "item.done")
 	if err != nil {
 		t.Fatalf("unexpected CheckSnapshot error: %v", err)
@@ -170,12 +170,12 @@ func TestChannelGuardHashMismatchDiscardsQuotaAndChargesFullCost(t *testing.T) {
 		t.Fatalf("expected full cost %d, got %d", len(data2), cost)
 	}
 
-	// CommitSnapshot 篡改帧后，该类型许可必须标记废弃
+	// After CommitSnapshot tampers with the frame, the permit for this type must be marked revoked
 	_ = cg.CommitSnapshot(data2, growth, cost, "item.done")
 	if !cg.consumedTerminalTypes["item.done"] {
 		t.Fatalf("expected item.done marked as consumed/discarded")
 	}
-	// 基准摘要绝不能被篡改快照覆盖，且必须是抗碰撞的 SHA-256（32B）而非 64-bit FNV
+	// The baseline digest must never be overwritten by a tampered snapshot, and it must be the collision-resistant SHA-256 (32B) rather than 64-bit FNV
 	wantDigest := sha256.Sum256(data1)
 	if cg.terminalBaselineHash != wantDigest {
 		t.Fatalf("expected baseline sha256 digest to stay unchanged")
@@ -185,9 +185,9 @@ func TestChannelGuardHashMismatchDiscardsQuotaAndChargesFullCost(t *testing.T) {
 	}
 }
 
-// B2 回归：终态等价比对使用抗碰撞 SHA-256 摘要。
-// 旧实现使用 64-bit FNV-1a，攻击者可用碰撞让"改动过的快照"零成本通过；
-// 这里直接验证 SHA-256 路径的选择性：同长度单字节篡改的摘要必然不同且被全额计费。
+// B2 regression: terminal equivalence comparison uses the collision-resistant SHA-256 digest.
+// The old implementation used 64-bit FNV-1a, which let an attacker use collisions to pass a modified snapshot at zero cost;
+// here the selectivity of the SHA-256 path is verified directly: a single-byte tamper of the same length must produce a different digest and be charged in full.
 func TestChannelGuardTerminalBaselineDigestIsCollisionResistant(t *testing.T) {
 	cg := NewChannelGuard("c_digest", KindToolArguments, 262144, 4096)
 	data1 := bytes.Repeat([]byte("terminal-snapshot-"), 64)
@@ -227,8 +227,8 @@ func TestChannelGuardTerminalBaselineDigestIsCollisionResistant(t *testing.T) {
 	}
 }
 
-// B1 回归：channel 结束（ReleaseWindow）后迟到的 append 仍必须接受周期检测。
-// 对应 Anthropic 在 content_block_stop 之后仍下发 content_block_delta 的场景。
+// B1 regression: a late append after the channel ends (ReleaseWindow) must still accept periodicity checks.
+// This matches the case where Anthropic still sends content_block_delta after content_block_stop.
 func TestChannelGuardPostEndAppendStillScans(t *testing.T) {
 	cg := NewChannelGuard("c_post_append", KindText, 1<<20, 4096)
 	prefix := []byte("non-repeating-prefix-")
@@ -245,7 +245,7 @@ func TestChannelGuardPostEndAppendStillScans(t *testing.T) {
 		t.Fatalf("ReleaseWindow must close channel and switch to bounded post-end detector")
 	}
 
-	periodic := bytes.Repeat([]byte("0123456789"), 1024) // 10240 字节，周期 10
+	periodic := bytes.Repeat([]byte("0123456789"), 1024) // 10240 bytes, period 10
 	var scanErr error
 	for off := 0; off < len(periodic); off += 1024 {
 		end := off + 1024
@@ -267,12 +267,12 @@ func TestChannelGuardPostEndAppendStillScans(t *testing.T) {
 	}
 }
 
-// B1 回归：channel 结束后的 snapshot 仍必须接受周期检测。
+// B1 regression: a snapshot after the channel ends must still accept periodicity checks.
 func TestChannelGuardPostEndSnapshotStillScans(t *testing.T) {
 	cg := NewChannelGuard("c_post_snapshot", KindText, 1<<20, 4096)
 	cg.ReleaseWindow()
 
-	snapshot := bytes.Repeat([]byte("abcdef"), 1500) // 9000 字节，周期 6
+	snapshot := bytes.Repeat([]byte("abcdef"), 1500) // 9000 bytes, period 6
 	growth, cost, skip, err := cg.CheckSnapshot(snapshot, "unknown_or_intermediate_type")
 	if err != nil {
 		t.Fatalf("post-end CheckSnapshot error: %v", err)
@@ -285,7 +285,7 @@ func TestChannelGuardPostEndSnapshotStillScans(t *testing.T) {
 	}
 }
 
-// B1 回归：结束后扫描仍受 2*limit 扫描预算约束，不能借关闭通道绕过预算。
+// B1 regression: scanning after the end is still bound by the 2*limit scan budget; closing the channel must not be used to bypass the budget.
 func TestChannelGuardPostEndScanBudgetStillEnforced(t *testing.T) {
 	cg := NewChannelGuard("c_post_budget", KindText, 4096, 4096)
 	if cg.RemainingScanBudget() != 8192 {
@@ -308,7 +308,7 @@ func TestChannelGuardPostEndScanBudgetStillEnforced(t *testing.T) {
 
 	cg.ReleaseWindow()
 
-	// 结束后的快照扫描同样扣减预算（非重复数据不触发检测，但必须计费）。
+	// Snapshot scans after the end also deduct from the budget (non-repeated data does not trigger detection, but it must be charged).
 	growth, cost, _, err = cg.CheckSnapshot(full, "unknown_or_intermediate_type")
 	if err != nil {
 		t.Fatalf("post-end CheckSnapshot error: %v", err)
@@ -320,7 +320,7 @@ func TestChannelGuardPostEndScanBudgetStillEnforced(t *testing.T) {
 		t.Fatalf("post-end snapshot must consume remaining budget, remaining=%d", cg.RemainingScanBudget())
 	}
 
-	// 预算耗尽后，结束后的快照不得再获得免费扫描。
+	// After the budget is exhausted, snapshots after the end must not get free scans.
 	if _, _, _, err := cg.CheckSnapshot(full, "unknown_or_intermediate_type"); !errors.Is(err, ErrScanBudgetExhausted) {
 		t.Fatalf("post-end scan must fail once budget exhausted, got %v", err)
 	}
@@ -328,17 +328,17 @@ func TestChannelGuardPostEndScanBudgetStillEnforced(t *testing.T) {
 
 func TestChannelGuardTailCheck(t *testing.T) {
 	cg := NewChannelGuard("c_text", KindText, 2097152, 4096)
-	// 短文本放行
+	// Short text passes
 	_ = cg.CommitAppend([]byte("short text"), 10, 10)
 	if err := cg.CheckTail(); err != nil {
 		t.Fatalf("expected nil error for short text tail check, got %v", err)
 	}
 
-	// 长周期文本检出
+	// Long-period text is detected
 	cg2 := NewChannelGuard("c_periodic", KindText, 2097152, 4096)
 	pattern := []byte("0123456789")
-	data := bytes.Repeat(pattern, 850) // 8500 字节
-	// 避免在 append 触发检查点，直接写入 window
+	data := bytes.Repeat(pattern, 850) // 8500 bytes
+	// Avoid triggering a checkpoint in append; write directly into the window
 	cg2.detector.window = [8192]byte{}
 	for i := 0; i < len(data); i++ {
 		cg2.detector.window[i%8192] = data[i]

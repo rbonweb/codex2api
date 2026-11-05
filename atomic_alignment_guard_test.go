@@ -11,10 +11,10 @@ import (
 	"testing"
 )
 
-// 32 位平台(arm/386/mips)只保证分配对象的首字 8 字节对齐,结构体中段的裸 int64/uint64
-// 字段交给 atomic.AddInt64 等函数会在运行时 panic("unaligned 64-bit atomic operation")。
-// CI 只跑 64 位,这类问题平时完全不可见,所以这里在源码层面禁止对结构体字段使用这组函数,
-// 统一改用 atomic.Int64/atomic.Uint64(编译器保证对齐)。
+// On 32-bit platforms (arm/386/mips) only the first 8 bytes of an allocated object are guaranteed aligned, so a bare int64/uint64
+// field in the middle of a struct passed to atomic.AddInt64 and similar functions panics at run time with "unaligned 64-bit atomic operation".
+// CI only runs 64-bit, so this class of bug is never visible; this test therefore bans this set of functions on struct fields at the source level,
+// and everything should use atomic.Int64/atomic.Uint64 instead (the compiler guarantees their alignment).
 var legacy64BitAtomicFuncs = map[string]bool{
 	"AddInt64": true, "AddUint64": true,
 	"LoadInt64": true, "LoadUint64": true,
@@ -37,7 +37,7 @@ func TestNoLegacy64BitAtomicsOnStructFields(t *testing.T) {
 			if strings.HasPrefix(name, ".") || name == "node_modules" || name == "testdata" || name == "frontend" {
 				return filepath.SkipDir
 			}
-			// 嵌套的独立 module(参考实现副本等)不属于本二进制。
+			// Nested independent modules (such as reference implementation copies) do not belong to this binary.
 			if _, statErr := os.Stat(filepath.Join(path, "go.mod")); statErr == nil {
 				return filepath.SkipDir
 			}

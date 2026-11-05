@@ -12,7 +12,7 @@ import (
 	"testing"
 )
 
-// 场景 1: 事故样式短周期重复（p<=256，8192~10240 触发，不等到 256 KiB）
+// Scenario 1: short-period repetition in the incident style (p<=256, triggers at 8192~10240, without waiting for 256 KiB)
 func TestAcceptanceScenario1_AccidentPatternEarlyTrigger(t *testing.T) {
 	rg := NewRequestGuard(Config{
 		Enabled:               true,
@@ -22,7 +22,7 @@ func TestAcceptanceScenario1_AccidentPatternEarlyTrigger(t *testing.T) {
 		MaxRequestBytes:       4194304,
 	})
 
-	pattern := []byte("_auditfree.md_pluginless.tmp.md") // 31 字节周期
+	pattern := []byte("_auditfree.md_pluginless.tmp.md") // 31-byte period
 	chunkSize := 128
 	totalPushed := 0
 	trippedAt := 0
@@ -57,7 +57,7 @@ func TestAcceptanceScenario1_AccidentPatternEarlyTrigger(t *testing.T) {
 	}
 }
 
-// 场景 2: 同语义流按 1-byte、小/大 delta、随机边界分割均可检测，切分不能让重复消失
+// Scenario 2: the same semantic stream is detected whether split into 1-byte, small/large deltas, or random boundaries; splitting must not make the repetition disappear
 func TestAcceptanceScenario2_ChunkInvariance(t *testing.T) {
 	pattern := []byte("defensive_pipeline_token_replay_") // 32 bytes
 	var fullStream []byte
@@ -71,7 +71,7 @@ func TestAcceptanceScenario2_ChunkInvariance(t *testing.T) {
 			rg := NewRequestGuard(Config{
 				Enabled:               true,
 				MaxToolArgumentBytes:  262144,
-				MaxToolArgumentDeltas: 65536, // 放宽 delta 计数，防止 1-byte 切分在 4096 delta 处提前遮蔽
+				MaxToolArgumentDeltas: 65536, // relax the delta count so 1-byte splitting is not masked early at 4096 deltas
 				MaxChannelBytes:       2097152,
 				MaxRequestBytes:       4194304,
 			})
@@ -129,9 +129,9 @@ func TestAcceptanceScenario2_ChunkInvariance(t *testing.T) {
 	})
 }
 
-// 场景 3: 单大 delta 中间嵌入 9215 bytes 精确短周期片段，尾部正常仍触发
+// Scenario 3: a single large delta with an exact 9215-byte short-period fragment embedded in the middle still triggers when the tail is normal
 func TestAcceptanceScenario3_Embedded9215BytesAnd8192Boundary(t *testing.T) {
-	// 精确构造 9215 bytes 周期片段：repeat ceil 后 slice 到恰好 9215 bytes，并验证多个不同起点
+	// Build the exact 9215-byte periodic fragment: repeat, ceil, then slice to exactly 9215 bytes, and verify several different starting points
 	unit := []byte("1234567890abcdefghijklmno") // p=25
 	repeats := int(math.Ceil(float64(9215) / float64(len(unit))))
 
@@ -180,7 +180,7 @@ func TestAcceptanceScenario3_Embedded9215BytesAnd8192Boundary(t *testing.T) {
 	})
 }
 
-// 场景 4: 多 text / thinking / tool 交错不互相污染，真实 item_id 无 call_id 晚到 alias
+// Scenario 4: interleaved text / thinking / tool streams do not contaminate each other; a real item_id with a late call_id gets an alias
 func TestAcceptanceScenario4_InterleavedChannelsAndNoReset(t *testing.T) {
 	rg := NewRequestGuard(Config{
 		Enabled:               true,
@@ -206,7 +206,7 @@ func TestAcceptanceScenario4_InterleavedChannelsAndNoReset(t *testing.T) {
 		}
 	}
 
-	// 晚到 call_id 绑定到 item_tool_1 作为 alias
+	// The late call_id is bound to item_tool_1 as an alias
 	if err := rg.ObserveAppend("call_999", "item_tool_1", KindToolArguments, []byte(`1"}`)); err != nil {
 		t.Fatalf("alias append failed: %v", err)
 	}
@@ -226,7 +226,7 @@ func TestAcceptanceScenario4_InterleavedChannelsAndNoReset(t *testing.T) {
 		t.Fatalf("highwater was reset or inaccurate! want %d, got %d", expectedHighwater, cg.Highwater())
 	}
 
-	// 验证 index alias 映射: 使用数字索引形式（如 "call_index_0"）向已映射通道追加，必须指向同一 channel 实例且累加高水位
+	// Verify the index alias mapping: appending with a numeric index form (such as "call_index_0") to a mapped channel must point to the same channel instance and accumulate the high-water mark
 	if err := rg.ObserveAppend("call_index_0", "call_999", KindToolArguments, []byte(`,"extra":2}`)); err != nil {
 		t.Fatalf("index alias append failed: %v", err)
 	}
@@ -239,9 +239,9 @@ func TestAcceptanceScenario4_InterleavedChannelsAndNoReset(t *testing.T) {
 	}
 }
 
-// 场景 5: 硬预算精确拦截与 ErrScanBudgetExhausted 不混层
+// Scenario 5: exact hard-budget blocking is kept separate from ErrScanBudgetExhausted
 func TestAcceptanceScenario5_BudgetInterception(t *testing.T) {
-	// 5a: 工具 bytes 精确 +1 拦截
+	// 5a: tool bytes blocked at exactly +1
 	t.Run("ToolBytesBudgetExactPlusOne", func(t *testing.T) {
 		rg := NewRequestGuard(Config{
 			Enabled:               true,
@@ -262,7 +262,7 @@ func TestAcceptanceScenario5_BudgetInterception(t *testing.T) {
 		}
 	})
 
-	// 5b: 细碎参数超 delta (4096 deltas)
+	// 5b: fine-grained arguments exceed the delta limit (4096 deltas)
 	t.Run("ToolDeltasBudget", func(t *testing.T) {
 		rg := NewRequestGuard(Config{
 			Enabled:               true,
@@ -282,7 +282,7 @@ func TestAcceptanceScenario5_BudgetInterception(t *testing.T) {
 		}
 	})
 
-	// 5c: 跨 channel 绕单项上限 -> request_bytes 拦截
+	// 5c: crossing channels to get around the per-item limit -> blocked as request_bytes
 	t.Run("RequestBytesBudget", func(t *testing.T) {
 		rg := NewRequestGuard(Config{
 			Enabled:               true,
@@ -309,7 +309,7 @@ func TestAcceptanceScenario5_BudgetInterception(t *testing.T) {
 		}
 	})
 
-	// 5d: 空 delta 洪泛与 131072 业务事件
+	// 5d: flood of empty deltas and 131072 business events
 	t.Run("EmptyDeltaEventFlood", func(t *testing.T) {
 		rg := NewRequestGuard(Config{
 			Enabled:               true,
@@ -329,7 +329,7 @@ func TestAcceptanceScenario5_BudgetInterception(t *testing.T) {
 		}
 	})
 
-	// 5e: 128 Channels 洪泛
+	// 5e: flood of 128 channels
 	t.Run("ChannelCountFlood", func(t *testing.T) {
 		rg := NewRequestGuard(Config{
 			Enabled:               true,
@@ -350,9 +350,9 @@ func TestAcceptanceScenario5_BudgetInterception(t *testing.T) {
 		}
 	})
 
-	// 5f: 下层 ErrScanBudgetExhausted 映射隔离（杜绝内部哨兵错误泄露，统一映射为公开 reason）
+	// 5f: lower-layer ErrScanBudgetExhausted is mapped in isolation (internal sentinel errors must never leak; they map to a public reason)
 	t.Run("ScanBudgetExhaustionMapping", func(t *testing.T) {
-		// ToolArguments channel 耗尽扫描预算 -> 映射为 tool_argument_bytes
+		// ToolArguments channel exhausts the scan budget -> mapped to tool_argument_bytes
 		rgTool := NewRequestGuard(Config{
 			Enabled:               true,
 			MaxToolArgumentBytes:  262144, // scan budget = 524288
@@ -367,12 +367,12 @@ func TestAcceptanceScenario5_BudgetInterception(t *testing.T) {
 				t.Fatalf("append %d failed: %v", i, err)
 			}
 		}
-		// 终态快照建立 baseline
+		// The terminal snapshot establishes the baseline
 		full := bytes.Repeat(chunk, 256)
 		if err := rgTool.ObserveSnapshot("tool_map", "", KindToolArguments, full, "arguments.done"); err != nil {
 			t.Fatalf("snapshot baseline failed: %v", err)
 		}
-		// 变体快照超出扫描预算 -> 必须映射为 tool_argument_bytes，绝不泄露内部 ErrScanBudgetExhausted
+		// Variant snapshot exceeds the scan budget -> must map to tool_argument_bytes, never leak the internal ErrScanBudgetExhausted
 		variant := bytes.Clone(full)
 		variant[100] ^= 0xEE
 		err := rgTool.ObserveSnapshot("tool_map", "", KindToolArguments, variant, "item.done")
@@ -380,7 +380,7 @@ func TestAcceptanceScenario5_BudgetInterception(t *testing.T) {
 			t.Fatalf("expected mapped reason tool_argument_bytes, got %v", err)
 		}
 
-		// Text channel 耗尽扫描预算 -> 映射为 channel_bytes
+		// Text channel exhausts the scan budget -> mapped to channel_bytes
 		rgText := NewRequestGuard(Config{
 			Enabled:               true,
 			MaxToolArgumentBytes:  262144,
@@ -406,7 +406,7 @@ func TestAcceptanceScenario5_BudgetInterception(t *testing.T) {
 	})
 }
 
-// 场景 6: 边界值、UTF-8 中文、Emoji、转义符与 int64 overflow 防护
+// Scenario 6: boundary values, UTF-8 Chinese text, emoji, escape characters and int64 overflow protection
 func TestAcceptanceScenario6_BoundaryValuesAndUTF8(t *testing.T) {
 	rg := NewRequestGuard(Config{
 		Enabled:               true,
@@ -421,7 +421,7 @@ func TestAcceptanceScenario6_BoundaryValuesAndUTF8(t *testing.T) {
 		t.Fatalf("multilingual append failed: %v", err)
 	}
 
-	// int64 overflow 防护：受控突变反证
+	// int64 overflow protection: controlled mutation as counter-evidence
 	t.Run("Int64OverflowGuard", func(t *testing.T) {
 		rgOverflow := NewRequestGuard(Config{
 			Enabled:               true,
@@ -432,7 +432,7 @@ func TestAcceptanceScenario6_BoundaryValuesAndUTF8(t *testing.T) {
 		})
 		_ = rgOverflow.ObserveAppend("c_overflow", "", KindText, []byte("init"))
 
-		// 模拟高水位接近 MaxInt64，断言加法溢出保护直接拦截并报错
+		// Simulate a high-water mark near MaxInt64; assert that addition overflow protection blocks directly and returns an error
 		cg := rgOverflow.channels["c_overflow"]
 		cg.highwater = math.MaxInt64 - 10
 		rgOverflow.requestBytes = math.MaxInt64 - 10
@@ -444,9 +444,9 @@ func TestAcceptanceScenario6_BoundaryValuesAndUTF8(t *testing.T) {
 	})
 }
 
-// 场景 7: 完整快照防逃逸（done-only、terminal-only、native object、变化 snapshot）
+// Scenario 7: full snapshots cannot escape (done-only, terminal-only, native object, changing snapshot)
 func TestAcceptanceScenario7_SnapshotsCannotBypass(t *testing.T) {
-	// 7a: 基础 9215B 周期快照拦截（严格 repeat ceil 后 slice 到恰好 9215 bytes）
+	// 7a: basic 9215B periodic snapshot blocked (strictly repeat, ceil, then slice to exactly 9215 bytes)
 	t.Run("BasicPeriodicSnapshot", func(t *testing.T) {
 		rg := NewRequestGuard(Config{
 			Enabled:               true,
@@ -464,7 +464,7 @@ func TestAcceptanceScenario7_SnapshotsCannotBypass(t *testing.T) {
 		}
 	})
 
-	// 7b: done-only 快照（无前置 append 直接下发 arguments.done / output_item.done 周期快照）
+	// 7b: done-only snapshot (no preceding append; periodic arguments.done / output_item.done snapshot sent directly)
 	t.Run("DoneOnlySnapshot", func(t *testing.T) {
 		rg := NewRequestGuard(Config{
 			Enabled:               true,
@@ -482,7 +482,7 @@ func TestAcceptanceScenario7_SnapshotsCannotBypass(t *testing.T) {
 		}
 	})
 
-	// 7c: terminal-only 终态快照拦截（仅下发终态阶段标识）
+	// 7c: terminal-only terminal snapshot blocked (only the terminal stage marker is sent)
 	t.Run("TerminalOnlySnapshot", func(t *testing.T) {
 		rg := NewRequestGuard(Config{
 			Enabled:               true,
@@ -500,7 +500,7 @@ func TestAcceptanceScenario7_SnapshotsCannotBypass(t *testing.T) {
 		}
 	})
 
-	// 7d: native object 原生紧凑序列化快照防逃逸（模拟 Gemini 等协议中的原生对象序列化快照）
+	// 7d: native object compact-serialized snapshot cannot escape (simulates native object serialized snapshots in protocols such as Gemini)
 	t.Run("NativeObjectSnapshot", func(t *testing.T) {
 		rg := NewRequestGuard(Config{
 			Enabled:               true,
@@ -518,7 +518,7 @@ func TestAcceptanceScenario7_SnapshotsCannotBypass(t *testing.T) {
 		}
 	})
 
-	// 7e: 变化 snapshot（前次快照与后次快照内容变化，增量与变化内容被完整核验）
+	// 7e: changing snapshot (content differs between the previous and the next snapshot; the delta and the changed content are fully verified)
 	t.Run("MutatingSnapshot", func(t *testing.T) {
 		rg := NewRequestGuard(Config{
 			Enabled:               true,
@@ -527,12 +527,12 @@ func TestAcceptanceScenario7_SnapshotsCannotBypass(t *testing.T) {
 			MaxChannelBytes:       2097152,
 			MaxRequestBytes:       4194304,
 		})
-		// 第一次合法快照
+		// First legal snapshot
 		initialSnap := []byte("initial valid snapshot content without any repetition")
 		if err := rg.ObserveSnapshot("c_mut", "", KindText, initialSnap, ""); err != nil {
 			t.Fatalf("initial snapshot failed: %v", err)
 		}
-		// 第二次突变为 9215B 周期性快照
+		// The second snapshot mutates into a 9215B periodic snapshot
 		unit := []byte("mutating_snapshot_pattern_1234!") // 31 bytes
 		repeats := int(math.Ceil(float64(9215) / float64(len(unit))))
 		mutatedSnap := bytes.Repeat(unit, repeats)[:9215]
@@ -543,9 +543,9 @@ func TestAcceptanceScenario7_SnapshotsCannotBypass(t *testing.T) {
 	})
 }
 
-// 场景 8: 8a/8b/8c 成本硬上界可观察计数
+// Scenario 8: observable counts for the 8a/8b/8c hard cost upper bounds
 func TestAcceptanceScenario8_BudgetScanPermitsAndBoundingCases(t *testing.T) {
-	// 用例 8a: 扫描预算耗尽与超额变体拒绝
+	// Case 8a: scan budget exhaustion and rejection of excess variants
 	t.Run("Case8a", func(t *testing.T) {
 		toolLimit := int64(262144) // 256 KiB -> scan budget 512 KiB
 		cg := NewChannelGuard("t8a", KindToolArguments, toolLimit, 4096)
@@ -586,7 +586,7 @@ func TestAcceptanceScenario8_BudgetScanPermitsAndBoundingCases(t *testing.T) {
 		}
 	})
 
-	// 用例 8b: 终态链 3 次许可（最多 3 次 cost=0 全文比对）与超出 3 次拦截；真实内部私有统计断言 (扫描 <= 2*limit, 总验证 <= 5*limit)
+	// Case 8b: the terminal chain has 3 permits (at most 3 cost=0 full-text comparisons) and blocks beyond 3; real internal private statistics assert (scan <= 2*limit, total verification <= 5*limit)
 	t.Run("Case8b", func(t *testing.T) {
 		toolLimit := int64(262144) // limit = 256 KiB
 		cg := NewChannelGuard("t8b", KindToolArguments, toolLimit, 4096)
@@ -594,7 +594,7 @@ func TestAcceptanceScenario8_BudgetScanPermitsAndBoundingCases(t *testing.T) {
 		snap := make([]byte, 262144)
 		rand.New(rand.NewSource(802)).Read(snap)
 
-		cg.remainingScanBudget = 262144 // 预留 256 KiB 扫描预算（前置 append 已消耗 256 KiB）
+		cg.remainingScanBudget = 262144 // reserve a 256 KiB scan budget (the preceding append already consumed 256 KiB)
 		cg.highwater = 262144
 		g, c, skip, err := cg.CheckSnapshot(snap, "arguments.done")
 		if err != nil || skip || c != 262144 {
@@ -602,19 +602,19 @@ func TestAcceptanceScenario8_BudgetScanPermitsAndBoundingCases(t *testing.T) {
 		}
 		_ = cg.CommitSnapshot(snap, g, c, "arguments.done")
 
-		// 真实内部私有统计断言：验证 SHA-256 baseline 摘要建立与扫描预算扣减
+		// Real internal private statistics assertion: verify that the SHA-256 baseline digest is established and the scan budget is deducted
 		if !cg.hasBaselineHash || cg.terminalBaselineHash != sha256.Sum256(snap) {
 			t.Fatalf("baseline sha256 digest not established")
 		}
 		if cg.remainingScanBudget != 0 {
 			t.Fatalf("scan budget must be exhausted (0), got %d", cg.remainingScanBudget)
 		}
-		// arguments.done 建立 baseline 时已计入第 1 次终态白名单消耗
+		// arguments.done already counted the 1st terminal allowlist consumption when it established the baseline
 		if cg.terminalPermitsUsed != 1 {
 			t.Fatalf("arguments.done terminalPermitsUsed want 1, got %d", cg.terminalPermitsUsed)
 		}
 
-		// 许可 1: item.done (cost=0)
+		// Permit 1: item.done (cost=0)
 		_, c2, skip2, err2 := cg.CheckSnapshot(snap, "item.done")
 		if err2 != nil || !skip2 || c2 != 0 {
 			t.Fatalf("item.done permit failed: err=%v, skip=%v, cost=%d", err2, skip2, c2)
@@ -624,7 +624,7 @@ func TestAcceptanceScenario8_BudgetScanPermitsAndBoundingCases(t *testing.T) {
 			t.Fatalf("terminalPermitsUsed want 2, got %d", cg.terminalPermitsUsed)
 		}
 
-		// 许可 2: response.completed (cost=0)
+		// Permit 2: response.completed (cost=0)
 		_, c3, skip3, err3 := cg.CheckSnapshot(snap, "response.completed")
 		if err3 != nil || !skip3 || c3 != 0 {
 			t.Fatalf("response.completed permit failed: err=%v, skip=%v, cost=%d", err3, skip3, c3)
@@ -634,7 +634,7 @@ func TestAcceptanceScenario8_BudgetScanPermitsAndBoundingCases(t *testing.T) {
 			t.Fatalf("terminalPermitsUsed want 3, got %d", cg.terminalPermitsUsed)
 		}
 
-		// 严格验证总处理量上界：总扫描预算为 2*limit (512 KiB)，3 次终态比对中最多 3 次额外全文 hash 比对（3*limit = 768 KiB），整体最大数据处理与校验量严格受限于 5*limit (1280 KiB)
+		// Strictly verify the total processing upper bound: the total scan budget is 2*limit (512 KiB); at most 3 extra full-text hash comparisons among the 3 terminal comparisons (3*limit = 768 KiB); overall maximum data processing and verification is strictly bounded by 5*limit (1280 KiB)
 		const maxAllowedScanned = 2 * 262144
 		const maxAllowedVerified = 5 * 262144
 		scannedTotal := (2 * toolLimit) - cg.remainingScanBudget
@@ -646,14 +646,14 @@ func TestAcceptanceScenario8_BudgetScanPermitsAndBoundingCases(t *testing.T) {
 			t.Fatalf("total verified bytes %d exceeds 5*limit bound %d", totalVerifiedBytes, maxAllowedVerified)
 		}
 
-		// 重复同类型终态帧无资格，cost 全额且超预算
+		// A repeated terminal frame of the same type is not eligible; the full cost applies and it exceeds the budget
 		_, _, _, err4 := cg.CheckSnapshot(snap, "response.completed")
 		if !errors.Is(err4, ErrScanBudgetExhausted) {
 			t.Fatalf("duplicate terminal frame want ErrScanBudgetExhausted, got %v", err4)
 		}
 	})
 
-	// 用例 8c: 小长度总长 <8192 不误判
+	// Case 8c: a short total length (<8192) is not misjudged
 	t.Run("Case8c_ShortSnapshotNoFalsePositive", func(t *testing.T) {
 		cg := NewChannelGuard("t8c", KindText, 2097152, 4096)
 		shortPeriodic := bytes.Repeat([]byte("repeat_me_1234567890"), 100) // 2000 bytes
@@ -667,7 +667,7 @@ func TestAcceptanceScenario8_BudgetScanPermitsAndBoundingCases(t *testing.T) {
 	})
 }
 
-// 场景 9: 7 类正常样本绝不误报
+// Scenario 9: 7 kinds of normal samples never produce a false positive
 func TestAcceptanceScenario9_NormalWorkloadsDoNotFalsePositive(t *testing.T) {
 	testCases := []struct {
 		name string
@@ -735,7 +735,7 @@ This document describes the pipeline for streaming events.
 	}
 }
 
-// 场景 10: 有意大段周期数据按规则拦（安全取舍，不宣称零误报）
+// Scenario 10: deliberately large periodic data is blocked by the rules (a deliberate safety trade-off; zero false positives are not claimed)
 func TestAcceptanceScenario10_IntentionalRepetitionBlockedAsDesigned(t *testing.T) {
 	rg := NewRequestGuard(Config{
 		Enabled:               true,
@@ -752,9 +752,9 @@ func TestAcceptanceScenario10_IntentionalRepetitionBlockedAsDesigned(t *testing.
 	}
 }
 
-// 场景 11: 尾检规则断言（短流 <8192 放行，已满 8192 未对齐 1024 尾检）
+// Scenario 11: tail-check rule assertions (a short stream under 8192 passes; a full 8192 window not aligned to the 1024 tail check)
 func TestAcceptanceScenario11_TailCheckRulesVerification(t *testing.T) {
-	// 11a: 短正常流 (<8192 bytes) 收到 end 绝不误报
+	// 11a: a short normal stream (<8192 bytes) never produces a false positive when end is received
 	t.Run("ShortStreamTailCheckAllowed", func(t *testing.T) {
 		rg := NewRequestGuard(Config{
 			Enabled:               true,
@@ -772,7 +772,7 @@ func TestAcceptanceScenario11_TailCheckRulesVerification(t *testing.T) {
 		}
 	})
 
-	// 11b: 已满 8192 窗口但尾部未对齐 1024-byte 的即时尾检
+	// 11b: immediate tail check for a full 8192 window whose tail is not aligned to 1024 bytes
 	t.Run("Full8192UnalignedTailCheck", func(t *testing.T) {
 		rg := NewRequestGuard(Config{
 			Enabled:               true,
@@ -796,8 +796,8 @@ func TestAcceptanceScenario11_TailCheckRulesVerification(t *testing.T) {
 	})
 }
 
-// 附加回归反例: 审查发现的 Append 优先级回归断言 (Spec §5.3 步骤 4 request_bytes 先于步骤 6 scan_budget)
-// 说明: 01 核心已在 targetfix 阶段同步修复加法 overflow 与流水线判定顺序，本测试执行严格断言而非仅仅 t.Log
+// Additional regression counterexample: the Append priority regression assertion found in review (Spec §5.3 step 4 request_bytes comes before step 6 scan_budget)
+// Note: the 01 core already fixed the addition overflow and the pipeline decision order in the targetfix stage; this test makes a strict assertion rather than only t.Log
 func TestAppendScanBudgetVsRequestBytesPrecedenceRegression(t *testing.T) {
 	limit := int64(1 << 20)       // channel 1 MiB -> scan budget 2 MiB
 	reqLimit := int64(600 * 1024) // request ≈0.586 MiB
@@ -815,7 +815,7 @@ func TestAppendScanBudgetVsRequestBytesPrecedenceRegression(t *testing.T) {
 		t.Fatalf("seed append failed: %v", err)
 	}
 
-	// 3 次 0.5MiB 无资格变体快照将 scan budget 消耗至 0
+	// Three ineligible 0.5 MiB variant snapshots drive the scan budget down to 0
 	variant := make([]byte, 512*1024)
 	copy(variant, half)
 	for i := 0; i < 3; i++ {
@@ -825,8 +825,8 @@ func TestAppendScanBudgetVsRequestBytesPrecedenceRegression(t *testing.T) {
 		}
 	}
 
-	// 再次追加 0.2MiB：同时超过 request_bytes 并且 scan budget 不足
-	// Spec §5.3 严格顺序要求：步骤 4 先于步骤 6，必须精确断言返回 request_bytes，杜绝仅以 t.Log 记录
+	// Append another 0.2 MiB: this exceeds request_bytes and the scan budget is insufficient at the same time
+	// The Spec §5.3 strict order requires step 4 before step 6; assert precisely that request_bytes is returned, not merely log it with t.Log
 	probe := make([]byte, 200*1024)
 	rand.New(rand.NewSource(9102)).Read(probe)
 	err := rg.ObserveAppend("c1", "", KindText, probe)

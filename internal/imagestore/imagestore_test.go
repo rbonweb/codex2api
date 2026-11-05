@@ -357,7 +357,7 @@ func TestApplyFromJSONFallbackOnInvalid(t *testing.T) {
 }
 
 func TestPresignURLS3(t *testing.T) {
-	// Presign 是离线本地签名，无需真实网络/桶，可纯单测。
+	// Presign is an offline local signature that needs no real network or bucket, so it can be unit-tested on its own.
 	cfg := Config{
 		Backend:        BackendS3,
 		Endpoint:       "https://s3.example.com",

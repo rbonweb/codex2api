@@ -2,7 +2,7 @@
 
 package promptfilter
 
-// raceDetectorEnabled 标记本次测试构建启用了 -race。本包生产代码没有 goroutine，
-// 纯 CPU 的超大样本扫描测试在竞争检测下慢 20 倍以上却跑不出任何竞争，
-// 这类测试只在普通构建里跑（见 skipHeavyFixtureUnderRace）。
+// raceDetectorEnabled marks that this test build has -race enabled. This package's production code has no goroutines,
+// pure-CPU large-sample scanning tests run more than 20 times slower under race detection and find no races at all,
+// so these tests only run in normal builds (see skipHeavyFixtureUnderRace).
 const raceDetectorEnabled = true

@@ -2,7 +2,7 @@ package promptfilter
 
 import "testing"
 
-// Ordinary software-engineering text uses "persistence" / "持久化" to mean a
+// Ordinary software-engineering text uses "persistence" to mean a
 // storage layer. Production replay showed malicious_persistence_c2 terminating
 // on that vocabulary alone, which blocks normal development traffic, so the
 // weak wording now requires co-occurring malicious context.

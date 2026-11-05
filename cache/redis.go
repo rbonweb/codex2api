@@ -30,7 +30,7 @@ type RedisOptions struct {
 	InsecureSkipVerify bool
 }
 
-// redisTokenCache Redis Token 缓存（参考 sub2api OpenAITokenCache 接口）
+// redisTokenCache is the Redis token cache (modeled on the sub2api OpenAITokenCache interface)
 type redisTokenCache struct {
 	client *redis.Client
 }
@@ -41,7 +41,7 @@ type redisResponseContextRecord struct {
 	Items []json.RawMessage `json:"items"`
 }
 
-// NewRedis 创建 Redis Token 缓存（poolSize <= 0 时使用默认值）。
+// NewRedis creates the Redis token cache (uses the default when poolSize <= 0).
 func NewRedis(addr, password string, db int, poolSize ...int) (TokenCache, error) {
 	size := 0
 	if len(poolSize) > 0 && poolSize[0] > 0 {
@@ -55,7 +55,7 @@ func NewRedis(addr, password string, db int, poolSize ...int) (TokenCache, error
 	})
 }
 
-// NewRedisWithOptions 创建 Redis Token 缓存，支持 redis:// / rediss:// URL 和 TLS。
+// NewRedisWithOptions creates the Redis token cache. It supports redis:// and rediss:// URLs and TLS.
 func NewRedisWithOptions(cfg RedisOptions) (TokenCache, error) {
 	opts, err := buildRedisClientOptions(cfg)
 	if err != nil {
@@ -70,15 +70,15 @@ func NewRedisWithOptions(cfg RedisOptions) (TokenCache, error) {
 	}
 	if err := waitForRedisLoading(context.Background(), ping, redisLoadingWait(), time.Sleep); err != nil {
 		_ = client.Close()
-		return nil, fmt.Errorf("Redis 连接失败: %w%s", err, redisConnectionHint(err, opts.TLSConfig != nil))
+		return nil, fmt.Errorf("failed to connect to Redis: %w%s", err, redisConnectionHint(err, opts.TLSConfig != nil))
 	}
 
 	return &redisTokenCache{client: client}, nil
 }
 
-// defaultRedisLoadingWait 默认等待 Redis 加载数据集的时长。
-// 大体量 AOF/RDB（数十 GB）重启后加载需要数分钟，期间 Redis 接受连接
-// 但对命令返回 -LOADING；直接失败会让进程陷入崩溃重启循环。
+// defaultRedisLoadingWait is how long to wait by default for Redis to load its dataset.
+// Loading a very large AOF/RDB (tens of GB) takes minutes after a restart; during that time Redis accepts connections
+// but replies -LOADING to commands; failing immediately would put the process into a crash-restart loop.
 const defaultRedisLoadingWait = 10 * time.Minute
 
 func redisLoadingWait() time.Duration {
@@ -93,7 +93,7 @@ func redisLoadingWait() time.Duration {
 	return time.Duration(seconds) * time.Second
 }
 
-// isRedisLoadingError 判断错误是否为 Redis 数据集加载中的 -LOADING 回复。
+// isRedisLoadingError reports whether the error is a -LOADING reply, meaning Redis is still loading its dataset.
 func isRedisLoadingError(err error) bool {
 	if err == nil {
 		return false
@@ -101,8 +101,8 @@ func isRedisLoadingError(err error) bool {
 	return strings.HasPrefix(strings.TrimSpace(err.Error()), "LOADING")
 }
 
-// waitForRedisLoading 执行 ping；仅当收到 -LOADING 回复时在 wait 时长内轮询重试，
-// 其余错误（地址错误、密码错误、拒绝连接等）保持原有的快速失败语义。
+// waitForRedisLoading pings Redis; only on a -LOADING reply does it poll and retry within the wait duration,
+// while other errors (wrong address, wrong password, connection refused, etc.) keep the original fail-fast behavior.
 func waitForRedisLoading(ctx context.Context, ping func(context.Context) error, wait time.Duration, sleep func(time.Duration)) error {
 	err := ping(ctx)
 	if err == nil || !isRedisLoadingError(err) {
@@ -111,12 +111,12 @@ func waitForRedisLoading(ctx context.Context, ping func(context.Context) error, 
 	if wait <= 0 {
 		return err
 	}
-	log.Printf("Redis 正在加载数据集到内存，等待就绪（最长 %s）...", wait)
+	log.Printf("Redis is loading the dataset into memory, waiting until ready (up to %s)...", wait)
 	const retryInterval = 2 * time.Second
 	var elapsed time.Duration
 	for attempt := 1; ; attempt++ {
 		if elapsed >= wait {
-			return fmt.Errorf("等待 Redis 加载数据集超时（%s）: %w", wait, err)
+			return fmt.Errorf("timed out waiting for Redis to load the dataset (%s): %w", wait, err)
 		}
 		sleep(retryInterval)
 		elapsed += retryInterval
@@ -124,9 +124,9 @@ func waitForRedisLoading(ctx context.Context, ping func(context.Context) error, 
 		if err == nil || !isRedisLoadingError(err) {
 			return err
 		}
-		// 每 30 秒左右提示一次，避免刷屏。
+		// Log about once every 30 seconds, to avoid flooding the log.
 		if attempt%15 == 0 {
-			log.Printf("Redis 仍在加载数据集，继续等待...")
+			log.Printf("Redis is still loading the dataset, continuing to wait...")
 		}
 	}
 }
@@ -134,14 +134,14 @@ func waitForRedisLoading(ctx context.Context, ping func(context.Context) error, 
 func buildRedisClientOptions(cfg RedisOptions) (*redis.Options, error) {
 	addr := strings.TrimSpace(cfg.Addr)
 	if addr == "" {
-		return nil, fmt.Errorf("Redis 地址不能为空")
+		return nil, fmt.Errorf("Redis address must not be empty")
 	}
 
 	var opts *redis.Options
 	if isRedisURL(addr) {
 		parsed, err := redis.ParseURL(addr)
 		if err != nil {
-			return nil, fmt.Errorf("Redis URL 格式错误: %w", err)
+			return nil, fmt.Errorf("invalid Redis URL format: %w", err)
 		}
 		opts = parsed
 		if cfg.DB != 0 {
@@ -210,7 +210,7 @@ func redisConnectionHint(err error, tlsEnabled bool) string {
 		return ""
 	}
 	if err == io.EOF || strings.Contains(strings.ToLower(err.Error()), "eof") {
-		return "（如果使用 Aiven / Upstash 等云 Redis，请使用 rediss:// 地址或设置 REDIS_TLS=true 启用 TLS）"
+		return "(if you use a cloud Redis such as Aiven or Upstash, use a rediss:// address or set REDIS_TLS=true to enable TLS)"
 	}
 	return ""
 }
@@ -230,7 +230,7 @@ func RedactRedisAddr(addr string) string {
 	return parsed.String()
 }
 
-// Close 关闭 Redis 连接
+// Close closes the Redis connection
 func (tc *redisTokenCache) Driver() string {
 	return "redis"
 }
@@ -243,12 +243,12 @@ func (tc *redisTokenCache) Close() error {
 	return tc.client.Close()
 }
 
-// Ping 检查 Redis 连通性
+// Ping checks Redis connectivity
 func (tc *redisTokenCache) Ping(ctx context.Context) error {
 	return tc.client.Ping(ctx).Err()
 }
 
-// Stats 返回 Redis 连接池状态
+// Stats returns the Redis connection pool status
 func (tc *redisTokenCache) Stats() PoolStats {
 	stats := tc.client.PoolStats()
 	return PoolStats{
@@ -262,26 +262,26 @@ func (tc *redisTokenCache) Stats() PoolStats {
 	}
 }
 
-// PoolSize 返回连接池大小配置
+// PoolSize returns the connection pool size setting
 func (tc *redisTokenCache) PoolSize() int {
 	return tc.client.Options().PoolSize
 }
 
-// SetPoolSize 设置连接池大小（go-redis 不支持运行时调整，需重启生效）
-// 此方法仅保存配置值用于持久化，实际生效需重启容器
+// SetPoolSize sets the connection pool size (go-redis does not support runtime changes, so it takes effect after a restart)
+// This method only stores the setting for persistence; it takes effect only after the container restarts
 func (tc *redisTokenCache) SetPoolSize(n int) {
-	// go-redis v9 的 PoolSize 在创建后不可变更
-	// 此处仅做记录，重启后 main.go 会使用数据库中保存的值
+	// go-redis v9 PoolSize cannot be changed after creation
+	// This only records the value; after a restart, main.go uses the value saved in the database
 	_ = n
 }
 
-// ==================== Access Token 缓存 ====================
+// ==================== Access token cache ====================
 
 func tokenKey(accountID int64) string {
 	return fmt.Sprintf("codex:token:%d", accountID)
 }
 
-// GetAccessToken 获取缓存的 AT
+// GetAccessToken gets the cached AT
 func (tc *redisTokenCache) GetAccessToken(ctx context.Context, accountID int64) (string, error) {
 	val, err := tc.client.Get(ctx, tokenKey(accountID)).Result()
 	if err == redis.Nil {
@@ -290,29 +290,29 @@ func (tc *redisTokenCache) GetAccessToken(ctx context.Context, accountID int64) 
 	return val, err
 }
 
-// SetAccessToken 缓存 AT
+// SetAccessToken caches the AT
 func (tc *redisTokenCache) SetAccessToken(ctx context.Context, accountID int64, token string, ttl time.Duration) error {
 	return tc.client.Set(ctx, tokenKey(accountID), token, ttl).Err()
 }
 
-// DeleteAccessToken 删除缓存的 AT
+// DeleteAccessToken deletes the cached AT
 func (tc *redisTokenCache) DeleteAccessToken(ctx context.Context, accountID int64) error {
 	return tc.client.Del(ctx, tokenKey(accountID)).Err()
 }
 
-// ==================== 分布式刷新锁 ====================
+// ==================== Distributed refresh lock ====================
 
 func refreshLockKey(accountID int64) string {
 	return fmt.Sprintf("codex:refresh_lock:%d", accountID)
 }
 
-// AcquireRefreshLock 获取刷新锁（防止并发刷新同一账号）
+// AcquireRefreshLock acquires the refresh lock (prevents concurrent refreshes of the same account)
 func (tc *redisTokenCache) AcquireRefreshLock(ctx context.Context, accountID int64, ttl time.Duration) (bool, error) {
 	ok, err := tc.client.SetNX(ctx, refreshLockKey(accountID), "1", ttl).Result()
 	return ok, err
 }
 
-// ReleaseRefreshLock 释放刷新锁
+// ReleaseRefreshLock releases the refresh lock
 func (tc *redisTokenCache) ReleaseRefreshLock(ctx context.Context, accountID int64) error {
 	return tc.client.Del(ctx, refreshLockKey(accountID)).Err()
 }
@@ -344,9 +344,9 @@ func (tc *redisTokenCache) ReleaseLease(ctx context.Context, namespace, key, own
 	return releaseLeaseScript.Run(ctx, tc.client, []string{redisLeaseKey(namespace, key)}, strings.TrimSpace(owner)).Err()
 }
 
-// ==================== 等待锁释放 ====================
+// ==================== Waiting for lock release ====================
 
-// WaitForRefreshComplete 等待另一个进程完成刷新（轮询锁 + 读取缓存）
+// WaitForRefreshComplete waits for another process to finish refreshing (polls the lock and reads the cache)
 func (tc *redisTokenCache) WaitForRefreshComplete(ctx context.Context, accountID int64, timeout time.Duration) (string, error) {
 	if timeout <= 0 {
 		timeout = 30 * time.Second
@@ -359,14 +359,14 @@ func (tc *redisTokenCache) WaitForRefreshComplete(ctx context.Context, accountID
 	defer ticker.Stop()
 
 	for {
-		// 检查锁是否还在
+		// Check whether the lock is still held
 		exists, err := tc.client.Exists(ctx, refreshLockKey(accountID)).Result()
 		if err != nil {
 			return "", err
 		}
 
 		if exists == 0 {
-			// 锁已释放，尝试读取新的 AT
+			// The lock is released; try to read the new AT
 			token, err := tc.GetAccessToken(ctx, accountID)
 			if err != nil {
 				return "", err
@@ -380,13 +380,13 @@ func (tc *redisTokenCache) WaitForRefreshComplete(ctx context.Context, accountID
 		case <-ctx.Done():
 			return "", ctx.Err()
 		case <-timeoutTimer.C:
-			return "", fmt.Errorf("等待刷新超时")
+			return "", fmt.Errorf("timed out waiting for refresh")
 		case <-ticker.C:
 		}
 	}
 }
 
-// ==================== 运行态缓存 ====================
+// ==================== Runtime-state cache ====================
 
 func runtimeHashKey(prefix, raw string) string {
 	sum := sha256.Sum256([]byte(strings.TrimSpace(raw)))
@@ -746,5 +746,5 @@ func (tc *redisTokenCache) GetRuntimeCounters(ctx context.Context, namespace str
 	return out, nil
 }
 
-// SharedAcrossInstances 报告 Redis 运行态缓存跨实例共享。
+// SharedAcrossInstances reports that the Redis runtime-state cache is shared across instances.
 func (tc *redisTokenCache) SharedAcrossInstances() bool { return true }

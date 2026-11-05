@@ -416,8 +416,8 @@ func TestReviewTextQuarantinesPaymentRequiredKeyAndUsesHealthyKeys(t *testing.T)
 	}
 }
 
-// 请求模式未显式配置时按模型推断:moderation 系列走 moderations,其余走
-// chat_completions;显式配置永远优先。
+// When the request mode is not set explicitly, infer it from the model: the moderation family uses moderations, the rest use
+// chat_completions; an explicit setting always takes precedence.
 func TestNormalizeReviewConfigInfersRequestModeFromModel(t *testing.T) {
 	cases := []struct {
 		name  string
@@ -575,7 +575,7 @@ func TestReviewModelResponseErrorClearsKeyCooldown(t *testing.T) {
 	if err != nil {
 		t.Fatalf("reviewEndpointForMode: %v", err)
 	}
-	// 模拟恢复探针路径：key 曾被隔离且冷却已到期。
+	// Simulate the recovery probe path: a key that was isolated and whose cooldown has now expired.
 	quarantineReviewKey(endpoint, cfg.Model, "healthy-key", http.StatusPaymentRequired, cfg.Adapter)
 	value, ok := reviewKeyCooldowns.Load(reviewKeyCooldownKey(endpoint, cfg.Model, "healthy-key"))
 	if !ok {
@@ -591,7 +591,7 @@ func TestReviewModelResponseErrorClearsKeyCooldown(t *testing.T) {
 	if calls.Load() != 2 {
 		t.Fatalf("malformed-response attempts = %d, want 2", calls.Load())
 	}
-	// HTTP 2xx 已证明 key 健康：冷却应被清除而非重新计时。
+	// HTTP 2xx proves the key is healthy: the cooldown should be cleared, not restarted.
 	health := ReviewKeyPoolStatus(cfg)
 	if health.Available != 1 || health.CoolingDown != 0 || health.Probing != 0 {
 		t.Fatalf("review key pool health = %+v, want key available again", health)
@@ -879,7 +879,7 @@ func TestReviewTextFailsOverToNextKeyOn429(t *testing.T) {
 		seen[key]++
 		mu.Unlock()
 		if key != "good" {
-			// 模拟低等级账号 TPM 限流。
+			// Simulate an account at a low tier hitting the TPM rate limit.
 			w.WriteHeader(http.StatusTooManyRequests)
 			return
 		}
@@ -964,7 +964,7 @@ func TestReviewTextRoundRobinsAcrossKeys(t *testing.T) {
 		Model:          "omni-moderation-latest",
 		TimeoutSeconds: 2,
 	}
-	// 连续多次请求应把成功请求分摊到全部 key 上。
+	// Repeated requests should spread successful requests across all keys.
 	for i := 0; i < 9; i++ {
 		if _, _, err := client.ReviewText(context.Background(), "hello", cfg); err != nil {
 			t.Fatalf("ReviewText #%d error: %v", i, err)

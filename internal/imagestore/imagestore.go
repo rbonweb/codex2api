@@ -1,9 +1,9 @@
-// Package imagestore 提供图片资源的可插拔存储后端。
+// Package imagestore provides pluggable storage backends for image assets.
 //
-// 设计目标：
-//   - 默认 LocalBackend 与现有行为完全一致（绝对路径作为 storage_path）
-//   - 可选 S3Backend，覆盖 AWS S3 / Cloudflare R2 / MinIO / 阿里云 OSS / 腾讯云 COS / B2 等 S3-compatible 服务
-//   - 数据库无 schema 变更：通过 storage_path 前缀（"s3://" vs 绝对路径）路由读/删，存量本地图无需迁移
+// Design goals:
+//   - The default LocalBackend behaves exactly as before (the absolute path is used as storage_path)
+//   - An optional S3Backend covering S3-compatible services such as AWS S3, Cloudflare R2, MinIO, Alibaba Cloud OSS, Tencent Cloud COS and B2
+//   - No database schema change: reads and deletes are routed by the storage_path prefix ("s3://" vs an absolute path), so existing local images need no migration
 package imagestore
 
 import (
@@ -23,29 +23,29 @@ const (
 	s3RefScheme = "s3://"
 )
 
-// Backend 抽象图片对象的存储读写。
+// Backend abstracts storage reads and writes for image objects.
 type Backend interface {
-	// Name 返回后端标识（"local" / "s3"），便于日志与判断。
+	// Name returns the backend identifier ("local" / "s3"), for logs and checks.
 	Name() string
-	// Save 保存图片字节流，返回写入后的 ref（LocalBackend 返回绝对路径，S3Backend 返回 s3://bucket/key）。
+	// Save stores the image bytes and returns the ref after writing (LocalBackend returns the absolute path, S3Backend returns s3://bucket/key).
 	Save(ctx context.Context, key string, data []byte, mime string) (ref string, err error)
-	// Open 以流式方式读取，调用方负责关闭。size 可能为 -1 表示未知。
+	// Open reads as a stream; the caller is responsible for closing it. size may be -1 when unknown.
 	Open(ctx context.Context, ref string) (rc io.ReadCloser, size int64, err error)
-	// Read 一次性读取（用于缩略图等小数据场景）。
+	// Read reads everything at once (for small data such as thumbnails).
 	Read(ctx context.Context, ref string) ([]byte, error)
-	// Delete 删除对应 ref。
+	// Delete deletes the corresponding ref.
 	Delete(ctx context.Context, ref string) error
 }
 
-// Presigner 由能为对象生成限时直链的后端实现（当前仅 S3Backend）。
+// Presigner is implemented by backends that can generate time-limited direct links for objects (currently only S3Backend).
 type Presigner interface {
 	PresignGetURL(ctx context.Context, ref string, ttl time.Duration) (string, error)
 }
 
-// ErrPresignUnsupported 表示当前后端无法生成云直链（如 LocalBackend）。
-var ErrPresignUnsupported = errors.New("imagestore: 当前后端不支持生成云存储直链")
+// ErrPresignUnsupported means the current backend cannot generate cloud direct links (such as LocalBackend).
+var ErrPresignUnsupported = errors.New("imagestore: the current backend does not support generating cloud storage direct links")
 
-// Config 集中描述一份运行时配置。来源于 system_settings。
+// Config describes one runtime configuration in one place. It comes from system_settings.
 type Config struct {
 	Backend        string // local / s3
 	Endpoint       string
@@ -53,12 +53,12 @@ type Config struct {
 	Bucket         string
 	AccessKey      string
 	SecretKey      string
-	Prefix         string // 例如 "images/"，会自动拼到对象 key 前
-	ForcePathStyle bool   // MinIO / 部分自建服务必须开启
-	LocalDir       string // LocalBackend 使用的目录；为空则由调用方提供默认
+	Prefix         string // for example "images/", automatically prepended to the object key
+	ForcePathStyle bool   // must be enabled for MinIO and some self-hosted services
+	LocalDir       string // directory used by LocalBackend; if empty, the caller provides the default
 }
 
-// Normalize 校正常见空白与默认值，便于与 DB 持久化值对齐。
+// Normalize fixes common whitespace and defaults, so values align with what is persisted in the DB.
 func (c Config) Normalize() Config {
 	c.Backend = strings.ToLower(strings.TrimSpace(c.Backend))
 	if c.Backend == "" {
@@ -77,7 +77,7 @@ func (c Config) Normalize() Config {
 	return c
 }
 
-// Validate 在切换到 S3 前校验必要字段。
+// Validate checks the required fields before switching to S3.
 func (c Config) Validate() error {
 	c = c.Normalize()
 	if c.Backend == BackendLocal {
@@ -97,36 +97,36 @@ func (c Config) Validate() error {
 		missing = append(missing, "secret_key")
 	}
 	if len(missing) > 0 {
-		return fmt.Errorf("S3 配置缺少字段: %s", strings.Join(missing, ", "))
+		return fmt.Errorf("S3 config is missing fields: %s", strings.Join(missing, ", "))
 	}
 	return nil
 }
 
-// IsS3Ref 判断 storage_path 是否落在 S3 后端。
+// IsS3Ref reports whether storage_path points to the S3 backend.
 func IsS3Ref(ref string) bool {
 	return strings.HasPrefix(strings.TrimSpace(ref), s3RefScheme)
 }
 
-// state 持有当前生效的后端集合。
+// state holds the backends currently in effect.
 //
-// 同时保留 local 与（可选）s3 实例，是为了让存量本地图与新图共存：
-//   - 写入永远走 currentWriter（用户在系统设置里选的那个）
-//   - 读取/删除按 ref 前缀分发到对应后端
+// It keeps both the local and (optional) s3 instances, so that existing local images and new images coexist:
+//   - writes always go through currentWriter (the one the user selected in system settings)
+//   - reads and deletes are dispatched to the matching backend by ref prefix
 type state struct {
 	cfg     Config
 	local   Backend
-	s3      Backend // nil 表示当前未启用 S3
-	primary Backend // 写入时使用
+	s3      Backend // nil means S3 is not currently enabled
+	primary Backend // used for writes
 }
 
 var current atomic.Pointer[state]
 
-// ErrNotConfigured 表示尚未调用 Configure。
+// ErrNotConfigured means Configure has not been called yet.
 var ErrNotConfigured = errors.New("imagestore: not configured")
 
-// Configure 应用一份新配置，原子切换全局后端。
+// Configure applies a new configuration and atomically switches the global backend.
 //
-// 总是会构造一个 LocalBackend 兜底，因此存量本地图始终可读。
+// It always constructs a LocalBackend as a fallback, so existing local images stay readable.
 func Configure(cfg Config) error {
 	cfg = cfg.Normalize()
 	if err := cfg.Validate(); err != nil {
@@ -135,7 +135,7 @@ func Configure(cfg Config) error {
 
 	local, err := NewLocalBackend(cfg.LocalDir)
 	if err != nil {
-		return fmt.Errorf("imagestore: 初始化本地后端失败: %w", err)
+		return fmt.Errorf("imagestore: failed to initialize the local backend: %w", err)
 	}
 
 	st := &state{cfg: cfg, local: local, primary: local}
@@ -143,7 +143,7 @@ func Configure(cfg Config) error {
 	if cfg.Backend == BackendS3 {
 		s3, err := NewS3Backend(cfg)
 		if err != nil {
-			return fmt.Errorf("imagestore: 初始化 S3 后端失败: %w", err)
+			return fmt.Errorf("imagestore: failed to initialize the S3 backend: %w", err)
 		}
 		st.s3 = s3
 		st.primary = s3
@@ -153,7 +153,7 @@ func Configure(cfg Config) error {
 	return nil
 }
 
-// CurrentConfig 返回当前生效的配置（拷贝）。
+// CurrentConfig returns a copy of the configuration currently in effect.
 func CurrentConfig() Config {
 	if st := current.Load(); st != nil {
 		return st.cfg
@@ -161,7 +161,7 @@ func CurrentConfig() Config {
 	return Config{Backend: BackendLocal}
 }
 
-// Primary 返回当前用于写入的后端（用户设置选中的那个）。
+// Primary returns the backend currently used for writes (the one the user selected in settings).
 func Primary() (Backend, error) {
 	st := current.Load()
 	if st == nil {
@@ -170,9 +170,9 @@ func Primary() (Backend, error) {
 	return st.primary, nil
 }
 
-// Resolve 按 ref 路由到正确后端。
-//   - "s3://..." 走 S3（若 S3 未配置则报错）
-//   - 其它走 Local
+// Resolve routes to the correct backend by ref.
+//   - "s3://..." goes to S3 (an error is returned if S3 is not configured)
+//   - everything else goes to Local
 func Resolve(ref string) (Backend, error) {
 	st := current.Load()
 	if st == nil {
@@ -180,14 +180,14 @@ func Resolve(ref string) (Backend, error) {
 	}
 	if IsS3Ref(ref) {
 		if st.s3 == nil {
-			return nil, fmt.Errorf("imagestore: 当前未启用 S3，但存在 S3 ref: %s", ref)
+			return nil, fmt.Errorf("imagestore: S3 is not enabled, but an S3 ref exists: %s", ref)
 		}
 		return st.s3, nil
 	}
 	return st.local, nil
 }
 
-// LocalDir 返回当前 LocalBackend 使用的目录（用于 path-allowlist 校验）。
+// LocalDir returns the directory used by the current LocalBackend (for path allowlist validation).
 func LocalDir() string {
 	if st := current.Load(); st != nil {
 		if lb, ok := st.local.(*LocalBackend); ok {
@@ -197,8 +197,8 @@ func LocalDir() string {
 	return ""
 }
 
-// PresignURL 为 ref 生成限时直链。按 ref 前缀路由到对应后端，
-// 若该后端不支持预签名（如本地后端）返回 ErrPresignUnsupported。
+// PresignURL generates a time-limited direct link for ref. It routes to the matching backend by ref prefix,
+// and returns ErrPresignUnsupported if that backend does not support presigning (such as the local backend).
 func PresignURL(ctx context.Context, ref string, ttl time.Duration) (string, error) {
 	backend, err := Resolve(ref)
 	if err != nil {

@@ -22,8 +22,8 @@ import (
 
 const maxUpscalerResponseBytes = 64 << 20
 
-// 目标尺寸上限：单边 16384，总像素 4000 万（RGBA 约 160MB）。
-// 超过上限的 strict_size 不会被当作精确目标，避免 NewRGBA 直接分配 GB 级内存。
+// Target size limit: 16384 per side, 40 million total pixels (about 160MB of RGBA).
+// A strict_size above the limit is not treated as an exact target, to avoid NewRGBA allocating gigabyte-scale memory directly.
 const (
 	maxTargetDimension = 16384
 	maxTargetPixels    = 40_000_000

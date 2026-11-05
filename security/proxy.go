@@ -77,14 +77,14 @@ func normalizeProxyURLEncodingUserinfo(raw string) (string, error) {
 		return "", fmt.Errorf("proxy url missing host")
 	}
 
-	// userinfo 与 hostport 以最后一个 '@' 分隔（密码可能含 '@'）。
+	// userinfo and hostport are split at the last '@' (the password may contain '@').
 	userinfo := ""
 	hostport := rest
 	if at := strings.LastIndex(rest, "@"); at >= 0 {
 		userinfo = rest[:at]
 		hostport = rest[at+1:]
 	}
-	// 代理 URL 不带 path/query/fragment，去掉尾部多余部分。
+	// A proxy URL carries no path, query or fragment, so strip any trailing extra part.
 	if cut := strings.IndexAny(hostport, "/?#"); cut >= 0 {
 		hostport = hostport[:cut]
 	}

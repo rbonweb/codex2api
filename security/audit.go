@@ -9,7 +9,7 @@ import (
 	"time"
 )
 
-// AuditLogger 安全审计日志记录器
+// AuditLogger is the security audit log recorder.
 type AuditLogger struct {
 	mu         sync.Mutex
 	file       *os.File
@@ -26,7 +26,7 @@ var (
 
 const defaultAuditLogDir = "logs/security"
 
-// GetAuditLogger 获取默认审计日志记录器
+// GetAuditLogger returns the default audit log recorder.
 func GetAuditLogger() *AuditLogger {
 	auditOnce.Do(func() {
 		if FileLogsDisabled() {
@@ -48,7 +48,7 @@ func securityLogDir() string {
 	return defaultAuditLogDir
 }
 
-// NewAuditLogger 创建新的审计日志记录器
+// NewAuditLogger creates a new audit log recorder.
 func NewAuditLogger(logDir, logFile string, maxSize int64, maxBackups int) *AuditLogger {
 	if maxSize <= 0 {
 		maxSize = 100 * 1024 * 1024 // 100MB
@@ -64,31 +64,31 @@ func NewAuditLogger(logDir, logFile string, maxSize int64, maxBackups int) *Audi
 		maxBackups: maxBackups,
 	}
 
-	// 初始化日志文件
+	// Initialize the log file.
 	if err := al.init(); err != nil {
-		fmt.Fprintf(os.Stderr, "初始化审计日志失败: %v\n", err)
+		fmt.Fprintf(os.Stderr, "failed to initialize audit log: %v\n", err)
 	}
 
 	return al
 }
 
-// init 初始化日志文件
+// init initializes the log file.
 func (al *AuditLogger) init() error {
 	if err := os.MkdirAll(al.logDir, 0750); err != nil {
-		return fmt.Errorf("创建日志目录失败: %w", err)
+		return fmt.Errorf("failed to create log directory: %w", err)
 	}
 
 	logPath := filepath.Join(al.logDir, al.logFile)
 	f, err := os.OpenFile(logPath, os.O_CREATE|os.O_WRONLY|os.O_APPEND, 0640)
 	if err != nil {
-		return fmt.Errorf("打开日志文件失败: %w", err)
+		return fmt.Errorf("failed to open log file: %w", err)
 	}
 
 	al.file = f
 	return nil
 }
 
-// Write 写入审计日志
+// Write writes an audit log entry.
 func (al *AuditLogger) Write(level, action, details string) {
 	al.mu.Lock()
 	defer al.mu.Unlock()
@@ -100,7 +100,7 @@ func (al *AuditLogger) Write(level, action, details string) {
 	timestamp := time.Now().Format(time.RFC3339)
 	line := fmt.Sprintf("[%s] [%s] %s: %s\n", timestamp, level, action, details)
 
-	// 检查是否需要轮转
+	// Check whether rotation is needed.
 	if al.shouldRotate() {
 		al.rotate()
 	}
@@ -108,7 +108,7 @@ func (al *AuditLogger) Write(level, action, details string) {
 	al.file.WriteString(line)
 }
 
-// shouldRotate 检查是否需要日志轮转
+// shouldRotate checks whether the log needs rotation.
 func (al *AuditLogger) shouldRotate() bool {
 	if al.file == nil {
 		return false
@@ -122,36 +122,36 @@ func (al *AuditLogger) shouldRotate() bool {
 	return info.Size() >= al.maxSize
 }
 
-// rotate 执行日志轮转
+// rotate performs log rotation.
 func (al *AuditLogger) rotate() {
 	if al.file != nil {
 		if err := al.file.Close(); err != nil {
-			fmt.Fprintf(os.Stderr, "关闭日志文件失败: %v\n", err)
+			fmt.Fprintf(os.Stderr, "failed to close log file: %v\n", err)
 		}
 	}
 
-	// 轮转旧日志
+	// Rotate the old logs.
 	logPath := filepath.Join(al.logDir, al.logFile)
 	for i := al.maxBackups - 1; i > 0; i-- {
 		oldPath := fmt.Sprintf("%s.%d", logPath, i)
 		newPath := fmt.Sprintf("%s.%d", logPath, i+1)
 		if err := os.Rename(oldPath, newPath); err != nil && !os.IsNotExist(err) {
-			fmt.Fprintf(os.Stderr, "重命名日志文件失败 %s -> %s: %v\n", oldPath, newPath, err)
+			fmt.Fprintf(os.Stderr, "failed to rename log file %s -> %s: %v\n", oldPath, newPath, err)
 		}
 	}
 
-	// 重命名当前日志
+	// Rename the current log.
 	if err := os.Rename(logPath, logPath+".1"); err != nil && !os.IsNotExist(err) {
-		fmt.Fprintf(os.Stderr, "重命名当前日志文件失败: %v\n", err)
+		fmt.Fprintf(os.Stderr, "failed to rename current log file: %v\n", err)
 	}
 
-	// 创建新日志文件
+	// Create a new log file.
 	if err := al.init(); err != nil {
-		fmt.Fprintf(os.Stderr, "初始化新日志文件失败: %v\n", err)
+		fmt.Fprintf(os.Stderr, "failed to initialize new log file: %v\n", err)
 	}
 }
 
-// Close 关闭审计日志
+// Close closes the audit log.
 func (al *AuditLogger) Close() error {
 	al.mu.Lock()
 	defer al.mu.Unlock()
@@ -162,29 +162,29 @@ func (al *AuditLogger) Close() error {
 	return nil
 }
 
-// SecurityAuditLog 记录安全审计日志（便捷函数）
+// SecurityAuditLog records a security audit log entry (convenience function).
 func SecurityAuditLog(action, details string) {
 	logger := GetAuditLogger()
 	sanitizedDetails := SanitizeLog(details)
 	logger.Write("SECURITY", action, sanitizedDetails)
 }
 
-// Info 记录信息级别审计日志
+// Info records an info-level audit log entry.
 func Info(action, details string) {
 	GetAuditLogger().Write("INFO", action, SanitizeLog(details))
 }
 
-// Warning 记录警告级别审计日志
+// Warning records a warning-level audit log entry.
 func Warning(action, details string) {
 	GetAuditLogger().Write("WARNING", action, SanitizeLog(details))
 }
 
-// Error 记录错误级别审计日志
+// Error records an error-level audit log entry.
 func Error(action, details string) {
 	GetAuditLogger().Write("ERROR", action, SanitizeLog(details))
 }
 
-// Critical 记录严重级别审计日志
+// Critical records a critical-level audit log entry.
 func Critical(action, details string) {
 	GetAuditLogger().Write("CRITICAL", action, SanitizeLog(details))
 }
