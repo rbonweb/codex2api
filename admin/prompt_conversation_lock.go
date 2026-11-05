@@ -32,7 +32,7 @@ func (h *Handler) UnlockPromptConversation(c *gin.Context) {
 	}
 	request.Reason = strings.TrimSpace(request.Reason)
 	if request.Reason == "" {
-		request.Reason = "管理员主动解锁"
+		request.Reason = "unlocked by administrator"
 	}
 	request.Scope = strings.ToLower(strings.TrimSpace(request.Scope))
 	if request.Scope == "" {

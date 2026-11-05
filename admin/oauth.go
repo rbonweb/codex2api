@@ -606,7 +606,7 @@ func (h *Handler) UpdateOAuthAccountCode(c *gin.Context) {
 	row, err := h.db.GetAccountByID(ctx, id)
 	if err != nil {
 		if errors.Is(err, sql.ErrNoRows) {
-			writeError(c, http.StatusNotFound, "账号不存在")
+			writeError(c, http.StatusNotFound, "Account not found")
 			return
 		}
 		writeInternalError(c, err)
@@ -676,7 +676,7 @@ func (h *Handler) UpdateOAuthAccountCode(c *gin.Context) {
 	}
 	if err := h.db.UpdateOAuthAccountCredentials(ctx, id, tokenCredentialMap(seed), proxyURL); err != nil {
 		if errors.Is(err, sql.ErrNoRows) {
-			writeError(c, http.StatusNotFound, "账号不存在")
+			writeError(c, http.StatusNotFound, "Account not found")
 			return
 		}
 		writeError(c, http.StatusInternalServerError, "Failed to write token to the database: "+err.Error())

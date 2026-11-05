@@ -390,7 +390,7 @@ func TestRefreshAccountReturnsNotFoundForMissingAccount(t *testing.T) {
 
 	handler := &Handler{
 		refreshAccount: func(context.Context, int64) error {
-			return errors.New("账号 7 不存在")
+			return errors.New("account 7 does not exist")
 		},
 	}
 
@@ -409,8 +409,8 @@ func TestRefreshAccountReturnsNotFoundForMissingAccount(t *testing.T) {
 	if err := json.Unmarshal(recorder.Body.Bytes(), &payload); err != nil {
 		t.Fatalf("decode response: %v", err)
 	}
-	if got := payload["error"]; got != "账号 7 不存在" {
-		t.Fatalf("error = %q, want %q", got, "账号 7 不存在")
+	if got := payload["error"]; got != "account 7 does not exist" {
+		t.Fatalf("error = %q, want %q", got, "account 7 does not exist")
 	}
 }
 

@@ -265,7 +265,7 @@ func (h *Handler) SendInvite(c *gin.Context) {
 
 	account := h.findAccountByID(id)
 	if account == nil {
-		writeError(c, http.StatusNotFound, "账号不存在")
+		writeError(c, http.StatusNotFound, "Account not found")
 		return
 	}
 	if account.GetAccessToken() == "" {
@@ -560,7 +560,7 @@ func (h *Handler) resolveInviteAccount(c *gin.Context) (*auth.Account, string, b
 	}
 	account := h.findAccountByID(id)
 	if account == nil {
-		writeError(c, http.StatusNotFound, "账号不存在")
+		writeError(c, http.StatusNotFound, "Account not found")
 		return nil, "", false
 	}
 	if account.GetAccessToken() == "" {

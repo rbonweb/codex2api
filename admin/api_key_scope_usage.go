@@ -79,7 +79,7 @@ func (h *Handler) GetAPIKeyScopeUsage(c *gin.Context) {
 		return
 	}
 	if row == nil {
-		writeError(c, http.StatusNotFound, "API Key 不存在")
+		writeError(c, http.StatusNotFound, "API key not found")
 		return
 	}
 
@@ -220,7 +220,7 @@ func (h *Handler) ResetAPIKeyScopeQuota(c *gin.Context) {
 		return
 	}
 	if row == nil {
-		writeError(c, http.StatusNotFound, "API Key 不存在")
+		writeError(c, http.StatusNotFound, "API key not found")
 		return
 	}
 	if err := h.db.ResetAPIKeyScopeCounter(ctx, id, req.ScopeType, req.ScopeID); err != nil {

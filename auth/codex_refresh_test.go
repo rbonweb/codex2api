@@ -175,7 +175,7 @@ func TestCodexRefreshDatabaseFailureFencesRestartAndDoesNotPublish(t *testing.T)
 	if err := restarted.LoadAccountByID(context.Background(), id); err != nil {
 		t.Fatal(err)
 	}
-	if err := restarted.RefreshSingle(context.Background(), id); err == nil || !strings.Contains(err.Error(), "未确认") {
+	if err := restarted.RefreshSingle(context.Background(), id); err == nil || !strings.Contains(err.Error(), "unconfirmed") {
 		t.Fatalf("lost durable fence: %v", err)
 	}
 	if calls.Load() != 1 {

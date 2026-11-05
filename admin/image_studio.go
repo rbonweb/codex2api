@@ -198,7 +198,7 @@ func (h *Handler) DeleteImagePromptTemplate(c *gin.Context) {
 		writeInternalError(c, err)
 		return
 	}
-	writeMessage(c, http.StatusOK, "已删除")
+	writeMessage(c, http.StatusOK, "Deleted")
 }
 
 func templateInputFromPayload(req imagePromptTemplatePayload, existing *database.ImagePromptTemplate) (database.ImagePromptTemplateInput, error) {
@@ -562,7 +562,7 @@ func (h *Handler) DeleteImageGenerationJob(c *gin.Context) {
 		thumbCache.Invalidate(asset.ID)
 		removeDiskThumbnails(asset.ID)
 	}
-	writeMessage(c, http.StatusOK, "已删除")
+	writeMessage(c, http.StatusOK, "Deleted")
 }
 
 func (h *Handler) attachImageJobAssetCachePayload(job *database.ImageGenerationJob) {
@@ -850,7 +850,7 @@ func (h *Handler) DeleteImageAsset(c *gin.Context) {
 		thumbCache.Invalidate(asset.ID)
 		removeDiskThumbnails(asset.ID)
 	}
-	writeMessage(c, http.StatusOK, "已删除")
+	writeMessage(c, http.StatusOK, "Deleted")
 }
 
 // imageJobRunOptions carries admission state from the enqueue site into the
@@ -1579,7 +1579,7 @@ func (h *Handler) resolveImageJobAPIKey(ctx context.Context, id int64) (*databas
 	if id > 0 {
 		key, err := h.db.GetAPIKeyByID(ctx, id)
 		if errors.Is(err, sql.ErrNoRows) {
-			return nil, fmt.Errorf("API Key 不存在")
+			return nil, fmt.Errorf("API key not found")
 		}
 		return key, err
 	}

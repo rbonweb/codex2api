@@ -3322,7 +3322,7 @@ func TestDeactivatedWorkspace402MarksAccountError(t *testing.T) {
 	sibling.Mu().RLock()
 	siblingMsg := sibling.ErrorMsg
 	sibling.Mu().RUnlock()
-	if !strings.Contains(siblingMsg, "工作区联动") {
+	if !strings.Contains(siblingMsg, "workspace-linked") {
 		t.Fatalf("sibling ErrorMsg = %q, want workspace-linked annotation", siblingMsg)
 	}
 	if other.RuntimeStatus() == "error" {

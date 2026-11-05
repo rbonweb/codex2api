@@ -1101,7 +1101,7 @@ curl --request POST \\
   "message": "Account deleted"
 }` },
           { code: 404, body: `{
-  "error": "account does not exist"
+  "error": "Account not found"
 }` },
         ]}
       />

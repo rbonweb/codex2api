@@ -1064,7 +1064,7 @@ func (h *Handler) runSingleBatchTest(ctx context.Context, acc *auth.Account) (st
 	testCtx, cancel := context.WithTimeout(ctx, batchTestAccountTimeout)
 	defer cancel()
 	if acc == nil {
-		return "failed", "账号不存在"
+		return "failed", "Account not found"
 	}
 
 	if !acc.IsCodexAgentIdentity() && acc.GetAccessToken() == "" {
@@ -1167,7 +1167,7 @@ func (h *Handler) runRecycleBinSingleTest(ctx context.Context, acc *auth.Account
 	testCtx, cancel := context.WithTimeout(ctx, batchTestAccountTimeout)
 	defer cancel()
 	if acc == nil {
-		return "failed", "账号不存在"
+		return "failed", "Account not found"
 	}
 
 	if !acc.IsCodexAgentIdentity() && acc.GetAccessToken() == "" {

@@ -129,7 +129,7 @@ func (h *Handler) scheduledTestAccount(c *gin.Context) (*database.AccountRow, bo
 	}
 	row, err := h.db.GetAccountByID(c.Request.Context(), id)
 	if errors.Is(err, sql.ErrNoRows) {
-		c.JSON(404, gin.H{"error": "账号不存在"})
+		c.JSON(404, gin.H{"error": "Account not found"})
 		return nil, false
 	}
 	if err != nil {

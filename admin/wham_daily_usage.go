@@ -82,7 +82,7 @@ func (h *Handler) GetAccountWhamDailyUsage(c *gin.Context) {
 		}
 		switch {
 		case account == nil:
-			writeError(c, http.StatusNotFound, "账号不存在")
+			writeError(c, http.StatusNotFound, "Account not found")
 			return
 		case isCodexATAccount(account) || !whamDailyUsageChannelSupported(account):
 			refreshError = errWhamDailyUsageUnsupported.Error()

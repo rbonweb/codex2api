@@ -96,7 +96,7 @@ func (h *Handler) CreatePromptFilterNewAPIBinding(c *gin.Context) {
 		return
 	}
 	if _, err := h.db.GetAPIKeyByID(c.Request.Context(), req.APIKeyID); errors.Is(err, sql.ErrNoRows) {
-		writeError(c, http.StatusNotFound, "API Key 不存在")
+		writeError(c, http.StatusNotFound, "API key not found")
 		return
 	} else if err != nil {
 		writeInternalError(c, err)

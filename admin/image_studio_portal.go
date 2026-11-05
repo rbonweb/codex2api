@@ -416,7 +416,7 @@ func (h *Handler) DeletePortalImageJob(c *gin.Context) {
 		thumbCache.Invalidate(asset.ID)
 		removeDiskThumbnails(asset.ID)
 	}
-	writeMessage(c, http.StatusOK, "已删除")
+	writeMessage(c, http.StatusOK, "Deleted")
 }
 
 func (h *Handler) ListPortalImageAssets(c *gin.Context) {
@@ -527,5 +527,5 @@ func (h *Handler) DeletePortalImageAsset(c *gin.Context) {
 		thumbCache.Invalidate(asset.ID)
 		removeDiskThumbnails(asset.ID)
 	}
-	writeMessage(c, http.StatusOK, "已删除")
+	writeMessage(c, http.StatusOK, "Deleted")
 }
