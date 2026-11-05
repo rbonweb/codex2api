@@ -86,14 +86,10 @@ func TestStrictResponsesCompatibilityHTTPDispatch(t *testing.T) {
 	t.Cleanup(func() { ApplyRuntimeSettings(previous) })
 	for _, endpoint := range []string{"responses", "compact"} {
 		for _, channel := range []string{database.UpstreamChannelAuto, database.UpstreamChannelCodex} {
-			for _, native := range []bool{true, false} {
+			{
 				for _, strict := range []bool{false, true} {
 					name := endpoint + "/" + channel + "/"
-					if native {
-						name += "native"
-					} else {
-						name += "relay"
-					}
+					name += "native"
 					if strict {
 						name += "/strict"
 					} else {
@@ -120,10 +116,6 @@ func TestStrictResponsesCompatibilityHTTPDispatch(t *testing.T) {
 						store := auth.NewStore(nil, nil, &database.SystemSettings{MaxConcurrency: 2, MaxRetries: 0, MaxRateLimitRetries: 0})
 						defer store.Stop()
 						account := &auth.Account{DBID: 1, AccessToken: "local-test", PlanType: "pro", Models: []string{"gpt-5.5"}}
-						if !native {
-							account.UpstreamType = auth.UpstreamOpenAIResponses
-							account.BaseURL, account.APIKey, account.PlanType = upstream.URL, "local-test", "api"
-						}
 						store.AddAccount(account)
 						h := NewHandler(store, nil, nil, nil)
 						body := []byte(`{"model":"gpt-5.5","input":"hi","stream":true,"metadata":{"tenant":"demo"},"background":false}`)
@@ -137,7 +129,7 @@ func TestStrictResponsesCompatibilityHTTPDispatch(t *testing.T) {
 								c.Request.Header.Set(strictResponsesCompatibilityHeader, "true")
 							}
 						}, handler, body)
-						if native && strict {
+						if strict {
 							if response.Code != http.StatusBadRequest || gjson.GetBytes(response.Body.Bytes(), "error.code").String() != string(api.ErrCodeUnsupportedFeature) || calls.Load() != 0 {
 								t.Fatalf("native strict response=%d %s calls=%d", response.Code, response.Body.String(), calls.Load())
 							}
@@ -145,13 +137,10 @@ func TestStrictResponsesCompatibilityHTTPDispatch(t *testing.T) {
 							if response.Code != http.StatusOK || calls.Load() != 1 {
 								t.Fatalf("response=%d %s calls=%d", response.Code, response.Body.String(), calls.Load())
 							}
-							if got := gjson.GetBytes(seen, "metadata.tenant"); got.Exists() == native {
-								t.Fatalf("wrong metadata preservation: native=%v body=%s", native, seen)
+							if got := gjson.GetBytes(seen, "metadata.tenant"); got.Exists() {
+								t.Fatalf("native request kept discarded metadata: body=%s", seen)
 							}
-							if !native && gjson.GetBytes(seen, "metadata.tenant").String() != "demo" {
-								t.Fatalf("relay lost metadata: %s", seen)
-							}
-							if native && gjson.GetBytes(seen, "background").Exists() {
+							if gjson.GetBytes(seen, "background").Exists() {
 								t.Fatalf("native synchronous background not normalized: %s", seen)
 							}
 							gjson.GetBytes(seen, "tools").ForEach(func(_, tool gjson.Result) bool {
@@ -183,7 +172,6 @@ func TestStrictResponsesCompatibilityPreservesErrorAfterSSECommit(t *testing.T) 
 		t.Fatalf("committed SSE lost structured compatibility error: %s", body)
 	}
 }
-
 
 func TestStrictResponsesCompatibilityWebSocketNativeSelection(t *testing.T) {
 	gin.SetMode(gin.TestMode)

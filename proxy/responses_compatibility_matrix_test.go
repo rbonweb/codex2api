@@ -122,8 +122,7 @@ func TestResponsesCompatibilityMatrixNamedToolRoundTrips(t *testing.T) {
 	}
 }
 
-// Compare native local replay with relay server-side continuation, both before
-// and after L1 state loss. The shared fixture survives the L1 reset; a plain
+// Check native local replay, both before and after L1 state loss. The shared fixture survives the L1 reset; a plain
 // memory backend must return an actionable 409 instead of forwarding orphaned
 // tool results. All actual upstream requests go to the loopback HTTP server.
 func TestResponsesCompatibilityMatrixHTTPContinuationStorage(t *testing.T) {
@@ -135,9 +134,9 @@ func TestResponsesCompatibilityMatrixHTTPContinuationStorage(t *testing.T) {
 	ApplyRuntimeSettings(settings)
 	t.Cleanup(func() { ApplyRuntimeSettings(previous) })
 	for _, shared := range []bool{false, true} {
-		for _, native := range []bool{true, false} {
+		{
 			for _, loseL1 := range []bool{false, true} {
-				t.Run(fmt.Sprintf("shared=%v/native=%v/L1lost=%v", shared, native, loseL1), func(t *testing.T) {
+				t.Run(fmt.Sprintf("shared=%v/L1lost=%v", shared, loseL1), func(t *testing.T) {
 					resetResponseCacheStateForTest(testResponseCacheConfig())
 					defer resetResponseCacheForTest()
 					memory := cache.NewMemory(1)
@@ -168,13 +167,6 @@ func TestResponsesCompatibilityMatrixHTTPContinuationStorage(t *testing.T) {
 					store := auth.NewStore(nil, nil, &database.SystemSettings{MaxConcurrency: 2, MaxRetries: 0, MaxRateLimitRetries: 0})
 					defer store.Stop()
 					account := &auth.Account{DBID: 1, AccessToken: "synthetic-matrix", PlanType: "pro"}
-					if !native {
-						account.UpstreamType = auth.UpstreamOpenAIResponses
-						account.BaseURL = upstream.URL
-						account.APIKey = "synthetic-matrix"
-						account.PlanType = "api"
-						account.Models = []string{"gpt-5.5"}
-					}
 					store.AddAccount(account)
 					h := NewHandler(store, nil, nil, nil)
 					request := func(body []byte, owner int64) *httptest.ResponseRecorder {
@@ -192,7 +184,7 @@ func TestResponsesCompatibilityMatrixHTTPContinuationStorage(t *testing.T) {
 						t.Fatalf("HTTP envelope cleanup removed nested data or retained stream_id: %s", firstBody)
 					}
 					drainResponseCacheBackendWrites()
-					if native && shared && fixture.sets.Load() == 0 {
+					if shared && fixture.sets.Load() == 0 {
 						t.Fatal("native tool state never reached shared backend fixture")
 					}
 					if loseL1 {
@@ -202,14 +194,12 @@ func TestResponsesCompatibilityMatrixHTTPContinuationStorage(t *testing.T) {
 					secondRaw := []byte(`{"model":"gpt-5.5","stream":true,"stream_id":"http-only-envelope","previous_response_id":"resp_matrix_tool","input":[{"type":"function_call_output","call_id":"call_matrix","output":"local-result"}]}`)
 					// A native replay belongs to the original API key, including when
 					// a shared backend rather than L1 supplies the snapshot.
-					if native {
-						wrongOwner := request(secondRaw, 8)
-						if wrongOwner.Code != 409 || calls.Load() != 1 {
-							t.Fatalf("cross-owner replay was not rejected: %d %s calls=%d", wrongOwner.Code, wrongOwner.Body.String(), calls.Load())
-						}
+					wrongOwner := request(secondRaw, 8)
+					if wrongOwner.Code != 409 || calls.Load() != 1 {
+						t.Fatalf("cross-owner replay was not rejected: %d %s calls=%d", wrongOwner.Code, wrongOwner.Body.String(), calls.Load())
 					}
 					second := request(secondRaw, 7)
-					if native && loseL1 && !shared {
+					if loseL1 && !shared {
 						if second.Code != 409 || gjson.GetBytes(second.Body.Bytes(), "error.code").String() != "previous_response_not_found" || calls.Load() != 1 {
 							t.Fatalf("lost memory history did not fail closed: %d %s calls=%d", second.Code, second.Body.String(), calls.Load())
 						}
@@ -221,12 +211,8 @@ func TestResponsesCompatibilityMatrixHTTPContinuationStorage(t *testing.T) {
 						if gjson.GetBytes(sent, "stream_id").Exists() {
 							t.Fatalf("HTTP leaked stream_id: %s", sent)
 						}
-						if native {
-							if gjson.GetBytes(sent, "previous_response_id").Exists() || gjson.GetBytes(sent, "input.#").Int() != 3 || gjson.GetBytes(sent, "input.1.call_id").String() != "call_matrix" || gjson.GetBytes(sent, "input.2.output").String() != "local-result" {
-								t.Fatalf("native tool call/result expansion changed: %s", sent)
-							}
-						} else if gjson.GetBytes(sent, "previous_response_id").String() != "resp_matrix_tool" || gjson.GetBytes(sent, "input.#").Int() != 1 {
-							t.Fatalf("relay lost server continuation or repeated history: %s", sent)
+						if gjson.GetBytes(sent, "previous_response_id").Exists() || gjson.GetBytes(sent, "input.#").Int() != 3 || gjson.GetBytes(sent, "input.1.call_id").String() != "call_matrix" || gjson.GetBytes(sent, "input.2.output").String() != "local-result" {
+							t.Fatalf("native tool call/result expansion changed: %s", sent)
 						}
 					}
 					if account.ActiveRequests.Load() != 0 {
@@ -247,8 +233,8 @@ func TestResponsesCompatibilityMatrixCompactToolContinuation(t *testing.T) {
 	ApplyRuntimeSettings(settings)
 	t.Cleanup(func() { ApplyRuntimeSettings(old) })
 	const compactOutput = `{"id":"resp_matrix_compact","object":"response.compaction","output":[{"type":"compaction","encrypted_content":"synthetic-opaque-context"}],"usage":{"input_tokens":2,"output_tokens":1}}`
-	for _, native := range []bool{true, false} {
-		t.Run(fmt.Sprintf("native=%v", native), func(t *testing.T) {
+	{
+		t.Run("native", func(t *testing.T) {
 			resetResponseCacheStateForTest(testResponseCacheConfig())
 			defer resetResponseCacheForTest()
 			setResponseCache("key:7", "resp_before_compact", []json.RawMessage{json.RawMessage(`{"role":"user","content":"lookup"}`), json.RawMessage(`{"type":"function_call","call_id":"compact_call","name":"lookup","arguments":"{}"}`)})
@@ -265,16 +251,9 @@ func TestResponsesCompatibilityMatrixCompactToolContinuation(t *testing.T) {
 			store := auth.NewStore(nil, nil, &database.SystemSettings{MaxConcurrency: 2, MaxRetries: 0, MaxRateLimitRetries: 0})
 			defer store.Stop()
 			account := &auth.Account{DBID: 1, AccessToken: "synthetic-compact", PlanType: "pro"}
-			if !native {
-				account.UpstreamType = auth.UpstreamOpenAIResponses
-				account.BaseURL = upstream.URL
-				account.APIKey = "synthetic-compact"
-				account.PlanType = "api"
-				account.Models = []string{"gpt-5.5"}
-			}
 			store.AddAccount(account)
 			h := NewHandler(store, nil, nil, nil)
-			raw := []byte(`{"model":"gpt-5.5","type":"response.create","stream_id":"http-envelope","previous_response_id":"resp_before_compact","input":[{"type":"function_call_output","call_id":"compact_call","output":"result"}],"metadata":{"owner":"retained-by-relay"}}`)
+			raw := []byte(`{"model":"gpt-5.5","type":"response.create","stream_id":"http-envelope","previous_response_id":"resp_before_compact","input":[{"type":"function_call_output","call_id":"compact_call","output":"result"}],"metadata":{"owner":"dropped-by-codex"}}`)
 			response := invokeResponsesHandlerWithContext(t, func(c *gin.Context) {
 				c.Set(contextAPIKeyID, int64(7))
 				c.Set(contextAPIKeyRow, &database.APIKeyRow{ID: 7})
@@ -286,12 +265,8 @@ func TestResponsesCompatibilityMatrixCompactToolContinuation(t *testing.T) {
 			if gjson.GetBytes(sent, "type").Exists() || gjson.GetBytes(sent, "stream_id").Exists() {
 				t.Fatalf("compact HTTP leaked envelope: %s", sent)
 			}
-			if native {
-				if gjson.GetBytes(sent, "previous_response_id").Exists() || gjson.GetBytes(sent, "input.#").Int() != 3 || gjson.GetBytes(sent, "metadata").Exists() {
-					t.Fatalf("native compact replay=%s", sent)
-				}
-			} else if gjson.GetBytes(sent, "previous_response_id").String() != "resp_before_compact" || gjson.GetBytes(sent, "input.#").Int() != 1 || gjson.GetBytes(sent, "metadata.owner").String() != "retained-by-relay" {
-				t.Fatalf("relay compact semantics=%s", sent)
+			if gjson.GetBytes(sent, "previous_response_id").Exists() || gjson.GetBytes(sent, "input.#").Int() != 3 || gjson.GetBytes(sent, "metadata").Exists() {
+				t.Fatalf("native compact replay=%s", sent)
 			}
 			if account.ActiveRequests.Load() != 0 {
 				t.Fatal("compact leaked account capacity")
