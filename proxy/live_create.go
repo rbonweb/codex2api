@@ -1,6 +1,8 @@
 package proxy
 
 import (
+	"encoding/json"
+	"fmt"
 	"log"
 	"net/http"
 	"strings"
@@ -59,49 +61,74 @@ func (s *liveCreateState) releaseUnheldKey() {
 	}
 }
 
-func (s *liveCreateState) run() {
+// liveCreateOutcome is what the attempt loop decided, without writing anything to the client.
+type liveCreateOutcome struct {
+	// account and created are set on success.
+	account *auth.Account
+	created *liveCallCreated
+	// silent means the client went away: nothing is written.
+	silent bool
+	// localErr is a failure that happened before the upstream answered (headers, attestation, transport).
+	localErr error
+	// failure is the upstream answer to hand back (status 0 means no answer: service unavailable).
+	failure liveCreateResult
+	// rejected is true when failure is a client-side upstream rejection (4xx other than 429) that ends the loop.
+	rejected bool
+}
+
+// attempt runs the account loop and returns the outcome. On failure the account reservation is already released.
+func (s *liveCreateState) attempt() liveCreateOutcome {
 	for attempt := 0; attempt < liveMaxCreateAttempts; attempt++ {
 		account := s.handler.store.NextExcludingWithFilter(requestAPIKeyID(s.client), s.excluded, s.filter)
 		if account == nil {
-			s.reply(s.last)
-			return
+			return liveCreateOutcome{failure: s.last}
 		}
 		result := s.handler.createUpstreamLiveCall(s.client.Request.Context(), liveCreateInput{
 			Account: account, Request: s.request, Downstream: s.client.Request.Header, APIKey: s.apiKey,
 		})
 		if result.created != nil {
-			s.save(account, result.created)
-			return
+			return liveCreateOutcome{account: account, created: result.created}
 		}
 		s.excluded[account.ID()] = true
 		s.handler.store.Release(account)
-		if s.handleFailure(result) {
-			return
+		if outcome, done := s.failureOutcome(result); done {
+			return outcome
 		}
 	}
-	s.reply(s.last)
+	return liveCreateOutcome{failure: s.last}
 }
 
-func (s *liveCreateState) handleFailure(result liveCreateResult) bool {
+func (s *liveCreateState) failureOutcome(result liveCreateResult) (liveCreateOutcome, bool) {
 	if s.client.Request.Context().Err() != nil {
-		return true
+		return liveCreateOutcome{silent: true}, true
 	}
 	if result.local {
-		status := StatusCodeFromError(result.err)
-		if status == 0 {
-			status = http.StatusServiceUnavailable
-		}
-		api.SendErrorWithStatus(s.client, api.NewAPIError(api.ErrCodeServiceUnavailable, result.err.Error(), api.ErrorTypeServer), status)
-		return true
+		return liveCreateOutcome{localErr: result.err}, true
 	}
 	if result.status >= http.StatusBadRequest && result.status < http.StatusInternalServerError && result.status != http.StatusTooManyRequests {
-		s.reply(result)
-		return true
+		return liveCreateOutcome{failure: result, rejected: true}, true
 	}
 	if result.status != 0 {
 		s.last = result
 	}
-	return false
+	return liveCreateOutcome{}, false
+}
+
+func (s *liveCreateState) run() {
+	outcome := s.attempt()
+	switch {
+	case outcome.created != nil:
+		s.save(outcome.account, outcome.created)
+	case outcome.silent:
+	case outcome.localErr != nil:
+		status := StatusCodeFromError(outcome.localErr)
+		if status == 0 {
+			status = http.StatusServiceUnavailable
+		}
+		api.SendErrorWithStatus(s.client, api.NewAPIError(api.ErrCodeServiceUnavailable, outcome.localErr.Error(), api.ErrorTypeServer), status)
+	default:
+		s.reply(outcome.failure)
+	}
 }
 
 func (s *liveCreateState) reply(result liveCreateResult) {
@@ -142,4 +169,146 @@ func (s *liveCreateState) record(account *auth.Account, created *liveCallCreated
 		OutboundIdentity: created.identity, UserAgent: s.client.GetHeader("User-Agent"),
 		ClientIP: s.client.ClientIP(), InboundEndpoint: liveInboundEndpoint(s.client),
 	}
+}
+
+// gatewayLiveCall is a Live call the gateway opened for itself: Record is the canonical store record (controller proxy; callers read only its immutable identity fields and pass it back to finalize, which stays idempotent), and AnswerSDP is the upstream answer.
+type gatewayLiveCall struct {
+	Record    *liveCallRecord
+	AnswerSDP []byte
+}
+
+// liveGatewayError is a failure of createGatewayLiveCall that the caller maps to its own protocol; nothing was written to the client.
+type liveGatewayError struct {
+	Status int
+	Err    *api.APIError
+}
+
+func (e *liveGatewayError) Error() string {
+	if e == nil || e.Err == nil {
+		return "live gateway error"
+	}
+	return e.Err.Message
+}
+
+func newLiveGatewayError(status int, code api.ErrorCode, errType api.ErrorType, msg string) *liveGatewayError {
+	return &liveGatewayError{Status: status, Err: api.NewAPIError(code, msg, errType)}
+}
+
+const liveGatewayMessageLimit = 300
+
+// liveGatewayLimitError maps an API key limit refusal to an error the way SendAPIKeyLimitError does.
+func liveGatewayLimitError(status int, msg string) *liveGatewayError {
+	errType, errCode := api.ErrorTypeRateLimit, api.ErrCodeRateLimitReached
+	switch status {
+	case http.StatusForbidden:
+		errType, errCode = api.ErrorTypePermission, api.ErrCodeInvalidRequest
+	case http.StatusBadRequest:
+		errType, errCode = api.ErrorTypeInvalidRequest, api.ErrCodeInvalidParameter
+	case http.StatusServiceUnavailable:
+		errType, errCode = api.ErrorTypeServer, api.ErrCodeServiceUnavailable
+	}
+	return newLiveGatewayError(status, errCode, errType, msg)
+}
+
+// liveGatewayUpstreamMessage extracts a short, printable message from an upstream rejection without echoing the raw body.
+func liveGatewayUpstreamMessage(status int, body []byte) string {
+	fallback := fmt.Sprintf("ChatGPT Live rejected the call (status %d)", status)
+	var parsed struct {
+		Error   json.RawMessage `json:"error"`
+		Message string          `json:"message"`
+		Detail  string          `json:"detail"`
+	}
+	if json.Unmarshal(body, &parsed) != nil {
+		return fallback
+	}
+	msg := parsed.Message
+	if msg == "" {
+		msg = parsed.Detail
+	}
+	if len(parsed.Error) > 0 {
+		var nested struct {
+			Message string `json:"message"`
+		}
+		if json.Unmarshal(parsed.Error, &nested) == nil && nested.Message != "" {
+			msg = nested.Message
+		}
+	}
+	msg = strings.Map(func(r rune) rune {
+		if r < 0x20 || r == 0x7f {
+			return ' '
+		}
+		return r
+	}, msg)
+	msg = strings.TrimSpace(msg)
+	if msg == "" {
+		return fallback
+	}
+	if runes := []rune(msg); len(runes) > liveGatewayMessageLimit {
+		msg = string(runes[:liveGatewayMessageLimit])
+	}
+	return msg
+}
+
+func (s *liveCreateState) gatewayError(outcome liveCreateOutcome) *liveGatewayError {
+	switch {
+	case outcome.silent:
+		return newLiveGatewayError(http.StatusServiceUnavailable, api.ErrCodeServiceUnavailable, api.ErrorTypeServer, "Request canceled")
+	case outcome.localErr != nil:
+		status := StatusCodeFromError(outcome.localErr)
+		if status == 0 {
+			status = http.StatusServiceUnavailable
+		}
+		msg := outcome.localErr.Error()
+		if runes := []rune(msg); len(runes) > liveGatewayMessageLimit {
+			msg = string(runes[:liveGatewayMessageLimit])
+		}
+		return newLiveGatewayError(status, api.ErrCodeServiceUnavailable, api.ErrorTypeServer, msg)
+	case outcome.rejected:
+		return newLiveGatewayError(outcome.failure.status, api.ErrCodeInvalidRequest, api.ErrorTypeInvalidRequest,
+			liveGatewayUpstreamMessage(outcome.failure.status, outcome.failure.body))
+	}
+	return newLiveGatewayError(http.StatusServiceUnavailable, api.ErrCodeServiceUnavailable, api.ErrorTypeServer, "Service temporarily unavailable")
+}
+
+// createGatewayLiveCall opens a Live call for the gateway itself. It runs the same account selection, retries, attestation, identity, lease, store save and usage logging as LiveCreate but never writes to c, so it is safe after a WebSocket upgrade.
+// The call is claimed as proxy-controlled so no external sideband can attach. The caller releases everything with h.liveCalls().finalize(record).
+func (h *Handler) createGatewayLiveCall(c *gin.Context, request *liveCallRequest) (*gatewayLiveCall, *liveGatewayError) {
+	row := apiKeyRowFromContext(c)
+	if row == nil || !row.Limits.AllowLive {
+		return nil, newLiveGatewayError(http.StatusForbidden, api.ErrCodeInsufficientScope, api.ErrorTypePermission, "ChatGPT Live is not enabled for this API key")
+	}
+	if err := ValidateLiveCallRequest(request); err != nil {
+		return nil, newLiveGatewayError(http.StatusBadRequest, api.ErrCodeInvalidRequest, api.ErrorTypeInvalidRequest, err.Error())
+	}
+	if status, msg := h.enforceAPIKeyLimits(c, ""); status != 0 {
+		return nil, liveGatewayLimitError(status, msg)
+	}
+	releaseKey, apiErr, ok := h.acquireAPIKeyConcurrencyForWebSocket(c)
+	if !ok {
+		return nil, &liveGatewayError{Status: http.StatusTooManyRequests, Err: apiErr}
+	}
+	state := &liveCreateState{
+		handler: h, client: c, request: request, releaseKey: releaseKey,
+		apiKey:   strings.TrimSpace(strings.TrimPrefix(c.GetHeader("Authorization"), "Bearer ")),
+		filter:   applyAffinityGroupRouting(c, resolveRequestSessionIdentity(c.Request.Header, request.Session), liveAccountFilter),
+		excluded: make(map[int64]bool),
+	}
+	defer state.releaseUnheldKey()
+	outcome := state.attempt()
+	if outcome.created == nil {
+		return nil, state.gatewayError(outcome)
+	}
+	ctx := c.Request.Context()
+	record := state.record(outcome.account, outcome.created)
+	if err := h.liveCalls().save(ctx, record, outcome.account, releaseKey); err != nil {
+		h.store.Release(outcome.account)
+		log.Printf("live: save call mapping: %v", err)
+		return nil, newLiveGatewayError(http.StatusServiceUnavailable, api.ErrCodeServiceUnavailable, api.ErrorTypeServer, "Live call mapping unavailable")
+	}
+	state.keyHeld = true
+	if _, claimed, err := h.liveCalls().claimProxy(ctx, record); err != nil || !claimed {
+		h.liveCalls().finalize(record)
+		return nil, newLiveGatewayError(http.StatusServiceUnavailable, api.ErrCodeServiceUnavailable, api.ErrorTypeServer, "Live call unavailable")
+	}
+	return &gatewayLiveCall{Record: record, AnswerSDP: outcome.created.sdp}, nil
 }
