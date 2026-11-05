@@ -2,29 +2,24 @@ import assert from 'node:assert/strict'
 import { readFileSync } from 'node:fs'
 import test from 'node:test'
 
-const zh = JSON.parse(readFileSync(new URL('../locales/zh.json', import.meta.url), 'utf8'))
-const zhTW = JSON.parse(readFileSync(new URL('../locales/zh-TW.json', import.meta.url), 'utf8'))
+const en = JSON.parse(readFileSync(new URL('../locales/en.json', import.meta.url), 'utf8'))
 const operations = readFileSync(new URL('../pages/Operations.tsx', import.meta.url), 'utf8')
 const settings = readFileSync(new URL('../pages/Settings.tsx', import.meta.url), 'utf8')
 
-test('scheduler engine choices use localized Chinese labels', () => {
+test('scheduler engine choices use English labels', () => {
   assert.deepEqual(
-    [zh.settings.schedulerEngineLegacy, zh.settings.schedulerEngineShadow, zh.settings.schedulerEngineIndexed],
-    ['旧版扫描', '影子校验', '索引调度'],
-  )
-  assert.deepEqual(
-    [zhTW.settings.schedulerEngineLegacy, zhTW.settings.schedulerEngineShadow, zhTW.settings.schedulerEngineIndexed],
-    ['舊版掃描', '影子校驗', '索引調度'],
+    [en.settings.schedulerEngineLegacy, en.settings.schedulerEngineShadow, en.settings.schedulerEngineIndexed],
+    ['Legacy', 'Shadow', 'Indexed'],
   )
 
-  for (const locale of [zh.settings, zhTW.settings]) {
+  for (const locale of [en.settings]) {
     assert.ok(locale.schedulerEngineLegacyDesc.length > 20)
     assert.match(locale.schedulerEngineShadowDesc, /64/)
     assert.ok(locale.schedulerEngineIndexedDesc.length > 20)
   }
-  assert.match(zh.settings.schedulerEngineCompatibilityNote, /快速调度器/)
-  assert.match(zh.settings.schedulerEngineCompatibilityNote, /关闭对应“旧版扫描”/)
-  assert.match(zh.settings.schedulerEngineCompatibilityNote, /开启对应“索引调度”/)
+  assert.match(en.settings.schedulerEngineCompatibilityNote, /Fast Scheduler/)
+  assert.match(en.settings.schedulerEngineCompatibilityNote, /Off maps to Legacy/)
+  assert.match(en.settings.schedulerEngineCompatibilityNote, /On maps to Indexed/)
   assert.match(settings, /schedulerEngineExplanations\.map/)
   assert.match(settings, /settings\.schedulerEngineCompatibilityNote/)
   assert.match(settings, /function SettingsCollapsibleNote/)

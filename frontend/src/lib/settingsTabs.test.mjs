@@ -3,7 +3,6 @@ import assert from 'node:assert/strict'
 import { readFileSync } from 'node:fs'
 
 const settings = readFileSync(new URL('../pages/Settings.tsx', import.meta.url), 'utf8')
-const zh = JSON.parse(readFileSync(new URL('../locales/zh.json', import.meta.url), 'utf8'))
 const en = JSON.parse(readFileSync(new URL('../locales/en.json', import.meta.url), 'utf8'))
 
 const TABS = ['codex', 'appearance', 'general']
@@ -16,7 +15,7 @@ test('settings page is split into one panel per tab driven by ?tab=', () => {
     assert.match(settings, new RegExp(`\\{ id: '${tab}', label: t\\('settings\\.nav\\.${tab}'\\)`), `tab pill ${tab}`)
     assert.match(settings, new RegExp(`\\{activeTab === '${tab}' \\? \\(`), `panel ${tab}`)
   }
-  // 旧滚动定位导航已移除，避免回退成单页长滚动。
+  // The old scroll-anchor navigation was removed to avoid regressing to one long scrolling page.
   assert.doesNotMatch(settings, /scrollToSection/)
   assert.doesNotMatch(settings, /settingsSections/)
   assert.match(settings, /role="tablist"/)
@@ -52,8 +51,8 @@ test('channel-specific cards live in their channel tab, shared cards in general'
   assert.ok(!general.includes('settings.codexUserAgentRaw'), 'Codex UA emulation must not stay in general runtime card')
 })
 
-test('tab and section labels exist in zh and en', () => {
-  for (const locale of [zh, en]) {
+test('tab and section labels exist in en', () => {
+  for (const locale of [en]) {
     for (const key of ['codex', 'codexDesc', 'appearance', 'general', 'generalDesc', 'codexQuota', 'codexQuotaDesc', 'codexTransport', 'codexTransportDesc', 'codexClient', 'codexClientDesc', 'codexImages', 'codexImagesDesc']) {
       assert.equal(typeof locale.settings?.nav?.[key], 'string', `settings.nav.${key}`)
     }
@@ -72,7 +71,7 @@ test('codex tab points at the shared scheduling strategy in general', () => {
   assert.match(codex, /selectTab\('general', 'settings-traffic'\)/)
   assert.match(codex, /settings\.codexSchedulingHintAction/)
   assert.match(settings, /pendingSectionRef/)
-  for (const locale of [zh, en]) {
+  for (const locale of [en]) {
     for (const key of ['codexSchedulingHintTitle', 'codexSchedulingHintDesc', 'codexSchedulingHintAction']) {
       assert.equal(typeof locale.settings?.[key], 'string', `settings.${key}`)
     }
@@ -82,7 +81,7 @@ test('codex tab points at the shared scheduling strategy in general', () => {
 test('settings has no provider tabs, provider cards or channel scope badges left', () => {
   assert.doesNotMatch(settings, /ChannelScopeBadges|ALL_UPSTREAM_CHANNELS|CHANNELS_(CODEX|RELAY|STREAMING)/)
   assert.doesNotMatch(settings, /VisibleChannelsPicker|ClaudeCodeSettingsCard|antigravityOAuth|grokSettings/)
-  for (const locale of [zh, en]) {
+  for (const locale of [en]) {
     assert.doesNotMatch(JSON.stringify(locale.settings.nav), /claude|antigravity|grok/i)
     assert.doesNotMatch(locale.settings.schedulerModeDesc, /Claude|Grok|Antigravity/)
   }
@@ -102,7 +101,7 @@ test('multi-section tabs render a section index that mirrors the rendered sectio
   for (const tab of TABS) {
     assert.match(index, new RegExp(`\\b${tab}: \\[`), `section index for ${tab}`)
   }
-  // Tab 栏跟随页面流粘顶，不再 fixed 悬浮盖住内容。
+  // The tab bar sticks to the top in page flow and no longer floats fixed over the content.
   assert.doesNotMatch(settings, /fixed left-1\/2 top-\[max\(0\.625rem/)
   assert.match(settings, /sticky top-2[\s\S]{0,400}role="tablist"/)
 })
@@ -114,7 +113,7 @@ test('manual-save fields are tracked against the persisted snapshot', () => {
   assert.match(settings, /markPersisted\(getSettingsPatchValues\(optimistic, patchKeys\)\)/, 'auto-save must merge only its own keys')
   assert.match(settings, /\{dirtyCount > 0 \? \(/, 'bottom save bar only renders with unsaved changes')
   assert.match(settings, /<SaveStatusPill autoSaveStatus=\{autoSaveStatus\} dirtyCount=\{dirtyCount\} \/>/)
-  for (const locale of [zh, en]) {
+  for (const locale of [en]) {
     for (const key of ['saveStatusSaved', 'saveStatusUnsaved', 'saveStatusUnsavedHint', 'discardChanges', 'sectionIndex']) {
       assert.equal(typeof locale.settings?.[key], 'string', `settings.${key}`)
     }
@@ -131,7 +130,7 @@ test('single-toggle compatibility settings are one row-list card, not three narr
   for (const key of ['overflowAutoCompact', 'compactViaResponses', 'codexPreflightSSEPassthrough']) {
     assert.match(card, new RegExp(`label=\\{t\\('settings\\.${key}'\\)\\}\\n\\s+description=\\{t\\('settings\\.${key}Desc'\\)\\}\\n\\s+help=\\{t\\('settings\\.${key}EnabledDesc'\\)\\}\\n\\s+layout="row"`), key)
   }
-  // 双列开关栅格里只放一个开关会挤成半宽折行：逐个栅格数到同缩进的 </div> 为止。
+  // A single switch in a two-column switch grid collapses to half width and wraps: count each grid up to the </div> at the same indent.
   const lines = settings.split('\n')
   lines.forEach((line, i) => {
     if (!line.includes('className={SETTINGS_SWITCH_GRID}')) return
@@ -146,7 +145,7 @@ test('single-toggle compatibility settings are one row-list card, not three narr
     }
     assert.ok(fields > 1, `line ${i + 1}: a lone switch must use SETTINGS_SWITCH_ROW, not SETTINGS_SWITCH_GRID (${switches} switch, ${fields} field)`)
   })
-  for (const locale of [zh, en]) {
+  for (const locale of [en]) {
     assert.equal(typeof locale.settings.codexCompatToggles, 'string')
     assert.equal(typeof locale.settings.codexCompatTogglesDesc, 'string')
   }

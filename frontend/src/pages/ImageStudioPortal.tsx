@@ -19,7 +19,6 @@ import {
   Image as ImageIcon,
   Images,
   KeyRound,
-  Languages,
   Lightbulb,
   Loader2,
   LogIn,
@@ -224,7 +223,7 @@ function PortalTabs({ activeView, className }: { activeView: PortalView; classNa
 }
 
 export default function ImageStudioPortal() {
-  const { t, i18n } = useTranslation()
+  const { t } = useTranslation()
   const { siteName, siteLogo } = useBranding()
   const { view } = useParams()
   const navigate = useNavigate()
@@ -818,14 +817,6 @@ export default function ImageStudioPortal() {
 
   const toolbar = (
     <div className="portal-toolbar">
-      <Button
-        variant="outline"
-        size="icon-sm"
-        onClick={() => i18n.changeLanguage(i18n.language === 'zh' ? 'en' : 'zh')}
-        title={i18n.language === 'zh' ? 'English' : '中文'}
-      >
-        <Languages className="size-4" />
-      </Button>
       <CinematicThemeSwitcher size="compact" />
     </div>
   )
