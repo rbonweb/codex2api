@@ -22,7 +22,7 @@ func TestUltrafastRequestAndUsageTiers(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	for _, body := range [][]byte{prepared, ws, chat, PrepareOpenAIResponsesBody(raw)} {
+	for _, body := range [][]byte{prepared, ws, chat} {
 		if got := gjson.GetBytes(body, "service_tier").String(); got != "ultrafast" {
 			t.Fatalf("Ultrafast lost during request preparation: %s", body)
 		}

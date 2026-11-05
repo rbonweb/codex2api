@@ -1,7 +1,6 @@
 package proxy
 
 import (
-	"bytes"
 	"container/list"
 	"crypto/sha256"
 	"encoding/json"
@@ -789,22 +788,6 @@ func shouldAutoInjectResponsesImageGenerationTool(body map[string]any) bool {
 	return !hasStructuredResponsesFormat(body)
 }
 
-func shouldInjectOpenAIResponsesImageGenerationTool(body map[string]any) bool {
-	if len(body) == 0 || hasResponsesImageGenerationTool(body) {
-		return false
-	}
-	// 与 ChatGPT 路径一致:namespace 生图声明在场时不叠加注入。
-	if hasResponsesImageGenNamespaceTool(body) {
-		return false
-	}
-	if hasResponsesImageGenerationToolChoice(body) {
-		return true
-	}
-	if hasTopLevelResponsesImageOptions(body) {
-		return true
-	}
-	return isImageOnlyModel(strings.TrimSpace(firstNonEmptyAnyString(body["model"])))
-}
 
 func normalizeResponsesImageOnlyModel(body map[string]any) bool {
 	if len(body) == 0 {
@@ -1862,32 +1845,6 @@ func TranslateRequest(rawJSON []byte) ([]byte, error) {
 	return json.Marshal(out)
 }
 
-// TranslateChatToResponsesForGrok converts a Chat Completions request into a
-// canonical Responses request for Grok routing. Unlike TranslateRequest, which
-// remains Codex-safe, this entry point retains request controls that a real
-// Responses backend can express (sampling, output limit, stop, penalties and
-// tool selection). Keeping the two entry points separate prevents those fields
-// from reaching the Codex backend, where they are unsupported.
-func TranslateChatToResponsesForGrok(rawJSON []byte) ([]byte, error) {
-	req := sanitizeChatCompletionToolHistory(cachedOrParse(rawJSON))
-	if err := validateChatCompletionFunctionNames(req); err != nil {
-		return nil, err
-	}
-	out := buildChatResponsesRequest(req)
-	// Rebuild tools and structured output without Codex-only schema cleanup.
-	if len(req.Tools) > 0 {
-		if tools := convertChatToolsToResponsesForGrok(req.Tools); len(tools) > 0 {
-			out["tools"] = tools
-		}
-	}
-	if format := chatResponseFormatToResponses(req.ResponseFormat); format != nil {
-		out["text"] = map[string]any{"format": format}
-	}
-	if err := copyChatResponsesControls(out, req); err != nil {
-		return nil, err
-	}
-	return json.Marshal(out)
-}
 
 // sanitizeChatCompletionToolHistory removes truncated ordinary function calls
 // together with their matching tool outputs before converting historical Chat
@@ -2104,32 +2061,6 @@ func copyChatResponsesControls(out map[string]any, req openAIRequest) error {
 	}
 }
 
-func convertChatToolsToResponsesForGrok(rawTools []json.RawMessage) []any {
-	tools := make([]any, 0, len(rawTools))
-	for _, raw := range rawTools {
-		var source map[string]any
-		if json.Unmarshal(raw, &source) != nil || source == nil {
-			continue
-		}
-		function, isFunction := source["function"].(map[string]any)
-		toolType := strings.TrimSpace(firstNonEmptyAnyString(source["type"]))
-		if function != nil && (toolType == "" || toolType == "function") {
-			item := map[string]any{"type": "function"}
-			for _, field := range []string{"name", "description", "parameters", "strict"} {
-				if value, ok := function[field]; ok {
-					item[field] = value
-				}
-			}
-			tools = append(tools, item)
-			continue
-		}
-		// A provider extension already using a Responses-shaped tool object can
-		// be carried into the canonical request without reinterpretation.
-		tools = append(tools, lowerChatCustomTool(source))
-		_ = isFunction
-	}
-	return tools
-}
 
 func chatResponseFormatToResponses(raw json.RawMessage) map[string]any {
 	if len(raw) == 0 || strings.TrimSpace(string(raw)) == "null" {
@@ -2690,60 +2621,6 @@ func prepareResponsesBodyWithOptions(rawBody []byte, opts responsesBodyPrepareOp
 	return result, gjson.GetBytes(result, "input").Raw
 }
 
-// PrepareOpenAIResponsesBody keeps native OpenAI Responses requests compatible
-// without applying Codex-specific fields such as store/include/tool injection.
-func PrepareOpenAIResponsesBody(rawBody []byte) []byte {
-	var body map[string]any
-	// Native schema constraints and future provider fields can contain integers
-	// beyond float64's exact range. Shape-only compatibility must preserve them.
-	decoder := json.NewDecoder(bytes.NewReader(rawBody))
-	decoder.UseNumber()
-	if !json.Valid(rawBody) || decoder.Decode(&body) != nil {
-		return rawBody
-	}
-
-	effortModel := firstNonEmptyAnyString(body["model"])
-	if re, ok := body["reasoning_effort"].(string); ok {
-		if normalized := normalizeReasoningEffortForModel(re, effortModel); normalized != "" {
-			reasoning, _ := body["reasoning"].(map[string]any)
-			if reasoning == nil {
-				reasoning = map[string]any{}
-			}
-			if _, hasEffort := reasoning["effort"]; !hasEffort {
-				reasoning["effort"] = normalized
-				body["reasoning"] = reasoning
-			}
-			delete(body, "reasoning_effort")
-		}
-	}
-
-	// Codex's structured-output sanitizer is deliberately confined to a
-	// translated legacy alias. A native Responses text.format is authoritative:
-	// retain its constraints and let its provider validate JSON-mode prompting.
-	if legacy, ok := body["response_format"].(map[string]any); ok && responsesTextFormatFromResponseFormat(legacy) != nil {
-		text, _ := body["text"].(map[string]any)
-		if _, nativeFormat := text["format"]; !nativeFormat {
-			normalizeResponsesStructuredOutputFormat(body)
-		}
-		delete(body, "response_format")
-	}
-	normalizeResponsesFunctionTools(body)
-	normalizeResponsesToolChoice(body)
-	normalizeResponsesContentPartTypes(body)
-	normalizeResponsesInputMessageContent(body)
-	if shouldInjectOpenAIResponsesImageGenerationTool(body) {
-		ensureResponsesImageGenerationTool(body)
-	}
-	moveTopLevelResponsesImageOptions(body)
-	normalizeResponsesImageGenerationTools(body, extractResponsesPromptText(body))
-
-	result, err := json.Marshal(body)
-	if err != nil {
-		return rawBody
-	}
-	result = normalizeCompactionTriggerFinal(result, false)
-	return result
-}
 
 // PrepareCompactResponsesBody 将 /responses/compact 请求转换为上游可接受的格式。
 // 它复用通用 Responses 预处理，但会移除 compact 端点不接受的自动注入字段。
@@ -2770,17 +2647,6 @@ func prepareCompactResponsesBodyForOwnerDetailed(rawBody []byte, owner string) r
 	return prepared
 }
 
-// PrepareOpenAIResponsesCompactBody 为中转（OpenAI Responses API）账号准备
-// /responses/compact 请求体。它复用 OpenAI Responses 预处理，并移除 compact
-// 端点不接受的自动注入字段（include/store/stream/client_metadata）。
-func PrepareOpenAIResponsesCompactBody(rawBody []byte) []byte {
-	body := PrepareOpenAIResponsesBody(rawBody)
-	body, _ = sjson.DeleteBytes(body, "include")
-	body, _ = sjson.DeleteBytes(body, "store")
-	body, _ = sjson.DeleteBytes(body, "stream")
-	body, _ = sjson.DeleteBytes(body, "client_metadata")
-	return body
-}
 
 // normalizeReasoningEffort 将 reasoning_effort 钳位到上游支持的值。
 // max 仅 gpt-5.6 起的模型支持(旧模型上游 400),无模型上下文时安全钳到 xhigh;
