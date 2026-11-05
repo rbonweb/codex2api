@@ -18,9 +18,9 @@ RUN VITE_APP_VERSION=${BUILD_VERSION} npm run build
 # ============================================================
 # Stage 2: 构建 Go 后端
 # Runs natively on each target platform (QEMU under buildx for arm64) because the real-time audio bridge links libopus through cgo, which a plain Go cross-compile cannot do.
-# The tag golang:1.26.10-alpine is on Alpine 3.24, so the runtime stage uses alpine:3.24 as well to keep musl and libopus identical to what the binary was linked against.
+# The builder is pinned to Alpine 3.24, so the runtime stage uses alpine:3.24 as well to keep musl and libopus identical to what the binary was linked against.
 # ============================================================
-FROM golang:1.26.10-alpine AS go-builder
+FROM golang:1.26.10-alpine3.24 AS go-builder
 
 ARG BUILD_VERSION=dev
 
