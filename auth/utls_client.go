@@ -21,8 +21,8 @@ import (
 	"github.com/codex2api/security"
 )
 
-// utlsAuthRoundTripper 使用 Chrome TLS 指纹的 http.RoundTripper，
-// 专门用于 chatgpt.com 等受 Cloudflare 保护的 auth 端点。
+// utlsAuthRoundTripper is an http.RoundTripper that uses a Chrome TLS fingerprint,
+// used specifically for auth endpoints behind Cloudflare such as chatgpt.com.
 type utlsAuthRoundTripper struct {
 	mu          sync.Mutex
 	connections map[string]*http2.ClientConn
@@ -101,7 +101,7 @@ func (t *utlsAuthRoundTripper) getOrCreateConnection(host, addr string) (*http2.
 func (t *utlsAuthRoundTripper) createConnection(host, addr string) (*http2.ClientConn, error) {
 	conn, err := t.dialer.Dial("tcp", addr)
 	if err != nil {
-		return nil, fmt.Errorf("TCP 连接失败: %w", err)
+		return nil, fmt.Errorf("TCP connection failed: %w", err)
 	}
 
 	tlsConfig := &utls.Config{ServerName: host}
@@ -112,12 +112,12 @@ func (t *utlsAuthRoundTripper) createConnection(host, addr string) (*http2.Clien
 
 	if err := tlsConn.HandshakeContext(handshakeCtx); err != nil {
 		conn.Close()
-		return nil, fmt.Errorf("TLS 握手失败: %w", err)
+		return nil, fmt.Errorf("TLS handshake failed: %w", err)
 	}
 
-	// 认证 transport 自管 HTTP/2 连接，不经过 net/http 的连接池。三项超时
-	// 必须直接配置在 http2.Transport 上：否则健康空闲连接不会安装回收计时器，
-	// readLoop、socket 与缓冲区会一直驻留。
+	// The auth transport manages its own HTTP/2 connections and does not go through net/http's connection pool. The three timeouts
+	// must be set directly on http2.Transport: otherwise healthy idle connections get no reclaim timer,
+	// and the readLoop, socket and buffers stay resident indefinitely.
 	tr := &http2.Transport{
 		ReadIdleTimeout: utlsAuthReadIdleTimeout,
 		PingTimeout:     utlsAuthPingTimeout,
@@ -126,7 +126,7 @@ func (t *utlsAuthRoundTripper) createConnection(host, addr string) (*http2.Clien
 	h2Conn, err := tr.NewClientConn(tlsConn)
 	if err != nil {
 		tlsConn.Close()
-		return nil, fmt.Errorf("HTTP/2 连接创建失败: %w", err)
+		return nil, fmt.Errorf("HTTP/2 connection creation failed: %w", err)
 	}
 
 	return h2Conn, nil
@@ -175,12 +175,12 @@ func (t *utlsAuthRoundTripper) CloseIdleConnections() {
 	}
 }
 
-// ---- proxy dialer helpers (auth 包内独立实现，避免循环依赖) ----
+// ---- proxy dialer helpers (implemented independently inside the auth package to avoid circular dependencies) ----
 
 func buildAuthProxyDialer(proxyURL string) (xproxy.Dialer, error) {
 	u, err := security.ParseProxyURL(proxyURL)
 	if err != nil {
-		return nil, fmt.Errorf("解析代理 URL 失败: %w", err)
+		return nil, fmt.Errorf("failed to parse proxy URL: %w", err)
 	}
 
 	switch strings.ToLower(u.Scheme) {
@@ -189,7 +189,7 @@ func buildAuthProxyDialer(proxyURL string) (xproxy.Dialer, error) {
 	case "socks5", "socks5h":
 		return buildAuthSOCKS5Dialer(u)
 	default:
-		return nil, fmt.Errorf("不支持的代理协议: %s", u.Scheme)
+		return nil, fmt.Errorf("unsupported proxy protocol: %s", u.Scheme)
 	}
 }
 
@@ -203,10 +203,10 @@ type authHTTPConnectDialer struct {
 func (d *authHTTPConnectDialer) Dial(network, addr string) (net.Conn, error) {
 	conn, err := net.DialTimeout("tcp", d.proxyAddr, 10*time.Second)
 	if err != nil {
-		return nil, fmt.Errorf("连接代理服务器失败: %w", err)
+		return nil, fmt.Errorf("failed to connect to proxy server: %w", err)
 	}
 
-	// https:// 代理先与代理完成 TLS，避免 Basic 凭据明文传输。
+	// For an https:// proxy, complete TLS with the proxy first, so Basic credentials are not sent in plaintext.
 	if d.useTLS {
 		tlsConn := tls.Client(conn, &tls.Config{
 			ServerName: d.proxyServerName,
@@ -215,7 +215,7 @@ func (d *authHTTPConnectDialer) Dial(network, addr string) (net.Conn, error) {
 		_ = tlsConn.SetDeadline(time.Now().Add(10 * time.Second))
 		if err := tlsConn.Handshake(); err != nil {
 			conn.Close()
-			return nil, fmt.Errorf("代理 TLS 握手失败: %w", err)
+			return nil, fmt.Errorf("proxy TLS handshake failed: %w", err)
 		}
 		_ = tlsConn.SetDeadline(time.Time{})
 		conn = tlsConn
@@ -229,20 +229,20 @@ func (d *authHTTPConnectDialer) Dial(network, addr string) (net.Conn, error) {
 
 	if _, err := conn.Write([]byte(connectReq)); err != nil {
 		conn.Close()
-		return nil, fmt.Errorf("发送 CONNECT 请求失败: %w", err)
+		return nil, fmt.Errorf("failed to send CONNECT request: %w", err)
 	}
 
 	br := bufio.NewReader(conn)
 	resp, err := http.ReadResponse(br, nil)
 	if err != nil {
 		conn.Close()
-		return nil, fmt.Errorf("读取代理响应失败: %w", err)
+		return nil, fmt.Errorf("failed to read proxy response: %w", err)
 	}
 	resp.Body.Close()
 
 	if resp.StatusCode != http.StatusOK {
 		conn.Close()
-		return nil, fmt.Errorf("代理 CONNECT 失败 (status %d)", resp.StatusCode)
+		return nil, fmt.Errorf("proxy CONNECT failed (status %d)", resp.StatusCode)
 	}
 
 	if br.Buffered() > 0 {
@@ -295,7 +295,7 @@ func buildAuthSOCKS5Dialer(u *url.URL) (xproxy.Dialer, error) {
 	return xproxy.SOCKS5("tcp", u.Host, auth, xproxy.Direct)
 }
 
-// ---- uTLS client pool (带 TTL 清理) ----
+// ---- uTLS client pool (with TTL cleanup) ----
 
 var utlsAuthClientPool sync.Map
 
@@ -336,8 +336,8 @@ func evictExpiredUTLSAuthClients() {
 		entry := value.(*utlsAuthPoolEntry)
 		if entry.lastUsed.Load() < cutoff && utlsAuthClientPool.CompareAndDelete(key, value) {
 			if ut, ok := entry.client.Transport.(*utlsAuthRoundTripper); ok {
-				// 只关闭无在途 stream 的连接，避免清理与刚开始的认证请求
-				// 竞态时误杀请求；漏过的连接由 IdleConnTimeout 最终回收。
+				// Only close connections that have no in-flight stream, to avoid cleanup racing with a just-started auth request
+				// and killing it by mistake; connections that slip through are reclaimed at last by IdleConnTimeout.
 				ut.CloseIdleConnections()
 			}
 		}
@@ -345,8 +345,8 @@ func evictExpiredUTLSAuthClients() {
 	})
 }
 
-// buildUTLSHTTPClient 构建使用 Chrome TLS 指纹的 HTTP 客户端（连接池复用）。
-// 用于请求受 Cloudflare 保护的 chatgpt.com 端点。
+// buildUTLSHTTPClient builds an HTTP client that uses a Chrome TLS fingerprint (connection pool reuse).
+// Used for requests to the chatgpt.com endpoints behind Cloudflare.
 func buildUTLSHTTPClient(proxyURL string) *http.Client {
 	if v, ok := utlsAuthClientPool.Load(proxyURL); ok {
 		entry := v.(*utlsAuthPoolEntry)

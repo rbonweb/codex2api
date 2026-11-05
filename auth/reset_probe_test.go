@@ -5,19 +5,19 @@ import (
 	"time"
 )
 
-// TestNeedsUsageProbeFiresAtResetBoundary 验证：5h/7d 窗口重置时刻一到，
-// 若用量快照仍停留在重置前采集的数据，就立即触发一次探测（用于识别"倒计时归零后
-// 看似可用、实际已被封禁"的账号）；探测刷新快照后不再重复触发。
+// TestNeedsUsageProbeFiresAtResetBoundary verifies that once the 5h/7d window reset time arrives,
+// if the usage snapshot still holds data collected before the reset, a probe fires right away (this catches accounts that "look usable once the countdown reaches zero"
+// but are in fact already banned); once the probe refreshes the snapshot, it does not fire again.
 func TestNeedsUsageProbeFiresAtResetBoundary(t *testing.T) {
 	now := time.Now()
 	maxAge := 10 * time.Minute
 
-	// base 构造一个「除待测窗口外一切正常/新鲜」的账号，隔离其它探测分支。
+	// base builds an account where everything except the window under test is normal and fresh, isolating the other probe branches.
 	base := func() *Account {
 		return &Account{
 			AccessToken:          "at-x",
 			Status:               StatusReady,
-			PlanType:             "", // 非 premium，避开 premium5h 分支
+			PlanType:             "", // not premium, to avoid the premium5h branch
 			resetCreditsProbedAt: now,
 			UsagePercent7d:       50,
 			UsagePercent7dValid:  true,
@@ -30,53 +30,53 @@ func TestNeedsUsageProbeFiresAtResetBoundary(t *testing.T) {
 		}
 	}
 
-	t.Run("5h 重置到点且快照过期→探测", func(t *testing.T) {
+	t.Run("5h reset reached and snapshot expired→probe", func(t *testing.T) {
 		a := base()
 		a.UsagePercent5h = 100
 		a.Reset5hAt = now.Add(-time.Minute)
-		a.UsageUpdatedAt5h = now.Add(-6 * time.Minute) // 快照早于重置时刻
+		a.UsageUpdatedAt5h = now.Add(-6 * time.Minute) // snapshot is older than the reset time
 		if !a.NeedsUsageProbe(maxAge) {
-			t.Fatal("期望 5h 重置到点立即触发探测")
+			t.Fatal("expected a probe to fire right when the 5h reset is reached")
 		}
 	})
 
-	t.Run("5h 重置后已刷新→不再重复探测", func(t *testing.T) {
+	t.Run("5h reset already refreshed→no repeat probe", func(t *testing.T) {
 		a := base()
 		a.UsagePercent5h = 0
 		a.Reset5hAt = now.Add(-time.Minute)
-		a.UsageUpdatedAt5h = now // 已在重置之后刷新
+		a.UsageUpdatedAt5h = now // already refreshed after the reset
 		if a.NeedsUsageProbe(maxAge) {
-			t.Fatal("重置后快照已刷新，不应再触发")
+			t.Fatal("snapshot was already refreshed after the reset, should not fire again")
 		}
 	})
 
-	t.Run("5h 未到重置且快照新鲜→不触发", func(t *testing.T) {
+	t.Run("5h not yet reset and snapshot fresh→does not fire", func(t *testing.T) {
 		a := base()
 		a.UsagePercent5h = 100
 		a.Reset5hAt = now.Add(time.Hour)
 		a.UsageUpdatedAt5h = now
 		if a.NeedsUsageProbe(maxAge) {
-			t.Fatal("5h 未到重置且快照新鲜，不应触发")
+			t.Fatal("5h not yet reset and snapshot fresh, should not fire")
 		}
 	})
 
-	t.Run("7d 重置到点且快照过期→探测", func(t *testing.T) {
+	t.Run("7d reset reached and snapshot expired→probe", func(t *testing.T) {
 		a := base()
 		a.Reset7dAt = now.Add(-time.Minute)
-		a.UsageUpdatedAt = now.Add(-2 * time.Minute) // 早于 7d 重置，但仍 < maxAge
+		a.UsageUpdatedAt = now.Add(-2 * time.Minute) // older than the 7d reset, but still < maxAge
 		if !a.NeedsUsageProbe(maxAge) {
-			t.Fatal("期望 7d 重置到点立即触发探测")
+			t.Fatal("expected a probe to fire right when the 7d reset is reached")
 		}
 	})
 
-	t.Run("状态为 error 时不触发", func(t *testing.T) {
+	t.Run("does not fire when status is error", func(t *testing.T) {
 		a := base()
 		a.Status = StatusError
 		a.UsagePercent5h = 100
 		a.Reset5hAt = now.Add(-time.Minute)
 		a.UsageUpdatedAt5h = now.Add(-6 * time.Minute)
 		if a.NeedsUsageProbe(maxAge) {
-			t.Fatal("error 账号不应触发探测")
+			t.Fatal("error accounts should not trigger a probe")
 		}
 	})
 }

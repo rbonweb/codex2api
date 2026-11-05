@@ -20,9 +20,9 @@ func TestNormalizeSchedulerPriority(t *testing.T) {
 	}
 }
 
-// 高优先级账号严格先调度，哪怕低优先级账号的套餐分数偏置更高。
+// Higher-priority accounts are always scheduled first, even if a lower-priority account has a higher plan score bias.
 func TestNextExcludingPrefersHigherSchedulerPriority(t *testing.T) {
-	// relay：plus 套餐默认 +50 分数偏置，若无优先级本应胜出
+	// relay: the plus plan has a default +50 score bias, which would win without a priority
 	relay := &Account{DBID: 1, AccessToken: "tok-relay", PlanType: "plus"}
 	official := &Account{DBID: 2, AccessToken: "tok-official", PlanType: "free"}
 	official.SetSchedulerPriority(10)
@@ -43,7 +43,7 @@ func TestNextExcludingPrefersHigherSchedulerPriority(t *testing.T) {
 	}
 }
 
-// 高优先级账号不可用（被排除）时回落到低优先级账号。
+// When the higher-priority account is unavailable (excluded), it falls back to the lower-priority account.
 func TestNextExcludingFallsBackToLowerPriorityWhenExcluded(t *testing.T) {
 	fallback := &Account{DBID: 1, AccessToken: "tok-fallback"}
 	fallback.SetSchedulerPriority(-10)
@@ -88,7 +88,7 @@ func TestApplyAccountSchedulerPriority(t *testing.T) {
 	}
 }
 
-// FastScheduler：同一健康桶内高优先级段先被轮询，段内耗尽才落到下一段。
+// FastScheduler: within the same health bucket, the higher-priority segment is polled first, and only falls to the next segment once the segment is exhausted.
 func TestFastSchedulerPrefersHigherPrioritySegment(t *testing.T) {
 	low := newFastSchedulerTestAccount(1, HealthTierHealthy, 120, 1)
 	high := newFastSchedulerTestAccount(2, HealthTierHealthy, 80, 1)
@@ -105,7 +105,7 @@ func TestFastSchedulerPrefersHigherPrioritySegment(t *testing.T) {
 		t.Fatalf("first Acquire() picked dbID=%d, want high-priority 2", first.DBID)
 	}
 
-	// 高优先级账号并发占满后，回落到低优先级账号
+	// Once the higher-priority account's concurrency is full, fall back to the lower-priority account
 	second := scheduler.Acquire()
 	if second == nil {
 		t.Fatal("second Acquire() returned nil")
@@ -117,8 +117,8 @@ func TestFastSchedulerPrefersHigherPrioritySegment(t *testing.T) {
 	scheduler.Release(second)
 }
 
-// FastScheduler 的调度优先级必须全局先于健康桶：高优先级 warm
-// 账号仍应先于低优先级 healthy 账号。
+// FastScheduler's scheduling priority must come before health buckets globally: a higher-priority warm
+// account should still come before a lower-priority healthy account.
 func TestFastSchedulerPriorityPrecedesHealthTier(t *testing.T) {
 	for _, mode := range []string{"round_robin", "remaining_quota"} {
 		t.Run(mode, func(t *testing.T) {
@@ -141,7 +141,7 @@ func TestFastSchedulerPriorityPrecedesHealthTier(t *testing.T) {
 	}
 }
 
-// 同一高优先级的所有健康桶都无可用容量后，才回落到低优先级账号。
+// Only after all health buckets at the same high priority have no available capacity does it fall back to the lower-priority account.
 func TestFastSchedulerFallsBackAfterHigherPriorityIsFullAcrossHealthTiers(t *testing.T) {
 	for _, mode := range []string{"round_robin", "remaining_quota"} {
 		t.Run(mode, func(t *testing.T) {

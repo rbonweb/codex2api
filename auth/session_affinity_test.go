@@ -228,7 +228,7 @@ func TestNextForContinuationPreservesBoundedAffinity(t *testing.T) {
 		t.Fatalf("continuation fell through to account %d when bound account was excluded", acc.DBID)
 	}
 
-	// 续链命中会刷新空闲时钟,重新置为空闲后普通请求才会逃逸换号。
+	// A chain-continuation hit refreshes the idle clock; only after it is reset to idle does a normal request escape and switch accounts.
 	store.sessionMu.Lock()
 	binding = store.sessionBindings["conversation-1"]
 	binding.lastUsedAt = time.Now().Add(-defaultAffinityIdleEscape - time.Minute)
@@ -251,7 +251,7 @@ func TestBoundedAffinityKeepsActiveBindingRegardlessOfAgeAndCount(t *testing.T) 
 	}).withMaxConcurrency(2)
 	store.bindSessionAffinity("conversation-active", bound, "")
 
-	// 旧实现会在 50 次请求或绑定满 5 分钟后换号;活跃会话现在必须继续粘住。
+	// The old implementation switched accounts after 50 requests or after the binding had lasted 5 minutes; active sessions must now keep sticking.
 	store.sessionMu.Lock()
 	binding := store.sessionBindings["conversation-active"]
 	binding.boundAt = time.Now().Add(-time.Hour)

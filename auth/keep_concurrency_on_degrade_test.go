@@ -41,7 +41,7 @@ func TestKeepConcurrencyOnDegradeKeepsBaseLimitForWarmAndRisky(t *testing.T) {
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
 			recomputeTestAccount(tc.acc, 8)
-			// 层级照算,只解开并发折算。
+			// Tiers are still computed; only the concurrency conversion is lifted.
 			if tc.acc.HealthTier != tc.want {
 				t.Fatalf("HealthTier = %s, want %s", tc.acc.HealthTier, tc.want)
 			}
@@ -133,7 +133,7 @@ func TestKeepConcurrencyOnDegradeFastSchedulerFallbackPaths(t *testing.T) {
 		}
 	}
 
-	// DynamicConcurrencyLimit 尚未算出时,快照走兜底折算,必须与主路径一致。
+	// When DynamicConcurrencyLimit has not been computed yet, the snapshot takes the fallback conversion and must match the main path.
 	if _, _, limit, _, _ := newRisky().fastSchedulerSnapshot(6, time.Now()); limit != 6 {
 		t.Fatalf("snapshot fallback limit = %d, want 6", limit)
 	}

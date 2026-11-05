@@ -5,12 +5,12 @@ import (
 	"time"
 )
 
-// TestNextProbeBoundaryPicksEarliest 验证 nextProbeBoundary 在多个候选边界中取最近的未来时刻，
-// 并正确忽略「已过期」「快照已刷新到重置后」「unauthorized 冷却」等不该探的情形。
+// TestNextProbeBoundaryPicksEarliest verifies that nextProbeBoundary picks the nearest future moment among several candidate boundaries,
+// and correctly ignores cases that should not be probed, such as "already expired", "snapshot refreshed after reset", and "unauthorized cooldown".
 func TestNextProbeBoundaryPicksEarliest(t *testing.T) {
 	now := time.Now()
 
-	t.Run("取最近未来边界(5h 冷却先于 7d 重置)", func(t *testing.T) {
+	t.Run("picks the nearest future boundary (5h cooldown before 7d reset)", func(t *testing.T) {
 		a := &Account{
 			AccessToken:         "tok",
 			Status:              StatusCooldown,
@@ -22,36 +22,36 @@ func TestNextProbeBoundaryPicksEarliest(t *testing.T) {
 		}
 		got, ok := a.nextProbeBoundary(now)
 		if !ok || !got.Equal(a.CooldownUtil) {
-			t.Fatalf("got %v,%v，want %v,true（应取更近的冷却结束时刻）", got, ok, a.CooldownUtil)
+			t.Fatalf("got %v,%v, want %v,true (should pick the nearer cooldown end time)", got, ok, a.CooldownUtil)
 		}
 	})
 
-	t.Run("5h 窗口重置", func(t *testing.T) {
+	t.Run("5h window reset", func(t *testing.T) {
 		a := &Account{
 			AccessToken:         "tok",
 			UsagePercent5hValid: true,
 			Reset5hAt:           now.Add(90 * time.Second),
-			UsageUpdatedAt5h:    now.Add(-time.Hour), // 快照采集于重置前
+			UsageUpdatedAt5h:    now.Add(-time.Hour), // snapshot taken before the reset
 		}
 		got, ok := a.nextProbeBoundary(now)
 		if !ok || !got.Equal(a.Reset5hAt) {
-			t.Fatalf("got %v,%v，want %v,true", got, ok, a.Reset5hAt)
+			t.Fatalf("got %v,%v, want %v,true", got, ok, a.Reset5hAt)
 		}
 	})
 
-	t.Run("快照已刷新到重置之后 → 不再需要该边界", func(t *testing.T) {
+	t.Run("snapshot refreshed after the reset → this boundary is no longer needed", func(t *testing.T) {
 		a := &Account{
 			AccessToken:         "tok",
 			UsagePercent5hValid: true,
 			Reset5hAt:           now.Add(90 * time.Second),
-			UsageUpdatedAt5h:    now.Add(2 * time.Minute), // 快照已晚于重置
+			UsageUpdatedAt5h:    now.Add(2 * time.Minute), // snapshot is later than the reset
 		}
 		if got, ok := a.nextProbeBoundary(now); ok {
-			t.Fatalf("got %v,%v，want zero,false（快照已覆盖该窗口，无需再探）", got, ok)
+			t.Fatalf("got %v,%v, want zero,false (the snapshot already covers this window, no probe needed)", got, ok)
 		}
 	})
 
-	t.Run("unauthorized 冷却不武装(探针必 401)", func(t *testing.T) {
+	t.Run("unauthorized cooldown does not arm (the probe always gets 401)", func(t *testing.T) {
 		a := &Account{
 			AccessToken:    "tok",
 			Status:         StatusCooldown,
@@ -59,11 +59,11 @@ func TestNextProbeBoundaryPicksEarliest(t *testing.T) {
 			CooldownUtil:   now.Add(time.Minute),
 		}
 		if got, ok := a.nextProbeBoundary(now); ok {
-			t.Fatalf("got %v,%v，want zero,false", got, ok)
+			t.Fatalf("got %v,%v, want zero,false", got, ok)
 		}
 	})
 
-	t.Run("边界已过 → 忽略", func(t *testing.T) {
+	t.Run("boundary already passed → ignored", func(t *testing.T) {
 		a := &Account{
 			AccessToken:         "tok",
 			UsagePercent5hValid: true,
@@ -71,11 +71,11 @@ func TestNextProbeBoundaryPicksEarliest(t *testing.T) {
 			UsageUpdatedAt5h:    now.Add(-time.Hour),
 		}
 		if got, ok := a.nextProbeBoundary(now); ok {
-			t.Fatalf("got %v,%v，want zero,false（已过期边界交给常规探针）", got, ok)
+			t.Fatalf("got %v,%v, want zero,false (an expired boundary is left to the regular probe)", got, ok)
 		}
 	})
 
-	t.Run("无凭据/错误态 → 不武装", func(t *testing.T) {
+	t.Run("no credentials / error state → does not arm", func(t *testing.T) {
 		a := &Account{
 			Status:              StatusCooldown,
 			CooldownReason:      "rate_limited",
@@ -84,20 +84,20 @@ func TestNextProbeBoundaryPicksEarliest(t *testing.T) {
 			Reset5hAt:           now.Add(time.Minute),
 			UsageUpdatedAt5h:    now.Add(-time.Hour),
 		}
-		// AccessToken 为空
+		// AccessToken is empty
 		if _, ok := a.nextProbeBoundary(now); ok {
-			t.Fatal("无 AccessToken 应返回 false")
+			t.Fatal("no AccessToken should return false")
 		}
 		a.AccessToken = "tok"
 		a.Status = StatusError
 		if _, ok := a.nextProbeBoundary(now); ok {
-			t.Fatal("StatusError 应返回 false")
+			t.Fatal("StatusError should return false")
 		}
 	})
 }
 
-// TestWakeBoundaryProbeOnlyNudgesForEarlier 验证 WakeBoundaryProbe 的「仅更早才打扰」节流：
-// 更早的边界会触发唤醒，更晚或已过的边界不会，避免高频重排。
+// TestWakeBoundaryProbeOnlyNudgesForEarlier verifies the throttle of WakeBoundaryProbe that only disturbs for an earlier boundary:
+// an earlier boundary triggers a wake-up, while a later or already-passed boundary does not, to avoid frequent re-sorting.
 func TestWakeBoundaryProbeOnlyNudgesForEarlier(t *testing.T) {
 	now := time.Now()
 	s := &Store{boundaryProbeWakeCh: make(chan struct{}, 1)}
@@ -111,53 +111,53 @@ func TestWakeBoundaryProbeOnlyNudgesForEarlier(t *testing.T) {
 		}
 	}
 
-	// 未武装(armedBoundaryAt=0)：任何未来边界都应唤醒。
+	// Not armed (armedBoundaryAt=0): any future boundary should wake it.
 	s.WakeBoundaryProbe(now.Add(time.Minute))
 	if !drain() {
-		t.Fatal("未武装时未来边界应触发唤醒")
+		t.Fatal("a future boundary should trigger a wake-up when not armed")
 	}
 
-	// 模拟已武装到 +30s。
+	// Simulate being armed to +30s.
 	s.armedBoundaryAt.Store(now.Add(30 * time.Second).UnixNano())
 
-	// 更晚的边界(+2min) → 不打扰。
+	// Later boundary (+2min) → does not disturb.
 	s.WakeBoundaryProbe(now.Add(2 * time.Minute))
 	if drain() {
-		t.Fatal("更晚的边界不应触发唤醒")
+		t.Fatal("a later boundary should not trigger a wake-up")
 	}
 
-	// 更早的边界(+5s) → 打扰。
+	// Earlier boundary (+5s) → disturbs.
 	s.WakeBoundaryProbe(now.Add(5 * time.Second))
 	if !drain() {
-		t.Fatal("更早的边界应触发唤醒")
+		t.Fatal("an earlier boundary should trigger a wake-up")
 	}
 
-	// 已过期的边界 → 不打扰。
+	// Expired boundary → does not disturb.
 	s.WakeBoundaryProbe(now.Add(-time.Second))
 	if drain() {
-		t.Fatal("已过期边界不应触发唤醒")
+		t.Fatal("an expired boundary should not trigger a wake-up")
 	}
 
-	// 零值 → 强制唤醒(未知时间，要求全量重排)。
+	// Zero value → force a wake-up (unknown time, requires a full re-sort).
 	s.WakeBoundaryProbe(time.Time{})
 	if !drain() {
-		t.Fatal("零值应强制唤醒")
+		t.Fatal("a zero value should force a wake-up")
 	}
 }
 
-// TestArmNextBoundaryProbeArmsTimer 验证 armNextBoundaryProbe 在有/无待处理边界时的定时器行为，
-// 并同步更新 armedBoundaryAt。
+// TestArmNextBoundaryProbeArmsTimer verifies the timer behavior of armNextBoundaryProbe with and without a pending boundary,
+// and that it updates armedBoundaryAt in sync.
 func TestArmNextBoundaryProbeArmsTimer(t *testing.T) {
 	now := time.Now()
 	s := &Store{boundaryProbeWakeCh: make(chan struct{}, 1)}
 	s.accounts = []*Account{
-		{ // 最近边界：+40ms 的 5h 重置
+		{ // nearest boundary: the 5h reset at +40ms
 			AccessToken:         "tok",
 			UsagePercent5hValid: true,
 			Reset5hAt:           now.Add(40 * time.Millisecond),
 			UsageUpdatedAt5h:    now.Add(-time.Hour),
 		},
-		{ // 更远：+10min 冷却
+		{ // farther: +10min cooldown
 			AccessToken:    "tok",
 			Status:         StatusCooldown,
 			CooldownReason: "rate_limited",
@@ -174,27 +174,27 @@ func TestArmNextBoundaryProbeArmsTimer(t *testing.T) {
 	s.armNextBoundaryProbe(timer)
 
 	if s.armedBoundaryAt.Load() != s.accounts[0].Reset5hAt.UnixNano() {
-		t.Fatalf("armedBoundaryAt=%d，want %d（最近边界）", s.armedBoundaryAt.Load(), s.accounts[0].Reset5hAt.UnixNano())
+		t.Fatalf("armedBoundaryAt=%d, want %d (nearest boundary)", s.armedBoundaryAt.Load(), s.accounts[0].Reset5hAt.UnixNano())
 	}
 
-	// 定时器应在最近边界(+滞后 probeBoundaryLag)后触发，这里给足余量。
+	// The timer should fire after the nearest boundary (+ probeBoundaryLag); allow enough margin here.
 	select {
 	case <-timer.C:
 	case <-time.After(probeBoundaryLag + time.Second):
-		t.Fatal("定时器应在最近边界到点后触发")
+		t.Fatal("the timer should fire once the nearest boundary is reached")
 	}
 
-	// 无任何待处理边界 → 停表并清零 armedBoundaryAt。
+	// No pending boundary → stop the timer and reset armedBoundaryAt to zero.
 	s.accounts = []*Account{{AccessToken: "tok"}}
 	s.publishAccountSnapshot(s.accounts)
 	timer2 := time.NewTimer(time.Hour)
 	s.armNextBoundaryProbe(timer2)
 	if s.armedBoundaryAt.Load() != 0 {
-		t.Fatalf("armedBoundaryAt=%d，want 0（无待处理边界）", s.armedBoundaryAt.Load())
+		t.Fatalf("armedBoundaryAt=%d, want 0 (no pending boundary)", s.armedBoundaryAt.Load())
 	}
 	select {
 	case <-timer2.C:
-		t.Fatal("无边界时定时器不应触发")
+		t.Fatal("the timer should not fire when there is no boundary")
 	case <-time.After(100 * time.Millisecond):
 	}
 }

@@ -58,7 +58,7 @@ func TestEvictExpiredUTLSAuthClientClosesHealthyIdleConnection(t *testing.T) {
 	transport.mu.Unlock()
 
 	if !conn.CanTakeNewRequest() {
-		t.Fatal("前置条件不成立：新建的 HTTP/2 连接应为健康空闲状态")
+		t.Fatal("precondition not met: a newly created HTTP/2 connection should be healthy and idle")
 	}
 
 	entry := &utlsAuthPoolEntry{
@@ -70,10 +70,10 @@ func TestEvictExpiredUTLSAuthClientClosesHealthyIdleConnection(t *testing.T) {
 	evictExpiredUTLSAuthClients()
 
 	if _, ok := utlsAuthClientPool.Load(poolKey); ok {
-		t.Fatal("过期认证客户端仍在连接池中")
+		t.Fatal("expired auth client is still in the connection pool")
 	}
 	if !conn.State().Closed {
-		t.Fatal("健康空闲 HTTP/2 连接未关闭：socket、readLoop goroutine 和缓冲区会继续驻留")
+		t.Fatal("healthy idle HTTP/2 connection was not closed: socket, readLoop goroutine and buffers stay resident")
 	}
 }
 
@@ -98,9 +98,9 @@ func TestUTLSAuthCloseIdleConnectionsKeepsBusyConnection(t *testing.T) {
 	_, exists := transport.connections["example.test"]
 	transport.mu.Unlock()
 	if !exists {
-		t.Fatal("在途 HTTP/2 连接被当成空闲连接移除")
+		t.Fatal("in-flight HTTP/2 connection was removed as if idle")
 	}
 	if conn.State().Closed {
-		t.Fatal("在途 HTTP/2 连接被关闭")
+		t.Fatal("in-flight HTTP/2 connection was closed")
 	}
 }

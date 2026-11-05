@@ -108,8 +108,8 @@ func (s *Store) routingFastScheduler(apiKeyID int64) *FastScheduler {
 	if s.schedulerMetrics != nil {
 		s.schedulerMetrics.routingCacheBuilds.Add(1)
 	}
-	// 构建期间若发生失效(成员/路由变化),丢弃缓存但本次仍可用:结果基于
-	// 当时的快照,下一请求会按新代重建。
+	// If an invalidation happens during the build (member or route change), the cache is discarded but this result is still usable: it is based
+	// on the snapshot at that time; the next request rebuilds with the new generation.
 	s.publishRoutingScheduler(apiKeyID, scheduler, len(eligible), false, generation)
 	return scheduler
 }
@@ -213,7 +213,7 @@ func (s *Store) invalidateRoutingSchedulers() {
 	if s == nil {
 		return
 	}
-	// 无论缓存是否为空都推进代际:锁外进行中的构建必须能感知本次失效。
+	// Always advance the generation, whether or not the cache is empty: a build in progress outside the lock must be able to see this invalidation.
 	s.routingGeneration.Add(1)
 	s.routingSchedulersMu.Lock()
 	defer s.routingSchedulersMu.Unlock()

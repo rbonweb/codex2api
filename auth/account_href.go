@@ -6,14 +6,14 @@ import (
 	"strings"
 )
 
-// AccountHrefCredentialKey 是账号绑定的「跳转地址」（credentials JSON 内），
-// 供账号页在浏览器里一键打开账号对应的控制台/用量页面。存放在既有
-// credentials JSON 里，旧库可以安全忽略该字段；空值表示未配置，
-// 前端回退打开账号的 base_url（api-base）。
+// AccountHrefCredentialKey is the account's bound "jump URL" (inside the credentials JSON),
+// so the account page can open the account's console/usage page in the browser with one click. Stored in the existing
+// credentials JSON; older databases can safely ignore this field. An empty value means not configured,
+// the frontend falls back to the account's base_url (api-base) when opening it.
 const AccountHrefCredentialKey = "account_href"
 
-// NormalizeAccountHref 校验并归一跳转地址：仅接受 http/https 绝对地址，
-// 去掉尾部斜杠；空输入合法（= 清除配置）。
+// NormalizeAccountHref validates and normalizes the jump URL: it accepts only absolute http/https addresses,
+// strips trailing slashes. Empty input is valid (= clear the setting).
 func NormalizeAccountHref(raw string) (string, error) {
 	trimmed := strings.TrimSpace(raw)
 	if trimmed == "" {
@@ -21,10 +21,10 @@ func NormalizeAccountHref(raw string) (string, error) {
 	}
 	parsed, err := url.Parse(trimmed)
 	if err != nil || parsed.Scheme != "http" && parsed.Scheme != "https" || parsed.Hostname() == "" {
-		return "", fmt.Errorf("account_href 必须是完整的 http/https URL")
+		return "", fmt.Errorf("account_href must be a full http/https URL")
 	}
-	// 只去掉 path 末尾的斜杠；query / fragment 里的尾部斜杠属于参数内容，
-	// 不能动（例如 ?redirect=/usage/ 的斜杠是有意义的）。
+	// Only strip the trailing slash of the path; trailing slashes in the query / fragment are part of the parameter content,
+	// and must be left alone (for example, the slash in ?redirect=/usage/ is meaningful).
 	parsed.Path = strings.TrimRight(parsed.Path, "/")
 	return parsed.String(), nil
 }

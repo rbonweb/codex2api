@@ -10,7 +10,7 @@ import (
 func proxiedHTTPClient(proxyURL string) (*http.Client, error) {
 	transport := http.DefaultTransport.(*http.Transport).Clone()
 	if err := ConfigureTransportProxy(transport, proxyURL, nil); err != nil {
-		return nil, fmt.Errorf("代理配置失败: %w", err)
+		return nil, fmt.Errorf("proxy configuration failed: %w", err)
 	}
 	return &http.Client{Transport: transport, Timeout: 30 * time.Second}, nil
 }

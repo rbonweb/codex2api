@@ -140,7 +140,7 @@ func TestCooldownCacheWritesAndDeletes(t *testing.T) {
 	}
 }
 
-// ageModelCooldown 把已存的冷却记录往前拨，模拟「冷却早已过期、但不久前刚失败过」。
+// ageModelCooldown moves a stored cooldown record back in time, simulating "the cooldown expired long ago, but the account failed not long ago".
 func ageModelCooldown(acc *Account, model string, resetAgo, updatedAgo time.Duration) {
 	key := normalizeModelCooldownKey(model)
 	acc.mu.Lock()
@@ -152,8 +152,8 @@ func ageModelCooldown(acc *Account, model string, resetAgo, updatedAgo time.Dura
 	acc.ModelCooldowns[key] = cd
 }
 
-// 低流量部署两次失败的间隔常常比冷却本身还长。退避档位不能因为「冷却已过期」
-// 就永远停在第一级——否则退避形同虚设，账号会以固定的基础间隔反复撞上游。
+// In low-traffic deployments, the gap between two failures is often longer than the cooldown itself. The backoff level must not be reset just because "the cooldown has expired"
+// otherwise it stays at the first level forever, backoff becomes meaningless, and the account keeps hitting upstream at a fixed base interval.
 func TestModelCooldownBackoffSurvivesSparseTraffic(t *testing.T) {
 	store := NewStore(nil, nil, nil)
 	acc := &Account{DBID: 12}
@@ -165,7 +165,7 @@ func TestModelCooldownBackoffSurvivesSparseTraffic(t *testing.T) {
 		t.Fatalf("first BackoffLevel = %d, want 0", first.BackoffLevel)
 	}
 
-	// 冷却已过期 5 分钟，但 10 分钟前刚失败过：连击仍在 TTL 内，档位必须继续升级。
+	// The cooldown expired 5 minutes ago, but the last failure was 10 minutes ago: the streak is still within the TTL, so the level must keep escalating.
 	ageModelCooldown(acc, model, 5*time.Minute, 10*time.Minute)
 	second := store.MarkModelCooldownWithBackoff(acc, model, base, "rate_limited_model", true)
 	if second.BackoffLevel != 1 {
@@ -175,7 +175,7 @@ func TestModelCooldownBackoffSurvivesSparseTraffic(t *testing.T) {
 		t.Fatalf("second remaining = %v, want longer than the %v base", remaining, base)
 	}
 
-	// 再隔一轮同样的稀疏失败，档位继续推进。
+	// After another round of the same sparse failures, the level keeps advancing.
 	ageModelCooldown(acc, model, 5*time.Minute, 10*time.Minute)
 	third := store.MarkModelCooldownWithBackoff(acc, model, base, "rate_limited_model", true)
 	if third.BackoffLevel != 2 {
@@ -186,7 +186,7 @@ func TestModelCooldownBackoffSurvivesSparseTraffic(t *testing.T) {
 	}
 }
 
-// 超过连击 TTL 后回到第一级，避免旧档位无限期挂在账号上。
+// After the streak TTL is exceeded, return to the first level, so an old level does not stay on the account indefinitely.
 func TestModelCooldownBackoffResetsAfterStreakTTL(t *testing.T) {
 	store := NewStore(nil, nil, nil)
 	acc := &Account{DBID: 13}
@@ -200,7 +200,7 @@ func TestModelCooldownBackoffResetsAfterStreakTTL(t *testing.T) {
 		t.Fatalf("BackoffLevel = %d, want 1 before the TTL lapses", escalated.BackoffLevel)
 	}
 
-	// 上次失败已经是 TTL 之外的事了：连击断开，回到第一级与基础时长。
+	// The last failure is already outside the TTL: the streak breaks, and it returns to the first level and base duration.
 	ageModelCooldown(acc, model, 2*modelCooldownStreakTTL, 2*modelCooldownStreakTTL)
 	revived := store.MarkModelCooldownWithBackoff(acc, model, base, "rate_limited_model", true)
 	if revived.BackoffLevel != 0 {
@@ -211,7 +211,7 @@ func TestModelCooldownBackoffResetsAfterStreakTTL(t *testing.T) {
 	}
 }
 
-// 成功会删掉冷却记录，连击随之归零。
+// A success deletes the cooldown record, and the streak resets to zero along with it.
 func TestModelCooldownBackoffResetsAfterSuccess(t *testing.T) {
 	store := NewStore(nil, nil, nil)
 	acc := &Account{DBID: 14}
@@ -255,8 +255,8 @@ func TestModelCooldownFixedModeDoesNotBackoff(t *testing.T) {
 	}
 }
 
-// 管理端在库层清掉 unauthorized 后必须能把跨实例冷却缓存一起清掉，否则调度器
-// 每次挑号回读缓存又把冷却盖回来。
+// After the admin panel clears unauthorized at the database layer, it must also clear the cross-instance cooldown cache, otherwise the scheduler
+// reads the cache on every pick and the cooldown is reapplied.
 func TestForgetCachedAccountCooldownDropsRecord(t *testing.T) {
 	tokenCache := cache.NewMemory(4)
 	defer tokenCache.Close()

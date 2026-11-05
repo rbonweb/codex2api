@@ -13,7 +13,7 @@ import (
 	"time"
 )
 
-// makeTestJWT 构造一个不签名的测试 JWT（header.payload.signature）
+// makeTestJWT builds an unsigned test JWT (header.payload.signature)
 func makeTestJWT(claims interface{}) string {
 	payload, _ := json.Marshal(claims)
 	encoded := base64.RawURLEncoding.EncodeToString(payload)
@@ -116,14 +116,14 @@ func TestRefreshAccessTokenRejectsEmptyAccessToken(t *testing.T) {
 }
 
 func TestRefreshTokenReusedIsNonRetryable(t *testing.T) {
-	reusedErr := errors.New(`刷新失败 (status 401): {"error":{"code":"refresh_token_reused"}}`)
+	reusedErr := errors.New(`refresh failed (status 401): {"error":{"code":"refresh_token_reused"}}`)
 	if !isNonRetryable(reusedErr) {
 		t.Fatal("refresh_token_reused should be treated as non-retryable")
 	}
 }
 
 func TestRefreshTokenInvalidatedIsPermanentFailure(t *testing.T) {
-	invalidatedErr := errors.New(`刷新失败（重试 3 次）: 刷新失败 (status 401): {"error":{"message":"Your session has ended. Please log in again.","code":"refresh_token_invalidated"}}`)
+	invalidatedErr := errors.New(`refresh failed after 3 retries: refresh failed (status 401): {"error":{"message":"Your session has ended. Please log in again.","code":"refresh_token_invalidated"}}`)
 	if !IsPermanentRefreshFailure(invalidatedErr) {
 		t.Fatal("refresh_token_invalidated should be treated as a permanent refresh failure")
 	}
@@ -175,8 +175,8 @@ func TestRefreshWithSessionToken(t *testing.T) {
 	}
 }
 
-// 个人账号 JWT 可能没有 chatgpt_account_id，只有 user_id；解析仍需保留元数据，
-// 但 user_id 不参与 workspace 身份去重。
+// A personal account's JWT may have no chatgpt_account_id, only user_id; parsing must still keep the metadata,
+// but user_id does not take part in workspace identity deduplication.
 func TestParseAccessTokenExtractsUserID(t *testing.T) {
 	jwt := makeTestJWT(map[string]interface{}{
 		"exp": int64(9999999999),

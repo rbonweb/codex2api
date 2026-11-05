@@ -14,7 +14,7 @@ const DaybreakRed = "daybreak_red"
 
 var daybreakObservationClock atomic.Int64
 
-// 单调版本避免系统时钟回拨或同一时钟刻度内的结果互相覆盖。
+// A monotonic version prevents results from overwriting each other when the system clock moves back or within the same clock tick.
 func (a *Account) BeginDaybreakObservation() database.DaybreakSnapshot {
 	a.mu.RLock()
 	defer a.mu.RUnlock()
@@ -112,7 +112,7 @@ func (a *Account) DaybreakAliases() []string {
 	return aliases
 }
 
-// Daybreak 目录只检查持久禁用状态，暂时无额度仍保留模型名称。
+// The Daybreak catalog only checks the persisted disabled state; a temporary lack of quota still keeps the model name.
 func (a *Account) DaybreakCatalogEligible() bool {
 	if a == nil || atomic.LoadInt32(&a.Disabled) != 0 || (atomic.LoadInt32(&a.DispatchPaused) != 0 || atomic.LoadInt32(&a.IntelligencePaused) != 0) {
 		return false

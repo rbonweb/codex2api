@@ -6,7 +6,7 @@ import (
 	"time"
 )
 
-// MockDB 用于测试的 mock 数据库
+// MockDB is a mock database for tests.
 type MockDB struct {
 	proxies []*MockProxyRow
 }
@@ -44,12 +44,12 @@ func TestNewEnhancedProxyPool(t *testing.T) {
 }
 
 func TestEnhancedProxyPoolInit(t *testing.T) {
-	// 这个测试在没有真实数据库的情况下需要 mock
-	// 这里简化测试
+	// This test needs a mock when there is no real database.
+	// Simplify the test here.
 	config := DefaultProxyPoolConfig()
 	pool := NewEnhancedProxyPool(nil, config)
 
-	// 手动添加代理
+	// Add proxies manually.
 	pool.pool.AddProxy("http://proxy1:8080", 10)
 	pool.pool.AddProxy("http://proxy2:8080", 5)
 	pool.initialized.Store(true)
@@ -68,12 +68,12 @@ func TestEnhancedProxyPoolNextProxy(t *testing.T) {
 	config := DefaultProxyPoolConfig()
 	pool := NewEnhancedProxyPool(nil, config)
 
-	// 未初始化应该返回空
+	// Uninitialized should return empty.
 	if pool.NextProxy() != "" {
 		t.Error("NextProxy should return empty when not initialized")
 	}
 
-	// 初始化
+	// Initialize.
 	pool.pool.AddProxy("http://proxy1:8080", 10)
 	pool.initialized.Store(true)
 	pool.enabled.Store(true)
@@ -93,7 +93,7 @@ func TestEnhancedProxyPoolSelectWithStrategy(t *testing.T) {
 	pool.initialized.Store(true)
 	pool.enabled.Store(true)
 
-	// 测试加权策略
+	// Test the weighted strategy.
 	entry := pool.SelectWithStrategy(StrategyWeighted)
 	if entry == nil {
 		t.Fatal("SelectWithStrategy should return an entry")
@@ -122,7 +122,7 @@ func TestEnhancedProxyPoolMarkFailure(t *testing.T) {
 	pool.pool.AddProxy("http://proxy1:8080", 10)
 	pool.initialized.Store(true)
 
-	// 多次失败
+	// Multiple failures.
 	for i := 0; i < 5; i++ {
 		pool.MarkProxyFailure("http://proxy1:8080")
 	}
@@ -140,7 +140,7 @@ func TestEnhancedProxyPoolConnection(t *testing.T) {
 	pool.pool.AddProxy("http://proxy1:8080", 10)
 	pool.initialized.Store(true)
 
-	// 获取连接
+	// Acquire connection.
 	if !pool.AcquireConnection("http://proxy1:8080") {
 		t.Error("AcquireConnection should succeed")
 	}
@@ -150,7 +150,7 @@ func TestEnhancedProxyPoolConnection(t *testing.T) {
 		t.Errorf("expected 1 active connection, got %d", stats["http://proxy1:8080"].ActiveConns)
 	}
 
-	// 释放连接
+	// Release connection.
 	pool.ReleaseConnection("http://proxy1:8080")
 
 	stats = pool.GetStats()
@@ -163,7 +163,7 @@ func TestEnhancedProxyPoolGetStats(t *testing.T) {
 	config := DefaultProxyPoolConfig()
 	pool := NewEnhancedProxyPool(nil, config)
 
-	// 未初始化应该返回空 map
+	// Uninitialized should return an empty map.
 	stats := pool.GetStats()
 	if stats == nil {
 		t.Error("GetStats should not return nil")
@@ -182,7 +182,7 @@ func TestEnhancedProxyPoolGetPoolStatus(t *testing.T) {
 	config := DefaultProxyPoolConfig()
 	pool := NewEnhancedProxyPool(nil, config)
 
-	// 未初始化
+	// Uninitialized.
 	status := pool.GetPoolStatus()
 	if status.Total != 0 {
 		t.Errorf("expected total 0, got %d", status.Total)
@@ -231,7 +231,7 @@ func TestEnhancedProxyPoolHasHealthyProxy(t *testing.T) {
 	config := DefaultProxyPoolConfig()
 	pool := NewEnhancedProxyPool(nil, config)
 
-	// 未初始化
+	// Uninitialized.
 	if pool.HasHealthyProxy() {
 		t.Error("HasHealthyProxy should return false when not initialized")
 	}
@@ -271,7 +271,7 @@ func TestParseDuration(t *testing.T) {
 		{"10s", 10 * time.Second},
 		{"5m", 5 * time.Minute},
 		{"1h", time.Hour},
-		{"invalid", 30 * time.Second}, // 默认值
+		{"invalid", 30 * time.Second}, // default value
 	}
 
 	for _, test := range tests {
@@ -289,7 +289,7 @@ func TestParseInt(t *testing.T) {
 	}{
 		{"10", 10},
 		{"3", 3},
-		{"0", 3}, // 默认值
+		{"0", 3}, // default value
 		{"invalid", 3},
 		{"", 3},
 	}
@@ -304,12 +304,12 @@ func TestParseInt(t *testing.T) {
 
 func TestEnhancedProxyPoolStop(t *testing.T) {
 	config := DefaultProxyPoolConfig()
-	config.CheckInterval = 1 * time.Hour // 设置较长间隔避免实际触发
+	config.CheckInterval = 1 * time.Hour // Set a long interval to avoid triggering a real check.
 	pool := NewEnhancedProxyPool(nil, config)
 
 	pool.pool.AddProxy("http://proxy1:8080", 10)
 	pool.initialized.Store(true)
 
-	// 停止不应该 panic
+	// Stop should not panic.
 	pool.Stop()
 }

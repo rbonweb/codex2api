@@ -143,9 +143,9 @@ func TestSparkSnapshotHydratesFromCredentials(t *testing.T) {
 	}
 }
 
-// DispatchPaused 是锁外原子标志:标准路径在 fastSchedulerSnapshotWithUsageOverride
-// 里显式拦截,spark 路径此前只走 sparkDispatchEligibleLocked(与 isAvailableLocked
-// 一样不读原子标志),导致运维手动停调度或过载熔断置位的账号仍被 spark 选中。
+// DispatchPaused is a lock-free atomic flag: the standard path checks it explicitly in fastSchedulerSnapshotWithUsageOverride
+// the spark path previously only went through sparkDispatchEligibleLocked (which, like isAvailableLocked
+// does not read the atomic flag), so accounts paused by operators or tripped by an overload circuit breaker were still picked by spark.
 func TestSparkDispatchRespectsDispatchPaused(t *testing.T) {
 	acc := newFastSchedulerTestAccount(1, HealthTierHealthy, 100, 2)
 	acc.PlanType = "pro"

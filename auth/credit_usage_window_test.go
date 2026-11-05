@@ -9,7 +9,7 @@ import (
 	"github.com/codex2api/database"
 )
 
-// plus5hExhausted 构造一个 5h 窗口已打满的 plus 账号：没有积分时它就是 rate_limited。
+// plus5hExhausted builds a plus account whose 5h window is already full: without credits, it is rate_limited.
 func plus5hExhausted() *Account {
 	return &Account{
 		DBID:                1,
@@ -22,7 +22,7 @@ func plus5hExhausted() *Account {
 	}
 }
 
-// withCredits 打开两个信用开关并写入一份积分余额快照。
+// withCredits turns on both credit switches and writes a credit balance snapshot.
 func withCredits(acc *Account, balance string, hasCredits, unlimited, overageReached bool) *Account {
 	acc.CreditEnabled = true
 	acc.CreditSkipUsageWindow = true
@@ -54,15 +54,15 @@ func TestCreditsBalanceValue(t *testing.T) {
 	}
 }
 
-// 有积分时用量窗口限流被顶替，账号仍可调度，状态显示 using_credits。
+// With credits, the usage window rate limit is overridden, the account stays schedulable, and the status shows using_credits.
 func TestUsingCreditsSuppressesRateLimitWhenBalancePositive(t *testing.T) {
 	acc := withCredits(plus5hExhausted(), "1000.0000000000", true, false, false)
 
 	if acc.IsPremium5hRateLimited() {
 		t.Error("IsPremium5hRateLimited() = true, want false while credits cover the window")
 	}
-	// 显示仍是限流（窗口客观上打满了），可调度与否由 IsAvailable 决定，
-	// 「正在用积分顶」由并列的 UsingCredits 信号表达。
+	// The display is still rate limited (the window is objectively full); whether it is schedulable is decided by IsAvailable,
+	// "using credits to cover" is expressed by the parallel UsingCredits signal.
 	if got := acc.RuntimeStatus(); got != "rate_limited" {
 		t.Fatalf("RuntimeStatus() = %q, want rate_limited", got)
 	}
@@ -78,7 +78,7 @@ func stringPtr(s string) *string {
 	return &s
 }
 
-// 积分耗尽（has_credits=false）后必须恢复成真实限流——否则调度会一直把请求送进注定 429 的账号。
+// After credits run out (has_credits=false), it must go back to a real rate limit, otherwise scheduling keeps sending requests to accounts that are bound to get 429.
 func TestUsingCreditsFallsBackToRateLimitedWhenCreditsExhausted(t *testing.T) {
 	acc := withCredits(plus5hExhausted(), "0.0000000000", false, false, false)
 
@@ -93,7 +93,7 @@ func TestUsingCreditsFallsBackToRateLimitedWhenCreditsExhausted(t *testing.T) {
 	}
 }
 
-// Team 会员：has_credits=true 但 balance 为空（隐藏）时，积分正常生效顶替限流。(issue #662)
+// Team member: when has_credits=true but balance is empty (hidden), credits take effect normally and override the rate limit. (issue #662)
 func TestUsingCreditsAllowsTeamHiddenBalanceWhenHasCredits(t *testing.T) {
 	acc := withCredits(plus5hExhausted(), "", true, false, false)
 
@@ -108,7 +108,7 @@ func TestUsingCreditsAllowsTeamHiddenBalanceWhenHasCredits(t *testing.T) {
 	}
 }
 
-// 工作区消费限制达到上限（spend_control.reached=true）时立即停止使用积分。(issue #662)
+// When the workspace spend limit is reached (spend_control.reached=true), credit use stops immediately. (issue #662)
 func TestUsingCreditsBlockedBySpendControlReached(t *testing.T) {
 	acc := withCredits(plus5hExhausted(), "", true, false, false)
 	reached := true
@@ -122,7 +122,7 @@ func TestUsingCreditsBlockedBySpendControlReached(t *testing.T) {
 	}
 }
 
-// rate_limit_reached_type 为工作区级 hard-stop 时立即停止使用积分。(issue #662)
+// When rate_limit_reached_type is a workspace-level hard-stop, credit use stops immediately. (issue #662)
 func TestUsingCreditsBlockedByWorkspaceHardStop(t *testing.T) {
 	for _, hardStopType := range []string{
 		"workspace_owner_credits_depleted",
@@ -142,7 +142,7 @@ func TestUsingCreditsBlockedByWorkspaceHardStop(t *testing.T) {
 	}
 }
 
-// has_credits=false 即使余额字符串非零也不放行：上游说没有就是没有。
+// has_credits=false does not let requests through even if the balance string is non-zero: when upstream says there are none, there are none.
 func TestUsingCreditsRequiresHasCreditsFlag(t *testing.T) {
 	acc := withCredits(plus5hExhausted(), "1000.0000000000", false, false, false)
 
@@ -151,7 +151,7 @@ func TestUsingCreditsRequiresHasCreditsFlag(t *testing.T) {
 	}
 }
 
-// overage_limit_reached 是上游权威的「超额额度已用尽」信号，优先于余额数字。
+// overage_limit_reached is the upstream's authoritative signal that the overage quota is used up, and it takes priority over the balance number.
 func TestUsingCreditsRespectsOverageLimitReached(t *testing.T) {
 	acc := withCredits(plus5hExhausted(), "1000.0000000000", true, false, true)
 
@@ -160,7 +160,7 @@ func TestUsingCreditsRespectsOverageLimitReached(t *testing.T) {
 	}
 }
 
-// 无限积分账号一直放行。
+// Unlimited-credit accounts always pass.
 func TestUsingCreditsHonorsUnlimited(t *testing.T) {
 	acc := withCredits(plus5hExhausted(), "0", false, true, false)
 
@@ -172,7 +172,7 @@ func TestUsingCreditsHonorsUnlimited(t *testing.T) {
 	}
 }
 
-// 余额未知（wham 探针没跑过）按没积分处理：宁可白等一个窗口，也不送进必然 429 的账号。
+// An unknown balance (the wham probe has not run) is treated as no credits: it is better to wait out a window than to send requests to an account that will certainly get 429.
 func TestUsingCreditsTreatsUnknownBalanceAsEmpty(t *testing.T) {
 	acc := plus5hExhausted()
 	acc.CreditEnabled = true
@@ -186,7 +186,7 @@ func TestUsingCreditsTreatsUnknownBalanceAsEmpty(t *testing.T) {
 	}
 }
 
-// 两个开关没开时积分余额完全不参与判断，保持原有限流语义。
+// When neither switch is on, the credit balance does not take part in the decision at all, keeping the original rate limit semantics.
 func TestUsingCreditsRequiresBothToggles(t *testing.T) {
 	onlyEnabled := plus5hExhausted()
 	onlyEnabled.CreditEnabled = true
@@ -206,8 +206,8 @@ func TestUsingCreditsRequiresBothToggles(t *testing.T) {
 	}
 }
 
-// 上游真的 429（走 cooldown）说明积分没顶住，必须暴露真实状态，不能被 using_credits 盖掉。
-// /responses 的真 429 记为 ResponsesRateLimitedCooldownReason；rate_limited_5h 是本地判罚。
+// A real 429 from upstream (going through cooldown) means the credits did not cover it, so the real state must be exposed and must not be masked by using_credits.
+// A real 429 from /responses is recorded as ResponsesRateLimitedCooldownReason; rate_limited_5h is a local penalty.
 func TestUsingCreditsDoesNotMaskUpstreamCooldown(t *testing.T) {
 	acc := withCredits(plus5hExhausted(), "1000.0000000000", true, false, false)
 	acc.SetCooldownUntil(time.Now().Add(30*time.Minute), ResponsesRateLimitedCooldownReason)
@@ -220,9 +220,9 @@ func TestUsingCreditsDoesNotMaskUpstreamCooldown(t *testing.T) {
 	}
 }
 
-// 本地用量窗口判罚产生的 cooldown 不该阻止「使用积分」——那正是积分要顶替的东西。
-// 这是实测抓到的缺陷：一刀切拦所有 cooldown，会让徽章在最常见的场景
-// （发现账号限流了才去开开关）永远不出现。
+// A cooldown produced by a local usage-window penalty must not block "using credits": that is exactly what credits are meant to cover.
+// This was a defect found in testing: blocking every cooldown across the board would make the badge never appear in the most common scenario
+// (the switch is turned on only after finding the account rate limited).
 func TestUsingCreditsIgnoresLocalUsageWindowCooldown(t *testing.T) {
 	store := NewStore(nil, nil, nil)
 	acc := &Account{
@@ -235,7 +235,7 @@ func TestUsingCreditsIgnoresLocalUsageWindowCooldown(t *testing.T) {
 	acc.SetUsagePercent7d(100)
 	acc.SetReset7dAt(time.Now().Add(72 * time.Hour))
 
-	// 先在没有积分的状态下自然进入用量窗口判罚。
+	// First, naturally enter the usage-window penalty with no credits.
 	if !store.MarkUsage7dRateLimited(acc) {
 		t.Fatal("MarkUsage7dRateLimited() = false, want true to set up the cooldown")
 	}
@@ -243,7 +243,7 @@ func TestUsingCreditsIgnoresLocalUsageWindowCooldown(t *testing.T) {
 		t.Fatal("UsageWindowCooldown() = false, want true for a locally derived usage cooldown")
 	}
 
-	// 再打开信用开关并充上积分：应识别为「正在用积分顶」。
+	// Then turn on the credit switch and top up credits: it should be recognized as "using credits to cover".
 	acc.CreditEnabled = true
 	acc.CreditSkipUsageWindow = true
 	acc.SetCreditBalance("981.7471800000", true, false, false)
@@ -253,7 +253,7 @@ func TestUsingCreditsIgnoresLocalUsageWindowCooldown(t *testing.T) {
 	}
 }
 
-// 释放只针对本地用量判罚：上游 429 的冷却（时长不对齐 Reset7dAt）必须保留。
+// Release applies only to local usage penalties: an upstream 429 cooldown (whose duration does not align with Reset7dAt) must be kept.
 func TestReleaseUsageWindowCooldownKeepsUpstream429(t *testing.T) {
 	store := NewStore(nil, nil, nil)
 	acc := &Account{
@@ -269,7 +269,7 @@ func TestReleaseUsageWindowCooldownKeepsUpstream429(t *testing.T) {
 	acc.CreditSkipUsageWindow = true
 	acc.SetCreditBalance("1000", true, false, false)
 
-	// 上游 429：冷却时长来自限流决策，不会落在 7d 重置时刻上。
+	// An upstream 429: the cooldown duration comes from the rate-limit decision and will not land on the 7d reset time.
 	store.MarkCooldown(acc, 15*time.Minute, "rate_limited")
 
 	if acc.UsageWindowCooldown() {
@@ -286,7 +286,7 @@ func TestReleaseUsageWindowCooldownKeepsUpstream429(t *testing.T) {
 	}
 }
 
-// 开关打开后应主动释放已落下的用量判罚，账号立刻回到可调度。
+// After the switch is turned on, the account should actively release the existing usage penalty and become schedulable again immediately.
 func TestReleaseUsageWindowCooldownReturnsAccountToScheduling(t *testing.T) {
 	store := NewStore(nil, nil, nil)
 	acc := &Account{
@@ -320,7 +320,7 @@ func TestReleaseUsageWindowCooldownReturnsAccountToScheduling(t *testing.T) {
 	}
 }
 
-// 积分为零时不释放：否则等于把请求送回注定 429 的账号。
+// Do not release when credits are zero: otherwise requests would be sent back to accounts that are bound to get 429.
 func TestReleaseUsageWindowCooldownSkipsWhenNoCredits(t *testing.T) {
 	store := NewStore(nil, nil, nil)
 	acc := &Account{
@@ -348,8 +348,8 @@ func TestReleaseUsageWindowCooldownSkipsWhenNoCredits(t *testing.T) {
 	}
 }
 
-// 正在用积分顶的账号显示为限流，但它其实在正常干活——「一键清理限流账号」必须放过它，
-// 否则用户点一下就把好账号删了。这是「显示限流但仍参与调度」这个设计带来的直接风险。
+// An account that is using credits to cover shows as rate limited, but it is actually working normally: "one-click cleanup of rate-limited accounts" must skip it,
+// otherwise one click would delete a good account. This is the direct risk of the design where an account shows rate limited yet still takes part in scheduling.
 func TestCleanRateLimitedSkipsAccountsUsingCredits(t *testing.T) {
 	store := NewStore(nil, nil, nil)
 
@@ -358,7 +358,7 @@ func TestCleanRateLimitedSkipsAccountsUsingCredits(t *testing.T) {
 	drained := withCredits(plus5hExhausted(), "0", false, false, false)
 	drained.DBID = 2
 
-	// 前置条件：两者都显示为限流，区别只在积分。
+	// Preconditions: both show as rate limited; the only difference is credits.
 	if got := covered.RuntimeStatus(); got != "rate_limited" {
 		t.Fatalf("covered RuntimeStatus() = %q, want rate_limited", got)
 	}
@@ -374,14 +374,14 @@ func TestCleanRateLimitedSkipsAccountsUsingCredits(t *testing.T) {
 
 	store.AddAccounts([]*Account{covered, drained})
 
-	// 无 db 时清理不会真正删除，但计数反映了哪些账号被选中。
+	// Without a db, cleanup does not actually delete, but the count reflects which accounts were selected.
 	cleaned := store.CleanRateLimitedManual(context.Background())
 	if cleaned != 1 {
 		t.Fatalf("CleanRateLimitedManual() = %d, want 1 (only the drained account)", cleaned)
 	}
 }
 
-// error 态同样优先于 using_credits。
+// The error state likewise takes priority over using_credits.
 func TestUsingCreditsDoesNotMaskError(t *testing.T) {
 	acc := withCredits(plus5hExhausted(), "1000.0000000000", true, false, false)
 	acc.Status = StatusError
@@ -392,7 +392,7 @@ func TestUsingCreditsDoesNotMaskError(t *testing.T) {
 	}
 }
 
-// 窗口没打满时不该显示 using_credits——那会把健康账号说成正在烧积分。
+// using_credits should not be shown when the window is not full: that would describe a healthy account as burning credits.
 func TestUsingCreditsOnlyWhenWindowActuallyExhausted(t *testing.T) {
 	acc := withCredits(plus5hExhausted(), "1000.0000000000", true, false, false)
 	acc.UsagePercent5h = 40
@@ -405,7 +405,7 @@ func TestUsingCreditsOnlyWhenWindowActuallyExhausted(t *testing.T) {
 	}
 }
 
-// Free 账号 7d 耗尽同样走积分门：有积分顶替、归零恢复 usage_exhausted。
+// A Free account whose 7d quota is exhausted also goes through the credit gate: credits cover it, and when they reach zero it returns to usage_exhausted.
 func TestUsingCreditsCoversFreeUsageExhausted(t *testing.T) {
 	base := func() *Account {
 		return &Account{
@@ -435,8 +435,8 @@ func TestUsingCreditsCoversFreeUsageExhausted(t *testing.T) {
 	}
 }
 
-// ignore_usage_limit_status 是另一条独立开关：它只放行已绑定活跃轮次，
-// 新轮次仍被阻止，因此后台继续显示限流，但不能显示成「使用积分」。
+// ignore_usage_limit_status is another, independent switch: it only lets through already-bound active turns,
+// new turns are still blocked, so the background keeps showing rate limited, but must not show as "using credits".
 func TestIgnoreUsageLimitStatusKeepsFreshDispatchRateLimitedWithoutCredits(t *testing.T) {
 	acc := plus5hExhausted()
 	ignore := true
@@ -451,8 +451,8 @@ func TestIgnoreUsageLimitStatusKeepsFreshDispatchRateLimitedWithoutCredits(t *te
 	}
 }
 
-// 积分快照必须能穿过重启：只留在内存的话，重启后账号被判成「没积分」，
-// 积分顶替限流失效，还会被「清理限流账号」当成真限流删掉。
+// The credit snapshot must survive a restart: if it stayed only in memory, the account would be judged "no credits" after a restart,
+// credit coverage would stop working, and "cleanup of rate-limited accounts" would delete it as a real rate limit.
 func TestCreditBalanceSnapshotRoundTrip(t *testing.T) {
 	raw, err := MarshalCreditBalanceSnapshot(CreditBalanceSnapshot{
 		Balance:    stringPtr("981.7471800000"),
@@ -463,7 +463,7 @@ func TestCreditBalanceSnapshotRoundTrip(t *testing.T) {
 		t.Fatalf("MarshalCreditBalanceSnapshot: %v", err)
 	}
 
-	// 重启后的账号：两个开关来自库里，积分快照未恢复时按"没积分"处理。
+	// Account after restart: both switches come from the database; when the credit snapshot is not restored, it is treated as "no credits".
 	acc := plus5hExhausted()
 	acc.CreditEnabled = true
 	acc.CreditSkipUsageWindow = true
@@ -482,11 +482,11 @@ func TestCreditBalanceSnapshotRoundTrip(t *testing.T) {
 		t.Error("UsingCredits() = false after restore, want true — the restored balance must keep the override alive")
 	}
 	if got := acc.RuntimeStatus(); got != "rate_limited" {
-		t.Errorf("RuntimeStatus() = %q, want rate_limited — 状态仍显示限流，只是被积分顶着", got)
+		t.Errorf("RuntimeStatus() = %q, want rate_limited — the status still shows rate limited, it is only covered by credits", got)
 	}
 }
 
-// 兼容旧版本落库的 JSON 快照（balance 字段为纯字符串，无 spend_control 与 rate_limit_reached_type）
+// Compatible with JSON snapshots persisted by older versions (the balance field is a plain string, with no spend_control or rate_limit_reached_type)
 func TestRestoreCreditBalanceFromOldJSONFormat(t *testing.T) {
 	oldJSON := `{"balance":"1234.5000000000","has_credits":true,"unlimited":false,"overage_limit_reached":false,"updated_at":"2026-08-01T12:00:00Z"}`
 	acc := plus5hExhausted()
@@ -505,7 +505,7 @@ func TestRestoreCreditBalanceFromOldJSONFormat(t *testing.T) {
 	}
 }
 
-// 没有快照 / 快照损坏 / 全空快照都不能凭空造出一个可用余额。
+// A missing snapshot, a corrupt snapshot, or an all-empty snapshot must never conjure a usable balance.
 func TestRestoreCreditBalanceRejectsEmptyOrInvalid(t *testing.T) {
 	empty, err := MarshalCreditBalanceSnapshot(CreditBalanceSnapshot{})
 	if err != nil {
@@ -527,8 +527,8 @@ func TestRestoreCreditBalanceRejectsEmptyOrInvalid(t *testing.T) {
 	}
 }
 
-// 积分用尽且无可用积分的快照要能恢复：它是「积分已用尽」的权威结论，恢复后应恢复真实限流，
-// 而不是退回「未探测」——否则重启后又会把请求送进注定 429 的账号。
+// A snapshot showing credits used up with none available must be restorable: it is the authoritative conclusion that "credits are used up", and after restore the real rate limit should apply,
+// rather than fall back to "not probed" — otherwise after a restart requests would again be sent to accounts that are bound to get 429.
 func TestRestoreCreditBalanceKeepsDrainedBalance(t *testing.T) {
 	raw, err := MarshalCreditBalanceSnapshot(CreditBalanceSnapshot{Balance: stringPtr("0"), HasCredits: false})
 	if err != nil {
@@ -650,7 +650,7 @@ func TestPersistSparseCreditObservation_SuccessAndRollbackOnDBError(t *testing.T
 		t.Fatal("expected creditsPersistedKey to be set after successful PersistSparseCreditObservation")
 	}
 
-	// 只有余额变化不落库（余额逐请求递减，留给 wham 探针刷新）。
+	// Only balance changes are not persisted (the balance decreases per request and is left for the wham probe to refresh).
 	bal2 := "10.00"
 	store.PersistSparseCreditObservation(account, true, false, &bal2, &ov, "")
 	account.mu.RLock()
@@ -675,7 +675,7 @@ func TestPersistSparseCreditObservation_SuccessAndRollbackOnDBError(t *testing.T
 	}
 }
 
-// 余额已知且为 0 时即使 has_credits=true 也不放行：刚花掉最后一分积分的那次响应。
+// When the balance is known to be 0, requests are not let through even if has_credits=true: this is the response that just spent the last credit.
 func TestUsingCreditsBlockedWhenKnownBalanceZero(t *testing.T) {
 	for _, balance := range []string{"0", "0.00", "0.0000000000"} {
 		acc := withCredits(plus5hExhausted(), balance, true, false, false)
@@ -687,7 +687,7 @@ func TestUsingCreditsBlockedWhenKnownBalanceZero(t *testing.T) {
 			t.Fatalf("IsAvailable() = true for known balance %q, want false", balance)
 		}
 	}
-	// unlimited 不看余额。
+	// unlimited ignores the balance.
 	acc := withCredits(plus5hExhausted(), "0", true, true, false)
 	acc.CreditsBalanceKnown = true
 	if !acc.UsingCredits() {
@@ -695,7 +695,7 @@ func TestUsingCreditsBlockedWhenKnownBalanceZero(t *testing.T) {
 	}
 }
 
-// 旧版快照把隐藏余额写成 ""：恢复后必须当「未知」而不是「0」，否则 Team 账号升级后先被判无积分。
+// Old snapshots wrote the hidden balance as ""; after restore it must be treated as "unknown" rather than "0", otherwise Team accounts are first judged to have no credits after an upgrade.
 func TestRestoreCreditBalanceLegacyEmptyBalanceMeansUnknown(t *testing.T) {
 	acc := plus5hExhausted()
 	acc.CreditEnabled = true
@@ -712,7 +712,7 @@ func TestRestoreCreditBalanceLegacyEmptyBalanceMeansUnknown(t *testing.T) {
 	}
 }
 
-// wham 全量快照缺 spend_control / rate_limit_reached_type 时要把旧的 hard-stop 清掉。
+// When a full wham snapshot lacks spend_control / rate_limit_reached_type, the old hard-stop must be cleared.
 func TestSetCreditBalanceDetailsClearsStaleWorkspaceHardStop(t *testing.T) {
 	acc := withCredits(plus5hExhausted(), "", true, false, false)
 	reached := true
@@ -730,7 +730,7 @@ func TestSetCreditBalanceDetailsClearsStaleWorkspaceHardStop(t *testing.T) {
 	}
 }
 
-// 响应头缺 rate_limit_reached_type 即「未触达」：sparse 观测必须把旧标记清掉。
+// A missing rate_limit_reached_type response header means "not reached": a sparse observation must clear the old marker.
 func TestApplySparseCreditsHeadersClearsReachedType(t *testing.T) {
 	acc := withCredits(plus5hExhausted(), "", true, false, false)
 	acc.SetRateLimitReachedType("workspace_owner_credits_depleted")
@@ -743,7 +743,7 @@ func TestApplySparseCreditsHeadersClearsReachedType(t *testing.T) {
 	}
 }
 
-// plus5hNearAutoPause 构造一个 5h 用到 96%、阈值 95% 的 plus 账号：没有积分顶替时它被自动暂停。
+// plus5hNearAutoPause builds a plus account with 5h usage at 96% and a 95% threshold: without credits covering it, it is auto-paused.
 func plus5hNearAutoPause() *Account {
 	acc := &Account{
 		DBID:                1,
@@ -759,8 +759,8 @@ func plus5hNearAutoPause() *Account {
 	return acc
 }
 
-// issue #791：自动暂停阈值最高只到 100%，若它压过积分开关，窗口永远走不到「打满后扣积分」，
-// 弹窗显示「已生效」、列表挂着「使用积分」徽章，账号却始终不被调度。
+// issue #791: the auto-pause threshold goes up to only 100%; if it overrode the credit switch, the window would never reach "spend credits once full",
+// the dialog would show "in effect" and the list would show the "using credits" badge, yet the account would never be scheduled.
 func TestCreditsBypassQuotaAutoPause(t *testing.T) {
 	near := withCredits(plus5hNearAutoPause(), "62500.00", true, false, false)
 	if !near.IsAvailable() {
@@ -784,7 +784,7 @@ func TestCreditsBypassQuotaAutoPause(t *testing.T) {
 	}
 }
 
-// 积分门关着（开关未开 / 积分归零 / 工作区 hard-stop）时自动暂停照常生效。
+// When the credit gate is closed (switch off / credits at zero / workspace hard-stop), auto-pause still applies as usual.
 func TestQuotaAutoPauseStillAppliesWithoutCredits(t *testing.T) {
 	cases := map[string]*Account{
 		"toggle off": func() *Account {
@@ -809,10 +809,10 @@ func TestQuotaAutoPauseStillAppliesWithoutCredits(t *testing.T) {
 	}
 }
 
-// 5h 护栏带属于自动暂停的一部分：积分顶替时不能把并发压到 0，也不该扣调度分。
+// The 5h guardrail band is part of auto-pause: when credits cover it, concurrency must not be pushed to 0, and scheduling score must not be deducted.
 func TestCreditsBypassAutoPause5hGuardBand(t *testing.T) {
 	plain := plus5hNearAutoPause()
-	plain.UsagePercent5h = 95.5 // 阈值内、护栏带内
+	plain.UsagePercent5h = 95.5 // within the threshold, inside the guardrail band
 	plain.autoPause5hGuardBandPercent = 5
 	plain.autoPause5hGuardConcurrency = 1
 
@@ -833,7 +833,7 @@ func TestCreditsBypassAutoPause5hGuardBand(t *testing.T) {
 		t.Errorf("guard dispatch penalty = %v with credits covering, want 0", penalty)
 	}
 
-	// 对照：没积分时护栏照常收紧，确认上面的断言不是空转。
+	// Control: without credits the guardrail still tightens as usual, confirming the assertions above are not vacuous.
 	plain.UsagePercent5h = 96
 	plain.mu.RLock()
 	plainLimit := plain.quotaAutoPause5hGuardConcurrencyLimitLocked(8, now)
@@ -843,8 +843,8 @@ func TestCreditsBypassAutoPause5hGuardBand(t *testing.T) {
 	}
 }
 
-// issue #791：Plus/Pro 先撞 5h（响应头 / WHAM 落下 rate_limited_5h）再开积分开关，
-// 判罚必须被释放，不能干等到 5h 重置。
+// issue #791: Plus/Pro first hits 5h (the response header / WHAM sets rate_limited_5h), and then the credit switch is turned on,
+// the penalty must be released and must not wait idly for the 5h reset.
 func TestReleaseUsageWindowCooldownReleasesPremium5hPenalty(t *testing.T) {
 	store := NewStore(nil, nil, nil)
 	acc := &Account{
@@ -880,7 +880,7 @@ func TestReleaseUsageWindowCooldownReleasesPremium5hPenalty(t *testing.T) {
 	}
 }
 
-// /responses 真 429 的 5h 冷却（ResponsesRateLimitedCooldownReason）是上游拒绝，积分不放行。
+// The 5h cooldown from a real 429 on /responses (ResponsesRateLimitedCooldownReason) is an upstream rejection, and credits do not let it through.
 func TestReleaseUsageWindowCooldownKeepsUpstream5h429(t *testing.T) {
 	store := NewStore(nil, nil, nil)
 	acc := &Account{

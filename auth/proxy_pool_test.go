@@ -51,7 +51,7 @@ func TestProxyPoolAddProxy(t *testing.T) {
 		t.Errorf("expected size 1, got %d", pool.Size())
 	}
 
-	// 重复添加应该被忽略
+	// Adding a duplicate should be ignored.
 	pool.AddProxy("http://proxy1:8080", 10)
 	if pool.Size() != 1 {
 		t.Errorf("expected size 1 after duplicate add, got %d", pool.Size())
@@ -74,7 +74,7 @@ func TestProxyPoolRemoveProxy(t *testing.T) {
 		t.Errorf("expected size 1, got %d", pool.Size())
 	}
 
-	// 移除不存在的代理
+	// Remove a proxy that does not exist.
 	pool.RemoveProxy("http://proxy3:8080")
 	if pool.Size() != 1 {
 		t.Errorf("expected size 1, got %d", pool.Size())
@@ -98,7 +98,7 @@ func TestProxyPoolSelectRoundRobin(t *testing.T) {
 		t.Fatal("Select() returned nil")
 	}
 
-	// 轮询应该交替选择
+	// Round robin should alternate.
 	if selected1.URL == selected2.URL {
 		t.Error("RoundRobin should alternate between proxies")
 	}
@@ -111,7 +111,7 @@ func TestProxyPoolSelectWeighted(t *testing.T) {
 	pool.AddProxy("http://proxy1:8080", 100)
 	pool.AddProxy("http://proxy2:8080", 1)
 
-	// 统计选择次数
+	// Count the selections.
 	counts := make(map[string]int)
 	for i := 0; i < 1000; i++ {
 		selected := pool.Select()
@@ -121,7 +121,7 @@ func TestProxyPoolSelectWeighted(t *testing.T) {
 		counts[selected.URL]++
 	}
 
-	// 权重高的应该被选择更多次
+	// The higher-weight proxy should be selected more often.
 	if counts["http://proxy1:8080"] <= counts["http://proxy2:8080"] {
 		t.Error("Weighted selection should prefer higher weights")
 	}
@@ -134,7 +134,7 @@ func TestProxyPoolSelectLeastConnections(t *testing.T) {
 	pool.AddProxy("http://proxy1:8080", 10)
 	pool.AddProxy("http://proxy2:8080", 10)
 
-	// 模拟 proxy1 有更多连接
+	// Simulate proxy1 having more connections.
 	entry1, _ := pool.findEntry("http://proxy1:8080")
 	entry2, _ := pool.findEntry("http://proxy2:8080")
 	if entry1 == nil || entry2 == nil {
@@ -144,7 +144,7 @@ func TestProxyPoolSelectLeastConnections(t *testing.T) {
 	entry1.ActiveConns.Store(10)
 	entry2.ActiveConns.Store(1)
 
-	// 应该选择连接少的
+	// Should select the one with fewer connections.
 	selected := pool.Select()
 	if selected == nil {
 		t.Fatal("Select() returned nil")
@@ -183,7 +183,7 @@ func TestProxyPoolMarkFailure(t *testing.T) {
 	pool := NewProxyPool(nil)
 	pool.AddProxy("http://proxy1:8080", 10)
 
-	// 多次标记失败
+	// Mark failure several times.
 	for i := 0; i < 5; i++ {
 		pool.MarkFailure("http://proxy1:8080")
 	}
@@ -193,7 +193,7 @@ func TestProxyPoolMarkFailure(t *testing.T) {
 		t.Errorf("expected 5 failed requests, got %d", stats["http://proxy1:8080"].FailedRequests)
 	}
 
-	// 检查是否被隔离
+	// Check whether it was isolated.
 	entry, _ := pool.findEntry("http://proxy1:8080")
 	if entry.Status != ProxyStatusIsolated {
 		t.Error("Proxy should be isolated after consecutive failures")
@@ -204,7 +204,7 @@ func TestProxyPoolAcquireReleaseConnection(t *testing.T) {
 	pool := NewProxyPool(nil)
 	pool.AddProxy("http://proxy1:8080", 10)
 
-	// 获取连接
+	// Acquire connection.
 	if !pool.AcquireConnection("http://proxy1:8080") {
 		t.Error("AcquireConnection should succeed for healthy proxy")
 	}
@@ -214,7 +214,7 @@ func TestProxyPoolAcquireReleaseConnection(t *testing.T) {
 		t.Errorf("expected 1 active connection, got %d", stats["http://proxy1:8080"].ActiveConns)
 	}
 
-	// 释放连接
+	// Release connection.
 	pool.ReleaseConnection("http://proxy1:8080")
 
 	stats = pool.GetStats()
@@ -324,7 +324,7 @@ func TestProxyPoolLoadProxiesFromURLs(t *testing.T) {
 		"http://proxy1:8080",
 		"http://proxy2:8080",
 		"",
-		"http://proxy1:8080", // 重复
+		"http://proxy1:8080", // duplicate
 	}
 
 	pool.LoadProxiesFromURLs(urls, 10)
@@ -351,7 +351,7 @@ func TestProxyPoolRecoverIsolatedProxies(t *testing.T) {
 
 	pool.AddProxy("http://proxy1:8080", 10)
 
-	// 多次失败使代理被隔离
+	// Repeated failures isolate the proxy.
 	for i := 0; i < 5; i++ {
 		pool.MarkFailure("http://proxy1:8080")
 	}
@@ -361,7 +361,7 @@ func TestProxyPoolRecoverIsolatedProxies(t *testing.T) {
 		t.Fatal("Proxy should be isolated")
 	}
 
-	// 轮询等待隔离期结束，而不是固定 sleep
+	// Poll until the isolation period ends, instead of a fixed sleep.
 	start := time.Now()
 	for entry.Status != ProxyStatusHealthy {
 		if time.Since(start) > 2*time.Second {
@@ -451,13 +451,13 @@ func TestProxyPoolCallbacks(t *testing.T) {
 
 	pool.AddProxy("http://proxy1:8080", 10)
 
-	// 触发隔离
+	// Trigger isolation.
 	pool.MarkFailure("http://proxy1:8080")
 	if !isolated {
 		t.Error("OnIsolation callback should be called")
 	}
 
-	// 触发恢复
+	// Trigger recovery.
 	pool.MarkSuccess("http://proxy1:8080")
 	if !recovered {
 		t.Error("OnRecovery callback should be called")
@@ -466,16 +466,16 @@ func TestProxyPoolCallbacks(t *testing.T) {
 
 func TestProxyPoolHealthCheck(t *testing.T) {
 	pool := NewProxyPool(nil)
-	pool.healthCheckURL = "http://127.0.0.1:1/generate_204" // 无效地址
+	pool.healthCheckURL = "http://127.0.0.1:1/generate_204" // invalid address
 
 	pool.AddProxy("http://127.0.0.1:1", 10)
 
-	// 执行健康检查
+	// Run the health check.
 	ctx, cancel := context.WithTimeout(context.Background(), 2*time.Second)
 	defer cancel()
 	pool.HealthCheck(ctx)
 
-	// 由于地址无效，代理应该被标记为不健康
+	// The address is invalid, so the proxy should be marked unhealthy.
 	entry, _ := pool.findEntry("http://127.0.0.1:1")
 	if entry.Healthy {
 		t.Error("Proxy should be marked unhealthy after failed health check")
@@ -486,7 +486,7 @@ func TestProxyPoolForceHealthCheck(t *testing.T) {
 	pool := NewProxyPool(nil)
 	pool.AddProxy("http://127.0.0.1:1", 10)
 
-	// 强制健康检查不应该 panic
+	// Forced health check should not panic.
 	ctx, cancel := context.WithTimeout(context.Background(), 2*time.Second)
 	defer cancel()
 	pool.ForceHealthCheck(ctx)
@@ -496,12 +496,12 @@ func TestProxyPoolStartStop(t *testing.T) {
 	pool := NewProxyPool(nil)
 	pool.AddProxy("http://proxy1:8080", 10)
 
-	// 启动健康检查
+	// Start health checks.
 	pool.StartHealthCheck()
 
-	// 等待一小段时间
+	// Wait a short while.
 	time.Sleep(100 * time.Millisecond)
 
-	// 停止
+	// Stop.
 	pool.Stop()
 }

@@ -145,7 +145,7 @@ func (q *usageFramePersistQueue) persist(s *Store, job usageFramePersistJob) {
 		if err != nil {
 			// Leave the throttle marker untouched; the next frame observation sees
 			// that no successful write happened and enqueues again.
-			log.Printf("[账号 %d] 异步持久化用量快照失败: %v", job.dbID, err)
+			log.Printf("[account %d] failed to persist usage snapshot asynchronously: %v", job.dbID, err)
 		} else {
 			acc.MarkUsageFramePersisted(job.observedAt, job.pct5h, job.has5h, job.pct7d, job.has7d)
 			acc.mu.Lock()
@@ -156,7 +156,7 @@ func (q *usageFramePersistQueue) persist(s *Store, job usageFramePersistJob) {
 		}
 	}
 	if err := s.persistUsageFramePlan(acc); err != nil {
-		log.Printf("[账号 %d] 异步持久化套餐失败: %v", acc.DBID, err)
+		log.Printf("[account %d] failed to persist plan asynchronously: %v", acc.DBID, err)
 	}
 	acc.usageSnapshotPersistMu.Unlock()
 	// Credit/cooldown publication and subscription hooks own their synchronization.

@@ -288,7 +288,7 @@ func TestCodexRefreshExpiredTokenIsPermanent(t *testing.T) {
 		_, _ = w.Write([]byte(`{"error":{"code":"refresh_token_expired"}}`))
 	})
 	err := store.RefreshSingle(context.Background(), id)
-	if err == nil || !strings.Contains(err.Error(), "重新登录") || calls.Load() != 1 || store.FindByID(id).RuntimeStatus() != "unauthorized" {
+	if err == nil || !strings.Contains(err.Error(), "log in again") || calls.Load() != 1 || store.FindByID(id).RuntimeStatus() != "unauthorized" {
 		t.Fatalf("expired RT misclassified: %v, calls %d", err, calls.Load())
 	}
 }

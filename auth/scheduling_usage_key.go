@@ -4,10 +4,10 @@ import (
 	"time"
 )
 
-// 调度模式（remaining_quota / fill_first / round_robin 的 healthy 桶）的排序键是
-// "账号已用配额百分比"，来源是 Codex 的 5h/7d 用量窗口（wham 探针、响应头）。
+// The sort key for the scheduling modes (the healthy buckets of remaining_quota / fill_first / round_robin) is
+// "account used quota percentage", sourced from Codex's 5h/7d usage windows (wham probe, response headers).
 
-// usagePercentForScheduling 返回调度排序用的已用配额百分比。
+// usagePercentForScheduling returns the used quota percentage used for scheduling order.
 func (a *Account) usagePercentForScheduling() float64 {
 	a.mu.RLock()
 	defer a.mu.RUnlock()

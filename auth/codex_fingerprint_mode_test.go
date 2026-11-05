@@ -37,7 +37,7 @@ func TestEffectiveCodexFingerprintMode(t *testing.T) {
 		t.Errorf("nil account mode = %q, want %q", got, CodexFingerprintModeOff)
 	}
 
-	// 未配置的既有账号必须保持 off，升级不改变出站行为。
+	// Existing accounts without configuration must stay off; the upgrade does not change outbound behavior.
 	if got := (&Account{DBID: 1}).EffectiveCodexFingerprintMode(); got != CodexFingerprintModeOff {
 		t.Errorf("unconfigured account mode = %q, want %q", got, CodexFingerprintModeOff)
 	}

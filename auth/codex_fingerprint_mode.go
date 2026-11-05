@@ -2,37 +2,37 @@ package auth
 
 import "strings"
 
-// Codex 设备指纹收敛模式。多人共享同一个 Codex OAuth 账号时，每个下游用户的
-// Codex 客户端携带各自的 installation_id / session_id / thread_id，上游据此
-// 判定这一个账号背后有多少台设备、多少个会话。收敛模式把这些标识改写成账号级
-// 恒定值，让上游看到的设备/会话数收敛到接近单人使用的形态。
+// Codex device fingerprint convergence mode. When several people share the same Codex OAuth account, each downstream user's
+// Codex client carries its own installation_id / session_id / thread_id, which the upstream uses to
+// determine how many devices and how many sessions sit behind this one account. Convergence mode rewrites these identifiers to account-level
+// constant values, so the device/session count the upstream sees converges toward the shape of a single user.
 //
 // Legacy modes only rewrite identity metadata. Session identity convergence also aligns
 // session/thread headers while leaving gateway prompt-cache partitioning intact.
 // No mode is enabled implicitly for existing accounts.
 const (
-	// CodexFingerprintModeOff 不做任何收敛，客户端标识原样透传（默认）。
+	// CodexFingerprintModeOff does no convergence; client identifiers pass through unchanged (default).
 	CodexFingerprintModeOff = "off"
 	// CodexFingerprintModeSingleMachineMultiWindow shares a device, not a conversation.
 	// Real windows and child threads retain distinct deterministic identities.
 	CodexFingerprintModeSingleMachineMultiWindow = "single_machine_multi_window"
-	// CodexFingerprintModeDevice 仅把 installation_id 收敛为账号级恒定值。
-	// 上游看到 1 台设备 + 每个下游用户各自的会话。
+	// CodexFingerprintModeDevice only converges installation_id to an account-level constant.
+	// The upstream sees 1 device + each downstream user's own sessions.
 	CodexFingerprintModeDevice = "device"
-	// CodexFingerprintModeSession 收敛 installation_id + session_id，并按客户端
-	// 原始会话标识确定性派生 thread_id：每个真实 Codex 会话得到一个独立线程。
-	// 上游看到 1 台设备 + 1 会话 + N 线程，接近单人开多窗口/spawn 子代理的形态。
+	// CodexFingerprintModeSession converges installation_id + session_id, and per client
+	// original session identifier deterministically derives thread_id: each real Codex session gets its own thread.
+	// The upstream sees 1 device + 1 session + N threads, close to a single person opening multiple windows or spawning sub-agents.
 	CodexFingerprintModeSession = "session"
-	// CodexFingerprintModeFull 令 thread_id 等于 session_id，上游看到
-	// 1 台设备 + 1 会话 + 1 线程。最激进，也最不像真实客户端的并发形态。
+	// CodexFingerprintModeFull makes thread_id equal session_id, so the upstream sees
+	// 1 device + 1 session + 1 thread. The most aggressive mode, and the concurrency shape least like a real client.
 	CodexFingerprintModeFull = "full"
 )
 
-// CodexFingerprintModeCredentialKey 是该模式在账号 credentials 中的存储键。
+// CodexFingerprintModeCredentialKey is the storage key for this mode in the account credentials.
 const CodexFingerprintModeCredentialKey = "codex_fingerprint_mode"
 
-// NormalizeCodexFingerprintMode 归一化模式取值；空值和非法值都落到 off，
-// 保证既有账号在升级后出站行为完全不变，必须显式配置才启用收敛。
+// NormalizeCodexFingerprintMode normalizes the mode value; empty and invalid values both fall back to off,
+// so existing accounts keep exactly the same outbound behavior after an upgrade; convergence is enabled only by explicit configuration.
 func NormalizeCodexFingerprintMode(value string) string {
 	switch strings.ToLower(strings.TrimSpace(value)) {
 	case CodexFingerprintModeSingleMachineMultiWindow:
@@ -58,7 +58,7 @@ func IsValidCodexFingerprintMode(value string) bool {
 	}
 }
 
-// EffectiveCodexFingerprintMode 返回账号生效的收敛模式。
+// EffectiveCodexFingerprintMode returns the convergence mode in effect for the account.
 func (a *Account) EffectiveCodexFingerprintMode() string {
 	if a == nil {
 		return CodexFingerprintModeOff

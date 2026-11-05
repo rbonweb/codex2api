@@ -2,18 +2,18 @@ package auth
 
 import "sync/atomic"
 
-// resinEgressEnabled 记录 Resin 反代是否承担 Codex 渠道出站。配置本体在 proxy 包
-// (auth 不能反向依赖 proxy),由 proxy.SetResinConfig 同步写入。调度器的代理池
-// fail-closed 过滤据此放行 Codex 账号:Resin 自带出口 IP,"池空/绑定的代理已禁用"
-// 不再意味着账号会脏 IP 直连(issue #679)。
+// resinEgressEnabled records whether the Resin reverse proxy carries the Codex channel's egress. The config itself lives in the proxy package
+// (auth cannot depend on proxy in reverse), and is written in sync by proxy.SetResinConfig. The scheduler's proxy pool
+// fail-closed filter uses this to let Codex accounts through: Resin brings its own egress IP, so "pool empty / bound proxy disabled"
+// no longer means the account will connect directly with a dirty IP (issue #679).
 var resinEgressEnabled atomic.Bool
 
-// SetResinEgressEnabled 由 proxy 包在 Resin 启用/禁用时调用。
+// SetResinEgressEnabled is called by the proxy package when Resin is enabled or disabled.
 func SetResinEgressEnabled(enabled bool) {
 	resinEgressEnabled.Store(enabled)
 }
 
-// ResinEgressEnabled 报告 Resin 是否正在承担 Codex 渠道出站。
+// ResinEgressEnabled reports whether Resin is currently carrying the Codex channel's egress.
 func ResinEgressEnabled() bool {
 	return resinEgressEnabled.Load()
 }

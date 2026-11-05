@@ -9,14 +9,14 @@ import (
 	"time"
 )
 
-// RefreshSchedulerIntegration 为 Store 提供刷新调度器集成功能
+// RefreshSchedulerIntegration provides refresh scheduler integration for Store.
 type RefreshSchedulerIntegration struct {
 	store     *Store
 	scheduler *RefreshScheduler
 	enabled   atomic.Bool
 }
 
-// EnableRefreshScheduler 启用智能刷新调度器
+// EnableRefreshScheduler enables the smart refresh scheduler.
 func (s *Store) EnableRefreshScheduler(config RefreshConfig) {
 	if s == nil {
 		return
@@ -50,17 +50,17 @@ func (s *Store) EnableRefreshScheduler(config RefreshConfig) {
 	}
 	integration.enabled.Store(true)
 
-	// 启动调度器（生命周期由 scheduler.Stop() 管理，不能在此 defer cancel）
+	// Start the scheduler (its lifecycle is managed by scheduler.Stop(); do not defer cancel here).
 	integration.scheduler.Start(context.Background())
 
-	// 存储到 store
+	// Store it in the store.
 	s.refreshScheduler.Store(integration)
 
-	log.Printf("[Store] 智能刷新调度器已启用（并发: %d, 预过期窗口: %v）",
+	log.Printf("[Store] smart refresh scheduler enabled (concurrency: %d, pre-expire window: %v)",
 		config.MaxConcurrency, config.PreExpireWindow)
 }
 
-// DisableRefreshScheduler 禁用智能刷新调度器
+// DisableRefreshScheduler disables the smart refresh scheduler.
 func (s *Store) DisableRefreshScheduler() {
 	if s == nil {
 		return
@@ -70,11 +70,11 @@ func (s *Store) DisableRefreshScheduler() {
 		integration.enabled.Store(false)
 		integration.scheduler.Stop()
 		s.refreshScheduler.Store(nil)
-		log.Println("[Store] 智能刷新调度器已禁用")
+		log.Println("[Store] smart refresh scheduler disabled")
 	}
 }
 
-// RefreshSchedulerEnabled 检查智能刷新调度器是否启用
+// RefreshSchedulerEnabled reports whether the smart refresh scheduler is enabled.
 func (s *Store) RefreshSchedulerEnabled() bool {
 	if s == nil {
 		return false
@@ -85,7 +85,7 @@ func (s *Store) RefreshSchedulerEnabled() bool {
 	return false
 }
 
-// GetRefreshScheduler 获取刷新调度器实例
+// GetRefreshScheduler returns the refresh scheduler instance.
 func (s *Store) GetRefreshScheduler() *RefreshScheduler {
 	if s == nil {
 		return nil
@@ -96,29 +96,29 @@ func (s *Store) GetRefreshScheduler() *RefreshScheduler {
 	return nil
 }
 
-// ScheduleAccountRefresh 调度账号刷新
+// ScheduleAccountRefresh schedules a refresh for an account.
 func (s *Store) ScheduleAccountRefresh(acc *Account) {
 	if s == nil || acc == nil {
 		return
 	}
 
-	// 优先使用智能调度器
+	// Prefer the smart scheduler.
 	if scheduler := s.GetRefreshScheduler(); scheduler != nil {
 		scheduler.Schedule(acc)
 		return
 	}
 
-	// 回退到传统方式：立即刷新
+	// Fall back to the legacy approach: refresh immediately.
 	s.startDBBackgroundTask(func(parent context.Context) {
 		ctx, cancel := context.WithTimeout(parent, 30*time.Second)
 		defer cancel()
 		if err := s.refreshAccount(ctx, acc); err != nil {
-			log.Printf("[账号 %d] 异步刷新失败: %v", acc.DBID, err)
+			log.Printf("[account %d] async refresh failed: %v", acc.DBID, err)
 		}
 	})
 }
 
-// ScheduleImmediateRefresh 立即调度账号刷新
+// ScheduleImmediateRefresh schedules an immediate refresh for an account.
 func (s *Store) ScheduleImmediateRefresh(acc *Account) {
 	if s == nil || acc == nil {
 		return
@@ -129,11 +129,11 @@ func (s *Store) ScheduleImmediateRefresh(acc *Account) {
 		return
 	}
 
-	// 回退到传统方式
+	// Fall back to the legacy approach.
 	s.ScheduleAccountRefresh(acc)
 }
 
-// GetRefreshMetrics 获取刷新指标
+// GetRefreshMetrics returns the refresh metrics.
 func (s *Store) GetRefreshMetrics() RefreshMetricsSnapshot {
 	if scheduler := s.GetRefreshScheduler(); scheduler != nil {
 		return scheduler.GetMetrics()
@@ -141,7 +141,7 @@ func (s *Store) GetRefreshMetrics() RefreshMetricsSnapshot {
 	return RefreshMetricsSnapshot{}
 }
 
-// GetRefreshTaskStatus 获取刷新任务状态
+// GetRefreshTaskStatus returns the refresh task status.
 func (s *Store) GetRefreshTaskStatus(dbID int64) (RefreshState, int, error) {
 	if scheduler := s.GetRefreshScheduler(); scheduler != nil {
 		return scheduler.GetTaskStatus(dbID)
@@ -149,7 +149,7 @@ func (s *Store) GetRefreshTaskStatus(dbID int64) (RefreshState, int, error) {
 	return RefreshStateSuccess, 0, nil
 }
 
-// CancelRefreshTask 取消刷新任务
+// CancelRefreshTask cancels a refresh task.
 func (s *Store) CancelRefreshTask(dbID int64) bool {
 	if scheduler := s.GetRefreshScheduler(); scheduler != nil {
 		return scheduler.CancelTask(dbID)
@@ -157,20 +157,20 @@ func (s *Store) CancelRefreshTask(dbID int64) bool {
 	return false
 }
 
-// InitRefreshSchedulerFromEnv 从环境变量初始化刷新调度器
+// InitRefreshSchedulerFromEnv initializes the refresh scheduler from environment variables.
 func (s *Store) InitRefreshSchedulerFromEnv() {
 	if s == nil {
 		return
 	}
 
-	// 检查是否启用
+	// Check whether it is enabled.
 	if !refreshSchedulerEnabledFromEnv() {
 		return
 	}
 
 	config := DefaultRefreshConfig()
 
-	// 从环境变量读取配置
+	// Read the configuration from environment variables.
 	if v := getEnvInt("REFRESH_MAX_CONCURRENCY", 0); v > 0 {
 		config.MaxConcurrency = v
 	}
@@ -197,7 +197,7 @@ func (s *Store) InitRefreshSchedulerFromEnv() {
 	s.EnableRefreshScheduler(config)
 }
 
-// refreshSchedulerEnabledFromEnv 检查环境变量是否启用刷新调度器
+// refreshSchedulerEnabledFromEnv checks whether the refresh scheduler is enabled by environment variable.
 func refreshSchedulerEnabledFromEnv() bool {
 	for _, key := range []string{"REFRESH_SCHEDULER_ENABLED", "SMART_REFRESH_ENABLED"} {
 		if truthyEnv(refreshGetEnv(key, "")) {
@@ -207,7 +207,7 @@ func refreshSchedulerEnabledFromEnv() bool {
 	return false
 }
 
-// refreshGetEnv 获取环境变量
+// refreshGetEnv gets an environment variable.
 func refreshGetEnv(key, defaultValue string) string {
 	if v := os.Getenv(key); v != "" {
 		return v
@@ -215,7 +215,7 @@ func refreshGetEnv(key, defaultValue string) string {
 	return defaultValue
 }
 
-// getEnvInt 获取整数环境变量
+// getEnvInt gets an integer environment variable.
 func getEnvInt(key string, defaultValue int) int {
 	v := os.Getenv(key)
 	if v == "" {
@@ -228,7 +228,7 @@ func getEnvInt(key string, defaultValue int) int {
 	return i
 }
 
-// getEnvDuration 获取持续时间环境变量
+// getEnvDuration gets a duration environment variable.
 func getEnvDuration(key string, defaultValue time.Duration) time.Duration {
 	v := os.Getenv(key)
 	if v == "" {
@@ -241,7 +241,7 @@ func getEnvDuration(key string, defaultValue time.Duration) time.Duration {
 	return d
 }
 
-// getEnvFloat 获取浮点数环境变量
+// getEnvFloat gets a float environment variable.
 func getEnvFloat(key string, defaultValue float64) float64 {
 	v := os.Getenv(key)
 	if v == "" {

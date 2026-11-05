@@ -8,9 +8,9 @@ import (
 func BenchmarkFastSchedulerAcquire10000(b *testing.B) { benchmarkFastSchedulerAcquire(b, 10000) }
 func BenchmarkFastSchedulerAcquire50000(b *testing.B) { benchmarkFastSchedulerAcquire(b, 50000) }
 
-// BenchmarkStoreAddAccount 量化"往已有号池里加一个账号"的代价随号池大小的变化。
-// 这条路径持有 Store 全局写锁，所有请求（调度取号、账号列表）都要排在它后面，
-// 所以它必须与号池大小无关——否则批量导入会把整个网关卡住。
+// BenchmarkStoreAddAccount measures how the cost of "adding one account to an existing pool" changes with pool size.
+// This path holds the global Store write lock, and every request (scheduling account picks, account listing) has to queue behind it,
+// so it must be independent of pool size: otherwise a bulk import would stall the whole gateway.
 func BenchmarkStoreAddAccount(b *testing.B) {
 	for _, pool := range []int{1000, 5000, 20000} {
 		b.Run("pool="+strconv.Itoa(pool), func(b *testing.B) {
@@ -23,8 +23,8 @@ func BenchmarkStoreAddAccount(b *testing.B) {
 	}
 }
 
-// BenchmarkFastSchedulerUpdate 量化稳态下的单次调度器条目更新（每次请求 Release、
-// 每次用量刷新、每次冷却标记都会走这里）。同样必须与号池大小无关。
+// BenchmarkFastSchedulerUpdate measures a single scheduler entry update in steady state (every request Release,
+// every usage refresh, and every cooldown mark goes through here). It must likewise be independent of pool size.
 func BenchmarkFastSchedulerUpdate(b *testing.B) {
 	for _, pool := range []int{1000, 5000, 20000} {
 		b.Run("pool="+strconv.Itoa(pool), func(b *testing.B) {

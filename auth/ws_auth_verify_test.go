@@ -9,8 +9,8 @@ import (
 	"github.com/codex2api/database"
 )
 
-// TestVerifyAccountAuthAsync 验证 WS 异常关闭后的鉴权验证探针：
-// 触发一次探针，且 30s 内的重复触发被节流跳过。
+// TestVerifyAccountAuthAsync verifies the auth verification probe after an abnormal WS close:
+// one probe fires, and repeated triggers within 30s are skipped by throttling.
 func TestVerifyAccountAuthAsync(t *testing.T) {
 	store := NewStore(nil, nil, &database.SystemSettings{MaxConcurrency: 2, TestConcurrency: 1, TestModel: "gpt-5.5"})
 
@@ -28,19 +28,19 @@ func TestVerifyAccountAuthAsync(t *testing.T) {
 	select {
 	case <-done:
 	case <-time.After(2 * time.Second):
-		t.Fatal("期望触发一次鉴权验证探针")
+		t.Fatal("expected one auth verification probe to fire")
 	}
 
-	// 节流：30s 内的第二次触发应被跳过。
+	// Throttling: a second trigger within 30s should be skipped.
 	store.VerifyAccountAuthAsync(acc)
 	time.Sleep(100 * time.Millisecond)
 	if got := atomic.LoadInt32(&calls); got != 1 {
-		t.Fatalf("探针调用次数 = %d, want 1（应被节流）", got)
+		t.Fatalf("probe call count = %d, want 1 (should be throttled)", got)
 	}
 }
 
-// TestVerifyAccountAuthAsyncNoProbeFunc 未注册探针时不 panic、直接返回。
+// TestVerifyAccountAuthAsyncNoProbeFunc does not panic and returns directly when no probe is registered.
 func TestVerifyAccountAuthAsyncNoProbeFunc(t *testing.T) {
 	store := NewStore(nil, nil, &database.SystemSettings{MaxConcurrency: 2, TestConcurrency: 1, TestModel: "gpt-5.5"})
-	store.VerifyAccountAuthAsync(&Account{DBID: 1, AccessToken: "at"}) // 不应 panic
+	store.VerifyAccountAuthAsync(&Account{DBID: 1, AccessToken: "at"}) // should not panic
 }

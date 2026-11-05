@@ -117,7 +117,7 @@ func (s *Store) startSchedulerOutboxConsumer(startWatermark int64) {
 			if isSchedulerOutboxTerminalError(ctx, err) {
 				return false
 			}
-			// 瞬时错误退避重试:错误连击越多,跳过的 poll tick 越多,封顶 5s。
+			// Back off and retry on transient errors: the more consecutive errors, the more poll ticks are skipped, capped at 5s.
 			errStreak++
 			backoff := time.Duration(min(errStreak, 20)) * schedulerOutboxPollInterval
 			retryNotBefore = time.Now().Add(backoff)
@@ -138,7 +138,7 @@ func (s *Store) startSchedulerOutboxConsumer(startWatermark int64) {
 					return
 				}
 			case <-reconcile.C:
-				// 事件流之外的兜底:低频全量对账修复任何被漏掉的状态。
+				// Fallback outside the event stream: a low-frequency full reconciliation repairs any state that was missed.
 				s.TriggerDispatchStateReconcileAsync()
 			case <-cleanup.C:
 				cutoff := time.Now().Add(-schedulerOutboxRetention)
@@ -149,7 +149,7 @@ func (s *Store) startSchedulerOutboxConsumer(startWatermark int64) {
 							return
 						}
 						if !errors.Is(err, context.Canceled) {
-							log.Printf("清理调度 outbox 失败: %v", err)
+							log.Printf("failed to clean up scheduler outbox: %v", err)
 						}
 						break
 					}
@@ -310,7 +310,7 @@ func (s *Store) recordSchedulerOutboxError(err error) {
 		s.schedulerMetrics.outboxErrors.Add(1)
 	}
 	if err != nil && !errors.Is(err, context.Canceled) {
-		log.Printf("同步调度 outbox 失败: %v", err)
+		log.Printf("failed to sync scheduler outbox: %v", err)
 	}
 }
 
@@ -622,8 +622,8 @@ func (s *Store) reloadAPIKeyRoutingByID(ctx context.Context, apiKeyID int64) err
 		}
 	}
 	s.apiKeyGroupsMu.Unlock()
-	// 全局索引的内容与 api_key 行无关(组/plan/渠道限制在取号时经
-	// groupCheck 实时校验),这里只需丢弃按 key 缓存的子池。
+	// The content of the global index is unrelated to api_key rows (group, plan and channel limits are checked when an account is picked, via
+	// groupCheck), so here we only need to drop the sub-pools cached per key.
 	s.invalidateRoutingSchedulers()
 	s.notifySchedulerAvailability()
 	return nil

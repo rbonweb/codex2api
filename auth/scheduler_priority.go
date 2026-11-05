@@ -1,9 +1,9 @@
 package auth
 
-// 账号调度优先级（issue #358）：优先级高的账号严格先调度，同优先级内再按
-// 健康档位与调度分竞争；账号不可用（冷却/暂停/限额）时自然回落到低优先级。
-// 典型用法：官方账号设正值、API-Key 中转渠道保持默认或设负值，实现
-// 「官方账号用尽才落中转」的兜底编排。
+// Account scheduling priority (issue #358): accounts with higher priority are always scheduled first; within the same priority,
+// health tier and scheduling score compete; when an account is unavailable (cooling down / paused / limited), traffic naturally falls back to lower priority.
+// Typical use: give official accounts a positive value, and leave API-key relay channels at the default or set a negative value, to implement
+// the fallback arrangement of "relay only once official accounts are used up".
 const (
 	minSchedulerPriority int64 = -100
 	maxSchedulerPriority int64 = 100
@@ -42,7 +42,7 @@ func (a *Account) GetSchedulerPriority() int64 {
 	return a.schedulerPriority()
 }
 
-// ApplyAccountSchedulerPriority 动态更新账号调度优先级（nil 恢复默认 0）。
+// ApplyAccountSchedulerPriority dynamically updates an account's scheduling priority (nil restores the default 0).
 func (s *Store) ApplyAccountSchedulerPriority(dbID int64, priority *int64) bool {
 	acc := s.FindByID(dbID)
 	if acc == nil {

@@ -16,7 +16,7 @@ func newPermanentFailureTestStore() (*Store, *Account) {
 
 func TestPermanentRefreshFailureEscalatesToTerminalError(t *testing.T) {
 	store, acc := newPermanentFailureTestStore()
-	failure := errors.New(`刷新失败 (status 401): {"error":{"code":"refresh_token_invalidated"}}`)
+	failure := errors.New(`refresh failed (status 401): {"error":{"code":"refresh_token_invalidated"}}`)
 
 	for i := 1; i < permanentRefreshFailureTerminalLimit; i++ {
 		store.markPermanentRefreshFailure(acc, failure)
@@ -37,8 +37,8 @@ func TestTerminalRefreshFailureExitsRecoveryProbeRotation(t *testing.T) {
 		store.markPermanentRefreshFailure(acc, failure)
 	}
 
-	// banned 层在 runtimeStatusLocked 里无条件显示 unauthorized、且是恢复
-	// 探测的准入层——终态账号必须已降出 banned,否则永远进不了 error 筛选。
+	// The banned tier in runtimeStatusLocked unconditionally shows unauthorized, and it is the recovery
+	// probe admission tier: a terminal account must already be moved out of banned, otherwise it can never reach the error filter.
 	acc.mu.RLock()
 	tier := acc.HealthTier
 	acc.mu.RUnlock()
@@ -49,8 +49,8 @@ func TestTerminalRefreshFailureExitsRecoveryProbeRotation(t *testing.T) {
 		t.Fatal("terminal dead-RT account must exit the recovery probe rotation")
 	}
 
-	// 兜底闸:请求侧 401 等路径把账号重新压回 banned 层时,判死计数未清零
-	// 就仍不该拿同一个死 RT 去探测。
+	// Fallback gate: when request-side 401 and similar paths push the account back into the banned tier, the terminal-failure counter has not been reset
+	// so the same dead RT still must not be used for probing.
 	acc.mu.Lock()
 	acc.HealthTier = HealthTierBanned
 	acc.mu.Unlock()
@@ -58,7 +58,7 @@ func TestTerminalRefreshFailureExitsRecoveryProbeRotation(t *testing.T) {
 		t.Fatal("re-banned terminal account must stay out of the probe rotation while the counter stands")
 	}
 
-	// 人工清理(重新授权入口)重置判死计数,恢复探测资格。
+	// A manual cleanup (the re-authorization entry point) resets the terminal-failure counter and restores probe eligibility.
 	store.ClearCooldown(acc)
 	acc.mu.Lock()
 	acc.HealthTier = HealthTierBanned

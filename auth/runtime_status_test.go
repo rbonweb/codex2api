@@ -57,7 +57,7 @@ func TestMarkCooldownWithErrorKeepsUnauthorizedStatusAndMessage(t *testing.T) {
 		HealthTier:  HealthTierHealthy,
 	}
 
-	store.MarkCooldownWithError(acc, 24*time.Hour, "unauthorized", "上游返回 401: token_invalidated")
+	store.MarkCooldownWithError(acc, 24*time.Hour, "unauthorized", "upstream returned 401: token_invalidated")
 
 	if got := acc.RuntimeStatus(); got != "unauthorized" {
 		t.Fatalf("RuntimeStatus() = %q, want unauthorized", got)
@@ -79,7 +79,7 @@ func TestMarkCooldownWithErrorKeepsUnauthorizedStatusAndMessage(t *testing.T) {
 	}
 }
 
-// TestUnauthorizedCooldownDurationPolicies 验证 unauthorized 的自适应和精确时长冷却策略。
+// TestUnauthorizedCooldownDurationPolicies verifies the adaptive and exact-duration cooldown policies for unauthorized.
 func TestUnauthorizedCooldownDurationPolicies(t *testing.T) {
 	tests := []struct {
 		name     string
@@ -154,7 +154,7 @@ func TestMarkUsage7dRateLimitedUsesActiveResetWindow(t *testing.T) {
 	}
 }
 
-// 信用账号只有在「当下真有积分可花」时才跳过 7d 用量窗口判罚。
+// A credits account skips the 7d usage window penalty only when it has credits to spend right now.
 func TestMarkUsage7dRateLimitedSkipsCreditUsageWindow(t *testing.T) {
 	store := NewStore(nil, nil, nil)
 	acc := &Account{
@@ -173,7 +173,7 @@ func TestMarkUsage7dRateLimitedSkipsCreditUsageWindow(t *testing.T) {
 	if store.MarkUsage7dRateLimited(acc) {
 		t.Fatal("MarkUsage7dRateLimited() = true, want false for credit account with balance")
 	}
-	// 显示仍是限流，但账号照常参与调度（下面的 IsAvailable 断言）。
+	// Still shows as rate limited, but the account keeps taking part in scheduling (see the IsAvailable assertion below).
 	if got := acc.RuntimeStatus(); got != "rate_limited" {
 		t.Fatalf("RuntimeStatus() = %q, want rate_limited for credit account with balance", got)
 	}
@@ -185,7 +185,7 @@ func TestMarkUsage7dRateLimitedSkipsCreditUsageWindow(t *testing.T) {
 	}
 }
 
-// 积分归零后信用开关不再豁免 7d 判罚——否则调度会一直喂给必然 429 的账号。
+// Once credits hit zero, the credits switch no longer exempts the 7d penalty; otherwise scheduling would keep feeding accounts that are certain to get a 429.
 func TestMarkUsage7dRateLimitedAppliesWhenCreditsDrained(t *testing.T) {
 	store := NewStore(nil, nil, nil)
 	acc := &Account{
@@ -209,7 +209,7 @@ func TestMarkUsage7dRateLimitedAppliesWhenCreditsDrained(t *testing.T) {
 	}
 }
 
-// 余额未探测（credits_valid=false）同样不豁免：未知按没有处理。
+// An unprobed balance (credits_valid=false) is likewise not exempt: unknown is treated as none.
 func TestMarkUsage7dRateLimitedAppliesWhenBalanceUnprobed(t *testing.T) {
 	store := NewStore(nil, nil, nil)
 	acc := &Account{

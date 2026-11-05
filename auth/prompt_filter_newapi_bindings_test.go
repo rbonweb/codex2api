@@ -21,7 +21,7 @@ func TestStoreInitLoadsAndHotReplacesPromptFilterNewAPIBinding(t *testing.T) {
 		t.Fatalf("InsertAPIKey: %v", err)
 	}
 	binding := &database.PromptFilterNewAPIBinding{
-		APIKeyID: apiKeyID, PlatformCode: "gateway-a", PlatformName: "示例平台", Secret: "01234567890123456789012345678901",
+		APIKeyID: apiKeyID, PlatformCode: "gateway-a", PlatformName: "Example platform", Secret: "01234567890123456789012345678901",
 		Enabled: true, RequireSignedIdentity: true, PolicyMode: "enforce", PolicyProfile: "balanced",
 	}
 	if err := db.CreatePromptFilterNewAPIBinding(ctx, binding); err != nil {

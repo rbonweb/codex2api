@@ -32,7 +32,7 @@ func TestMarkDeactivatedWorkspaceFansOutSameWorkspace(t *testing.T) {
 		store.AddAccount(acc)
 	}
 
-	store.MarkDeactivatedWorkspace(trigger, "上游返回 402: deactivated_workspace")
+	store.MarkDeactivatedWorkspace(trigger, "upstream returned 402: deactivated_workspace")
 
 	if trigger.RuntimeStatus() != "error" {
 		t.Fatalf("trigger status = %q, want error", trigger.RuntimeStatus())
@@ -40,7 +40,7 @@ func TestMarkDeactivatedWorkspaceFansOutSameWorkspace(t *testing.T) {
 	if !strings.Contains(accountErrorMsg(trigger), "deactivated_workspace") {
 		t.Fatalf("trigger ErrorMsg = %q, want original deactivated_workspace text", accountErrorMsg(trigger))
 	}
-	if strings.Contains(accountErrorMsg(trigger), "工作区联动") {
+	if strings.Contains(accountErrorMsg(trigger), "workspace-linked") {
 		t.Fatalf("trigger ErrorMsg = %q, must not use linked wording", accountErrorMsg(trigger))
 	}
 
@@ -51,7 +51,7 @@ func TestMarkDeactivatedWorkspaceFansOutSameWorkspace(t *testing.T) {
 		if atomic.LoadInt32(&acc.Disabled) == 0 {
 			t.Fatalf("sibling %d should be instantly unschedulable", acc.DBID)
 		}
-		if !strings.Contains(accountErrorMsg(acc), "工作区联动") || !strings.Contains(accountErrorMsg(acc), "账号 1") {
+		if !strings.Contains(accountErrorMsg(acc), "workspace-linked") || !strings.Contains(accountErrorMsg(acc), "account 1") {
 			t.Fatalf("sibling %d ErrorMsg = %q, want linked trigger annotation", acc.DBID, accountErrorMsg(acc))
 		}
 	}
@@ -71,11 +71,11 @@ func TestMarkDeactivatedWorkspaceDedupWithinTTL(t *testing.T) {
 	store.AddAccount(first)
 	store.AddAccount(second)
 
-	store.MarkDeactivatedWorkspace(first, "上游返回 402: deactivated_workspace")
+	store.MarkDeactivatedWorkspace(first, "upstream returned 402: deactivated_workspace")
 
 	late := newWorkspaceLinkedAccount(3, "team-A")
 	store.AddAccount(late)
-	store.MarkDeactivatedWorkspace(second, "上游返回 402: deactivated_workspace")
+	store.MarkDeactivatedWorkspace(second, "upstream returned 402: deactivated_workspace")
 
 	if late.RuntimeStatus() == "error" {
 		t.Fatal("same-workspace fan-out within TTL must be skipped")
@@ -89,7 +89,7 @@ func TestMarkDeactivatedWorkspaceMissingWorkspaceIDDoesNothing(t *testing.T) {
 	store.AddAccount(trigger)
 	store.AddAccount(sibling)
 
-	store.MarkDeactivatedWorkspace(trigger, "上游返回 402: deactivated_workspace")
+	store.MarkDeactivatedWorkspace(trigger, "upstream returned 402: deactivated_workspace")
 
 	if trigger.RuntimeStatus() != "error" {
 		t.Fatalf("trigger status = %q, want error", trigger.RuntimeStatus())
@@ -109,7 +109,7 @@ func TestMarkDeactivatedWorkspaceOverrideTargetsNativeWorkspace(t *testing.T) {
 	store.AddAccount(nativeA)
 	store.AddAccount(nativeB)
 
-	store.MarkDeactivatedWorkspace(trigger, "上游返回 402: deactivated_workspace")
+	store.MarkDeactivatedWorkspace(trigger, "upstream returned 402: deactivated_workspace")
 
 	if nativeA.RuntimeStatus() != "error" {
 		t.Fatal("native members of the overridden workspace should be marked")
@@ -137,7 +137,7 @@ func TestMarkDeactivatedWorkspaceLinksTeamAndK12SeatsByEffectiveWorkspace(t *tes
 		store.AddAccount(acc)
 	}
 
-	store.MarkDeactivatedWorkspace(trigger, "上游返回 402: deactivated_workspace")
+	store.MarkDeactivatedWorkspace(trigger, "upstream returned 402: deactivated_workspace")
 
 	if k12Seat.RuntimeStatus() != "error" {
 		t.Fatal("k12 seat in the same effective workspace should be marked")
@@ -167,12 +167,12 @@ func TestMarkDeactivatedWorkspaceOverridesRateLimitedDisplay(t *testing.T) {
 	store.AddAccount(trigger)
 	store.AddAccount(limited)
 
-	store.MarkDeactivatedWorkspace(trigger, "上游返回 402: deactivated_workspace")
+	store.MarkDeactivatedWorkspace(trigger, "upstream returned 402: deactivated_workspace")
 
 	if got := limited.RuntimeStatus(); got != "error" {
 		t.Fatalf("after link RuntimeStatus() = %q, want error (not rate_limited)", got)
 	}
-	if !strings.Contains(accountErrorMsg(limited), "工作区联动") {
+	if !strings.Contains(accountErrorMsg(limited), "workspace-linked") {
 		t.Fatalf("ErrorMsg = %q, want linked annotation", accountErrorMsg(limited))
 	}
 }
@@ -188,10 +188,10 @@ func TestLinkedDeactivatedWorkspaceResultSkipsSameWorkspaceSeats(t *testing.T) {
 	plusRouted.PlanType = "plus"
 	plusRouted.CustomHeaders = map[string]string{openaiidentity.ChatGPTAccountIDHeader: "org-ws"}
 	store.AddAccount(trigger)
-	store.MarkDeactivatedWorkspace(trigger, "上游返回 402: deactivated_workspace")
+	store.MarkDeactivatedWorkspace(trigger, "upstream returned 402: deactivated_workspace")
 
 	msg, ok := store.LinkedDeactivatedWorkspaceResult(lateK12)
-	if !ok || !strings.Contains(msg, "工作区联动") || !strings.Contains(msg, "账号 1") {
+	if !ok || !strings.Contains(msg, "workspace-linked") || !strings.Contains(msg, "account 1") {
 		t.Fatalf("late k12 skip = (%q, %v)", msg, ok)
 	}
 	if msg, ok := store.LinkedDeactivatedWorkspaceResult(plusRouted); ok {

@@ -17,7 +17,7 @@ func newSpreadTestStore(t *testing.T, accounts int) *Store {
 	return store
 }
 
-// 同一亲和键在号池不变时恒命中同一账号(幂等一一绑定,issue #484 诉求)。
+// The same affinity key always hits the same account while the account pool is unchanged (idempotent one-to-one binding, issue #484 requirement).
 func TestFreshAffinitySpreadDeterministic(t *testing.T) {
 	store := newSpreadTestStore(t, 3)
 
@@ -36,8 +36,8 @@ func TestFreshAffinitySpreadDeterministic(t *testing.T) {
 	}
 }
 
-// 不同亲和键在候选账号上均匀摊开,不再全部涌向同一账号——这就是 issue #484
-// 里 10 个下游键 90% 聚到一个账号的对照场景。
+// Different affinity keys spread evenly across candidate accounts instead of all flocking to one account, which is the issue #484
+// control case where 90% of 10 downstream keys pile onto one account.
 func TestFreshAffinitySpreadDistributes(t *testing.T) {
 	store := newSpreadTestStore(t, 3)
 
@@ -61,7 +61,7 @@ func TestFreshAffinitySpreadDistributes(t *testing.T) {
 	}
 }
 
-// 哈希首选被占满时确定性顺延到哈希序下一名;释放后新绑定回到首选。
+// When the hash-preferred account is full, the choice deterministically moves to the next one in hash order; after release, new bindings return to the preferred account.
 func TestFreshAffinitySpreadFallsThroughWhenTopBusy(t *testing.T) {
 	store := NewStore(nil, nil, &database.SystemSettings{MaxConcurrency: 1, TestConcurrency: 1, TestModel: "gpt-5.4"})
 	for i := 1; i <= 3; i++ {
@@ -74,7 +74,7 @@ func TestFreshAffinitySpreadFallsThroughWhenTopBusy(t *testing.T) {
 	if top == nil {
 		t.Fatal("no account selected")
 	}
-	// 首选被占满(MaxConcurrency=1),同键再选必须顺延到别的账号而不是失败。
+	// The preferred account is full (MaxConcurrency=1); selecting the same key again must move to another account instead of failing.
 	second := store.nextAccountForFreshAffinity(key, 0, nil, nil)
 	if second == nil {
 		t.Fatal("expected fall-through account while top is busy")
@@ -92,7 +92,7 @@ func TestFreshAffinitySpreadFallsThroughWhenTopBusy(t *testing.T) {
 	store.Release(again)
 }
 
-// 调度优先级严格分层:低优先级账号即使哈希更大也不得越过高优先级层。
+// Scheduling priority is strictly layered: a lower-priority account must not cross into a higher-priority layer, even if its hash is larger.
 func TestFreshAffinitySpreadHonorsSchedulerPriority(t *testing.T) {
 	store := newSpreadTestStore(t, 3)
 	priority := store.FindByID(2)
@@ -114,7 +114,7 @@ func TestFreshAffinitySpreadHonorsSchedulerPriority(t *testing.T) {
 	}
 }
 
-// 开关关闭时走原有调度路径;默认值为关。
+// When the switch is off, the original scheduling path is used; the default is off.
 func TestFreshAffinitySpreadDisabledFallsBack(t *testing.T) {
 	store := NewStore(nil, nil, &database.SystemSettings{MaxConcurrency: 4, TestConcurrency: 1, TestModel: "gpt-5.4"})
 	store.AddAccount(&Account{DBID: 1, AccessToken: "at-1", PlanType: "plus"})
@@ -128,7 +128,7 @@ func TestFreshAffinitySpreadDisabledFallsBack(t *testing.T) {
 	store.Release(acc)
 }
 
-// 全链路:经 NextForSessionWithFilter 的新键选号散开,复用路径仍粘住绑定账号。
+// End to end: keys selected through NextForSessionWithFilter spread out, while the reuse path still sticks to the bound account.
 func TestNextForSessionWithFilterSpreadsFreshKeys(t *testing.T) {
 	store := newSpreadTestStore(t, 3)
 
@@ -148,7 +148,7 @@ func TestNextForSessionWithFilterSpreadsFreshKeys(t *testing.T) {
 	if len(distribution) < 2 {
 		t.Fatalf("fresh keys all clustered: %v", distribution)
 	}
-	// 复用:已绑定的键仍回到原账号。
+	// Reuse: a key that is already bound still returns to its original account.
 	for key, want := range bound {
 		acc, _ := store.NextForSessionWithFilter(key, 0, nil, nil)
 		if acc == nil || acc.DBID != want {

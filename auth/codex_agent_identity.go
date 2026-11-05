@@ -20,13 +20,13 @@ import (
 	"golang.org/x/crypto/nacl/box"
 )
 
-// Codex Agent Identity（auth_mode=agentIdentity）授权：
-// 账号不保存 OAuth access/refresh token，而是持有 Ed25519 私钥（PKCS#8 base64）与
-// agent_runtime_id。每次上游请求用私钥对 "runtime_id:task_id:timestamp" 签名，放进
-// Authorization: AgentAssertion <base64url(envelope)> 头。task_id 首次由 task 注册端点
-// 获得（可能是加密返回，用 X25519/NaCl box 从私钥 seed 派生密钥解密），之后缓存并落库。
+// Codex Agent Identity (auth_mode=agentIdentity) authorization:
+// The account does not store OAuth access/refresh tokens. Instead it holds an Ed25519 private key (PKCS#8 base64) and
+// agent_runtime_id. For each upstream request, the private key signs "runtime_id:task_id:timestamp" and puts the result in
+// the Authorization: AgentAssertion <base64url(envelope)> header. The task_id is first obtained from the task registration endpoint
+// (the response may be encrypted; it is decrypted with a key derived from the private key seed via X25519/NaCl box), then cached and persisted.
 //
-// 逻辑参考 sub2api 的 agent identity 实现，适配本项目的 Account/Store 架构。
+// The logic follows the agent identity implementation in sub2api, adapted to this project's Account/Store architecture.
 
 const CodexAuthModeAgentIdentity = "agentIdentity"
 
@@ -35,13 +35,13 @@ const (
 	agentIdentityTaskRegistrationTimeout = 30 * time.Second
 )
 
-// agentIdentityAuthAPIBase 可在测试中覆盖。
+// agentIdentityAuthAPIBase can be overridden in tests.
 var agentIdentityAuthAPIBase = agentIdentityAuthAPIBaseURL
 
-// agentIdentityTaskLocks 按账号串行化 task 注册，避免并发重复注册。
+// agentIdentityTaskLocks serializes task registration per account, to avoid concurrent duplicate registrations.
 var agentIdentityTaskLocks sync.Map // map[int64]*sync.Mutex
 
-// IsCodexAgentIdentity 判断账号是否为 Agent Identity 授权账号。
+// IsCodexAgentIdentity reports whether the account is an Agent Identity authorized account.
 func (a *Account) IsCodexAgentIdentity() bool {
 	if a == nil {
 		return false
@@ -57,34 +57,34 @@ func (a *Account) isCodexAgentIdentityLocked() bool {
 		strings.TrimSpace(a.AgentPrivateKey) != ""
 }
 
-// parseAgentIdentityPrivateKey 解析 PKCS#8 base64 的 Ed25519 私钥（不记录密钥内容）。
+// parseAgentIdentityPrivateKey parses an Ed25519 private key in PKCS#8 base64 (the key contents are not logged).
 func parseAgentIdentityPrivateKey(raw string) (ed25519.PrivateKey, error) {
 	raw = strings.TrimSpace(raw)
 	if raw == "" {
-		return nil, errors.New("agent identity 私钥缺失")
+		return nil, errors.New("agent identity private key is missing")
 	}
 	der, err := base64.StdEncoding.DecodeString(raw)
 	if err != nil {
-		return nil, errors.New("agent identity 私钥不是合法的 base64")
+		return nil, errors.New("agent identity private key is not valid base64")
 	}
 	key, err := x509.ParsePKCS8PrivateKey(der)
 	if err != nil {
-		return nil, errors.New("agent identity 私钥不是合法的 PKCS#8")
+		return nil, errors.New("agent identity private key is not valid PKCS#8")
 	}
 	privateKey, ok := key.(ed25519.PrivateKey)
 	if !ok || len(privateKey) != ed25519.PrivateKeySize {
-		return nil, errors.New("agent identity 私钥不是 Ed25519")
+		return nil, errors.New("agent identity private key is not Ed25519")
 	}
 	return privateKey, nil
 }
 
-// ValidateCodexAgentIdentityPrivateKey 只校验私钥形态，不返回/记录密钥。
+// ValidateCodexAgentIdentityPrivateKey only checks the key format and does not return or log the key.
 func ValidateCodexAgentIdentityPrivateKey(encoded string) error {
 	_, err := parseAgentIdentityPrivateKey(encoded)
 	return err
 }
 
-// agentIdentityRuntimeKey 是构建签名所需的运行时凭据快照。
+// agentIdentityRuntimeKey is the runtime credentials snapshot needed to build a signature.
 type agentIdentityRuntimeKey struct {
 	runtimeID  string
 	taskID     string
@@ -98,7 +98,7 @@ func (a *Account) agentIdentityRuntimeKeyLocked() (agentIdentityRuntimeKey, erro
 	}
 	runtimeID := strings.TrimSpace(a.AgentRuntimeID)
 	if runtimeID == "" {
-		return agentIdentityRuntimeKey{}, errors.New("agent identity runtime id 缺失")
+		return agentIdentityRuntimeKey{}, errors.New("agent identity runtime id is missing")
 	}
 	return agentIdentityRuntimeKey{
 		runtimeID:  runtimeID,
@@ -107,8 +107,8 @@ func (a *Account) agentIdentityRuntimeKeyLocked() (agentIdentityRuntimeKey, erro
 	}, nil
 }
 
-// BuildCodexAgentAssertion 生成一次请求用的 Authorization 值（AgentAssertion <...>）。
-// 纯本地签名，不发网络请求；要求 task_id 已就绪（由 EnsureCodexAgentIdentityTask 保证）。
+// BuildCodexAgentAssertion generates the Authorization value for one request (AgentAssertion <...>).
+// Signing is purely local and makes no network request; it requires the task_id to be ready (guaranteed by EnsureCodexAgentIdentityTask).
 func (a *Account) BuildCodexAgentAssertion(now time.Time) (string, error) {
 	if a == nil {
 		return "", errors.New("account is nil")
@@ -124,13 +124,13 @@ func (a *Account) BuildCodexAgentAssertion(now time.Time) (string, error) {
 
 func buildAgentAssertion(key agentIdentityRuntimeKey, now time.Time) (string, error) {
 	if key.runtimeID == "" || key.taskID == "" {
-		return "", errors.New("agent identity runtime 或 task id 缺失")
+		return "", errors.New("agent identity runtime or task id is missing")
 	}
 	timestamp := now.UTC().Format(time.RFC3339)
 	payload := []byte(key.runtimeID + ":" + key.taskID + ":" + timestamp)
 	signature, err := key.privateKey.Sign(nil, payload, crypto.Hash(0))
 	if err != nil {
-		return "", errors.New("agent assertion 签名失败")
+		return "", errors.New("failed to sign agent assertion")
 	}
 	envelope := map[string]string{
 		"agent_runtime_id": key.runtimeID,
@@ -140,29 +140,29 @@ func buildAgentAssertion(key agentIdentityRuntimeKey, now time.Time) (string, er
 	}
 	encoded, err := json.Marshal(envelope)
 	if err != nil {
-		return "", errors.New("agent assertion 序列化失败")
+		return "", errors.New("failed to serialize agent assertion")
 	}
 	return "AgentAssertion " + base64.RawURLEncoding.EncodeToString(encoded), nil
 }
 
 func signAgentTaskRegistration(key agentIdentityRuntimeKey, timestamp time.Time) (string, string, error) {
 	if key.runtimeID == "" {
-		return "", "", errors.New("agent identity runtime id 缺失")
+		return "", "", errors.New("agent identity runtime id is missing")
 	}
 	formatted := timestamp.UTC().Format(time.RFC3339)
 	signature, err := key.privateKey.Sign(nil, []byte(key.runtimeID+":"+formatted), crypto.Hash(0))
 	if err != nil {
-		return "", "", errors.New("agent task 注册签名失败")
+		return "", "", errors.New("failed to sign agent task registration")
 	}
 	return formatted, base64.StdEncoding.EncodeToString(signature), nil
 }
 
-// decryptAgentTaskID 解密注册端点返回的加密 task_id（NaCl anonymous box，
-// 收方公私钥由 Ed25519 seed 经 SHA-512 派生为 Curve25519 密钥）。
+// decryptAgentTaskID decrypts the encrypted task_id returned by the registration endpoint (NaCl anonymous box,
+// the recipient's public and private keys are derived from the Ed25519 seed via SHA-512 into Curve25519 keys).
 func decryptAgentTaskID(key agentIdentityRuntimeKey, encoded string) (string, error) {
 	ciphertext, err := base64.StdEncoding.DecodeString(strings.TrimSpace(encoded))
 	if err != nil {
-		return "", errors.New("加密 task id 不是合法的 base64")
+		return "", errors.New("encrypted task id is not valid base64")
 	}
 	seed := key.privateKey.Seed()
 	digest := sha512.Sum512(seed)
@@ -173,17 +173,17 @@ func decryptAgentTaskID(key agentIdentityRuntimeKey, encoded string) (string, er
 	curvePrivate[31] |= 64
 	curvePublicBytes, err := curve25519.X25519(curvePrivate[:], curve25519.Basepoint)
 	if err != nil {
-		return "", errors.New("派生 agent identity 解密公钥失败")
+		return "", errors.New("failed to derive the agent identity decryption public key")
 	}
 	var curvePublic [32]byte
 	copy(curvePublic[:], curvePublicBytes)
 	plaintext, ok := box.OpenAnonymous(nil, ciphertext, &curvePublic, &curvePrivate)
 	if !ok {
-		return "", errors.New("解密加密 task id 失败")
+		return "", errors.New("failed to decrypt the encrypted task id")
 	}
 	taskID := strings.TrimSpace(string(plaintext))
 	if taskID == "" {
-		return "", errors.New("解密出的 task id 为空")
+		return "", errors.New("decrypted task id is empty")
 	}
 	return taskID, nil
 }
@@ -195,7 +195,7 @@ type agentIdentityTaskRegistrationResponse struct {
 	EncryptedTaskIDCamel string `json:"encryptedTaskId"`
 }
 
-// registerAgentIdentityTask 向 OpenAI 注册一个新 task 并返回 task_id。
+// registerAgentIdentityTask registers a new task with OpenAI and returns the task_id.
 func registerAgentIdentityTask(ctx context.Context, key agentIdentityRuntimeKey, proxyURL string) (string, error) {
 	timestamp, signature, err := signAgentTaskRegistration(key, time.Now())
 	if err != nil {
@@ -218,26 +218,26 @@ func registerAgentIdentityTask(ctx context.Context, key agentIdentityRuntimeKey,
 	client.Timeout = agentIdentityTaskRegistrationTimeout
 	body, err := json.Marshal(map[string]string{"timestamp": timestamp, "signature": signature})
 	if err != nil {
-		return "", errors.New("序列化 agent task 注册请求失败")
+		return "", errors.New("failed to serialize agent task registration request")
 	}
 	url := strings.TrimRight(strings.TrimSpace(agentIdentityAuthAPIBase), "/") + "/v1/agent/" + key.runtimeID + "/task/register"
 	req, err := http.NewRequestWithContext(ctx, http.MethodPost, url, strings.NewReader(string(body)))
 	if err != nil {
-		return "", errors.New("构建 agent task 注册请求失败")
+		return "", errors.New("failed to build agent task registration request")
 	}
 	req.Header.Set("Content-Type", "application/json")
 	req.Header.Set("Accept", "application/json")
 	resp, err := client.Do(req)
 	if err != nil {
-		return "", errors.New("agent task 注册请求失败")
+		return "", errors.New("agent task registration request failed")
 	}
 	defer resp.Body.Close()
 	if resp.StatusCode < http.StatusOK || resp.StatusCode >= http.StatusMultipleChoices {
-		return "", fmt.Errorf("agent task 注册返回状态 %d", resp.StatusCode)
+		return "", fmt.Errorf("agent task registration returned status %d", resp.StatusCode)
 	}
 	var result agentIdentityTaskRegistrationResponse
 	if err := json.NewDecoder(io.LimitReader(resp.Body, 64*1024)).Decode(&result); err != nil {
-		return "", errors.New("agent task 注册响应无效")
+		return "", errors.New("agent task registration response is invalid")
 	}
 	if taskID := strings.TrimSpace(result.TaskID); taskID != "" {
 		return taskID, nil
@@ -250,14 +250,14 @@ func registerAgentIdentityTask(ctx context.Context, key agentIdentityRuntimeKey,
 		encrypted = strings.TrimSpace(result.EncryptedTaskIDCamel)
 	}
 	if encrypted == "" {
-		return "", errors.New("agent task 注册响应未包含 task id")
+		return "", errors.New("agent task registration response did not include a task id")
 	}
 	return decryptAgentTaskID(key, encrypted)
 }
 
-// EnsureCodexAgentIdentityTask 保证账号持有可用 task_id：缺失（或需强制刷新）时注册，
-// 成功后落库(credentials.task_id)并缓存到运行时账号。按账号串行化，避免并发重复注册。
-// forceRefresh=true 时忽略现有 task_id 重新注册（用于 401 task 失效恢复）。
+// EnsureCodexAgentIdentityTask ensures the account holds a usable task_id: it registers one when missing (or when a forced refresh is needed),
+// then persists it (credentials.task_id) on success and caches it on the runtime account. Serialized per account to avoid concurrent duplicate registrations.
+// With forceRefresh=true, the existing task_id is ignored and a new one is registered (used to recover from a 401 when the task has expired).
 func (s *Store) EnsureCodexAgentIdentityTask(ctx context.Context, account *Account, forceRefresh bool) error {
 	if account == nil || !account.IsCodexAgentIdentity() {
 		return nil
@@ -281,7 +281,7 @@ func (s *Store) EnsureCodexAgentIdentityTask(ctx context.Context, account *Accou
 	mu.Lock()
 	defer mu.Unlock()
 
-	// 拿到锁后复查：可能已有其它请求完成注册
+	// After taking the lock, check again: another request may have completed the registration already.
 	account.mu.RLock()
 	key, keyErr := account.agentIdentityRuntimeKeyLocked()
 	existingTask := strings.TrimSpace(account.AgentTaskID)
@@ -305,13 +305,13 @@ func (s *Store) EnsureCodexAgentIdentityTask(ctx context.Context, account *Accou
 
 	if s != nil && s.db != nil && account.DBID > 0 {
 		if err := s.db.UpdateCredentials(ctx, account.DBID, map[string]interface{}{"task_id": taskID}); err != nil {
-			return fmt.Errorf("持久化 agent task id 失败: %w", err)
+			return fmt.Errorf("failed to persist agent task id: %w", err)
 		}
 	}
 	return nil
 }
 
-// IsAgentIdentityTaskInvalidResponse 判断上游 401 是否为 task 失效（可通过重注册恢复）。
+// IsAgentIdentityTaskInvalidResponse reports whether an upstream 401 means the task is invalid (recoverable by registering again).
 func IsAgentIdentityTaskInvalidResponse(statusCode int, body []byte) bool {
 	if statusCode != http.StatusUnauthorized {
 		return false

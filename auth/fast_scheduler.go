@@ -19,7 +19,7 @@ type fastSchedulerEntry struct {
 	dbID          int64
 	dispatchScore float64
 	proven        bool
-	priority      int64     // 账号调度优先级（issue #358）：全局降序选择，同优先级内再按健康桶调度
+	priority      int64     // account scheduling priority (issue #358): selection is globally descending, and within the same priority it is scheduled by health bucket
 	reset5hAt     time.Time // immutable sort key until Update or a reset boundary
 }
 
@@ -28,29 +28,29 @@ type fastSchedulerPosition struct {
 	index int
 }
 
-// FastScheduler 是一个仅使用本地内存的调度器 POC。
-// 它不在请求热路径内重算全量 score，而是直接复用 Account 上已缓存的
-// HealthTier / DispatchScore / DynamicConcurrencyLimit。
+// FastScheduler is a POC scheduler that uses only local memory.
+// It does not recompute the full score on the request hot path; instead it reuses the cached
+// HealthTier / DispatchScore / DynamicConcurrencyLimit.
 //
-// 调度策略：调度优先级全局优先；同优先级内按健康层级分桶，
-// 桶内按调度分排序后 round-robin。
-// 验证过的账号只作为同分 tie-breaker，避免历史请求量盖过额度快重置优先级。
-// 取号时只比较一个固定大小候选窗口的占用；配额模式仍先比较用量。
-// 过滤和准入回调可能访问 Redis/DB，必须在调度锁外执行。
+// Scheduling policy: scheduling priority comes first globally; within the same priority, accounts are bucketed by health tier,
+// and within each bucket they are sorted by dispatch score and then served round-robin.
+// verified accounts only act as a tie-breaker on equal scores, so that historical request volume does not override the priority of accounts whose quota resets soon.
+// When picking an account, only the occupancy of a fixed-size candidate window is compared; quota mode still compares usage first.
+// Filter and admission callbacks may access Redis/DB, so they must run outside the scheduling lock.
 //
-// fill_first 模式（issue #501）：同优先级内按 7d 用量降序排列并始终从队首
-// 取号，流量集中在剩余额度最少的账号上；该账号限流/耗尽后自然滑落到下一个，
-// 恢复后按最新用量重新排队。无用量数据的账号退化为固定顺序（dbID 升序）。
+// fill_first mode (issue #501): within the same priority, accounts are sorted by 7d usage in descending order and always taken from the head of the list
+// so traffic concentrates on the account with the least remaining quota; once that account is rate limited or exhausted, it naturally falls to the next one,
+// and it is re-queued by its latest usage after it recovers. Accounts without usage data fall back to a fixed order (dbID ascending).
 type FastScheduler struct {
 	mu            sync.RWMutex
 	baseLimit     int64
 	schedulerMode string
 	buckets       map[AccountHealthTier][]fastSchedulerEntry
 	positions     map[int64]fastSchedulerPosition
-	// unsorted 记录哪些桶的顺序已被写入侧打乱。写入侧（新增/删除/状态变更）只做
-	// O(1) 改动并在这里打标，真正的重排推迟到下一次取号时按桶合并成一次。
-	// 号池上万时，"每次账号状态变更都整桶重排 + 全量重建位置索引"会把调度器
-	// 独占锁占满（批量导入是最容易触发的场景）。
+	// unsorted records which buckets have had their order shuffled by the write side. The write side (add/remove/status change) only does
+	// an O(1) change and marks the bucket here; the actual re-sort is deferred and merged into one per bucket at the next account pick.
+	// With tens of thousands of accounts, "re-sorting the whole bucket and rebuilding the full position index on every account state change" would hold the scheduler
+	// exclusive lock (bulk import is the easiest scenario to trigger this).
 	unsorted   map[AccountHealthTier]bool
 	cursors    [3]atomic.Uint64
 	groupCheck func(apiKeyID int64, account *Account) bool
@@ -61,12 +61,12 @@ type FastScheduler struct {
 	// live Account snapshot still gates acquisition, but recovery no longer
 	// requires rebuilding every API-key sub-pool.
 	retainUnavailable bool
-	// resorts 统计整桶重排次数，用于回归测试锁定"批量写入不再逐条重排"这个性质。
+	// resorts counts whole-bucket re-sorts; it is used by regression tests to lock in the property that "bulk writes no longer re-sort one entry at a time".
 	resorts             atomic.Uint64
 	reset5hOrderExpires map[AccountHealthTier]time.Time
 }
 
-// ResortCount 返回累计的整桶重排次数。
+// ResortCount returns the cumulative number of whole-bucket re-sorts.
 func (s *FastScheduler) ResortCount() uint64 {
 	if s == nil {
 		return 0
@@ -161,17 +161,17 @@ func (s *FastScheduler) SetSchedulerMode(mode string) {
 	}
 }
 
-// entryLessLocked 是所有调度模式共用的桶内排序谓词。调用方必须持有 s.mu。
+// entryLessLocked is the in-bucket sort predicate shared by all scheduling modes. The caller must hold s.mu.
 //
-// 各模式的排序键：
-//   - reset_5h_first：有效 Codex 5h 重置时间升序，未知窗口沿用轮询兜底
-//   - fill_first：7d 用量降序，流量集中在剩余额度最少的账号（issue #501）
-//   - remaining_quota：7d 用量升序，优先用剩余额度多的账号
-//   - round_robin 的 healthy 桶：7d 用量升序，把负载摊平到所有可用账号（issue #150）
-//   - 其余：调度分降序
+// Sort keys for each mode:
+//   - reset_5h_first: valid Codex 5h reset time ascending; unknown windows fall back to round-robin
+//   - fill_first: 7d usage descending, so traffic concentrates on the account with the least remaining quota (issue #501)
+//   - remaining_quota: 7d usage ascending, preferring accounts with more remaining quota
+//   - round_robin healthy bucket: 7d usage ascending, spreading load across all available accounts (issue #150)
+//   - others: dispatch score descending
 //
-// 调度优先级（issue #358）始终全局优先，验证过的账号只作同分 tie-breaker，
-// 最后用 dbID 兜底保证全序（因此排序结果与是否稳定排序无关）。
+// Scheduling priority (issue #358) always comes first globally; verified accounts only act as a same-score tie-breaker,
+// and dbID is the final fallback that guarantees a total order (so the sort result does not depend on whether the sort is stable).
 func (s *FastScheduler) entryLessLocked(tier AccountHealthTier, a, b *fastSchedulerEntry) bool {
 	if a.priority != b.priority {
 		return a.priority > b.priority
@@ -211,7 +211,7 @@ func (s *FastScheduler) entryLessLocked(tier AccountHealthTier, a, b *fastSchedu
 	return a.dbID < b.dbID
 }
 
-// sortBucketLocked 重排单个桶并重建其位置索引，清掉待重排标记。
+// sortBucketLocked re-sorts a single bucket, rebuilds its position index, and clears the pending re-sort mark.
 func (s *FastScheduler) sortBucketLocked(tier AccountHealthTier) {
 	s.generation++
 	entries := s.buckets[tier]
@@ -232,8 +232,8 @@ func (s *FastScheduler) sortBucketLocked(tier AccountHealthTier) {
 	s.rebuildPositionsLocked(tier)
 }
 
-// ensureSortedLocked 在取号前把被打乱的桶补排一次。写入侧只打标不排序，
-// 一批连续变更（例如批量导入、并发 Release）在这里合并成一次排序。
+// ensureSortedLocked re-sorts each shuffled bucket once before an account is picked. The write side only marks buckets and does not sort,
+// so a batch of consecutive changes (for example a bulk import or concurrent Release calls) is merged into a single sort here.
 func (s *FastScheduler) ensureSortedLocked() {
 	if s.schedulerMode == SchedulerModeReset5hFirst {
 		now := time.Now()
@@ -262,8 +262,8 @@ func (s *FastScheduler) SchedulerMode() string {
 	return s.schedulerMode
 }
 
-// BuildFastScheduler 用当前 Store 快照构建一个独立 scheduler。
-// 该方法不会影响现有生产流量路径，只用于 POC/benchmark/灰度验证。
+// BuildFastScheduler builds a standalone scheduler from a snapshot of the current Store.
+// This method does not affect the existing production traffic path; it is only used for POC, benchmark, and gradual rollout verification.
 func (s *Store) BuildFastScheduler() *FastScheduler {
 	if s == nil {
 		return NewFastScheduler(1, "round_robin")
@@ -297,7 +297,7 @@ func (s *FastScheduler) Rebuild(accounts []*Account) {
 	s.unsorted = map[AccountHealthTier]bool{}
 	s.reset5hOrderExpires = map[AccountHealthTier]time.Time{}
 
-	// 批量插入：先全部放入桶中，不逐条排序
+	// Bulk insert: put all entries into the buckets first, without sorting one by one
 	now := time.Now()
 	for _, acc := range accounts {
 		if acc == nil || acc.DBID == 0 {
@@ -321,7 +321,7 @@ func (s *FastScheduler) Rebuild(accounts []*Account) {
 		})
 	}
 
-	// 每个桶只排序一次 + 重建位置索引 + 计算验证账号边界
+	// Sort each bucket only once, rebuild the position index, and compute the verified-account boundary
 	for _, tier := range fastSchedulerTierOrder {
 		s.sortBucketLocked(tier)
 	}
@@ -355,9 +355,9 @@ func (s *FastScheduler) UpdateMany(accounts []*Account) {
 	}
 }
 
-// updateLocked 优先就地更新已在桶内的条目：只有当新的排序键真的破坏了它与相邻
-// 条目的顺序时，才给该桶打上待重排标记。这样一次 Release / 用量刷新 / 冷却标记
-// 的代价是 O(1)，而不是"整桶重排 + 全量重建位置索引"。
+// updateLocked prefers to update an entry already in its bucket in place: only when the new sort key really breaks its order relative to its neighbours
+// does the bucket get a pending re-sort mark. This way one Release / usage refresh / cooldown mark
+// costs O(1), instead of "re-sorting the whole bucket + rebuilding the full position index".
 func (s *FastScheduler) updateLocked(acc *Account, now time.Time) {
 	if acc == nil || acc.DBID == 0 {
 		return
@@ -379,7 +379,7 @@ func (s *FastScheduler) updateLocked(acc *Account, now time.Time) {
 	inPlace := exists && pos.tier == tier &&
 		pos.index >= 0 && pos.index < len(entries) && entries[pos.index].dbID == acc.DBID
 	if !inPlace {
-		// 新账号、换了健康层级，或位置索引与桶不一致：走"摘掉再挂上"的慢路径。
+		// New account, a changed health tier, or a position index that is out of step with the bucket: take the slow path of "remove, then re-attach".
 		if exists {
 			s.removeLocked(acc.DBID)
 		}
@@ -408,8 +408,8 @@ func (s *FastScheduler) updateLocked(acc *Account, now time.Time) {
 	}
 }
 
-// entryOutOfOrderLocked 只比较左右邻居：桶已排好序时这足以判断该条目是否仍在
-// 正确位置；桶已被标记待重排时结论无所谓，反正马上会整桶重排。
+// entryOutOfOrderLocked only compares the left and right neighbours: when the bucket is already sorted, this is enough to tell whether the entry is still in the
+// right position. When the bucket is already marked for re-sorting, the result does not matter, since the whole bucket is about to be re-sorted anyway.
 func (s *FastScheduler) entryOutOfOrderLocked(tier AccountHealthTier, entries []fastSchedulerEntry, idx int) bool {
 	if idx > 0 && s.entryLessLocked(tier, &entries[idx], &entries[idx-1]) {
 		return true
@@ -420,7 +420,7 @@ func (s *FastScheduler) entryOutOfOrderLocked(tier AccountHealthTier, entries []
 	return false
 }
 
-// appendLocked 把条目挂到桶尾并打上待重排标记，O(1)。
+// appendLocked attaches the entry to the end of the bucket and marks the bucket for re-sorting, O(1).
 func (s *FastScheduler) appendLocked(acc *Account, tier AccountHealthTier, dispatchScore float64, proven bool) {
 	s.generation++
 	entries := append(s.buckets[tier], fastSchedulerEntry{
@@ -466,17 +466,17 @@ func (s *FastScheduler) Acquire() *Account {
 	return s.AcquireExcluding(0, nil)
 }
 
-// AcquireExcluding 获取下一个可用账号，排除指定的账号 ID 集合
+// AcquireExcluding gets the next available account, excluding the given set of account IDs
 func (s *FastScheduler) AcquireExcluding(apiKeyID int64, exclude map[int64]bool) *Account {
 	return s.AcquireExcludingWithFilter(apiKeyID, exclude, nil)
 }
 
-// AcquireExcludingWithFilter 获取下一个可用账号，并应用请求级账号过滤器。
+// AcquireExcludingWithFilter gets the next available account and applies the request-level account filter.
 func (s *FastScheduler) AcquireExcludingWithFilter(apiKeyID int64, exclude map[int64]bool, filter AccountFilter) *Account {
 	return s.AcquireExcludingWithDispatch(apiKeyID, exclude, filter, DispatchPolicyStandard)
 }
 
-// AcquireExcludingWithDispatch 按用量策略选号。spark 请求不看账号级 5h/7d。
+// AcquireExcludingWithDispatch picks an account by usage policy. spark requests ignore account-level 5h/7d.
 func (s *FastScheduler) AcquireExcludingWithDispatch(apiKeyID int64, exclude map[int64]bool, filter AccountFilter, policy DispatchPolicy) *Account {
 	return s.acquireExcludingWithDispatch(apiKeyID, exclude, filter, policy, nil, false)
 }
@@ -769,7 +769,7 @@ func (s *FastScheduler) acquireCandidatesOutsideLock(candidates []fastSchedulerC
 	return nil, stale
 }
 
-// refreshEntryLocked 就地刷新桶内某个下标的排序键缓存，顺序被破坏时打上待重排标记。
+// refreshEntryLocked refreshes the cached sort key of the entry at one index in the bucket in place, and marks the bucket for re-sorting if the order is broken.
 func (s *FastScheduler) refreshEntryLocked(tier AccountHealthTier, idx int, dispatchScore float64, proven bool) {
 	entries := s.buckets[tier]
 	if idx < 0 || idx >= len(entries) || entries[idx].acc == nil {
@@ -823,8 +823,8 @@ func (s *FastScheduler) insertLocked(acc *Account, now time.Time) {
 	s.appendLocked(acc, tier, dispatchScore, proven)
 }
 
-// removeLocked 用"末尾条目补洞"的方式摘除，O(1)。补洞会打乱桶内顺序，
-// 因此打上待重排标记，由下一次取号前的 ensureSortedLocked 统一修复。
+// removeLocked removes an entry by filling the hole with the last entry, O(1). Filling the hole shuffles the order inside the bucket,
+// so the bucket is marked for re-sorting, and ensureSortedLocked repairs it before the next account pick.
 func (s *FastScheduler) removeLocked(dbID int64) {
 	pos, ok := s.positions[dbID]
 	if !ok {
@@ -834,7 +834,7 @@ func (s *FastScheduler) removeLocked(dbID int64) {
 
 	entries := s.buckets[pos.tier]
 	if pos.index < 0 || pos.index >= len(entries) || entries[pos.index].dbID != dbID {
-		// 位置索引与桶不一致（不应发生）：线性找一遍，宁可慢也不能漏摘。
+		// Position index is out of step with the bucket (should not happen): do a linear scan, accepting slowness over leaving an entry behind.
 		pos.index = -1
 		for idx := range entries {
 			if entries[idx].dbID == dbID {
@@ -907,9 +907,9 @@ func (a *Account) fastSchedulerSnapshotForSpark(baseLimit int64, now time.Time) 
 		baseConcurrencyEffective = a.effectiveBaseConcurrencyLocked(baseLimit)
 	}
 	limit := a.tierConcurrencyLimitLocked(baseConcurrencyEffective, tier)
-	// sparkDispatchEligibleLocked 与 isAvailableLocked 一样只看锁内状态;
-	// DispatchPaused 是锁外原子标志,标准快照在这里显式补一道门,spark 必须
-	// 对齐,否则运维手动停调度或过载熔断置位的账号仍会被 spark 请求选中。
+	// sparkDispatchEligibleLocked, like isAvailableLocked, only looks at state under the lock;
+	// DispatchPaused is an atomic flag outside the lock, so the standard snapshot adds an explicit gate here; spark must
+	// stay aligned with it, otherwise accounts paused by operators or tripped by overload circuit breakers would still be picked by spark requests.
 	available := a.sparkDispatchEligibleLocked(now) && !accountDispatchBlocked(a)
 	return tier, score, limit, proven, available
 }

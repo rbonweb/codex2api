@@ -5,8 +5,8 @@ import (
 	"time"
 )
 
-// TestStaleSubscriptionExpiry 验证「付费套餐 + 到期时间已过去」被判为陈旧，
-// 其余组合（免费/API/未到期/无到期时间）不受影响。(issue #360)
+// TestStaleSubscriptionExpiry verifies that "paid plan + expiry time has passed" is judged stale,
+// other combinations (free/API/not yet expired/no expiry time) are unaffected. (issue #360)
 func TestStaleSubscriptionExpiry(t *testing.T) {
 	now := time.Now()
 	past := now.Add(-48 * time.Hour)
@@ -18,15 +18,15 @@ func TestStaleSubscriptionExpiry(t *testing.T) {
 		expiresAt time.Time
 		want      bool
 	}{
-		{"付费套餐+已过去", "plus", past, true},
-		{"付费套餐大小写与空白", "  Plus ", past, true},
-		{"team+已过去", "team", past, true},
-		{"pro+已过去", "pro", past, true},
-		{"付费套餐+未到期", "plus", future, false},
-		{"free+已过去", "free", past, false},
-		{"api+已过去", "api", past, false},
-		{"未知套餐+已过去", "", past, false},
-		{"付费套餐+零值", "plus", time.Time{}, false},
+		{"paid plan+expired", "plus", past, true},
+		{"paid plan case and whitespace", "  Plus ", past, true},
+		{"team+expired", "team", past, true},
+		{"pro+expired", "pro", past, true},
+		{"paid plan+not yet expired", "plus", future, false},
+		{"free+expired", "free", past, false},
+		{"api+expired", "api", past, false},
+		{"unknown plan+expired", "", past, false},
+		{"paid plan+zero value", "plus", time.Time{}, false},
 	}
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
@@ -37,8 +37,8 @@ func TestStaleSubscriptionExpiry(t *testing.T) {
 	}
 }
 
-// TestClearStaleSubscriptionExpiresAt 验证清理只作用于陈旧组合：
-// 付费套餐的过期时间被清空；free 套餐（真过期）与未到期的付费套餐保持不变。
+// TestClearStaleSubscriptionExpiresAt verifies that clearing only applies to stale combinations:
+// the expiry time of a paid plan is cleared; a free plan (truly expired) and a paid plan that has not expired stay unchanged.
 func TestClearStaleSubscriptionExpiresAt(t *testing.T) {
 	past := time.Now().Add(-72 * time.Hour)
 	future := time.Now().Add(30 * 24 * time.Hour)
@@ -49,10 +49,10 @@ func TestClearStaleSubscriptionExpiresAt(t *testing.T) {
 		expiresAt   time.Time
 		wantCleared bool
 	}{
-		{"付费套餐陈旧值被清理", "plus", past, true},
-		{"free 套餐真过期保留", "free", past, false},
-		{"付费套餐未到期保留", "plus", future, false},
-		{"无到期时间不动", "plus", time.Time{}, false},
+		{"paid plan stale value cleared", "plus", past, true},
+		{"free plan truly expired kept", "free", past, false},
+		{"paid plan not expired kept", "plus", future, false},
+		{"no expiry time left alone", "plus", time.Time{}, false},
 	}
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
@@ -84,8 +84,8 @@ func TestClearStaleSubscriptionExpiresAt(t *testing.T) {
 	}
 }
 
-// TestNeedsSubscriptionExpiryProbe 验证订阅到期探针的触发条件与节流：
-// 仅付费套餐且到期时间未知/临近/已过时需要，且距上次尝试满足最小间隔。
+// TestNeedsSubscriptionExpiryProbe verifies the trigger conditions and throttling of the subscription expiry probe:
+// it is needed only for a paid plan whose expiry time is unknown, near, or past, and only when the minimum interval since the last attempt has passed.
 func TestNeedsSubscriptionExpiryProbe(t *testing.T) {
 	now := time.Now()
 	interval := 6 * time.Hour
@@ -97,15 +97,15 @@ func TestNeedsSubscriptionExpiryProbe(t *testing.T) {
 		probedAt  time.Time
 		want      bool
 	}{
-		{"付费+无到期时间", "plus", time.Time{}, time.Time{}, true},
-		{"付费+已过去", "plus", now.Add(-48 * time.Hour), time.Time{}, true},
-		{"付费+临近到期(3d)", "plus", now.Add(3 * 24 * time.Hour), time.Time{}, true},
-		{"付费+远未到期(30d)", "plus", now.Add(30 * 24 * time.Hour), time.Time{}, false},
-		{"free 不探", "free", time.Time{}, time.Time{}, false},
-		{"api 不探", "api", time.Time{}, time.Time{}, false},
-		{"未知套餐不探", "", time.Time{}, time.Time{}, false},
-		{"节流:刚探过", "plus", time.Time{}, now.Add(-time.Hour), false},
-		{"节流:间隔已满", "plus", time.Time{}, now.Add(-7 * time.Hour), true},
+		{"paid+no expiry time", "plus", time.Time{}, time.Time{}, true},
+		{"paid+expired", "plus", now.Add(-48 * time.Hour), time.Time{}, true},
+		{"paid+expiring soon (3d)", "plus", now.Add(3 * 24 * time.Hour), time.Time{}, true},
+		{"paid+far from expiry (30d)", "plus", now.Add(30 * 24 * time.Hour), time.Time{}, false},
+		{"free no probe", "free", time.Time{}, time.Time{}, false},
+		{"api no probe", "api", time.Time{}, time.Time{}, false},
+		{"unknown plan no probe", "", time.Time{}, time.Time{}, false},
+		{"throttle:just probed", "plus", time.Time{}, now.Add(-time.Hour), false},
+		{"throttle:interval elapsed", "plus", time.Time{}, now.Add(-7 * time.Hour), true},
 	}
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {

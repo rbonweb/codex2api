@@ -32,7 +32,7 @@ func (s *Store) intelligencePaused(ctx context.Context, id int64) bool {
 	}
 	paused, err := s.db.IsIntelligenceCheckPaused(ctx, id)
 	if err != nil {
-		log.Printf("读取账号 %d 检测暂停失败: %v", id, err)
+		log.Printf("failed to read check pause for account %d: %v", id, err)
 		return true
 	}
 	return paused

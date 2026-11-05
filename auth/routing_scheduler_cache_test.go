@@ -150,7 +150,7 @@ func TestSchedulerShadowSamplesIndexedAvailability(t *testing.T) {
 func TestRoutingSchedulerEvictsSingleLRUEntry(t *testing.T) {
 	accounts := sparseRoutingAccounts(16, 9)
 	store := newIndexedRoutingTestStore(accounts)
-	// 先配置全部 key 再选号:SetAPIKeyAllowedGroups 本身会失效缓存。
+	// Configure all keys before selecting accounts: SetAPIKeyAllowedGroups itself invalidates the cache.
 	for key := int64(1); key <= int64(maxRoutingSchedulerKeys)+1; key++ {
 		store.SetAPIKeyAllowedGroups(key, []int64{9})
 	}

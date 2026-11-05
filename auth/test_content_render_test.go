@@ -103,11 +103,11 @@ func TestRenderTestContentVariables(t *testing.T) {
 
 func TestRenderTestContentUnknownVariablesPreserved(t *testing.T) {
 	for _, raw := range []string{
-		"hello {{name}}",       // 未知变量
-		"{{rand:abc-def}}",     // 非数字范围
-		"{{rand:-5-5}}",        // 负数下界不支持
-		"json 示例 {{not closed", // 未闭合
-		"literal {{}} braces",  // 空 token
+		"hello {{name}}",       // unknown variable
+		"{{rand:abc-def}}",     // non-numeric range
+		"{{rand:-5-5}}",        // negative lower bound not supported
+		"json 示例 {{not closed", // unclosed
+		"literal {{}} braces",  // empty token
 	} {
 		got := RenderTestContent(raw)
 		if got != raw {

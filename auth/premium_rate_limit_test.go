@@ -69,8 +69,8 @@ func TestPremium5hRateLimitExpiresAndUsageProbeResumes(t *testing.T) {
 func TestPremium5hRateLimitedSkipsResponsesProbeButRefreshesResetCredits(t *testing.T) {
 	acc := newPremium5hTestAccount("pro", time.Now().Add(30*time.Minute))
 
-	// premium 5h 限流期间，重置次数过期时仍允许探针——但必须是 wham-only（InLimitedState=true），
-	// 不会发 /responses 加重限流。
+	// During premium 5h rate limiting, a probe is still allowed when the reset count expires, but it must be wham-only (InLimitedState=true),
+	// and must not send /responses, which would add to the rate limit.
 	if !acc.NeedsUsageProbe(10 * time.Minute) {
 		t.Fatal("NeedsUsageProbe() = false, want true to refresh stale reset credits during premium 5h limit")
 	}
@@ -78,7 +78,7 @@ func TestPremium5hRateLimitedSkipsResponsesProbeButRefreshesResetCredits(t *test
 		t.Fatal("InLimitedState() = false, want true during premium 5h limit so the probe stays wham-only")
 	}
 
-	// 重置次数刚探测过：limit 未到期前不应再触发探针。
+	// The reset count was just probed: a probe must not be triggered again before the limit expires.
 	acc.MarkResetCreditsProbed(time.Now())
 	if acc.NeedsUsageProbe(10 * time.Minute) {
 		t.Fatal("NeedsUsageProbe() = true, want false before premium 5h reset once reset credits are fresh")
@@ -294,8 +294,8 @@ func TestPromaxIsTreatedAsPremium5hPlan(t *testing.T) {
 	}
 }
 
-// issue #306/#309: k12(教育)等付费工作区计划有 5h 窗口，必须纳入 premium 5h 限流
-// 语义，否则 429 后用量探针会把冷却清掉、账号显示可用但实际仍限流。
+// issue #306/#309: paid workspace plans such as k12 (education) have a 5h window and must be included in premium 5h rate limiting
+// semantics; otherwise, after a 429, the usage probe would clear the cooldown, and the account would show as available while it is still rate limited.
 func TestPaidWorkspacePlansAreTreatedAsPremium5hPlans(t *testing.T) {
 	for _, plan := range []string{"k12", "edu", "education", "go", "teamplus", "enterprise", "business"} {
 		if !isPremium5hPlan(plan) {
@@ -323,7 +323,7 @@ func TestK12RateLimitedAccountIsFencedFromScheduling(t *testing.T) {
 	}
 }
 
-// issue #282: k12 是教育版 team 工作区，调度权重应与 team 对齐。
+// issue #282: k12 is the education edition of the team workspace, so its scheduling weight should align with team.
 func TestK12GetsTeamSchedulerBias(t *testing.T) {
 	if got := defaultScoreBiasForPlan("k12"); got != 50 {
 		t.Fatalf("defaultScoreBiasForPlan(k12) = %d, want 50 (same as team)", got)
@@ -360,7 +360,7 @@ func TestCleanRateLimitedManualClearsAllRateLimitFlavors(t *testing.T) {
 	premium := newPremium5hTestAccount("plus", time.Now().Add(20*time.Minute))
 	premium.DBID = 1
 
-	// Free 7d 用尽 → RuntimeStatus = "usage_exhausted"
+	// Free 7d exhausted → RuntimeStatus = "usage_exhausted"
 	exhausted := &Account{
 		DBID:                2,
 		AccessToken:         "token-exhausted",
@@ -373,7 +373,7 @@ func TestCleanRateLimitedManualClearsAllRateLimitFlavors(t *testing.T) {
 		UsageUpdatedAt:      time.Now().Add(-1 * time.Minute),
 	}
 
-	// 普通正常账号 → 不应被清理
+	// Regular healthy account → should not be cleared
 	healthy := &Account{
 		DBID:        3,
 		AccessToken: "token-healthy",
@@ -382,7 +382,7 @@ func TestCleanRateLimitedManualClearsAllRateLimitFlavors(t *testing.T) {
 		HealthTier:  HealthTierHealthy,
 	}
 
-	// 锁定的限流账号 → 不应被清理
+	// Locked rate-limited account → should not be cleared
 	lockedRL := newPremium5hTestAccount("plus", time.Now().Add(20*time.Minute))
 	lockedRL.DBID = 4
 	lockedRL.Locked = 1
