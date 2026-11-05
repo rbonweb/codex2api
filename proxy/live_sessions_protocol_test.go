@@ -443,7 +443,6 @@ func TestLiveSessionUpstreamMappings(t *testing.T) {
 	// turn.delta duplicates the added events and the turn events carry no incremental text.
 	for _, raw := range []string{
 		`{"delta":", can","end_ms":21400,"start_ms":21200,"turn_id":"turn_1","type":"turn.delta"}`,
-		`{"turn":{"end_ms":800,"id":"turn_1","role":"user","start_ms":600,"transcript":"Open"},"type":"turn.created"}`,
 		`{"turn":{"end_ms":4600,"id":"turn_1","role":"assistant","start_ms":4400,"transcript":" On it"},"type":"turn.done"}`,
 		`{"type":"something.else"}`,
 		`not json`,
