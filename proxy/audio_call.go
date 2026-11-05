@@ -24,6 +24,8 @@ const (
 	audioCallSendDeadline   = 5 * time.Second
 	audioCallCloseDeadline  = time.Second
 	audioCallSidebandReadMB = 8
+	// audioCallStartTimeoutDefault is how long a call may wait for the upstream session.started before it is closed.
+	audioCallStartTimeoutDefault = 15 * time.Second
 	// audioCallStartQueueMax bounds the events Send holds back until upstream announces session.started.
 	audioCallStartQueueMax = 256
 )
@@ -31,10 +33,12 @@ const (
 var (
 	// audioCallSetupTimeout bounds the whole setup; tests shorten it.
 	audioCallSetupTimeout = 25 * time.Second
+	// audioCallStartTimeout bounds the wait for session.started after the sideband opened; tests shorten it.
+	audioCallStartTimeout = audioCallStartTimeoutDefault
 
 	errAudioCallClosed = errors.New("the audio call is closed")
 	// errAudioCallStartQueueFull is returned by Send when too many events wait for session.started.
-	errAudioCallStartQueueFull = errors.New("too many events are waiting for the audio call to start")
+	errAudioCallStartQueueFull = errors.New("too many events before the Live session started")
 
 	// audioCallICEServers is the STUN server set the gateway peer gathers with; tests clear it to stay on loopback.
 	audioCallICEServers = []webrtc.ICEServer{{URLs: []string{"stun:stun.l.google.com:19302"}}}
@@ -60,8 +64,10 @@ type audioCall struct {
 	closeOnce sync.Once
 	closed    atomic.Bool
 	expiry    atomic.Pointer[time.Timer]
-	setup     time.Duration
-	opened    time.Time
+	// startTimer closes the call when session.started never arrives.
+	startTimer atomic.Pointer[time.Timer]
+	setup      time.Duration
+	opened     time.Time
 }
 
 // sidebandStartGate holds back client events until the upstream announces session.started: the internal sideband closes itself (1011) when the client sends anything earlier. Events queue in order, up to audioCallStartQueueMax, start hands them back exactly once for flushing, and later events pass straight through. It is safe for concurrent use; the audio call additionally serializes its flush with direct writes through writeMu so order is kept across both paths.
@@ -232,6 +238,16 @@ func (h *Handler) openAudioCall(c *gin.Context, session json.RawMessage) (*audio
 	if call.closed.Load() {
 		timer.Stop()
 	}
+	startTimer := time.AfterFunc(audioCallStartTimeout, func() {
+		if !call.startGate.isStarted() && !call.closed.Load() {
+			log.Printf("audio call %s: no session.started within %s, closing", record.CallHash, audioCallStartTimeout)
+			call.Close()
+		}
+	})
+	call.startTimer.Store(startTimer)
+	if call.closed.Load() {
+		startTimer.Stop()
+	}
 	go call.readSideband(callCtx)
 	go func() {
 		select {
@@ -337,6 +353,9 @@ func (a *audioCall) Close() {
 		a.closed.Store(true)
 		a.startGate.close()
 		if timer := a.expiry.Load(); timer != nil {
+			timer.Stop()
+		}
+		if timer := a.startTimer.Load(); timer != nil {
 			timer.Stop()
 		}
 		// The goodbye is best effort: when a Send holds the write lock the sideband is closed instead, which also unblocks that writer, so releasing the lease, key slot and usage record is never delayed.

@@ -169,6 +169,11 @@ type realtimeAudioBridge struct {
 	cfg    realtimeAudioConfig
 	// acks holds the FIFO acknowledgement queues of context appends, keyed by delegation item id ("" for session-level appends). It reuses the GPT-Live translator's bookkeeping; only expectAck and ackFor are used, and they take the translator's own mutex.
 	acks *liveSessionTranslator
+	// inDec converts client input audio to 24 kHz and outEnc converts output audio to the client rate; each keeps resampler state across chunks and is recreated when its rate changes. inDec is used by the client loop and outEnc by the upstream pump, both guarded by mu.
+	inDec      *clientAudioDecoder
+	inDecRate  int
+	outEnc     *clientAudioEncoder
+	outEncRate int
 
 	// startMu serializes call creation (it is held for the whole upstream open); stateMu guards the fields below and is never held across I/O.
 	startMu sync.Mutex
@@ -354,11 +359,20 @@ func (b *realtimeAudioBridge) forwardUpstream(raw []byte) bool {
 	mapped := b.mapper.MapUpstream(raw)
 	mapped = append(mapped, b.extensionEvents(raw)...)
 	textOnly := b.cfg.TextOnly
-	outRate := b.cfg.outputRate()
+	var enc *clientAudioEncoder
+	if outRate := b.cfg.outputRate(); outRate != realtimeAudioNativeRate {
+		if b.outEnc == nil || b.outEncRate != outRate {
+			b.outEnc, b.outEncRate = newClientAudioEncoder(clientAudioFormat{Type: "audio/pcm", Rate: outRate}), outRate
+		}
+		enc = b.outEnc
+	}
 	b.mu.Unlock()
 	for _, event := range mapped {
-		if outRate != realtimeAudioNativeRate && gjson.GetBytes(event, "type").String() == "response.output_audio.delta" {
-			event = realtimeAudioResampleDelta(event, outRate)
+		if enc != nil && gjson.GetBytes(event, "type").String() == "response.output_audio.delta" {
+			var keep bool
+			if event, keep = realtimeAudioResampleDelta(event, enc); !keep {
+				continue
+			}
 		}
 		if textOnly {
 			var keep bool
@@ -531,40 +545,47 @@ func writeRealtimeAudioError(conn *websocket.Conn, apiErr *api.APIError, clientE
 	_ = writeResponsesWSError(conn, apiErr)
 }
 
-// realtimeAudioResampleDelta converts the base64 PCM16 24 kHz delta of an output audio event to the client's output rate. An undecodable delta is passed through unchanged.
-func realtimeAudioResampleDelta(event []byte, toRate int) []byte {
+// realtimeAudioResampleDelta converts the base64 PCM16 24 kHz delta of an output audio event with the session's stateful encoder. It returns false when the chunk produced no samples yet (the encoder holds them for the next one); an undecodable delta is passed through unchanged.
+func realtimeAudioResampleDelta(event []byte, enc *clientAudioEncoder) ([]byte, bool) {
 	pcm, err := base64.StdEncoding.DecodeString(gjson.GetBytes(event, "delta").String())
 	if err != nil {
-		return event
+		return event, true
 	}
-	samples, err := decodePCM16LE(pcm)
+	converted := enc.Encode(pcm)
+	if len(converted) == 0 {
+		return nil, false
+	}
+	out, err := sjson.SetBytes(event, "delta", base64.StdEncoding.EncodeToString(converted))
 	if err != nil {
-		return event
+		return event, true
 	}
-	out, err := sjson.SetBytes(event, "delta", base64.StdEncoding.EncodeToString(encodePCM16LE(resamplePCM16(samples, realtimeAudioNativeRate, toRate))))
-	if err != nil {
-		return event
-	}
-	return out
+	return out, true
 }
 
-// appendClientAudio decodes one input_audio_buffer.append payload, resamples it to 24 kHz when the client sends 16 kHz, and feeds the input pipeline.
+// appendClientAudio decodes one input_audio_buffer.append payload, converts it to 24 kHz with the session's stateful decoder when the client sends 16 kHz, and feeds the input pipeline.
 func (b *realtimeAudioBridge) appendClientAudio(input *realtimeAudioInput, b64 string) error {
 	b.mu.Lock()
 	rate := b.cfg.inputRate()
+	var dec *clientAudioDecoder
+	if rate != realtimeAudioNativeRate {
+		if b.inDec == nil || b.inDecRate != rate {
+			b.inDec, b.inDecRate = newClientAudioDecoder(clientAudioFormat{Type: "audio/pcm", Rate: rate}), rate
+		}
+		dec = b.inDec
+	}
 	b.mu.Unlock()
-	if rate == realtimeAudioNativeRate {
+	if dec == nil {
 		return input.AppendBase64(b64)
 	}
 	pcm, err := base64.StdEncoding.DecodeString(b64)
 	if err != nil {
 		return err
 	}
-	samples, err := decodePCM16LE(pcm)
-	if err != nil {
-		return err
+	converted := dec.Decode(pcm)
+	if len(converted) == 0 {
+		return nil
 	}
-	return input.AppendPCM16(encodePCM16LE(resamplePCM16(samples, rate, realtimeAudioNativeRate)))
+	return input.AppendPCM16(converted)
 }
 
 func (b *realtimeAudioBridge) writeEvent(event []byte) {
@@ -702,6 +723,10 @@ func (b *realtimeAudioBridge) handleSessionUpdate(raw []byte) {
 			refused = append(refused, "Voice")
 			next.Voice = b.cfg.Voice
 		}
+		if next.DelegationNoAck != b.cfg.DelegationNoAck {
+			refused = append(refused, "Delegation acknowledgement")
+			next.DelegationNoAck = b.cfg.DelegationNoAck
+		}
 		if len(refused) > 0 {
 			ack = marshalRealtimeServerEvent(map[string]any{
 				"type":     "session.updated",
@@ -723,8 +748,11 @@ func (b *realtimeAudioBridge) handleSessionUpdate(raw []byte) {
 	b.writeEvent(ack)
 	for _, field := range refused {
 		param := "session.instructions"
-		if field == "Voice" {
+		switch field {
+		case "Voice":
 			param = "session.audio.output.voice"
+		case "Delegation acknowledgement":
+			param = "session.delegation.acknowledgement"
 		}
 		b.writeParamError("immutable_field_update", param, field+" cannot be updated after initialization.")
 	}

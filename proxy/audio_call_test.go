@@ -463,3 +463,19 @@ func TestSidebandStartGate(t *testing.T) {
 		t.Fatal("a closed gate queued an event")
 	}
 }
+
+func TestAudioCallClosesWhenSessionNeverStarts(t *testing.T) {
+	previous := audioCallStartTimeout
+	t.Cleanup(func() { audioCallStartTimeout = previous })
+	audioCallStartTimeout = 50 * time.Millisecond
+	handler, fx := newAudioCallFixture(t, http.StatusCreated)
+	call := openTestAudioCall(t, handler)
+	receiveWithin(t, fx.sbConn, "sideband connection")
+	if err := call.Send([]byte(`{"n":1}`)); err != nil {
+		t.Fatal(err)
+	}
+	receiveWithin(t, call.Done(), "the call closing without session.started")
+	if err := call.Send([]byte(`{"n":2}`)); err == nil {
+		t.Fatal("Send after the start timeout should fail")
+	}
+}
