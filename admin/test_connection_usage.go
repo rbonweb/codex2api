@@ -54,37 +54,16 @@ func connectionTestReason(quality *qualityTestRequest) string {
 }
 
 // connectionTestReasoningEffort 从探针请求体里取推理档位:Responses 形状在
-// reasoning.effort,Claude Messages 形状在 output_config.effort。
+// reasoning.effort。
 func connectionTestReasoningEffort(payload []byte) string {
 	if len(payload) == 0 {
 		return ""
 	}
-	if effort := strings.TrimSpace(gjson.GetBytes(payload, "reasoning.effort").String()); effort != "" {
-		return effort
-	}
-	return strings.TrimSpace(gjson.GetBytes(payload, "output_config.effort").String())
+	return strings.TrimSpace(gjson.GetBytes(payload, "reasoning.effort").String())
 }
 
 func connectionTestEndpoint(account *auth.Account) string {
-	if account != nil && account.IsClaudeOAuth() {
-		return "/v1/messages"
-	}
 	return "/v1/responses"
-}
-
-func usageChannelForAccount(account *auth.Account) string {
-	switch {
-	case account == nil:
-		return database.UpstreamChannelCodex
-	case account.IsGrokAPI():
-		return database.UpstreamChannelGrok
-	case account.IsAntigravityAPI():
-		return database.UpstreamChannelAntigravity
-	case account.IsClaudeOAuth():
-		return database.UpstreamChannelClaude
-	default:
-		return database.UpstreamChannelCodex
-	}
 }
 
 // rememberConnectionTestError 记下最后一条推给客户端的错误文案,收尾记账时作为
@@ -116,8 +95,7 @@ func int64PtrValue(v *int64) int {
 	return int(*v)
 }
 
-// connectionTestUsageFromCodex 把 Codex/Responses 探针诊断(Codex、Grok、Antigravity
-// 共用)投影成记账字段。诊断里的 usage 是终态全量值,直接采用。
+// connectionTestUsageFromCodex 把 Codex/Responses 探针诊断投影成记账字段。诊断里的 usage 是终态全量值,直接采用。
 func connectionTestUsageFromCodex(d *codexTestDiagnostics, model string) connectionTestUsageInput {
 	in := connectionTestUsageInput{Model: model, EffectiveModel: model}
 	if d == nil {
@@ -143,38 +121,6 @@ func connectionTestUsageFromCodex(d *codexTestDiagnostics, model string) connect
 	return in
 }
 
-// connectionTestUsageFromClaude 把 Claude Messages 探针诊断投影成记账字段。
-// Anthropic 的 input_tokens 不含缓存部分,这里对齐网关记账口径:input = 未缓存 +
-// 缓存命中 + 缓存写入;只给了缓存写入总数时按 5 分钟缓存计。
-func connectionTestUsageFromClaude(d *claudeTestDiagnostics, model string) connectionTestUsageInput {
-	in := connectionTestUsageInput{Model: model, EffectiveModel: model}
-	if d == nil {
-		return in
-	}
-	in.StatusCode = d.HTTPStatus
-	in.DurationMs = int64PtrValue(d.DurationMS)
-	in.FirstTokenMs = int64PtrValue(d.FirstContentMS)
-	if d.ResponseModel != "" {
-		in.EffectiveModel = d.ResponseModel
-	}
-	in.UpstreamRequestID = d.RequestID
-	if d.Usage == nil {
-		return in
-	}
-	uncached := int64PtrValue(d.Usage.InputTokens)
-	in.OutputTokens = int64PtrValue(d.Usage.OutputTokens)
-	in.CachedTokens = int64PtrValue(d.Usage.CacheReadTokens)
-	if d.Usage.CacheCreation != nil {
-		in.CacheWrite5m = int64PtrValue(d.Usage.CacheCreation.FiveMinute)
-		in.CacheWrite1h = int64PtrValue(d.Usage.CacheCreation.OneHour)
-	}
-	if in.CacheWrite5m+in.CacheWrite1h == 0 {
-		in.CacheWrite5m = int64PtrValue(d.Usage.CacheCreationTokens)
-	}
-	in.InputTokens = uncached + in.CachedTokens + in.CacheWrite5m + in.CacheWrite1h
-	return in
-}
-
 // logConnectionTestUsage 把一次探针写进 usage_logs。不经过下游 API Key 记账链路:
 // 探针没有下游身份,只按账号/渠道归属,成本由写入层按模型定价计算。
 func (h *Handler) logConnectionTestUsage(c *gin.Context, account *auth.Account, in connectionTestUsageInput) {
@@ -197,7 +143,7 @@ func (h *Handler) logConnectionTestUsage(c *gin.Context, account *auth.Account, 
 	input := &database.UsageLogInput{
 		AccountID:            account.ID(),
 		CredentialGeneration: account.GetCredentialGeneration(),
-		Channel:              usageChannelForAccount(account),
+		Channel:              database.UpstreamChannelCodex,
 		InternalReason:       in.Reason,
 		Endpoint:             in.Endpoint,
 		InboundEndpoint:      in.Endpoint,

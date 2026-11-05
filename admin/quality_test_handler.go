@@ -116,27 +116,9 @@ func (h *Handler) QualityTestOptions(c *gin.Context) {
 func (h *Handler) qualityTestOptionsForAccount(ctx context.Context, account *auth.Account) qualityTestOptions {
 	options := qualityTestOptions{Models: []string{}, ReasoningEfforts: []string{"", "none", "minimal", "low", "medium", "high", "xhigh", "max", "ultra"}}
 	var candidates []string
-	switch {
-	case account.IsClaudeOAuth():
-		candidates = claudeProbeModelIDs(account)
-		options.ReasoningEfforts = []string{"", "low", "medium", "high", "max"}
-	case account.IsAntigravityAPI():
-		candidates = antigravityConnectionTestModels(account)
-		// Public Antigravity model IDs already encode a fixed thinking tier.
-		options.ReasoningEfforts = []string{""}
-	case account.IsRelayStyle():
-		candidates = account.OpenAIResponsesModels()
-		if account.IsGrokAPI() {
-			options.ReasoningEfforts = []string{"", "low", "medium", "high"}
-			if len(candidates) == 0 {
-				candidates = defaultGrokConnectionTestModels(account)
-			}
-		}
-	default:
-		candidates = account.CodexModels()
-		if len(candidates) == 0 {
-			candidates = proxy.TextTestModelIDs(ctx, h.db)
-		}
+	candidates = account.CodexModels()
+	if len(candidates) == 0 {
+		candidates = proxy.TextTestModelIDs(ctx, h.db)
 	}
 	for _, model := range candidates {
 		model = strings.TrimSpace(model)
@@ -160,28 +142,14 @@ func (h *Handler) validateQualityTestForAccount(ctx context.Context, account *au
 	return nil
 }
 
-func buildQualityTestPayload(account *auth.Account, model string, req qualityTestRequest, securityCfg auth.ClaudeSecurityConfig) ([]byte, error) {
+func buildQualityTestPayload(account *auth.Account, model string, req qualityTestRequest) ([]byte, error) {
 	const instructions = "Return a complete, self-contained HTML document for the user's request. Include all SVG, CSS and JavaScript inline. Do not use external resources. Return only HTML, without Markdown fences or explanations."
 	body := map[string]any{"model": model, "stream": true}
-	if account.IsClaudeOAuth() {
-		maxTokens := int64(32768)
-		if securityCfg.MaxOutputTokens > 0 && securityCfg.MaxOutputTokens < maxTokens {
-			maxTokens = securityCfg.MaxOutputTokens
-		}
-		body["max_tokens"] = maxTokens
-		body["system"] = instructions
-		body["messages"] = []map[string]any{{"role": "user", "content": req.Prompt}}
-		if req.ReasoningEffort != "" {
-			body["thinking"] = map[string]any{"type": "adaptive"}
-			body["output_config"] = map[string]any{"effort": req.ReasoningEffort}
-		}
-	} else {
-		body["store"] = false
-		body["instructions"] = instructions
-		body["input"] = []map[string]any{{"role": "user", "content": []map[string]any{{"type": "input_text", "text": req.Prompt}}}}
-		if req.ReasoningEffort != "" {
-			body["reasoning"] = map[string]any{"effort": req.ReasoningEffort}
-		}
+	body["store"] = false
+	body["instructions"] = instructions
+	body["input"] = []map[string]any{{"role": "user", "content": []map[string]any{{"type": "input_text", "text": req.Prompt}}}}
+	if req.ReasoningEffort != "" {
+		body["reasoning"] = map[string]any{"effort": req.ReasoningEffort}
 	}
 	return json.Marshal(body)
 }
