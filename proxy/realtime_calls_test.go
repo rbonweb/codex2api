@@ -223,15 +223,3 @@ func TestRealtimeCallsRoutesRegistered(t *testing.T) {
 		}
 	}
 }
-
-func TestAudioTranscriptionsNotImplemented(t *testing.T) {
-	handler := &Handler{}
-	c, rec := liveTestContext(t, http.MethodPost, "/v1/audio/transcriptions", []byte(`{}`), nil)
-	handler.AudioTranscriptions(c)
-	if rec.Code != http.StatusNotImplemented {
-		t.Fatalf("status=%d body=%s", rec.Code, rec.Body.String())
-	}
-	if !strings.Contains(rec.Body.String(), "not_implemented") {
-		t.Fatalf("body=%s", rec.Body.String())
-	}
-}

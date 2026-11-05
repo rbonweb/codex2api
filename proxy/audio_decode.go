@@ -81,6 +81,10 @@ func decodeWAVUpload(data []byte) ([]int16, error) {
 		id := string(data[pos : pos+4])
 		size := uint64(binary.LittleEndian.Uint32(data[pos+4 : pos+8]))
 		body := pos + 8
+		if id == "data" && (size == 0 || size > uint64(len(data)-body)) {
+			// Streamed WAVs (ffmpeg pipes) declare a data size of 0 or 0xFFFFFFFF because the length is unknown when the header is written; a truncated upload reads the same way. Take the rest of the file.
+			size = uint64(len(data) - body)
+		}
 		if size > uint64(len(data)-body) {
 			return nil, fmt.Errorf("malformed wav: %q chunk claims %d bytes but only %d remain", id, size, len(data)-body)
 		}
