@@ -3,19 +3,18 @@ import assert from 'node:assert/strict'
 import { readFileSync } from 'node:fs'
 import { normalizeVisibleChannels, toggleVisibleChannel } from './visibleChannels.ts'
 
-test('normalizeVisibleChannels mirrors the backend rules', () => {
-  assert.deepEqual(normalizeVisibleChannels(null), ['codex', 'claude', 'antigravity', 'grok'])
-  assert.deepEqual(normalizeVisibleChannels(undefined), ['codex', 'claude', 'antigravity', 'grok'])
+test('normalizeVisibleChannels only ever returns the Codex channel', () => {
+  assert.deepEqual(normalizeVisibleChannels(null), ['codex'])
+  assert.deepEqual(normalizeVisibleChannels(undefined), ['codex'])
   assert.deepEqual(normalizeVisibleChannels([]), ['codex'])
-  assert.deepEqual(normalizeVisibleChannels(['grok']), ['codex', 'grok'])
-  assert.deepEqual(normalizeVisibleChannels([' Grok ', '', 'claude', 'grok', 'openai', 42]), ['codex', 'claude', 'grok'])
-  assert.deepEqual(normalizeVisibleChannels('codex'), ['codex', 'claude', 'antigravity', 'grok'])
+  assert.deepEqual(normalizeVisibleChannels(['grok']), ['codex'])
+  assert.deepEqual(normalizeVisibleChannels([' Codex ', '', 'claude', 'openai', 42]), ['codex'])
+  assert.deepEqual(normalizeVisibleChannels('codex'), ['codex'])
 })
 
 test('toggleVisibleChannel never drops the fallback channel', () => {
-  assert.deepEqual(toggleVisibleChannel(['codex', 'claude'], 'claude'), ['codex'])
-  assert.deepEqual(toggleVisibleChannel(['codex'], 'grok'), ['codex', 'grok'])
-  assert.deepEqual(toggleVisibleChannel(['codex', 'grok'], 'codex'), ['codex', 'grok'])
+  assert.deepEqual(toggleVisibleChannel(['codex'], 'codex'), ['codex'])
+  assert.deepEqual(toggleVisibleChannel(['codex'], 'grok'), ['codex'])
 })
 
 test('dashboard, accounts and the usage channel filter consume the visibility setting', () => {

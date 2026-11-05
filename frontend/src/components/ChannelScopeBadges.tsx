@@ -4,18 +4,15 @@ import type { UpstreamChannel } from '../types'
 import { cn } from '@/lib/utils'
 
 // 设置项适用渠道标记：用在 SettingsCard / SettingField 标题旁，让"这条设置对哪家上游生效"
-// 一眼可见。四家全适用时只显示四个 logo；单一渠道时补渠道名。
-export const ALL_UPSTREAM_CHANNELS: readonly UpstreamChannel[] = ['codex', 'claude', 'antigravity', 'grok']
+// 一眼可见。
+export const ALL_UPSTREAM_CHANNELS: readonly UpstreamChannel[] = ['codex']
 
-const CHANNEL_NAMES: Record<UpstreamChannel, string> = {
+const CHANNEL_NAMES: Record<string, string> = {
   codex: 'Codex',
-  claude: 'Claude',
-  antigravity: 'Antigravity',
-  grok: 'Grok',
 }
 
 export function channelScopeLabel(channels: readonly UpstreamChannel[]): string {
-  return channels.map((channel) => CHANNEL_NAMES[channel]).join(' / ')
+  return channels.map((channel) => CHANNEL_NAMES[channel] ?? channel).join(' / ')
 }
 
 export default function ChannelScopeBadges({

@@ -22,15 +22,9 @@ const ICON_URLS = import.meta.glob(
     '../../node_modules/@lobehub/icons-static-svg/icons/sora-color.svg',
     '../../node_modules/@lobehub/icons-static-svg/icons/dalle.svg',
     '../../node_modules/@lobehub/icons-static-svg/icons/dalle-color.svg',
-    '../../node_modules/@lobehub/icons-static-svg/icons/claude.svg',
-    '../../node_modules/@lobehub/icons-static-svg/icons/claude-color.svg',
-    '../../node_modules/@lobehub/icons-static-svg/icons/claudecode.svg',
     '../../node_modules/@lobehub/icons-static-svg/icons/claudecode-color.svg',
     '../../node_modules/@lobehub/icons-static-svg/icons/cherrystudio.svg',
     '../../node_modules/@lobehub/icons-static-svg/icons/cherrystudio-color.svg',
-    '../../node_modules/@lobehub/icons-static-svg/icons/anthropic.svg',
-    '../../node_modules/@lobehub/icons-static-svg/icons/gemini.svg',
-    '../../node_modules/@lobehub/icons-static-svg/icons/gemini-color.svg',
     '../../node_modules/@lobehub/icons-static-svg/icons/gemma.svg',
     '../../node_modules/@lobehub/icons-static-svg/icons/gemma-color.svg',
     '../../node_modules/@lobehub/icons-static-svg/icons/deepmind.svg',
@@ -46,7 +40,6 @@ const ICON_URLS = import.meta.glob(
     '../../node_modules/@lobehub/icons-static-svg/icons/meta-color.svg',
     '../../node_modules/@lobehub/icons-static-svg/icons/llava.svg',
     '../../node_modules/@lobehub/icons-static-svg/icons/llava-color.svg',
-    '../../node_modules/@lobehub/icons-static-svg/icons/grok.svg',
     '../../node_modules/@lobehub/icons-static-svg/icons/perplexity.svg',
     '../../node_modules/@lobehub/icons-static-svg/icons/perplexity-color.svg',
     '../../node_modules/@lobehub/icons-static-svg/icons/yi.svg',
@@ -109,7 +102,7 @@ const ICON_BY_FILE = (() => {
 })()
 
 type Mapping = {
-  /** LobeHub static icon id (lowercase), e.g. "openai", "claude" */
+  /** LobeHub static icon id (lowercase), e.g. "openai", "codex" */
   id: string
   /** Prefer color variant when available */
   color?: boolean
@@ -125,9 +118,6 @@ const MODEL_MAPPINGS: Mapping[] = [
   { id: 'openai', color: false, keywords: ['gpt-oss', 'text-embedding-', 'tts-', 'whisper-', 'davinci', 'babbage', 'omni-moderation', 'computer-use'] },
   { id: 'openai', color: false, keywords: ['o1-', '^o1', '/o1', 'o3-', '^o3', '/o3', 'o4-', '^o4', '/o4'] },
   { id: 'openai', color: false, keywords: ['gpt-3', 'gpt-4', 'gpt-5', '^gpt-', '/gpt-', 'openai'] },
-  { id: 'claude', color: true, keywords: ['claude'] },
-  { id: 'anthropic', color: false, keywords: ['anthropic'] },
-  { id: 'gemini', color: true, keywords: ['gemini'] },
   { id: 'gemma', color: true, keywords: ['gemma'] },
   { id: 'deepmind', color: true, keywords: ['^imagen-', '/imagen-', 'deepmind'] },
   { id: 'deepseek', color: true, keywords: ['deepseek'] },
@@ -136,7 +126,6 @@ const MODEL_MAPPINGS: Mapping[] = [
   { id: 'mistral', color: true, keywords: ['mistral', 'mixtral', 'codestral', 'pixtral', 'ministral', 'magistral', 'devstral', 'voxtral'] },
   { id: 'meta', color: true, keywords: ['llama', '/l3'] },
   { id: 'llava', color: true, keywords: ['llava'] },
-  { id: 'grok', color: false, keywords: ['^grok-', '/grok-', 'grok'] },
   { id: 'perplexity', color: true, keywords: ['pplx', 'sonar', 'perplexity'] },
   { id: 'yi', color: true, keywords: ['^yi-', '/yi-', '-yi-'] },
   { id: 'minimax', color: true, keywords: ['minimax', 'abab'] },
@@ -199,7 +188,7 @@ export function getLobeIconUrl(model: string, preferColor = true): string | null
   return resolveIconUrl(resolved.id, preferColor && resolved.color)
 }
 
-/** Explicit file lookup for non-model brand icons (e.g. claudecode-color.svg). */
+/** Explicit file lookup for non-model brand icons (e.g. codex-color.svg). */
 export function getLobeIconFileUrl(fileName: string): string | null {
   const name = fileName.endsWith('.svg') ? fileName : `${fileName}.svg`
   return ICON_BY_FILE.get(name) ?? null
@@ -303,9 +292,8 @@ export default function ModelLogo({
         draggable={false}
         className={cn(
           'object-contain',
-          // Mono OpenAI / Grok marks are dark; invert in dark mode for contrast.
+          // Mono OpenAI marks are dark; invert in dark mode for contrast.
           resolved.id === 'openai' && 'dark:invert dark:opacity-90',
-          resolved.id === 'grok' && 'dark:invert dark:opacity-90',
         )}
         style={{ width: iconSize, height: iconSize }}
         loading="lazy"

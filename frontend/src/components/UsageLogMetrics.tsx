@@ -37,14 +37,7 @@ const DatabasePlus = createLucideIcon('database-plus', [
 export function UsageInputTokenCount({ log }: { log: UsageMetricLog }) {
   const { t } = useTranslation()
   const tokens = getUsageTokenBreakdown(log)
-  const title = tokens.isClaude
-    ? t('usage.claudeInputTooltip', {
-      input: formatTokens(tokens.inputTokens, true),
-      total: formatTokens(tokens.totalInputTokens, true),
-      read: formatTokens(tokens.cacheReadTokens, true),
-      write: formatTokens(tokens.cacheWriteTokens, true),
-    })
-    : `${t('usage.inputTokens')}: ${formatTokens(tokens.inputTokens, true)}`
+  const title = `${t('usage.inputTokens')}: ${formatTokens(tokens.inputTokens, true)}`
 
   return <span className="text-blue-500" title={title}>↓{formatTokens(tokens.inputTokens, true)}</span>
 }

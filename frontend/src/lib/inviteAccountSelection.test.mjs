@@ -43,7 +43,6 @@ test('invite selectors keep locked and temporarily limited accounts', () => {
 
 test('sender candidates also require a referral-capable Codex OAuth account', () => {
   assert.equal(isCodexInviteSenderCandidate(account()), true)
-  assert.equal(isCodexInviteSenderCandidate(account({ openai_responses_api: true })), false)
   assert.equal(isCodexInviteSenderCandidate(account({ at_only: true })), false)
   assert.equal(isCodexInviteSenderCandidate(account({ status: 'error' })), false)
 })

@@ -76,20 +76,11 @@ test("table markers replace status content without entering selection cells", ()
     new URL("../pages/Accounts.tsx", import.meta.url),
     "utf8",
   );
-  const grokSource = readFileSync(
-    new URL("../pages/GrokAccounts.tsx", import.meta.url),
-    "utf8",
-  );
 
   const accountsRow = sourceSlice(
     accountsSource,
     "const AccountTableRow = memo(function AccountTableRow(",
     "// AccountMobileCard",
-  );
-  const grokRow = sourceSlice(
-    grokSource,
-    "function GrokAccountTableRow(",
-    "function grokFormatDollars",
   );
 
   const accountsSelectionCell = sourceSlice(
@@ -102,41 +93,21 @@ test("table markers replace status content without entering selection cells", ()
     '<TableCell data-account-state-cell="status">',
     "{visibleColumns.today",
   );
-  const grokSelectionCell = sourceSlice(
-    grokRow,
-    '<TableCell className="w-9">',
-    '<TableCell className="font-mono',
-  );
-  const grokStatusCell = sourceSlice(
-    grokRow,
-    '<TableCell data-account-state-cell="status">',
-    "<RequestCountPills account={account} compact />",
-  );
 
   assert.match(accountsRow, /accountStateTableRowClass\(account\)/);
-  assert.match(grokRow, /disabledAccountTableRowClass\(account\)/);
   assert.match(
     accountsRow,
     /const tableOverlay = renderAccountStateOverlay\(account, t, \{[\s\S]*?markerOnly: true,/,
   );
   assert.doesNotMatch(accountsRow, /\brenderDisabledAccountOverlay\(/);
-  assert.match(
-    grokRow,
-    /const tableOverlay = renderDisabledAccountOverlay\(account, t, \{[\s\S]*?markerOnly: true,/,
-  );
-  assert.doesNotMatch(grokRow, /\brenderAccountStateOverlay\(/);
 
   assert.doesNotMatch(accountsSelectionCell, /\{tableOverlay\b/);
-  assert.doesNotMatch(grokSelectionCell, /\{tableOverlay\b/);
   assert.match(accountsSelectionCell, /tableOverlayKind/);
   assert.match(accountsSelectionCell, /className="sr-only"/);
   assert.match(accountsSelectionCell, /actions\.resetStatus\(account\)/);
   assert.match(accountsStatusCell, /\{tableOverlay \?\? \(/);
-  assert.match(grokStatusCell, /\{tableOverlay \?\? \(/);
   assert.match(accountsStatusCell, /<AccountHealthBar/);
-  assert.match(grokStatusCell, /<AccountHealthBar/);
   assert.equal(occurrenceCount(accountsRow, "{tableOverlay ?? ("), 1);
-  assert.equal(occurrenceCount(grokRow, "{tableOverlay ?? ("), 1);
 });
 
 test("table styling has no positioned scrim on internal table boxes", () => {

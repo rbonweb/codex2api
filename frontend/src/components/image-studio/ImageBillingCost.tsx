@@ -17,7 +17,7 @@ export function ImageBillingCost({ count = 0, unitPrice = 0, userBilled, account
   userBilled: number
   accountBilled?: number
   mode?: string
-  /** Grok Imagine rows: upstream cost is per media unit rather than token-based. */
+  /** Media rows: upstream cost is per media unit rather than token-based. */
   media?: boolean
 }) {
   const { t } = useTranslation()

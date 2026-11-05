@@ -24,9 +24,6 @@ import {
 const RESULT_PAGE_SIZE_OPTIONS = [50, 100, 200];
 
 function formatResultAccountName(account: AccountRow): string {
-  if (account.openai_responses_api || account.grok_api) {
-    return account.name?.trim() || `ID ${account.id}`;
-  }
   return account.email || account.name || `ID ${account.id}`;
 }
 
@@ -57,7 +54,8 @@ export default function OperationResultsModal({
 }: {
   state: AccountOperationResultsState | null;
   accounts: AccountRow[];
-  channel: "codex" | "grok" | "antigravity";
+  /** 保留给尚未迁移的调用方，结果弹窗只展示 Codex 渠道。 */
+  channel?: string;
   onClose: () => void;
 }) {
   const { t } = useTranslation();
@@ -174,11 +172,7 @@ export default function OperationResultsModal({
       show={Boolean(state)}
       title={
         <span className="inline-flex items-center gap-2.5">
-          <ChannelLogo
-            channel={channel}
-            size={26}
-            title={channel === "grok" ? "Grok" : channel === "antigravity" ? "Antigravity" : "Codex"}
-          />
+          <ChannelLogo channel="codex" size={26} title="Codex" />
           <span>{title}</span>
         </span>
       }

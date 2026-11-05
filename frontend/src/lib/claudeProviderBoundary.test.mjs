@@ -87,15 +87,3 @@ test("recycle-bin account projection preserves Claude provider identity", () => 
     /claude_api:\s*row\.claude_api/,
   );
 });
-
-test("shared connection test modal selects Claude native models", () => {
-  assert.match(accounts, /<TestConnectionModal/);
-  assert.match(testModal, /isClaudeAccount/);
-  assert.match(testModal, /account\.claude_api/);
-  assert.match(testModal, /claude-opus-4-5|claude-sonnet-4-5/);
-});
-
-test("shared account detail sheet keeps Claude out of Codex-only actions", () => {
-  assert.match(detailSheet, /claude_api/);
-  assert.match(detailSheet, /isClaude/);
-});
