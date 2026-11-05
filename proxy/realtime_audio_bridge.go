@@ -128,61 +128,43 @@ func realtimeAudioHandoff(state *realtimeTextSession, raw []byte) (cfg realtimeA
 	return cfg, ack, apiErr, true
 }
 
-// realtimeAudioBridge is the state of one audio session. The mapper and the config are touched by the upstream pump and the client loop, so mu guards both.
+// realtimeAudioCreateGrace is how long a new audio session waits for its first session.update, audio, item or response.create before it creates the Live call anyway. ChatGPT Live only accepts instructions and voice at call creation, so waiting lets the client's first session.update reach the call.
+var realtimeAudioCreateGrace = 750 * time.Millisecond
+
+// realtimeAudioBridge is the state of one audio session. The Live call is created lazily by ensureCall. The mapper and the config are touched by the upstream pump and the client loop, so mu guards both.
 type realtimeAudioBridge struct {
+	h      *Handler
+	c      *gin.Context
+	ctx    context.Context
 	conn   *websocket.Conn
-	call   realtimeAudioCallConn
-	input  *realtimeAudioInput
 	cancel context.CancelFunc
 
 	mu     sync.Mutex
 	mapper *realtimeAudioMapper
 	cfg    realtimeAudioConfig
+
+	// startMu serializes call creation (it is held for the whole upstream open); stateMu guards the fields below and is never held across I/O.
+	startMu  sync.Mutex
+	stateMu  sync.RWMutex
+	call     realtimeAudioCallConn
+	input    *realtimeAudioInput
+	closed   bool
+	failed   bool
+	graceTmr *time.Timer
 }
 
-// runRealtimeAudioSession runs one audio session on an upgraded connection until the client leaves or the Live call ends. A nil ack announces the session with session.created; the handoff passes the session.updated ack instead because the client already saw a text session.created.
+// runRealtimeAudioSession runs one audio session on an upgraded connection until the client leaves or the Live call ends. A nil ack announces the session with session.created and creates the call on the first trigger or after the grace period; the handoff passes the session.updated ack instead, because the client already saw a text session.created and its session.update is the trigger, so the call is created at once.
 func (h *Handler) runRealtimeAudioSession(c *gin.Context, conn *websocket.Conn, ctx context.Context, cancel context.CancelFunc, cfg realtimeAudioConfig, ack []byte) {
-	call, gerr := openRealtimeAudioCall(h, c, buildLiveAudioSession(cfg.Model, cfg.Voice, cfg.Instructions))
-	if gerr != nil || call == nil {
-		apiErr := (*api.APIError)(nil)
-		status := http.StatusInternalServerError
-		if gerr != nil {
-			apiErr, status = gerr.Err, gerr.Status
-		}
-		_ = writeResponsesWSError(conn, apiErr)
-		code, reason := websocket.CloseInternalServerErr, "audio call failed"
-		switch status {
-		case http.StatusBadRequest, http.StatusUnauthorized, http.StatusForbidden:
-			code, reason = websocket.ClosePolicyViolation, "audio call refused"
-		case http.StatusTooManyRequests, http.StatusBadGateway, http.StatusServiceUnavailable, http.StatusGatewayTimeout:
-			code, reason = websocket.CloseTryAgainLater, "audio call unavailable, try again later"
-		}
-		closeResponsesWS(conn, code, reason)
-		return
-	}
-	defer call.Close()
-
-	input, err := newRealtimeAudioInput(call.WriteOpusFrame)
-	if err != nil {
-		apiErr := api.NewAPIError(api.ErrCodeServerError, "Failed to start the audio input pipeline", api.ErrorTypeServer)
-		if errors.Is(err, errAudioBridgeUnavailable) {
-			apiErr = audioBridgeUnavailableAPIError()
-		}
-		_ = writeResponsesWSError(conn, apiErr)
-		closeResponsesWS(conn, websocket.CloseTryAgainLater, "audio bridge unavailable")
-		return
-	}
-	defer input.Close()
-	input.Start(ctx)
-
 	b := &realtimeAudioBridge{
+		h:      h,
+		c:      c,
+		ctx:    ctx,
 		conn:   conn,
-		call:   call,
-		input:  input,
 		cancel: cancel,
 		mapper: newRealtimeAudioMapper(nil),
 		cfg:    cfg,
 	}
+	defer b.closeAll()
 
 	first := ack
 	if len(first) == 0 {
@@ -195,15 +177,115 @@ func (h *Handler) runRealtimeAudioSession(c *gin.Context, conn *websocket.Conn, 
 	if err := writeResponsesWSMessage(conn, first); err != nil {
 		return
 	}
-
-	go b.pumpUpstream(ctx)
+	if len(ack) > 0 {
+		if !b.ensureCall() {
+			return
+		}
+	} else {
+		b.graceTmr = time.AfterFunc(realtimeAudioCreateGrace, func() { b.ensureCall() })
+	}
 	b.clientLoop(ctx)
 }
 
+// closeAll releases the grace timer, the input pipeline and the call. It waits for a call creation in flight, so a call that finishes opening after the client left is still closed.
+func (b *realtimeAudioBridge) closeAll() {
+	if b.graceTmr != nil {
+		b.graceTmr.Stop()
+	}
+	b.startMu.Lock()
+	defer b.startMu.Unlock()
+	b.stateMu.Lock()
+	b.closed = true
+	call, input := b.call, b.input
+	b.stateMu.Unlock()
+	if input != nil {
+		input.Close()
+	}
+	if call != nil {
+		call.Close()
+	}
+}
+
+func (b *realtimeAudioBridge) liveInput() *realtimeAudioInput {
+	b.stateMu.RLock()
+	defer b.stateMu.RUnlock()
+	return b.input
+}
+
+func (b *realtimeAudioBridge) liveCall() realtimeAudioCallConn {
+	b.stateMu.RLock()
+	defer b.stateMu.RUnlock()
+	return b.call
+}
+
+// ensureCall creates the Live call from the current config unless it exists, and starts the input pipeline and the upstream pump. Audio the client sends meanwhile waits in the connection (the client loop is the caller, or waits on startMu), so it reaches the track in order once the call is up. On failure it sends an error event and closes the client; it returns false once the session cannot continue.
+func (b *realtimeAudioBridge) ensureCall() bool {
+	b.startMu.Lock()
+	defer b.startMu.Unlock()
+	b.stateMu.RLock()
+	exists, dead := b.call != nil, b.closed || b.failed
+	b.stateMu.RUnlock()
+	if exists {
+		return true
+	}
+	if dead || b.ctx.Err() != nil {
+		return false
+	}
+	b.mu.Lock()
+	cfg := b.cfg
+	b.mu.Unlock()
+
+	call, gerr := openRealtimeAudioCall(b.h, b.c, buildLiveAudioSession(cfg.Model, cfg.Voice, cfg.Instructions))
+	if gerr != nil || call == nil {
+		apiErr := (*api.APIError)(nil)
+		status := http.StatusInternalServerError
+		if gerr != nil {
+			apiErr, status = gerr.Err, gerr.Status
+		}
+		code, reason := websocket.CloseInternalServerErr, "audio call failed"
+		switch status {
+		case http.StatusBadRequest, http.StatusUnauthorized, http.StatusForbidden:
+			code, reason = websocket.ClosePolicyViolation, "audio call refused"
+		case http.StatusTooManyRequests, http.StatusBadGateway, http.StatusServiceUnavailable, http.StatusGatewayTimeout:
+			code, reason = websocket.CloseTryAgainLater, "audio call unavailable, try again later"
+		}
+		b.fail(apiErr, code, reason)
+		return false
+	}
+	input, err := newRealtimeAudioInput(call.WriteOpusFrame)
+	if err != nil {
+		call.Close()
+		apiErr := api.NewAPIError(api.ErrCodeServerError, "Failed to start the audio input pipeline", api.ErrorTypeServer)
+		if errors.Is(err, errAudioBridgeUnavailable) {
+			apiErr = audioBridgeUnavailableAPIError()
+		}
+		b.fail(apiErr, websocket.CloseTryAgainLater, "audio bridge unavailable")
+		return false
+	}
+	input.Start(b.ctx)
+
+	b.stateMu.Lock()
+	b.call, b.input = call, input
+	b.stateMu.Unlock()
+	go b.pumpUpstream(b.ctx, call)
+	return true
+}
+
+// fail reports a call creation failure to the client, closes it, and ends the session; the short read deadline unblocks a client loop that is waiting for the next frame.
+func (b *realtimeAudioBridge) fail(apiErr *api.APIError, code int, reason string) {
+	b.stateMu.Lock()
+	b.failed = true
+	b.stateMu.Unlock()
+	_ = writeResponsesWSError(b.conn, apiErr)
+	closeResponsesWS(b.conn, code, reason)
+	b.cancel()
+	_ = b.conn.SetReadDeadline(time.Now().Add(realtimeAudioCloseGrace))
+}
+
 // pumpUpstream maps every Live sideband event to OpenAI events for the client, and closes the client when the call ends. Events still buffered when the call ends are written first, so the final turn.done or error is not lost.
-func (b *realtimeAudioBridge) pumpUpstream(ctx context.Context) {
-	events := b.call.Events()
-	done := b.call.Done()
+func (b *realtimeAudioBridge) pumpUpstream(ctx context.Context, call realtimeAudioCallConn) {
+	events := call.Events()
+	done := call.Done()
 	for {
 		select {
 		case <-ctx.Done():
@@ -374,8 +456,12 @@ func (b *realtimeAudioBridge) writeEvent(event []byte) {
 	_ = writeResponsesWSMessage(b.conn, event)
 }
 
+// sendUpstream creates the call if needed and writes one event to the Live sideband.
 func (b *realtimeAudioBridge) sendUpstream(event []byte) bool {
-	if err := b.call.Send(event); err != nil {
+	if !b.ensureCall() {
+		return false
+	}
+	if err := b.liveCall().Send(event); err != nil {
 		b.writeError(api.NewAPIError(api.ErrCodeServiceUnavailable, "The audio call is no longer available", api.ErrorTypeServer))
 		return false
 	}
@@ -395,27 +481,23 @@ func (b *realtimeAudioBridge) handleClientEvent(raw []byte) {
 	eventType := strings.TrimSpace(gjson.GetBytes(raw, "type").String())
 	switch eventType {
 	case "session.update":
-		b.mu.Lock()
-		sideband, ack, apiErr := applyRealtimeAudioSessionUpdate(&b.cfg, raw)
-		b.mu.Unlock()
-		if apiErr != nil {
-			b.writeError(apiErr)
-			return
-		}
-		if len(sideband) > 0 && !b.sendUpstream(sideband) {
-			return
-		}
-		b.writeEvent(ack)
+		b.handleSessionUpdate(raw)
 
 	case "input_audio_buffer.append":
-		if err := b.input.AppendBase64(gjson.GetBytes(raw, "audio").String()); err != nil {
+		if !b.ensureCall() {
+			return
+		}
+		if err := b.liveInput().AppendBase64(gjson.GetBytes(raw, "audio").String()); err != nil {
 			b.writeError(invalidAudioRequest("input_audio_buffer.append failed: " + err.Error()))
 		}
 
 	case "input_audio_buffer.commit":
-		if err := b.input.Commit(); err != nil {
-			b.writeError(invalidAudioRequest("input_audio_buffer.commit failed: " + err.Error()))
-			return
+		// Before the call exists there is no audio to flush, so a commit does not create it.
+		if input := b.liveInput(); input != nil {
+			if err := input.Commit(); err != nil {
+				b.writeError(invalidAudioRequest("input_audio_buffer.commit failed: " + err.Error()))
+				return
+			}
 		}
 		// The upstream runs its own turn detection, so a commit only flushes the partial frame; the item id it reports is the one the next user turn will use.
 		b.mu.Lock()
@@ -434,7 +516,9 @@ func (b *realtimeAudioBridge) handleClientEvent(raw []byte) {
 		}))
 
 	case "input_audio_buffer.clear":
-		b.input.Clear()
+		if input := b.liveInput(); input != nil {
+			input.Clear()
+		}
 		b.writeEvent(marshalRealtimeServerEvent(map[string]any{
 			"type":     "input_audio_buffer.cleared",
 			"event_id": defaultRealtimeAudioID("event"),
@@ -463,5 +547,53 @@ func (b *realtimeAudioBridge) handleClientEvent(raw []byte) {
 
 	default:
 		b.writeError(invalidAudioRequest("unsupported realtime websocket request type: " + eventType))
+	}
+}
+
+// handleSessionUpdate applies a session.update. Before the call exists it only records the config (the call is then created from it, which is how instructions and voice reach ChatGPT Live) and acks. Once the call exists, instructions and voice cannot change: they are not forwarded, the session.updated ack reflects the accepted fields, and each refused field gets an immutable_field_update error event while the session continues.
+func (b *realtimeAudioBridge) handleSessionUpdate(raw []byte) {
+	// startMu makes "has the call been created" and the config change one step: an update that races the grace timer either lands in the creation session or is refused, never silently lost.
+	b.startMu.Lock()
+	b.stateMu.RLock()
+	created := b.call != nil
+	b.stateMu.RUnlock()
+
+	b.mu.Lock()
+	next := b.cfg
+	_, ack, apiErr := applyRealtimeAudioSessionUpdate(&next, raw)
+	var refused []string
+	if apiErr == nil && created {
+		if realtimeAudioInstructionsOrDefault(next.Instructions) != realtimeAudioInstructionsOrDefault(b.cfg.Instructions) {
+			refused = append(refused, "Instructions")
+			next.Instructions = b.cfg.Instructions
+		}
+		if mapRealtimeVoiceToLive(next.Voice) != mapRealtimeVoiceToLive(b.cfg.Voice) {
+			refused = append(refused, "Voice")
+			next.Voice = b.cfg.Voice
+		}
+		if len(refused) > 0 {
+			ack = marshalRealtimeServerEvent(map[string]any{
+				"type":     "session.updated",
+				"event_id": defaultRealtimeAudioID("event"),
+				"session":  realtimeAudioSessionObject(&next, ""),
+			})
+		}
+	}
+	if apiErr == nil {
+		b.cfg = next
+	}
+	b.mu.Unlock()
+	b.startMu.Unlock()
+
+	if apiErr != nil {
+		b.writeError(apiErr)
+		return
+	}
+	b.writeEvent(ack)
+	for _, field := range refused {
+		b.writeError(api.NewAPIError(api.ErrorCode("immutable_field_update"), field+" cannot be updated after initialization.", api.ErrorTypeInvalidRequest))
+	}
+	if !created {
+		b.ensureCall()
 	}
 }
