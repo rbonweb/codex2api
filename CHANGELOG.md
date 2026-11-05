@@ -5,9 +5,20 @@
 ### Features
 
 - **`DATABASE_URL` configures PostgreSQL in one variable.** A `postgres://` or `postgresql://` connection string, such as the one Neon or Render shows, can be pasted as is: host, port (default 5432), user, password and database come from the URL and `sslmode` from its query string. It wins over the split `DATABASE_*` variables, cannot be combined with `DATABASE_DRIVER=sqlite`, and configuration errors never echo the URL. The admin setup page shows only `host[:port]/name` from it.
+- **GPT-Live API for voice agents at `/v1/live/sessions`.** A WebSocket route where the gateway owns the audio, a WebRTC route where the client owns it (`POST`, plus `GET .../attach` for a server-side sideband), 24 kHz and 16 kHz PCM, G.711 at 8 kHz, and 22 public voice names. Strict session fields return `unknown_parameter` for anything unknown. See the GPT-Live section of `docs/API.md`.
+- **Delegation for voice agents.** Live hands a caller's request to your code as `session.delegation.created`, and your code speaks the result with `session.commentary.append` while `session.thinking.append` and `session.instructions.append` add quiet context. `delegation.acknowledgement: "none"` turns off the spoken filler.
+- **Transcript events carry a `language` code.** A gateway-side detector (about 84 languages) adds it when the result is reliable. The gateway restricts no language.
+
+### Changed
+
+- **`/v1/realtime` creates the Live call on the first audio, item or `response.create`.** Every `session.update` sent before that applies, including `instructions`. After the call starts, `instructions` and `voice` return `immutable_field_update`.
+- **`/v1/realtime` takes `instructions`, `voice` and `delegation` query parameters.** `conversation.item.create` text is now quiet context on the `commentary` channel, so Live uses it without speaking it.
+- **`/v1/realtime` accepts 16 kHz pcm16.** Set it with `{"type":"audio/pcm","rate":16000}`.
+- **Strict session fields on `/v1/realtime`.** Unknown field names return `unknown_parameter`. Known Realtime fields the gateway cannot act on are still accepted and ignored.
 
 ### Fixes
 
+- **The ChatGPT Live sideband no longer closes when a client sends events before `session.started`.** Those events are queued, up to 256, and delivered in order once the call starts.
 - **PostgreSQL passwords with spaces, quotes or backslashes connect.** The keyword/value DSN now quotes every value, so a password like `a b'c` is no longer split into extra keywords.
 
 - **Public Images API returns the exact size the caller asked for.** The Codex upstream treats `size` as a hint and chooses the image shape from the driver model's reading of the prompt, so a `1024x1024` request could come back `1536x1024` and a `1024x1536` portrait as `1312x1199`. `/v1/images/generations` and `/v1/images/edits` (JSON and multipart) now add an output directive with the exact pixels, orientation and aspect ratio to the upstream request, and finalize every image onto the requested canvas when `size` is an explicit `WIDTHxHEIGHT`. The default fit is `pad`, which keeps the whole image and never crops; `upscale_fit: "cover"` fills the canvas and crops the overflow; `strict_size: false` returns the upstream pixels unchanged. Requests with no `size` or `size: "auto"` behave as before, and Image Studio keeps its own `strict_size` / `upscale_fit` handling.

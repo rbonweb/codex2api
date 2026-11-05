@@ -553,6 +553,156 @@ Real-time voice is served by the ChatGPT Live backend and exposed with OpenAI Re
 - Every audio session and transcription uses the account's ChatGPT voice minutes.
 - The binary must be built with the `opus` build tag and CGO. The Docker image is built this way. Release binaries built without it answer 501 with code `audio_bridge_unavailable`.
 
+#### GPT-Live API: `/v1/live/sessions`
+
+The GPT-Live API is the path for voice agents. You set the session once, the model decides when to speak, and your code can answer the caller's requests with the delegation flow below. Clients that already speak OpenAI Realtime events keep using `/v1/realtime`.
+
+| Endpoint | Transport | Who owns the media |
+| --- | --- | --- |
+| `GET /v1/live/sessions` | WebSocket | The gateway. Audio goes over the WebSocket in the session format. |
+| `POST /v1/live/sessions` | JSON in, SDP answer out | The client. Audio travels on the client's WebRTC peer connection. |
+| `GET /v1/live/sessions/{id}/attach` | WebSocket sideband | The client's server, for a call created with `POST`. Events only, no audio. |
+
+Each path also works without the `/v1` prefix. All three need an API key with `limits.allow_live`, otherwise they answer 403 `insufficient_scope`. The WebSocket route needs the `opus` build with CGO and answers 501 `audio_bridge_unavailable` without it. The `POST` and attach routes do not need the Opus build.
+
+Create a WebRTC call:
+
+```bash
+curl https://your-gateway/v1/live/sessions \
+  -H "Authorization: Bearer $API_KEY" \
+  -H "Content-Type: application/json" \
+  -d '{"session":{"instructions":"Be brief.","audio":{"output":{"voice":"willow"}}},"transport":{"type":"webrtc","sdp":"<offer SDP as one JSON string>"}}'
+```
+
+The response is `201` with `{"session":{"id":"<call id>"},"transport":{"type":"webrtc","sdp":"<answer SDP>"}}`. Connect the client with the answer SDP, then open the sideband with `GET /v1/live/sessions/<call id>/attach`. The sideband does not send `session.start`, because the session is already running.
+
+##### Session fields
+
+`session.start` (WebSocket) and `session` (WebRTC) take the same object:
+
+| Field | What it does |
+| --- | --- |
+| `model` | `gpt-live-1` (default), `gpt-live-1-codex`, or a realtime or live model name such as `gpt-realtime` or `gpt-live-*`. Other names return `unsupported_value`. Every name runs `gpt-live-1-codex` upstream. |
+| `instructions` | System instructions, at most 16,384 tokens (estimated as bytes / 4). Fixed after `session.start`. When empty, none are sent upstream. |
+| `input` | Conversation history as message items: `type`, `role` (`user`, `assistant`, `developer` or `system`) and `content` text parts. At most 128 items and 8,192 tokens, otherwise `invalid_value`. |
+| `audio.format` | `{"type","rate"}`, WebSocket only. See [Audio formats](#audio-formats). WebRTC negotiates the format in the SDP, so this field returns `unsupported_value` there. |
+| `audio.output.voice` | A public voice name from the table below. Default `marin`. Unknown names return `unsupported_value`. |
+| `delegation` | `type` must be `client`. `acknowledgement` is `auto` (default) or `none`, a gateway extension. `acknowledgement_delay_ms` is an integer of 0 or more, echoed back and not acted on. `responses` returns `unsupported_value`. |
+| `store` | A boolean. Accepted and echoed in `session.started`. |
+
+Validation is strict. A field the gateway does not know returns `unknown_parameter` with the full dotted path, such as `session.audio.foo`, and the check runs before any value check. Errors use the public error event:
+
+```json
+{"type":"error","error":{"type":"invalid_request_error","code":"unknown_parameter","message":"Unknown parameter: 'session.audio.foo'.","param":"session.audio.foo","client_event_id":null}}
+```
+
+| Error code | Meaning |
+| --- | --- |
+| `unknown_parameter` | The field is not in the public schema. |
+| `unsupported_value` | The field is known but the value is not supported, such as an unknown model, voice or format. |
+| `missing_required_parameter` | A required field is absent, such as `type` or `session.start`'s `session`. |
+| `immutable_field_update` | A field that is fixed after the session starts was sent in `session.update`. |
+| `invalid_value` | The value has the wrong type or breaks a limit. |
+
+##### Client events
+
+| Client event | Behaviour |
+| --- | --- |
+| `session.start` | Required first message on the WebSocket: `{"type":"session.start","session":{...}}`, with an optional `event_id`. Any other first message closes the socket with code 1008. |
+| `session.input_audio.append` | `audio` is base64 audio in the session format. WebSocket only. On the attach sideband it returns `unsupported_value`. |
+| `session.input_audio.mute` | Pauses input. Acked with `session.input_audio.muted`. |
+| `session.input_audio.unmute` | Resumes input. Acked with `session.input_audio.unmuted`. |
+| `session.commentary.append` | `content` (a string or text parts) and an optional `delegation_id`. The model speaks it. Acked with `session.commentary.appended`. |
+| `session.thinking.append` | Same fields as `session.commentary.append`. Quiet: the model uses it and may voice it as progress while a delegation is open. Acked with `session.thinking.appended`. |
+| `session.instructions.append` | `content`. Quiet session-level context for later turns, never spoken. Acked with `session.instructions.appended`. |
+| `session.update` | Any field returns `immutable_field_update`. An unknown field returns `unknown_parameter`. `delegation.responses` returns `unsupported_value`. |
+| `session.close` | Ends the call. The gateway replies with `session.closed` and reason `close_requested`. |
+| `response.create`, `response.item.create` | Return `unsupported_value`. GPT-Live decides when to speak. |
+
+An append whose `content` is longer than 500 bytes is split into chunks without cutting a UTF-8 character. The append is acked once, when its last chunk is acked. Acks follow the order of their appends, and any event with an `event_id` gets it back as `client_event_id` on its ack or error.
+
+##### Server events
+
+| Server event | Payload and notes |
+| --- | --- |
+| `session.started` | `session`: the effective public session with `id`, `model`, `instructions`, `audio.format`, `audio.output.voice`, `delegation` and `store`. Client events sent before it are queued (up to 256) and delivered in order. |
+| `session.output_audio.delta` | `delta`: base64 reply audio in the session format. WebSocket only. |
+| `session.input_transcript.delta` | `delta`, `start_ms`, `end_ms`, and `language` when the detector is reliable (see [Languages](#languages)). |
+| `session.output_transcript.delta` | The same fields for the reply. |
+| `session.delegation.created` | `offset_ms` and `delegation` with `id`, `type` (`delegation`), `target` (`client`) and `content`, the text of the request. Gateway extension. |
+| `session.commentary.appended`, `session.thinking.appended`, `session.instructions.appended` | Acks for the matching append, with `client_event_id` when the client sent an `event_id`. |
+| `session.input_audio.muted`, `session.input_audio.unmuted` | Acks for mute and unmute. |
+| `session.usage.updated` | `usage.seconds`. Live sends it about every 15 seconds. The gateway sends it itself after 60 seconds without one from Live. |
+| `session.closed` | `reason` and `usage.seconds`. The WebSocket then closes with the same reason. |
+| `error` | The public error event shown above. Upstream errors keep their code. |
+
+Close reasons are `close_requested` (the client sent `session.close`), `remote_hangup` (Live ended the call), `expired` (the one-hour limit) and `connection_lost` (the client's connection dropped).
+
+##### Audio formats
+
+- `audio/pcm` at 24 kHz (default) or 16 kHz: 16-bit little-endian mono.
+- `audio/pcmu` and `audio/pcma`: G.711 mu-law and A-law at 8 kHz.
+
+The format applies to input and output. It is set in `session.start` only.
+
+##### Voices
+
+| Public voice | ChatGPT Live voice |
+| --- | --- |
+| `marin` (default) | `maple` |
+| `quartz` | `sol` |
+| `ripple` | `breeze` |
+| `vesper` | `vale` |
+| `willow` | `juniper` |
+| `stone` | `arbor` |
+| `gleam` | `ember` |
+| `meridian` | `cove` |
+| `bossa` | `spruce` |
+| `tempo` | `ember` |
+| `beacon` | `sol` |
+| `delta` | `arbor` |
+| `cinder` | `spruce` |
+| `nuri` | `juniper` |
+| `juni` | `cove` |
+| `flitz` | `breeze` |
+| `brise` | `vale` |
+| `sillage` | `maple` |
+| `nira` | `maple` |
+| `harema` | `juniper` |
+| `shida` | `vale` |
+| `noeul` | `breeze` |
+
+The ChatGPT Live names (`arbor`, `breeze`, `cove`, `ember`, `juniper`, `maple`, `sol`, `spruce`, `vale`) and the Realtime names (`alloy`, `ash`, `ballad`, `coral`, `echo`, `sage`, `shimmer`, `verse`, `marin`, `cedar`) are accepted too. Names are case-insensitive.
+
+##### Delegation example
+
+Your code does the work and Live speaks the result. The values below are examples and the session object is shortened.
+
+```text
+client   {"type":"session.start","event_id":"start-1","session":{"instructions":"You help customers check their orders.","delegation":{"type":"client","acknowledgement":"none"},"audio":{"format":{"type":"audio/pcm","rate":16000},"output":{"voice":"marin"}}}}
+server   {"type":"session.started","session":{"id":"call_123","model":"gpt-live-1","audio":{"format":{"type":"audio/pcm","rate":16000},"output":{"voice":"marin"}},"delegation":{"type":"client","acknowledgement_delay_ms":0,"acknowledgement":"none"}, ...}}
+client   {"type":"session.input_audio.append","audio":"<base64 PCM16, 16 kHz>"}
+server   {"type":"session.input_transcript.delta","delta":"Where is my order 1234?","start_ms":0,"end_ms":2100,"language":"en"}
+server   {"type":"session.delegation.created","offset_ms":2100,"delegation":{"id":"item_9","type":"delegation","target":"client","content":"Where is my order 1234?"}}
+client   {"type":"session.thinking.append","delegation_id":"item_9","event_id":"think-1","content":"Looking up order 1234."}
+server   {"type":"session.thinking.appended","client_event_id":"think-1"}
+client   {"type":"session.commentary.append","delegation_id":"item_9","event_id":"result-1","content":"Order 1234 shipped yesterday and arrives on Friday."}
+server   {"type":"session.commentary.appended","client_event_id":"result-1"}
+server   {"type":"session.output_audio.delta","delta":"<base64 PCM16, 16 kHz>"}
+server   {"type":"session.usage.updated","usage":{"seconds":15}}
+client   {"type":"session.close"}
+server   {"type":"session.closed","reason":"close_requested","usage":{"seconds":42}}
+```
+
+##### Gateway extensions
+
+These are not part of OpenAI's API. They are documented here so that clients can rely on them.
+
+- `delegation.content` on `session.delegation.created`: the text of the request, the `input_text` parts joined.
+- `delegation.acknowledgement`: `none` turns off Live's spoken filler ("On it") while a delegation runs. `auto` keeps it.
+- `language` on transcript deltas: a language code from the gateway-side detector.
+- `session.delegation.created`, `session.commentary.append`, `session.thinking.append`, `session.instructions.append` and their acks: the delegation events, also available on `/v1/realtime`.
+
 #### WebRTC calls: `POST /v1/realtime/calls`
 
 `POST /realtime/calls` is the same endpoint without the `/v1` prefix. The body is read by its `Content-Type`:
@@ -614,13 +764,13 @@ Audio model names (case-insensitive, trimmed):
 - `gpt-4o-realtime-preview*` and `gpt-4o-mini-realtime-preview*`
 - `gpt-live` and `gpt-live-*`
 
-Audio format is pcm16, 24 kHz, mono, little-endian, base64 in `input_audio_buffer.append`. Input and output use the same format. Other formats are rejected with a 400 `invalid_request` error. The accepted values are `"pcm16"` or `{"type":"audio/pcm","rate":24000}`, in `input_audio_format`, `output_audio_format`, `audio.input.format` or `audio.output.format`.
+Audio format is pcm16, mono, little-endian, base64 in `input_audio_buffer.append`, at 24 kHz or 16 kHz. Input and output use the same format. Other formats are rejected with `unsupported_value`. The accepted values are `"pcm16"` (24 kHz), `{"type":"audio/pcm","rate":24000}` and `{"type":"audio/pcm","rate":16000}`, in `input_audio_format`, `output_audio_format`, `audio.input.format` or `audio.output.format`.
 
 Client events:
 
 | Client event | Behaviour |
 | --- | --- |
-| `session.update` | Applies `instructions`, `voice` or `audio.output.voice`, `model` and `output_modalities`. Instructions and voice are sent upstream. `model` is recorded but the upstream always runs `gpt-live-1-codex`. Replies `session.updated`. |
+| `session.update` | Before the call exists (the first audio, item or `response.create`), applies `instructions`, `voice` or `audio.output.voice`, `model`, `output_modalities` and `delegation`. After it exists, `instructions` and `voice` return `immutable_field_update` and the session keeps the original values. `model` is recorded but the upstream always runs `gpt-live-1-codex`. Replies `session.updated`. |
 | `input_audio_buffer.append` | Queues base64 pcm16 audio. It is resampled to 48 kHz, encoded as Opus in 20 ms frames and sent at real-time pace. |
 | `input_audio_buffer.commit` | Flushes the partial 20 ms frame only. The upstream runs its own turn detection (server-side VAD), so a commit does not start a response. Replies `input_audio_buffer.committed`. |
 | `input_audio_buffer.clear` | Drops audio that is queued but not yet sent. Replies `input_audio_buffer.cleared`. |
@@ -650,6 +800,16 @@ Text-only output: `output_modalities: ["text"]` drops `response.output_audio.del
 Each call ends after one hour. When the call ends, the gateway closes the WebSocket with a normal close and the reason `live call ended`.
 
 When the client disconnects, the gateway sends `session.close` upstream, closes the WebRTC peer, releases the account lease and the API key concurrency slot, and logs usage once.
+
+#### Changes to `/v1/realtime`
+
+Voice agents should use the [GPT-Live API](#gpt-live-api-v1livesessions) instead. These changes apply to the Realtime WebSocket.
+
+- The Live call is created on the first `input_audio_buffer.append`, `conversation.item.create` or `response.create`, not on connect. Every `session.update` sent before that applies, including `instructions`.
+- The URL takes `instructions`, `voice` and `delegation` query parameters next to `model`. `delegation=none` turns off Live's spoken filler acknowledgement. Any other `delegation` value returns 400 `unsupported_value` before the upgrade. A later `session.update` sent before the call exists overrides them.
+- `conversation.item.create` text is quiet context on the `commentary` channel. Live may use it but never speaks it.
+- The delegation extension events work here too: `session.delegation.created`, `session.commentary.append`, `session.thinking.append`, `session.instructions.append` and their acks, with the same shapes as the GPT-Live API.
+- Unknown session field names return `unknown_parameter` with the dotted path. Realtime fields the bridge cannot act on, such as `tools` and `temperature`, are accepted and ignored.
 
 #### Transcriptions: `POST /v1/audio/transcriptions`
 
@@ -717,7 +877,23 @@ Every audio model name maps to `gpt-live-1-codex`. The default instruction, used
 
 - `POST /v1/audio/speech` is not available. ChatGPT Live answers each turn in its own words, and `session.context.append` adds context rather than a verbatim "say this" command, so no verbatim text-to-speech primitive is known.
 - The plain WebSocket voice endpoint `wss://…/v1/live` refuses voice for ChatGPT accounts ("Voice session access denied"), so the gateway always runs the upstream session over WebRTC.
-- Audio on the WebSocket path is pcm16 at 24 kHz only. WebRTC clients send and receive Opus on their own peer connection.
+- Audio on the WebSocket path is pcm16 at 24 kHz or 16 kHz. WebRTC clients send and receive Opus on their own peer connection.
+
+#### GPT-Live limits
+
+- A call lasts one hour. At the limit the gateway sends `session.closed` with reason `expired` on the GPT-Live API, and closes the Realtime WebSocket with `live call ended`.
+- Calls are limited per ChatGPT account. In testing, the third concurrent call on one account got 503, so plan for two calls per account.
+- Every open session counts toward the account's ChatGPT voice allowance, including silence.
+- Live never speaks first and decides for itself when to speak. There is no manual turn control: `response.create` and `response.item.create` are refused on `/v1/live/sessions`, and `input_audio_buffer.commit` on `/v1/realtime` does not start a reply.
+
+#### Languages
+
+- The gateway never restricts language. Speech in any language goes to the model, and the reply language follows the conversation and the instructions. For example, "Speak Gujarati unless the user switches" in `instructions`.
+- OpenAI publishes no complete list of languages for ChatGPT voice or `gpt-live-1`. It names dedicated voices for English, Brazilian Portuguese, French, German, Hindi, Japanese, Korean and Mexican Spanish. Azure describes `gpt-live-1` as "multilingual across 10 languages" without naming them.
+- `/v1/audio/transcriptions` follows Whisper-family coverage, about 98 languages. Accuracy varies by language.
+- Tested through this gateway: English, Indian English and Hindi. Hindi is transcribed in Devanagari.
+- The `language` field on transcript events comes from a gateway-side detector (whatlanggo, about 84 languages). It is left out when the detection is not reliable or the text has fewer than three words.
+- Test any other language, Gujarati included, before production.
 
 ### 5. List Models
 
