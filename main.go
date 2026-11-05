@@ -13,8 +13,8 @@ import (
 	"strings"
 	"syscall"
 	"time"
-	// Windows 与无 zoneinfo 的精简环境没有 IANA 时区库,内嵌兜底让 TZ=Asia/Shanghai
-	// 这类名字仍可解析(系统自带 zoneinfo 时优先用系统的)。issue #498。
+	// Windows and slim environments without zoneinfo have no IANA time zone database, so the embedded fallback lets TZ=Asia/Shanghai
+	// names like this still resolve (the system zoneinfo is preferred when present). issue #498.
 	_ "time/tzdata"
 
 	"github.com/codex2api/admin"
@@ -46,53 +46,53 @@ func configureCodexIdleUsageObserver(store *auth.Store) {
 	})
 }
 
-// main 加载配置、初始化存储与路由，并启动 Codex2API HTTP 服务。
+// main loads the config, initializes storage and routing, and starts the Codex2API HTTP service.
 func main() {
 	log.SetFlags(log.LstdFlags | log.Lshortfile)
-	log.Println("Codex2API v2 启动中...")
+	log.Println("Codex2API v2 starting...")
 
-	// 1. 加载配置 (.env)
+	// 1. Load the config (.env)
 	cfg, err := config.Load(".env")
 	if err != nil {
-		log.Fatalf("加载核心环境配置失败 (请检查 .env 文件): %v", err)
+		log.Fatalf("failed to load core environment config (check the .env file): %v", err)
 	}
 	proxy.ConfigureDownstreamKeepaliveFromEnv()
-	log.Printf("物理层配置加载成功: port=%d, database=%s, cache=%s, tz=%s", cfg.Port, cfg.Database.Label(), cfg.Cache.Label(), time.Local)
+	log.Printf("physical layer config loaded successfully: port=%d, database=%s, cache=%s, tz=%s", cfg.Port, cfg.Database.Label(), cfg.Cache.Label(), time.Local)
 
-	// 2. 初始化数据库
+	// 2. Initialize the database
 	db, err := database.New(cfg.Database.Driver, cfg.Database.DSN(), cfg.Database.Schema)
 	if err != nil {
-		log.Fatalf("数据库初始化失败: %v", err)
+		log.Fatalf("database initialization failed: %v", err)
 	}
 	defer db.Close()
 	if migrateOnlyEnabled() {
-		log.Println("数据库迁移完成，CODEX_MIGRATE_ONLY 已启用，进程退出")
+		log.Println("database migration complete, CODEX_MIGRATE_ONLY is enabled, process exiting")
 		return
 	}
 	switch cfg.Database.Driver {
 	case "sqlite":
-		log.Printf("%s 连接成功: %s", cfg.Database.Label(), cfg.Database.Path)
+		log.Printf("%s connected successfully: %s", cfg.Database.Label(), cfg.Database.Path)
 	default:
 		if cfg.Database.Schema != "" {
-			log.Printf("%s 连接成功: %s:%d/%s (schema=%s)", cfg.Database.Label(), cfg.Database.Host, cfg.Database.Port, cfg.Database.DBName, cfg.Database.Schema)
+			log.Printf("%s connected successfully: %s:%d/%s (schema=%s)", cfg.Database.Label(), cfg.Database.Host, cfg.Database.Port, cfg.Database.DBName, cfg.Database.Schema)
 		} else {
-			log.Printf("%s 连接成功: %s:%d/%s", cfg.Database.Label(), cfg.Database.Host, cfg.Database.Port, cfg.Database.DBName)
+			log.Printf("%s connected successfully: %s:%d/%s", cfg.Database.Label(), cfg.Database.Host, cfg.Database.Port, cfg.Database.DBName)
 		}
 	}
 
-	// 3. 读取运行时的系统逻辑设置（需在缓存初始化之前，以获取连接池大小）
+	// 3. Read the runtime system settings (must run before cache initialization, to get the connection pool size)
 	sysCtx, sysCancel := context.WithTimeout(context.Background(), 5*time.Second)
 	settings, err := db.GetSystemSettings(sysCtx)
 	sysCancel()
 	recommendedPromptFilter := promptfilter.RecommendedConfig()
 
 	if err == nil && settings == nil {
-		// 初次运行，保存初始安全设置到数据库
-		log.Printf("初次运行，初始化系统默认设置...")
+		// First run: save the initial security settings to the database
+		log.Printf("first run, initializing default system settings...")
 		settings = &database.SystemSettings{
 			SiteName:                          database.DefaultSiteName,
 			MaxConcurrency:                    2,
-			CodexTelemetryEnabled:             false, // 实验性:模拟遥测默认不外发,由部署者显式开启
+			CodexTelemetryEnabled:             false, // experimental: simulated telemetry is not sent out by default, the deployer must enable it explicitly
 			GlobalRPM:                         0,
 			TestModel:                         auth.DefaultTestModel,
 			TestContent:                       auth.DefaultTestContent,
@@ -146,11 +146,11 @@ func main() {
 		}
 		_ = db.UpdateSystemSettings(context.Background(), settings)
 	} else if err != nil {
-		log.Printf("警告: 读取系统设置失败: %v，将采用安全后备策略", err)
+		log.Printf("warning: failed to read system settings: %v, falling back to the safe fallback strategy", err)
 		settings = &database.SystemSettings{
 			SiteName:                          database.DefaultSiteName,
 			MaxConcurrency:                    2,
-			CodexTelemetryEnabled:             false, // 实验性:模拟遥测默认不外发,由部署者显式开启
+			CodexTelemetryEnabled:             false, // experimental: simulated telemetry is not sent out by default, the deployer must enable it explicitly
 			GlobalRPM:                         0,
 			TestModel:                         auth.DefaultTestModel,
 			TestContent:                       auth.DefaultTestContent,
@@ -200,14 +200,14 @@ func main() {
 			UTLSShutdownTimeoutMinutes:        30,
 		}
 	} else {
-		log.Printf("已加载持久化业务设置: ProxyURL=%s, MaxConcurrency=%d, GlobalRPM=%d, PgMaxConns=%d, RedisPoolSize=%d",
+		log.Printf("persisted business settings loaded: ProxyURL=%s, MaxConcurrency=%d, GlobalRPM=%d, PgMaxConns=%d, RedisPoolSize=%d",
 			security.MaskURLCredentials(settings.ProxyURL), settings.MaxConcurrency, settings.GlobalRPM, settings.PgMaxConns, settings.RedisPoolSize)
 	}
 	modelCooldownCtx, modelCooldownCancel := context.WithTimeout(context.Background(), 3*time.Second)
 	modelCooldownSettings, modelCooldownErr := db.GetModelCooldownSettings(modelCooldownCtx)
 	modelCooldownCancel()
 	if modelCooldownErr != nil {
-		log.Printf("警告: 读取模型冷却设置失败，将采用安全默认值: %v", modelCooldownErr)
+		log.Printf("warning: failed to read model cooldown settings, using safe defaults: %v", modelCooldownErr)
 		modelCooldownSettings = database.DefaultModelCooldownSettings()
 	}
 	settings.RelayModelCooldownMode = modelCooldownSettings.RelayMode
@@ -224,37 +224,37 @@ func main() {
 	responseCacheCtx, responseCacheCancel := context.WithTimeout(context.Background(), 3*time.Second)
 	if err := proxy.LoadResponseCacheSettings(responseCacheCtx, db); err != nil {
 		responseCacheCancel()
-		log.Fatalf("加载响应缓存设置失败: %v", err)
+		log.Fatalf("failed to load response cache settings: %v", err)
 	}
 	responseCacheCancel()
 
 	appliedResponseCache := proxy.GetResponseCacheAppliedConfig()
 	log.Printf(
-		"响应缓存设置已加载: generation=%d total=%d entry=%d reconstruct=%d",
+		"response cache settings loaded: generation=%d total=%d entry=%d reconstruct=%d",
 		appliedResponseCache.Generation,
 		appliedResponseCache.LocalMaxBytes,
 		appliedResponseCache.LocalMaxEntryBytes,
 		appliedResponseCache.ReconstructMaxBytes,
 	)
 
-	// 模型输出失控防护设置：冷启动读取失败不致命，由后台 5 秒轮询器恢复；
-	// 未就绪期间 HTTP/WS/Stream 门禁统一返回 503 service_unavailable。
+	// Model output runaway guard settings: a cold-start read failure is not fatal, the background 5-second poller recovers it;
+	// while not ready, the HTTP/WS/Stream gates uniformly return 503 service_unavailable.
 	outputGuardCtx, outputGuardCancel := context.WithTimeout(context.Background(), 3*time.Second)
 	if err := proxy.LoadOutputGuardSettings(outputGuardCtx, db); err != nil {
 		outputGuardCancel()
-		log.Printf("警告: 加载模型输出失控防护设置失败（冷启动门禁将返回 503 直至 DB 轮询恢复）: %v", err)
+		log.Printf("warning: failed to load model output runaway guard settings (the cold-start gate returns 503 until DB polling recovers): %v", err)
 	} else {
 		outputGuardCancel()
 		appliedGuard := proxy.CurrentOutputGuardConfig()
 		log.Printf(
-			"模型输出失控防护设置已加载: generation=%d enabled=%t tool_bytes=%d tool_deltas=%d channel_bytes=%d request_bytes=%d",
+			"model output runaway guard settings loaded: generation=%d enabled=%t tool_bytes=%d tool_deltas=%d channel_bytes=%d request_bytes=%d",
 			appliedGuard.Generation, appliedGuard.Enabled, appliedGuard.MaxToolArgumentBytes,
 			appliedGuard.MaxToolArgumentDeltas, appliedGuard.MaxChannelBytes, appliedGuard.MaxRequestBytes,
 		)
 	}
 	proxy.StartOutputGuardConfigPoller(context.Background(), db)
 
-	// 4. 初始化缓存（使用数据库中保存的连接池大小）
+	// 4. Initialize the cache (using the connection pool size saved in the database)
 	redisPoolSize := 30
 	if settings.RedisPoolSize > 0 {
 		redisPoolSize = settings.RedisPoolSize
@@ -274,15 +274,15 @@ func main() {
 			InsecureSkipVerify: cfg.Cache.Redis.InsecureSkipVerify,
 		})
 		if err != nil {
-			log.Fatalf("缓存初始化失败: %v", err)
+			log.Fatalf("cache initialization failed: %v", err)
 		}
 	}
 	defer tc.Close()
 	switch cfg.Cache.Driver {
 	case "memory":
-		log.Printf("%s 缓存已启用: pool_size=%d", cfg.Cache.Label(), redisPoolSize)
+		log.Printf("%s cache enabled: pool_size=%d", cfg.Cache.Label(), redisPoolSize)
 	default:
-		log.Printf("%s 连接成功: %s, pool_size=%d", cfg.Cache.Label(), cache.RedactRedisAddr(cfg.Cache.Redis.Addr), redisPoolSize)
+		log.Printf("%s connected successfully: %s, pool_size=%d", cfg.Cache.Label(), cache.RedactRedisAddr(cfg.Cache.Redis.Addr), redisPoolSize)
 	}
 	responseContextCache := tc
 	var durableResponseContexts *cache.DurableResponseContextStore
@@ -292,8 +292,8 @@ func main() {
 			MaxBytes: storeCfg.MaxBytes,
 		})
 		if err != nil {
-			// 持久层只是缓存：打不开时退回原有的 L1 行为，不阻止服务启动。
-			log.Printf("持久化 response context 存储不可用，继续使用内存缓存: %v", err)
+			// The persistence layer is only a cache: when it cannot be opened, fall back to the original L1 behavior and do not block service startup.
+			log.Printf("persisted response context store unavailable, continuing with the in-memory cache: %v", err)
 			durableResponseContexts = nil
 		} else {
 			responseContextCache = cache.WithDurableResponseContexts(tc, durableResponseContexts)
@@ -301,25 +301,25 @@ func main() {
 			stats, statsErr := durableResponseContexts.Stats(statsCtx)
 			cancelStats()
 			if statsErr != nil {
-				log.Printf("持久化 response context 存储已启用: path=%s ttl=%s max_mb=%d (统计失败: %v)", storeCfg.Path, storeCfg.TTL, storeCfg.MaxBytes>>20, statsErr)
+				log.Printf("persisted response context store enabled: path=%s ttl=%s max_mb=%d (stats failed: %v)", storeCfg.Path, storeCfg.TTL, storeCfg.MaxBytes>>20, statsErr)
 			} else {
-				log.Printf("持久化 response context 存储已启用: path=%s ttl=%s max_mb=%d contexts=%d item_bytes=%d", storeCfg.Path, storeCfg.TTL, storeCfg.MaxBytes>>20, stats.Contexts, stats.ItemBytes)
+				log.Printf("persisted response context store enabled: path=%s ttl=%s max_mb=%d contexts=%d item_bytes=%d", storeCfg.Path, storeCfg.TTL, storeCfg.MaxBytes>>20, stats.Contexts, stats.ItemBytes)
 			}
 		}
 	}
 	proxy.SetResponseContextCache(responseContextCache)
 
-	// 4b. 应用数据库连接池设置
+	// 4b. Apply the database connection pool settings
 	if settings.PgMaxConns > 0 {
 		db.SetMaxOpenConns(settings.PgMaxConns)
-		log.Printf("%s 连接池: max_conns=%d", cfg.Database.Label(), settings.PgMaxConns)
+		log.Printf("%s connection pool: max_conns=%d", cfg.Database.Label(), settings.PgMaxConns)
 	}
 	db.SetUsageLogConfig(settings.UsageLogMode, settings.UsageLogBatchSize, settings.UsageLogFlushIntervalSeconds)
 	if overrides, perr := database.ParseModelPricingOverridesJSON(settings.ModelPricingOverrides); perr == nil {
 		database.SetModelPricingOverrides(overrides)
 	}
 	runtimeSettings := proxy.ApplyRuntimeSettingsFromSystem(settings)
-	log.Printf("运行时优化配置: client_compat=%s min_cli=%s usage_log=%s batch=%d flush=%ds stream_flush=%s/%dms first_token_mode=%s first_token_timeout=%ds billing_tier_policy=%s",
+	log.Printf("runtime optimization config: client_compat=%s min_cli=%s usage_log=%s batch=%d flush=%ds stream_flush=%s/%dms first_token_mode=%s first_token_timeout=%ds billing_tier_policy=%s",
 		runtimeSettings.ClientCompatMode,
 		runtimeSettings.CodexMinCLIVersion,
 		db.GetUsageLogMode(),
@@ -332,30 +332,30 @@ func main() {
 		runtimeSettings.BillingTierPolicy,
 	)
 
-	// 4b'. 应用图片存储后端配置
+	// 4b'. Apply the image storage backend config
 	imgLocalDir := strings.TrimSpace(os.Getenv("IMAGE_ASSET_DIR"))
 	if imgLocalDir == "" {
 		imgLocalDir = "/data/images"
 	}
 	if imgCfg, err := imagestore.ApplyFromJSON(settings.ImageStorageConfig, imgLocalDir); err != nil {
-		log.Printf("图片存储配置应用失败，已回退到本地: %v", err)
+		log.Printf("failed to apply image storage config, fell back to local storage: %v", err)
 	} else {
-		log.Printf("图片存储后端: %s", imgCfg.Backend)
+		log.Printf("image storage backend: %s", imgCfg.Backend)
 	}
 
-	// 4c. 初始化 Resin 粘性代理池
+	// 4c. Initialize the Resin sticky proxy pool
 	if settings.ResinURL != "" && settings.ResinPlatformName != "" {
 		proxy.SetResinConfig(&proxy.ResinConfig{
 			BaseURL:      settings.ResinURL,
 			PlatformName: settings.ResinPlatformName,
 		})
-		// 注入 Resin URL 装饰器到 auth 包（避免 auth → proxy 循环依赖）
+		// Inject the Resin URL decorator into the auth package (avoids an auth → proxy circular dependency)
 		auth.ResinRequestDecorator = func(targetURL, accountID string) string {
 			return proxy.BuildReverseProxyURL(targetURL)
 		}
 	}
 
-	// 5. 初始化账号管理器
+	// 5. Initialize the account manager
 	auth.CodexOAuthIdentityHeaders = proxy.CodexOAuthIdentityHeaders
 	store := auth.NewStore(db, tc, settings)
 	store.SetSchedulerWaitLimits(cfg.SchedulerMaxWaiters, cfg.SchedulerMaxWaitersPerKey)
@@ -363,18 +363,18 @@ func main() {
 	ctx, cancel := context.WithTimeout(context.Background(), 3*time.Minute)
 	if err := store.Init(ctx); err != nil {
 		cancel()
-		log.Fatalf("账号初始化失败: %v", err)
+		log.Fatalf("account initialization failed: %v", err)
 	}
 	cancel()
 
-	// 全局 RPM 限流器
+	// Global RPM rate limiter
 	rateLimiter := proxy.NewRateLimiter(settings.GlobalRPM)
 	adminHandler := admin.NewHandler(store, db, tc, rateLimiter, cfg.AdminSecret)
-	// 初始化 admin handler 的连接池设置跟踪
+	// Initialize connection pool settings tracking for the admin handler
 	adminHandler.SetPoolSizes(settings.PgMaxConns, settings.RedisPoolSize)
 	store.SetUsageProbeFunc(adminHandler.ProbeUsageSnapshot)
 
-	// 启动后台刷新
+	// Start background refresh
 	store.StartBackgroundRefresh()
 	store.TriggerUsageProbeAsync()
 	store.TriggerRecoveryProbeAsync()
@@ -384,46 +384,46 @@ func main() {
 	adminHandler.StartQualityTests(backgroundCtx)
 	defer cancelBackground()
 	if !proxy.StartResponseCacheSettingsPoller(backgroundCtx, db) {
-		log.Fatalf("启动响应缓存设置同步失败")
+		log.Fatalf("failed to start response cache settings sync")
 	}
 	adminHandler.StartAutoResetCredits(backgroundCtx)
 	adminHandler.StartAutoActivate5hWindow(backgroundCtx)
 	adminHandler.StartScheduledConnectionTests(backgroundCtx)
-	// 官方结算用量按天快照：上游只保留 7 天，不落库就永久丢失，长期历史全靠这个任务。
+	// Daily snapshots of official billing usage: upstream keeps only 7 days, so without persisting them the history is lost for good; this job is the only source of long-term history.
 	adminHandler.StartWhamDailyUsageProbe(backgroundCtx)
-	// 官方模型价目轮询默认关闭；启用后只在网络解析完成后做一次短数据库写入。
+	// Polling of official model prices is off by default; once enabled, it makes one short database write only after network resolution completes.
 	adminHandler.StartOfficialPricingSync(backgroundCtx)
-	// Prompt 审核日志保留清理：默认保留 7 天，每小时分批清理过期行，CY 关联行不动。
+	// Prompt review log retention cleanup: keeps 7 days by default, deletes expired rows in batches every hour, and leaves CY-linked rows untouched.
 	adminHandler.StartPromptLogRetention(backgroundCtx)
 
-	// 版本闸与套餐闸上游同文案：版本抬升后旧版本下学到的模型不支持冷却作废（issue #793）。
+	// The version gate and the plan gate share the same upstream wording: after the version is raised, cooldowns on models learned as unsupported under the old version are void (issue #793).
 	proxy.OnCodexClientVersionRaised(func() {
 		if cleared := store.ClearModelCooldownsByReason(auth.ModelCooldownReasonUnsupported, 0); cleared > 0 {
-			log.Printf("Codex 客户端版本已抬升，清除 %d 条模型不支持冷却", cleared)
+			log.Printf("Codex client version raised, cleared %d unsupported-model cooldowns", cleared)
 		}
 	})
-	// 后台定时同步 Codex CLI 模拟版本（启动即拉一次，之后按设置的间隔）；
-	// 出上游新版本门槛时无需发版即可跟进。开关/间隔在设置页可调，
-	// CODEX_DISABLE_CLI_VERSION_SYNC 为硬关闭。
+	// Background scheduled sync of the simulated Codex CLI version (fetched once at startup, then at the configured interval);
+	// when the upstream raises its new-version threshold, this follows without a release. The switch and interval are adjustable on the settings page,
+	// CODEX_DISABLE_CLI_VERSION_SYNC is a hard off switch.
 	proxy.StartCodexCLIVersionSync(backgroundCtx, db, store.GetProxyURL)
 
-	log.Printf("账号就绪: %d/%d 可用", store.AvailableCount(), store.AccountCount())
+	log.Printf("accounts ready: %d/%d available", store.AvailableCount(), store.AccountCount())
 
-	// 6. 启动 HTTP 服务
+	// 6. Start the HTTP service
 	gin.SetMode(gin.ReleaseMode)
 	r := gin.New()
-	// 默认信任本机回环与常见私有网段，兼顾同机 / Docker WAF 反代获取真实 IP 与公网直连防伪造；
-	// 如需收紧或扩展可信代理范围，可通过 CODEX_TRUSTED_PROXIES 显式配置 CIDR/IP。
+	// By default, loopback and common private networks are trusted, so that a same-host or Docker WAF reverse proxy gets the real IP while direct public connections are protected against spoofing;
+	// to tighten or extend the trusted proxy range, set CIDRs/IPs explicitly via CODEX_TRUSTED_PROXIES.
 	if err := configureTrustedProxies(r, cfg.TrustedProxies); err != nil {
-		log.Fatalf("配置可信代理失败: %v", err)
+		log.Fatalf("failed to configure trusted proxies: %v", err)
 	}
 	r.Use(api.RecoveryMiddleware())
 	r.Use(api.RequestContextMiddleware())
 	r.Use(api.VersionMiddleware())
 	security.MaxRequestBodySize = cfg.MaxRequestBodySize
 	security.ConfigureRequestMemoryBudget(cfg.RequestMemoryBudgetBytes)
-	// 账号导入端点(multipart 文件上传)单独放宽体积上限,默认 200MB,可用
-	// CODEX_MAX_IMPORT_BODY_SIZE_MB 覆盖。前端按大小分批发送,单批控制在此上限内。
+	// The account import endpoint (multipart file upload) has its own relaxed size limit, 200MB by default, which can be
+	// overridden with CODEX_MAX_IMPORT_BODY_SIZE_MB. The frontend sends in size-based batches, each kept within this limit.
 	if v := strings.TrimSpace(os.Getenv("CODEX_MAX_IMPORT_BODY_SIZE_MB")); v != "" {
 		if mb, err := strconv.Atoi(v); err == nil && mb > 0 {
 			security.MaxImportBodySize = int64(mb) * 1024 * 1024
@@ -437,35 +437,35 @@ func main() {
 	r.Use(loggerMiddleware())
 	r.Use(security.SecurityHeadersMiddleware())
 
-	// handler 不再接收 cfg.APIKeys
-	// 从环境变量读取 Codex 画像与 Beta 配置。
+	// The handler no longer receives cfg.APIKeys
+	// Read the Codex profile and Beta config from environment variables.
 	deviceCfg := proxy.DeviceProfileConfigFromEnv(os.Getenv)
 	handler := proxy.NewHandler(store, db, cfg, deviceCfg)
 	handler.SetRuntimeCache(tc)
 	defer handler.CloseAPIKeyAuthCache()
 	adminHandler.SetAPIKeyAuthCacheHandler(handler)
 
-	// 注册 WebSocket 执行函数（避免 proxy ↔ wsrelay 循环依赖）
+	// Register the WebSocket execution function (avoids a proxy ↔ wsrelay circular dependency)
 	proxy.WebsocketExecuteFunc = wsrelay.ExecuteRequestWebsocket
-	// 连接级（终态后补发）的用量帧也交给 proxy 更新内存快照；observer 必须非阻塞。
+	// Connection-level usage frames (re-sent after the terminal state) are also handed to proxy to update the in-memory snapshot; the observer must not block.
 	configureCodexIdleUsageObserver(store)
-	// WS 逐帧用量落库节流；大号池可按数据库承压情况调大，0/非法值保持默认 30s。
+	// Throttles per-frame WS usage persistence; large account pools may raise it according to database load; 0 or invalid values keep the default of 30s.
 	if raw := strings.TrimSpace(os.Getenv("CODEX_WS_USAGE_FRAME_PERSIST_SECONDS")); raw != "" {
 		if seconds, err := strconv.Atoi(raw); err == nil && seconds > 0 {
 			proxy.SetCodexUsageFramePersistInterval(time.Duration(seconds) * time.Second)
 		}
 	}
-	// 帧摄入的部署级逃生阀；false 时回退到 WHAM 探针与 HTTP 响应头。
+	// Deployment-level escape hatch for frame ingestion; when false, falls back to the WHAM probe and HTTP response headers.
 	if raw := strings.TrimSpace(os.Getenv("CODEX_WS_USAGE_FRAME_INGEST")); raw != "" {
 		if enabled, err := strconv.ParseBool(raw); err == nil {
 			proxy.SetCodexUsageFrameIngestEnabled(enabled)
 		}
 	}
 
-	// 注册 Agent Identity task 确保函数（proxy 无 Store 引用，启动时注入）
+	// Register the Agent Identity task ensure function (proxy has no Store reference, so it is injected at startup)
 	proxy.EnsureCodexAgentIdentityTaskFunc = store.EnsureCodexAgentIdentityTask
 
-	// 上游 WS 空闲连接保活常驻任务（默认关闭：goroutine 常驻但仅在运行时开关开启时才发送 Ping）
+	// Upstream WS idle connection keepalive resident task (off by default: the goroutine stays resident but only sends Ping when the runtime switch is on)
 	wsKeepalive := wsrelay.NewKeepaliveTask(
 		wsrelay.GetManager(),
 		store.CodexWSKeepaliveEnabled,
@@ -475,9 +475,9 @@ func main() {
 
 	r.Use(rateLimiter.Middleware())
 	if settings.GlobalRPM > 0 {
-		log.Printf("全局限流已生效: %d RPM", settings.GlobalRPM)
+		log.Printf("global rate limit in effect: %d RPM", settings.GlobalRPM)
 	}
-	log.Printf("单账号并发上限: %d", settings.MaxConcurrency)
+	log.Printf("per-account concurrency limit: %d", settings.MaxConcurrency)
 
 	handler.RegisterRoutes(r)
 	adminHandler.RegisterExternalImageRoutes(r, handler)
@@ -495,20 +495,20 @@ func main() {
 	adminHandler.StartIntelligenceChecks(backgroundCtx, deviceCfg)
 	adminHandler.RegisterRoutes(r)
 
-	// 管理后台前端静态文件
+	// Admin panel frontend static files
 	subFS, err := fs.Sub(frontendFS, "frontend/dist")
 	if err != nil {
-		log.Printf("前端静态文件加载失败（开发模式可忽略）: %v", err)
+		log.Printf("failed to load frontend static files (can be ignored in development mode): %v", err)
 	} else {
 		httpFS := http.FS(subFS)
-		// 预读 index.html（SPA 回退时直接返回，避免 FileServer 重定向）
+		// Pre-read index.html (returned directly on SPA fallback, to avoid FileServer redirects)
 		indexHTML, _ := fs.ReadFile(subFS, "index.html")
 
 		serveFrontend := func(c *gin.Context) {
 			fp := c.Param("filepath")
-			// 尝试打开请求的文件（排除目录和根路径）
+			// Try to open the requested file (excluding directories and the root path)
 			if fp != "/" && len(fp) > 1 {
-				trimmed := fp[1:] // 去掉开头的 /
+				trimmed := fp[1:] // strip the leading /
 				if f, err := subFS.Open(trimmed); err == nil {
 					fi, statErr := f.Stat()
 					f.Close()
@@ -522,19 +522,19 @@ func main() {
 						return
 					}
 				}
-				// 带 hash 的静态资源不存在时必须返回 404。若回退到 index.html，
-				// 浏览器会把 HTML 当成 JS/CSS 解析并反复触发 chunk load error。
+				// A missing static asset with a hash in its name must return 404. If it fell back to index.html,
+				// the browser would parse the HTML as JS/CSS and repeatedly trigger chunk load errors.
 				if strings.HasPrefix(trimmed, "assets/") {
 					c.Header("Cache-Control", "no-store, no-cache, must-revalidate")
 					c.Status(http.StatusNotFound)
 					return
 				}
 			}
-			// 文件不存在或者是目录 → 直接返回 index.html 字节（让 React Router 处理）
+			// File does not exist or is a directory → return the index.html bytes directly (let React Router handle it)
 			c.Header("Cache-Control", "no-store, no-cache, must-revalidate")
 			c.Header("Pragma", "no-cache")
 			if c.Query("refresh-assets") == "1" {
-				// 仅清理 HTTP cache，不影响登录态、localStorage 或站点配置。
+				// Only clears the HTTP cache; login state, localStorage, and site configuration are unaffected.
 				c.Header("Clear-Site-Data", `"cache"`)
 			}
 			c.Data(http.StatusOK, "text/html; charset=utf-8", indexHTML)
@@ -545,7 +545,7 @@ func main() {
 
 			enabled, err := adminHandler.PublicAPIKeyUsagePageEnabled(ctx)
 			if err != nil {
-				log.Printf("读取 API Key 自助用量页开关失败: %v", err)
+				log.Printf("failed to read the API key self-service usage page switch: %v", err)
 				c.Status(http.StatusInternalServerError)
 				return
 			}
@@ -561,7 +561,7 @@ func main() {
 
 			enabled, err := adminHandler.PublicImageStudioPageEnabled(ctx)
 			if err != nil {
-				log.Printf("读取生图门户开关失败: %v", err)
+				log.Printf("failed to read the image generation portal switch: %v", err)
 				c.Status(http.StatusInternalServerError)
 				return
 			}
@@ -577,7 +577,7 @@ func main() {
 
 			enabled, err := adminHandler.PublicAccountPortalPageEnabled(ctx)
 			if err != nil {
-				log.Printf("读取账号自助门户开关失败: %v", err)
+				log.Printf("failed to read the account self-service portal switch: %v", err)
 				c.Status(http.StatusInternalServerError)
 				return
 			}
@@ -588,7 +588,7 @@ func main() {
 			serveFrontend(c)
 		}
 
-		// 同时处理 /admin 和 /admin/*，避免依赖自动补斜杠重定向。
+		// Handle both /admin and /admin/* to avoid relying on automatic trailing-slash redirects.
 		r.GET("/admin", serveFrontend)
 		r.GET("/admin/*filepath", serveFrontend)
 		r.HEAD("/admin", serveFrontend)
@@ -607,14 +607,14 @@ func main() {
 		r.HEAD("/account-portal/*filepath", serveAccountPortalFrontend)
 	}
 
-	// 根路径重定向到管理后台（使用 302 避免浏览器永久缓存）
+	// Redirect the root path to the admin panel (uses 302 to avoid permanent browser caching)
 	r.GET("/", func(c *gin.Context) {
 		c.Redirect(http.StatusFound, "/admin/")
 	})
 
-	// 健康检查：只做非阻塞的尽力统计，避免账号热路径锁竞争拖死 liveness。
-	// 但账号池读锁连续超过门槛一次都拿不到时视为疑似死锁,降 503 让
-	// healthcheck 重启实例——否则死锁实例会一直以 200 留在服务里。
+	// Health check: only does non-blocking best-effort stats, so lock contention on the account hot path cannot stall liveness.
+	// But if the account pool read lock cannot be acquired for longer than the threshold in a row, treat it as a suspected deadlock and return 503 so
+	// the healthcheck restarts the instance; otherwise a deadlocked instance would stay in service with 200 forever.
 	healthProbe := &healthLockProbe{}
 	r.GET("/health", func(c *gin.Context) {
 		available, total, countsComplete := store.HealthCountsNonBlocking()
@@ -639,7 +639,7 @@ func main() {
 		})
 	})
 
-	// 6.5 启动安全状态自检 banner
+	// 6.5 Start the security status self-check banner
 	printSecurityBanner(db, cfg, settings)
 
 	addr := fmt.Sprintf("%s:%d", cfg.BindAddress, cfg.Port)
@@ -648,13 +648,13 @@ func main() {
 		displayHost = "localhost"
 	}
 	log.Println("==========================================")
-	log.Printf("  Codex2API v2 已启动")
+	log.Printf("  Codex2API v2 started")
 	log.Printf("  Listen: %s", addr)
 	log.Printf("  HTTP:   http://%s:%d", displayHost, cfg.Port)
-	log.Printf("  管理台: http://%s:%d/admin/", displayHost, cfg.Port)
-	log.Printf("  Key用量: http://%s:%d/key-usage", displayHost, cfg.Port)
-	log.Printf("  生图门户: http://%s:%d/image-studio", displayHost, cfg.Port)
-	log.Printf("  账号自助: http://%s:%d/account-portal", displayHost, cfg.Port)
+	log.Printf("  Admin panel: http://%s:%d/admin/", displayHost, cfg.Port)
+	log.Printf("  Key usage: http://%s:%d/key-usage", displayHost, cfg.Port)
+	log.Printf("  Image generation portal: http://%s:%d/image-studio", displayHost, cfg.Port)
+	log.Printf("  Account self-service: http://%s:%d/account-portal", displayHost, cfg.Port)
 	log.Printf("  API:    POST /v1/chat/completions")
 	log.Printf("  API:    POST /v1/responses")
 	log.Printf("  API:    POST /v1/images/generations")
@@ -666,21 +666,21 @@ func main() {
 	log.Printf("  API:    GET  /v1/models")
 	log.Println("==========================================")
 
-	// 优雅关闭
+	// Graceful shutdown
 	srv := &http.Server{
 		Addr:    addr,
 		Handler: r,
-		// ReadHeaderTimeout 防 Slowloris 慢速攻击；ReadTimeout 限制整个请求体读取，
-		// 防止“声明大 Content-Length 但不发 body”长期占用连接/内存预算；
-		// IdleTimeout 回收空闲 keep-alive 连接。
-		// 注意：WriteTimeout 必须保持 0 —— LLM 流式响应可持续数分钟，任何固定写超时都会中途切断长回答。
+		// ReadHeaderTimeout guards against Slowloris slow attacks; ReadTimeout limits reading of the whole request body,
+		// preventing a client that declares a large Content-Length but sends no body from holding connections and memory budget for long;
+		// IdleTimeout reclaims idle keep-alive connections.
+		// Note: WriteTimeout must stay 0. LLM streaming responses can last several minutes, and any fixed write timeout would cut long answers off midway.
 		ReadHeaderTimeout: 30 * time.Second,
 		ReadTimeout:       10 * time.Minute,
 		IdleTimeout:       120 * time.Second,
 	}
 	go func() {
 		if err := srv.ListenAndServe(); err != nil && err != http.ErrServerClosed {
-			log.Fatalf("HTTP 服务启动失败: %v", err)
+			log.Fatalf("HTTP service failed to start: %v", err)
 		}
 	}()
 
@@ -688,13 +688,13 @@ func main() {
 	signal.Notify(quit, syscall.SIGINT, syscall.SIGTERM)
 	<-quit
 
-	log.Println("正在关闭...")
-	// 先停止会产生新副作用的后台任务，再等待现有 HTTP 请求排空。
+	log.Println("shutting down...")
+	// Stop background tasks that create new side effects first, then wait for in-flight HTTP requests to drain.
 	cancelBackground()
 	shutdownCtx, cancelShutdown := context.WithTimeout(context.Background(), 10*time.Second)
 	defer cancelShutdown()
 	if err := srv.Shutdown(shutdownCtx); err != nil {
-		log.Printf("HTTP 服务优雅关闭超时: %v", err)
+		log.Printf("HTTP service graceful shutdown timed out: %v", err)
 	}
 	adminHandler.WaitAutoResetCredits()
 	adminHandler.WaitAutoActivate5hWindow()
@@ -704,23 +704,23 @@ func main() {
 	wsKeepalive.Stop()
 	wsrelay.ShutdownExecutor()
 	if !proxy.DrainResponseCacheBackendWrites(2 * time.Second) {
-		log.Printf("部分响应上下文后台写入未在关闭窗口内完成")
+		log.Printf("some response context background writes did not finish within the shutdown window")
 	}
 	if durableResponseContexts != nil {
 		if err := durableResponseContexts.Close(); err != nil {
-			log.Printf("关闭持久化 response context 存储失败: %v", err)
+			log.Printf("failed to close persisted response context store: %v", err)
 		}
 	}
 	store.Stop()
-	// 所有请求入口和后台生产者停止后，再排空仍可能访问 Store、缓存或数据库的短任务。
+	// After all request entry points and background producers have stopped, drain the short tasks that may still access the Store, cache, or database.
 	if !db.DrainBackgroundTasks(2 * time.Second) {
-		log.Printf("部分后台任务未在关闭窗口内退出")
+		log.Printf("some background tasks did not exit within the shutdown window")
 	}
 	proxy.CloseErrorLogger()
-	log.Println("已关闭")
+	log.Println("closed")
 }
 
-// configureTrustedProxies 配置 Gin 的可信代理列表。
+// configureTrustedProxies configures Gin's trusted proxy list.
 func configureTrustedProxies(r *gin.Engine, proxies []string) error {
 	if r == nil {
 		return nil
@@ -728,7 +728,7 @@ func configureTrustedProxies(r *gin.Engine, proxies []string) error {
 	return r.SetTrustedProxies(proxies)
 }
 
-// loggerMiddleware 简单日志中间件（增强版，支持敏感信息脱敏）
+// loggerMiddleware is a simple logging middleware (enhanced version, with sensitive information redaction)
 func loggerMiddleware() gin.HandlerFunc {
 	return func(c *gin.Context) {
 		start := time.Now()
@@ -752,7 +752,7 @@ func loggerMiddleware() gin.HandlerFunc {
 
 		emailStr := ""
 		if e, ok := email.(string); ok && e != "" {
-			// 脱敏邮箱
+			// Redact email
 			emailStr = security.MaskEmail(e)
 		}
 		proxyStr := "no proxy"
@@ -760,7 +760,7 @@ func loggerMiddleware() gin.HandlerFunc {
 			proxyStr = security.SanitizeLog(p)
 		}
 
-		// 构建扩展标签
+		// Build extended labels
 		var tags []string
 		if m, ok := modelVal.(string); ok && m != "" {
 			tags = append(tags, security.SanitizeLog(m))
@@ -784,9 +784,9 @@ func loggerMiddleware() gin.HandlerFunc {
 	}
 }
 
-// printSecurityBanner 启动时打印安全状态自检 banner：
-//   - 不再自动生成 ADMIN_SECRET。若两端都空，则提示用户首次访问页面进行初始化。
-//   - 检查 API Key 数量、监听地址、匿名开关，命中风险时给出对应提示。
+// printSecurityBanner prints the security status self-check banner at startup:
+//   - No longer auto-generates ADMIN_SECRET. If both are empty, prompt the user to initialize by visiting the page for the first time.
+//   - Checks the API key count, listen address, and anonymous switch, and shows a matching warning when a risk is hit.
 func printSecurityBanner(db *database.DB, cfg *config.Config, settings *database.SystemSettings) {
 	if db == nil || cfg == nil || settings == nil {
 		return
@@ -809,43 +809,43 @@ func printSecurityBanner(db *database.DB, cfg *config.Config, settings *database
 	publicBind := bind == "" || bind == "0.0.0.0" || bind == "::"
 	const sep = "=========================================================="
 	log.Println(sep)
-	log.Println("[SECURITY] Codex2API 安全状态自检")
+	log.Println("[SECURITY] Codex2API security status self-check")
 	log.Println(sep)
 
 	switch {
 	case needsBootstrap:
-		log.Println("⚠ 尚未配置 ADMIN_SECRET（环境变量与数据库均为空）。")
-		log.Printf("  请使用浏览器访问管理台 http://%s:%d/admin/ 完成首次初始化，", bannerDisplayHost(bind), cfg.Port)
-		log.Println("  设置一个强随机的管理密钥；该密钥也将作为登录密钥。")
-		log.Println("  初始化页面需要填写下面的一次性令牌，以证明操作者能读到本服务日志：")
+		log.Println("⚠ ADMIN_SECRET is not configured (environment variable and database are both empty).")
+		log.Printf("  Open the admin panel at http://%s:%d/admin/ in a browser to complete first-time setup,", bannerDisplayHost(bind), cfg.Port)
+		log.Println("  set a strong random admin secret; this secret also serves as the login key.")
+		log.Println("  The setup page requires the one-time token below, to prove the operator can read this service's logs:")
 		if _, err := admin.EnsureBootstrapToken(); err != nil {
-			log.Printf("  生成初始化令牌失败: %v", err)
+			log.Printf("  failed to generate the setup token: %v", err)
 		}
-		log.Println("  在初始化完成之前，所有 /api/admin/* 接口（除初始化端点外）均返回 503。")
+		log.Println("  Until setup is complete, all /api/admin/* endpoints (except the setup endpoint) return 503.")
 	case envSecret != "":
-		log.Println("✓ ADMIN_SECRET 来源：环境变量 (.env)")
+		log.Println("✓ ADMIN_SECRET source: environment variable (.env)")
 	default:
-		log.Println("✓ ADMIN_SECRET 来源：数据库（如需修改请进入「设置」页面）")
+		log.Println("✓ ADMIN_SECRET source: database (to change it, go to the 'Settings' page)")
 	}
 
 	if apiKeyCount == 0 {
 		if cfg.AllowAnonymousV1 {
-			log.Println("⚠ /v1/* 当前处于【匿名访问】模式（CODEX_ALLOW_ANONYMOUS=true）。")
-			log.Println("  任何能访问端口的人均可调用 /v1/* 消耗你的账号池配额，请仅在内网/测试环境使用！")
+			log.Println("⚠ /v1/* is currently in [anonymous access] mode (CODEX_ALLOW_ANONYMOUS=true).")
+			log.Println("  Anyone who can reach the port can call /v1/* and consume your account pool's quota, so use this only in internal or test environments!")
 		} else {
-			log.Println("⚠ 尚未创建任何对外 API Key。/v1/* 接口在创建第一把 Key 之前会返回 503。")
-			log.Println("  请进入管理台「API 密钥」页面创建至少一把 Key 后再对外提供服务。")
+			log.Println("⚠ No external API key has been created yet. /v1/* endpoints return 503 until the first key is created.")
+			log.Println("  Go to the admin panel's 'API Keys' page and create at least one key before serving external traffic.")
 		}
 	} else {
-		log.Printf("✓ 已配置 %d 个对外 API Key，/v1/* 强制鉴权已生效。", apiKeyCount)
+		log.Printf("✓ %d external API keys configured, /v1/* authentication is enforced.", apiKeyCount)
 	}
 
 	if publicBind {
-		log.Printf("ℹ 监听地址 = %s （所有网卡，兼容 Docker / 反代 / 公网）。", bind)
-		log.Println("  生产环境请确认已部署反向代理 + HTTPS、配置防火墙白名单，并使用强 ADMIN_SECRET 与 API Key。")
-		log.Println("  如希望服务只在本机回环可达，可设置 CODEX_BIND=127.0.0.1。")
+		log.Printf("ℹ listen address = %s (all interfaces, compatible with Docker / reverse proxy / public network).", bind)
+		log.Println("  In production, confirm that a reverse proxy with HTTPS is deployed, configure a firewall allowlist, and use a strong ADMIN_SECRET and API keys.")
+		log.Println("  To make the service reachable only on loopback, set CODEX_BIND=127.0.0.1.")
 	} else {
-		log.Printf("✓ 监听地址 = %s （受限访问）。", bind)
+		log.Printf("✓ listen address = %s (restricted access).", bind)
 	}
 
 	log.Println(sep)

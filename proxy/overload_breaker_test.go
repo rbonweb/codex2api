@@ -102,7 +102,7 @@ func TestNoteOverloadOutcomePausesAccountAndResetsWindow(t *testing.T) {
 		t.Fatalf("cooldown reason = %q, want %q", reason, overloadPauseReason)
 	}
 
-	// 非 Codex 渠道与未启用开关都不参与统计。
+	// Non-Codex channels and those with the switch off are not counted.
 	globalOverloadBreaker.reset(9101)
 	otherLog := &database.UsageLogInput{AccountID: 9101, StatusCode: 503, Channel: "other",
 		ErrorMessage: "server_is_overloaded"}

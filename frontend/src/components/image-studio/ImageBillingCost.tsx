@@ -3,7 +3,7 @@ import { Info } from 'lucide-react'
 import { Tooltip, TooltipContent, TooltipTrigger } from '@/components/ui/tooltip'
 import { formatImageStudioQuota } from '@/lib/imageStudioQuota'
 
-// ImageBillingCost 展示按张计费的用户金额与计费依据;count 是落库的计费张数。
+// ImageBillingCost shows the per-image billing amount for the user and its billing basis; count is the billed image count saved to the database.
 export function ImageBillingCost({ count = 0, unitPrice = 0, userBilled, accountBilled }: {
   count?: number
   unitPrice?: number

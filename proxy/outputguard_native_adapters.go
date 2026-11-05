@@ -24,8 +24,8 @@ func nativeGuardCoreConfig() outputguard.Config {
 	}
 }
 
-// selectNativeProjector 为上游通道选择真实 upstream projector。
-// 严禁按客户端下游请求路径盲目推测上游协议：Codex/Responses 永远是 Responses SSE，其余按上游协议名分派。
+// selectNativeProjector selects the real upstream projector for the upstream channel.
+// Never guess the upstream protocol blindly from the client's downstream request path: Codex/Responses is always Responses SSE, and everything else is dispatched by the upstream protocol name.
 func selectNativeProjector(protocol string, isCodexResponses bool) ProtocolProjector {
 	if isCodexResponses {
 		return NewResponsesProjector()

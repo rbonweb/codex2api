@@ -3421,7 +3421,7 @@ func (h *Handler) Responses(c *gin.Context) {
 
 	capacityShedRetries := map[int64]int{}
 	dispatchPolicy := dispatchPolicyForModel(effectiveModel)
-	// native remote compaction 的候选池不沿用请求渠道，只带调度策略。
+	// The candidate pool for native remote compaction does not reuse the request channel; it carries only the scheduling policy.
 	selectionOpts := auth.SelectionOptions{Policy: dispatchPolicy}
 	var affinityGuard auth.SessionAffinityGuard
 	var selectionErr error

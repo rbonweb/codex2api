@@ -612,7 +612,7 @@ func (h *Handler) forwardResponsesWebSocketTurn(c *gin.Context, conn *websocket.
 	}()
 
 	dispatchPolicy := dispatchPolicyForModel(effectiveModel)
-	// Responses WS 入口与 compact 入口一致：选号上下文只带 Policy。
+	// The Responses WS entry matches the compact entry: the account-selection context carries only the Policy.
 	selectionOpts := auth.SelectionOptions{Policy: dispatchPolicy}
 	var affinityGuard auth.SessionAffinityGuard
 	var selectionErr error
