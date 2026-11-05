@@ -9,8 +9,8 @@ const UNIT_MODE_TITLE: Record<string, string> = {
   per_second: 'settings.pricing.mediaBilling.perSecond',
 }
 
-// ImageBillingCost 展示按单位计费(按张/按次/按秒)的用户金额与计费依据;
-// count 是落库的计费单位数(张/视频数/秒),与 mode 对应。
+// ImageBillingCost shows the user amount and billing basis for per-unit billing (per image / per request / per second);
+// count is the stored number of billing units (images / videos / seconds), matching mode.
 export function ImageBillingCost({ count = 0, unitPrice = 0, userBilled, accountBilled, mode = 'per_image', media = false }: {
   count?: number
   unitPrice?: number

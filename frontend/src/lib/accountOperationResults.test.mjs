@@ -21,7 +21,7 @@ test("collectAccountOperationResult preserves every account event before UI thro
     account_id: 3,
     status: "success",
     http_status: 200,
-    message: "测试通过",
+    message: "Test passed",
   });
   collectAccountOperationResult(results, {
     type: "progress",
@@ -29,7 +29,7 @@ test("collectAccountOperationResult preserves every account event before UI thro
     account_id: 7,
     status: "rate_limited",
     http_status: 429,
-    message: "上游返回 429",
+    message: "upstream returned 429",
   });
   collectAccountOperationResult(results, {
     type: "progress",
@@ -37,7 +37,7 @@ test("collectAccountOperationResult preserves every account event before UI thro
     account_id: 5,
     status: "failed",
     http_status: 500,
-    error: "上游返回 500",
+    error: "upstream returned 500",
   });
 
   assert.deepEqual(snapshotAccountOperationResults(results), [
@@ -45,19 +45,19 @@ test("collectAccountOperationResult preserves every account event before UI thro
       accountId: 5,
       status: "failed",
       httpStatus: 500,
-      message: "上游返回 500",
+      message: "upstream returned 500",
     },
     {
       accountId: 7,
       status: "rate_limited",
       httpStatus: 429,
-      message: "上游返回 429",
+      message: "upstream returned 429",
     },
     {
       accountId: 3,
       status: "success",
       httpStatus: 200,
-      message: "测试通过",
+      message: "Test passed",
     },
   ]);
 });
@@ -186,8 +186,8 @@ test("paginateAccountOperationResults pages large result sets on the client", ()
 test("usage refresh results retain both refreshed and failed accounts", () => {
   const results = new Map();
   collectAccountOperationResult(results, { type: "start", action: "batch_usage_refresh" });
-  collectAccountOperationResult(results, { type: "progress", action: "batch_usage_refresh", account_id: 1, status: "success", http_status: 200, message: "用量已更新" });
-  collectAccountOperationResult(results, { type: "progress", action: "batch_usage_refresh", account_id: 2, status: "failed", http_status: 401, error: "WHAM 上游返回 401" });
+  collectAccountOperationResult(results, { type: "progress", action: "batch_usage_refresh", account_id: 1, status: "success", http_status: 200, message: "Usage updated" });
+  collectAccountOperationResult(results, { type: "progress", action: "batch_usage_refresh", account_id: 2, status: "failed", http_status: 401, error: "WHAM upstream returned 401" });
   const snapshot = snapshotAccountOperationResults(results);
   assert.deepEqual(snapshot.map(({ accountId, status }) => [accountId, status]), [[2, "failed"], [1, "success"]]);
   assert.equal(summarizeAccountOperationResults(snapshot).failed, 1);

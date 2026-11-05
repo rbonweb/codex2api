@@ -18,7 +18,7 @@ export interface AccountHrefEditorAccount {
 
 interface AccountHrefQuickEditorProps {
   account: AccountHrefEditorAccount | null;
-  /** 账号显示名由各页自己的命名规则决定（Codex 用邮箱）。 */
+  /** The account display name is decided by each page's own naming rule (Codex uses email). */
   accountLabel: string;
   onClose: () => void;
   onSaved: () => void | Promise<void>;
@@ -36,7 +36,7 @@ function isValidHrefInput(url: string): boolean {
   }
 }
 
-/** 未配置跳转地址时实际打开的目标 = account_href ?? base_url。 */
+/** The target actually opened when no jump address is configured = account_href ?? base_url. */
 export function accountHrefTarget(
   account: Pick<AccountHrefEditorAccount, "account_href" | "base_url"> | null,
 ): string {
@@ -44,19 +44,19 @@ export function accountHrefTarget(
   return (account.account_href || account.base_url || "").trim();
 }
 
-/** 在新窗口打开账号跳转地址；配置了 account_href 用它，否则回退 base_url。 */
+/** Opens the account jump address in a new window; uses account_href if configured, otherwise falls back to base_url. */
 export function openAccountHref(
   account: Pick<AccountHrefEditorAccount, "account_href" | "base_url"> | null,
 ): boolean {
   const target = accountHrefTarget(account);
-  // 与保存同一套校验口径，防止 https:// 这类残缺草稿被 window.open 打开。
+  // Same validation rules as save, so an incomplete draft such as https:// cannot be opened by window.open.
   if (!target || !isValidHrefInput(target)) return false;
   window.open(target, "_blank", "noopener,noreferrer");
   return true;
 }
 
-// 只改 account_href 一个字段的小弹窗：从账号列表直达，配置的地址在浏览器新
-// 窗口打开（账号控制台/用量页等）；留空 = 回退打开 api-base（base_url）。
+// A small dialog that only edits the account_href field: reached directly from the account list, and the configured address opens in a new browser
+// window (account console, usage page, etc.); leaving it empty = falls back to opening api-base (base_url).
 export default function AccountHrefQuickEditor({
   account,
   accountLabel,

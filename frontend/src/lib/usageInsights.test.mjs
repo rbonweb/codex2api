@@ -48,14 +48,14 @@ test('the five leading models and Other preserve every aggregate field', () => {
     user_billed: value,
     error_count: value,
   }))
-  const { items, total } = buildModelShareData(stats, 'amount', '其他')
+  const { items, total } = buildModelShareData(stats, 'amount', 'Other')
   assert.equal(total, 28)
   assert.deepEqual(items.slice(0, 5).map((item) => item.model), [
     'model-7', 'model-6', 'model-5', 'model-4', 'model-3',
   ])
   assert.deepEqual(items[5], {
     key: 'aggregate:other',
-    model: '其他',
+    model: 'Other',
     requests: 30,
     tokens: 300,
     amount: 3,

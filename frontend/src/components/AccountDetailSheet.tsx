@@ -89,8 +89,8 @@ function getRateLimitWindow(account: AccountRow): "5h" | "7d" | null {
   return has7dWindow && !has5hWindow ? "7d" : "5h";
 }
 
-// 复制邮箱按钮。navigator.clipboard 在非安全上下文（局域网 http 访问）下不存在，
-// 回退到隐藏 textarea + execCommand，否则内网部署里这个按钮会静默失效。
+// Copy email button. navigator.clipboard does not exist in non-secure contexts (LAN http access),
+// so fall back to a hidden textarea + execCommand; otherwise this button silently stops working in intranet deployments.
 async function copyTextToClipboard(text: string): Promise<void> {
   if (navigator.clipboard?.writeText) {
     await navigator.clipboard.writeText(text);
@@ -121,7 +121,7 @@ function CopyValueButton({ value, label }: { value: string; label: string }) {
       await copyTextToClipboard(value);
       setCopied(true);
     } catch {
-      // 剪贴板权限被拒时不打断查看详情，保持静默。
+      // If clipboard permission is denied, do not interrupt viewing the details; stay silent.
     }
   };
 
@@ -285,12 +285,12 @@ export default function AccountDetailSheet({
   const displayName = account
     ? account.email || account.name || `#${account.id}`
     : "";
-  // 标题退化成 "#12" 这种 id 兜底时没有复制价值（旁边就有 ID 徽章），不显示按钮。
+  // When the title falls back to an id such as "#12", there is nothing worth copying (the ID badge is right beside it), so no button is shown.
   const copyableName = Boolean(
     account && displayName && displayName !== `#${account.id}`,
   );
   const rateWindow = account ? getRateLimitWindow(account) : null;
-  // Codex AT-only 账号不走 AT 刷新。
+  // Codex AT-only accounts do not go through AT refresh.
   const refreshDisabled = Boolean(account && (refreshing || account.at_only));
   const authJsonDisabled = Boolean(
     account && (authJsonExporting || account.at_only),
@@ -811,7 +811,7 @@ export default function AccountDetailSheet({
                   className="col-span-2 border-primary/40 bg-primary/10 font-bold text-primary hover:bg-primary/20"
                 >
                   <Fingerprint className="size-4 text-primary" />
-                  <span>指纹与快捷配置</span>
+                  <span>Fingerprint and quick configuration</span>
                 </Button>
               ) : null}
               <Button type="button" variant="default" size="sm" onClick={onEdit}>

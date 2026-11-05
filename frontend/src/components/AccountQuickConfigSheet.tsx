@@ -63,10 +63,10 @@ function getDefaultScoreBias(planType?: string | null): number {
 }
 
 const SAVE_ERROR_TOAST: Record<QuickConfigReadySaveError, string> = {
-  invalid_headers: "自定义请求头必须是 JSON 对象，且所有值必须是字符串",
-  invalid_score: "自定义加权分必须在 -200 到 200 之间",
-  invalid_concurrency: "基础并发覆盖必须大于等于 1",
-  invalid_priority: "调度优先级必须在 -100 到 100 之间",
+  invalid_headers: "Custom request headers must be a JSON object, and all values must be strings",
+  invalid_score: "Custom weighted score must be between -200 and 200",
+  invalid_concurrency: "Base concurrency override must be greater than or equal to 1",
+  invalid_priority: "Scheduling priority must be between -100 and 100",
 };
 
 interface AccountQuickConfigSheetProps {
@@ -166,11 +166,11 @@ export default function AccountQuickConfigSheet({
     setSaving(true);
     try {
       await api.updateAccountScheduler(account.id, result.payload);
-      showToast("账号配置与设备指纹已保存");
+      showToast("Account configuration and device fingerprint saved");
       onSaved();
       onClose();
     } catch (err) {
-      showToast(`保存失败: ${getErrorMessage(err)}`, "error");
+      showToast(`Save failed: ${getErrorMessage(err)}`, "error");
     } finally {
       setSaving(false);
     }
@@ -209,7 +209,7 @@ export default function AccountQuickConfigSheet({
             </div>
             <div className="min-w-0">
               <SheetTitle className="text-base font-bold text-foreground">
-                账号指纹与快捷配置
+                Account fingerprint and quick configuration
               </SheetTitle>
               <SheetDescription className="truncate text-xs text-muted-foreground">
                 {account.email || account.name || `ID ${account.id}`}
@@ -226,7 +226,7 @@ export default function AccountQuickConfigSheet({
                   {account.email || account.name || `ID ${account.id}`}
                 </div>
                 <div className="text-[11px] text-muted-foreground">
-                  账号 ID: {account.id} · 套餐: {account.plan_type || "Standard"}
+                  Account ID: {account.id} · Plan: {account.plan_type || "Standard"}
                 </div>
               </div>
               <Badge variant="outline" className="text-xs font-mono font-semibold">
@@ -286,7 +286,7 @@ export default function AccountQuickConfigSheet({
             <div className="flex items-center gap-2 border-b border-border/50 pb-2.5">
               <Gauge className="size-4 text-amber-500" />
               <span className="text-xs font-bold uppercase tracking-wider text-foreground">
-                调度与并发加权
+                Scheduling and concurrency weighting
               </span>
             </div>
 
@@ -321,7 +321,7 @@ export default function AccountQuickConfigSheet({
               </div>
               {scoreMode === "default" ? (
                 <div className="rounded-lg border border-border/60 bg-muted/20 px-3 py-2 text-xs text-muted-foreground flex justify-between items-center">
-                  <span>跟随套餐默认</span>
+                  <span>Follow plan default</span>
                   <span className="font-mono font-bold text-primary">
                     {formatSignedNumber(getDefaultScoreBias(account.plan_type))}
                   </span>
@@ -369,7 +369,7 @@ export default function AccountQuickConfigSheet({
               </div>
               {concurrencyMode === "default" ? (
                 <div className="rounded-lg border border-border/60 bg-muted/20 px-3 py-2 text-xs text-muted-foreground flex justify-between items-center">
-                  <span>跟随分组/全局</span>
+                  <span>Follow group/global</span>
                   <span className="font-mono font-bold text-primary">
                     {account.base_concurrency_effective ?? 2}
                   </span>
@@ -405,7 +405,7 @@ export default function AccountQuickConfigSheet({
             <div className="flex items-center gap-2 border-b border-border/50 pb-2.5">
               <Globe className="size-4 text-indigo-500" />
               <span className="text-xs font-bold uppercase tracking-wider text-foreground">
-                防护与网络代理
+                Protection and network proxy
               </span>
             </div>
 
@@ -443,7 +443,7 @@ export default function AccountQuickConfigSheet({
 
             <div className="space-y-1.5 pt-1 border-t border-border/40">
               <label className="block text-xs font-semibold text-foreground">
-                代理服务器 (Proxy URL)
+                Proxy server (Proxy URL)
               </label>
               <Input
                 value={form.proxyUrl}
@@ -455,16 +455,16 @@ export default function AccountQuickConfigSheet({
             </div>
 
             <div className="space-y-1.5">
-              <label className="block text-xs font-semibold text-foreground" htmlFor="upstream-request-id-header">上游请求 ID 响应头</label>
+              <label className="block text-xs font-semibold text-foreground" htmlFor="upstream-request-id-header">Upstream request ID response header</label>
               <Input id="upstream-request-id-header" maxLength={64} value={form.upstreamRequestIdHeader}
                 onChange={(e: ChangeEvent<HTMLInputElement>) => patchForm({ upstreamRequestIdHeader: e.target.value })}
-                placeholder="自动识别 X-Request-ID / Request-ID" />
-              <p className="text-[11px] text-muted-foreground">填写上游用于定位请求的响应头名称，留空自动识别。WebSocket 轮次不记录握手请求 ID。</p>
+                placeholder="Auto-detect X-Request-ID / Request-ID" />
+              <p className="text-[11px] text-muted-foreground">Enter the name of the response header upstream uses to locate requests; leave empty to auto-detect. WebSocket turns do not record the handshake request ID.</p>
             </div>
 
             <div className="space-y-1.5 pt-1 border-t border-border/40">
               <label className="block text-xs font-semibold text-foreground">
-                自定义请求头 JSON
+                Custom request headers JSON
               </label>
               <textarea
                 rows={3}
@@ -482,7 +482,7 @@ export default function AccountQuickConfigSheet({
             <div className="flex items-center gap-2 border-b border-border/50 pb-2.5">
               <Tag className="size-4 text-violet-500" />
               <span className="text-xs font-bold uppercase tracking-wider text-foreground">
-                标签与分组
+                Tags and groups
               </span>
             </div>
 
@@ -531,7 +531,7 @@ export default function AccountQuickConfigSheet({
             ) : (
               <Save className="size-4" />
             )}
-            保存配置
+            Save configuration
           </Button>
         </SheetFooter>
       </SheetContent>

@@ -9,7 +9,7 @@ const rootElement = document.getElementById('root')
 const routerBasename = window.location.pathname.startsWith('/admin') ? '/admin' : undefined
 
 if (!rootElement) {
-  throw new Error('未找到 root 节点')
+  throw new Error('root node not found')
 }
 
 ReactDOM.createRoot(rootElement).render(

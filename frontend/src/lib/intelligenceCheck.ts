@@ -115,17 +115,17 @@ export interface IntelligencePage<T> {
   page_size: number;
 }
 export const intelligenceLabels: Record<string, string> = {
-  queued: "等待执行",
-  running: "检测中",
-  normal: "正常",
-  degraded: "未通过",
-  error: "上游错误",
-  interrupted: "已中断",
-  resume: "恢复调度",
-  restore_groups: "还原分组",
-  none: "无处置",
-  pause: "检测暂停调度",
-  switch_group: "检测切换分组",
+  queued: "Queued",
+  running: "Checking",
+  normal: "Normal",
+  degraded: "Failed",
+  error: "upstream error",
+  interrupted: "Interrupted",
+  resume: "Resume scheduling",
+  restore_groups: "Restore groups",
+  none: "No action",
+  pause: "Pause scheduling",
+  switch_group: "Switch group",
 };
 export function intelligenceColor(status: string): string | undefined {
   return (
@@ -173,13 +173,13 @@ export function latestRequestGuard() {
 
 export function intelligenceScheduleLabel(bar: IntelligenceBar): string {
   const labels: Record<string, string> = {
-    normal: '正常检测', backoff: '退避中', recovering: '恢复确认',
-    retrying: '异常重试', credential_blocked: '等待凭证修复',
+    normal: 'Normal check', backoff: 'Backing off', recovering: 'Confirming recovery',
+    retrying: 'Retrying after error', credential_blocked: 'Waiting for credential fix',
   };
   const label = labels[bar.probe_phase || ''];
   if (!label) return '';
   if (bar.probe_phase === 'credential_blocked') return label;
-  const progress = bar.probe_phase === 'recovering' ? ` · 连续通过 ${bar.passed_streak ?? 0} 次` : '';
-  const due = bar.enabled && bar.next_due_at ? ` · 下次 ${new Date(bar.next_due_at).toLocaleString()}` : '';
+  const progress = bar.probe_phase === 'recovering' ? ` · ${bar.passed_streak ?? 0} consecutive passes` : '';
+  const due = bar.enabled && bar.next_due_at ? ` · next run ${new Date(bar.next_due_at).toLocaleString()}` : '';
   return label + progress + due;
 }

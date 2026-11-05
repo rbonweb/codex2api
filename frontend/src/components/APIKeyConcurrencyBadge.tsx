@@ -17,7 +17,7 @@ export function useAPIKeyConcurrency() {
         const response = await api.getAPIKeyConcurrency();
         if (!cancelled) setCounts(response.concurrency);
       } catch {
-        // 暂时读取失败时保留上次快照，下一次轮询重试。
+        // If the read fails temporarily, keep the last snapshot and retry on the next poll.
       } finally {
         pending = false;
       }

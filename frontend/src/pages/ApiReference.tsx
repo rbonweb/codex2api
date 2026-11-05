@@ -15,7 +15,7 @@ import {
 } from '@/components/ui/dialog'
 import { CodeBlock } from './docs/EndpointDoc'
 
-// 状态码 Tab 切换
+// Status code tab switch
 function StatusTabs({ tabs, active, onChange }: { tabs: { code: number; label?: string }[]; active: number; onChange: (c: number) => void }) {
   return (
     <div className="flex items-center gap-0.5 border-b border-border mb-0">
@@ -42,7 +42,7 @@ function StatusTabs({ tabs, active, onChange }: { tabs: { code: number; label?: 
   )
 }
 
-// 方法颜色
+// Method colors
 function MethodBadge({ method, sm }: { method: string; sm?: boolean }) {
   const colors: Record<string, string> = {
     GET: 'bg-emerald-100 text-emerald-700 dark:bg-emerald-900/30 dark:text-emerald-400 border-emerald-200 dark:border-emerald-800',
@@ -203,7 +203,7 @@ function downloadImagePreview(preview: ImagePreview) {
   a.remove()
 }
 
-// Try It 测试弹窗
+// Try It test dialog
 function TryItDialog({ open, onClose, method, path, defaultBody, apiKey, baseUrl, allKeys }: {
   open: boolean
   onClose: () => void
@@ -277,7 +277,7 @@ function TryItDialog({ open, onClose, method, path, defaultBody, apiKey, baseUrl
   return (
     <Dialog open={open} onOpenChange={(v) => { if (!v) onClose() }}>
       <DialogContent className="sm:max-w-3xl max-h-[90vh] overflow-visible flex flex-col gap-0 p-0 sm:p-0" showCloseButton={false}>
-        {/* 顶部端点栏 + Send */}
+        {/* Top endpoint bar + Send */}
         <div className="flex items-center gap-3 px-5 py-3.5 border-b border-border bg-muted/30">
           <div className="flex items-center gap-2.5 flex-1 px-3 py-2 rounded-xl border border-border bg-background">
             <MethodBadge method={method} />
@@ -293,9 +293,9 @@ function TryItDialog({ open, onClose, method, path, defaultBody, apiKey, baseUrl
           </Button>
         </div>
 
-        {/* 内容区：左右分栏 */}
+        {/* Content area: left and right split */}
         <div className="flex flex-1 min-h-0 overflow-hidden">
-          {/* 左侧：参数 */}
+          {/* Left side: parameters */}
           <div className="flex-1 overflow-visible p-5 space-y-4 border-r border-border">
             {/* Authorization */}
             <div className="rounded-xl border border-border overflow-visible">
@@ -352,7 +352,7 @@ function TryItDialog({ open, onClose, method, path, defaultBody, apiKey, baseUrl
             )}
           </div>
 
-          {/* 右侧：响应 */}
+          {/* Right side: response */}
           <div className="flex-1 overflow-auto p-5">
             <div className="rounded-xl border border-border overflow-hidden h-full flex flex-col">
               <div className="px-4 py-2.5 bg-muted/30 border-b border-border flex items-center justify-between">
@@ -427,7 +427,7 @@ function TryItDialog({ open, onClose, method, path, defaultBody, apiKey, baseUrl
   )
 }
 
-// 单个端点文档
+// Single endpoint docs
 function EndpointDoc({ id, method, path, title, description, curlExample, responseExamples, defaultBody, apiKey, baseUrl, allKeys }: {
   id?: string
   method: string
@@ -453,11 +453,11 @@ function EndpointDoc({ id, method, path, title, description, curlExample, respon
   return (
     <Card id={id} className="mb-6 scroll-mt-20">
       <CardContent className="p-6">
-        {/* 标题 */}
+        {/* Title */}
         <h3 className="text-xl font-bold text-foreground mb-1">{title}</h3>
         <p className="text-sm text-muted-foreground mb-4">{description}</p>
 
-        {/* 端点路径栏 + Try it */}
+        {/* Endpoint path bar + Try it */}
         <div className="flex items-center gap-3 p-3 rounded-xl border border-border bg-muted/30 mb-5">
           <MethodBadge method={method} />
           <code className="font-mono text-sm font-semibold text-foreground flex-1">{path}</code>
@@ -485,12 +485,12 @@ function EndpointDoc({ id, method, path, title, description, curlExample, respon
           />
         )}
 
-        {/* cURL 示例 */}
+        {/* cURL example */}
         <div className="mb-5">
           <CodeBlock label="cURL" content={curlExample} />
         </div>
 
-        {/* 响应示例 */}
+        {/* Response example */}
         <div className="border border-border rounded-xl overflow-hidden">
           <div className="px-4 pt-1.5 bg-muted/30">
             <StatusTabs
@@ -514,7 +514,7 @@ export default function ApiReference() {
   const [firstKey, setFirstKey] = useState('')
   const [allKeys, setAllKeys] = useState<{ name: string; key: string }[]>([])
 
-  // 加载 API Key 列表
+  // Load API key list
   useEffect(() => {
     api.getAPIKeys({ view: 'lite' }).then(res => {
       const keys = (res.keys ?? []).map(k => ({ name: k.name, key: k.raw_key || k.key }))
@@ -549,7 +549,7 @@ export default function ApiReference() {
       left: el.offsetLeft,
       width: el.offsetWidth,
     })
-    // 将激活的导航项滚动到可见区域
+    // Scroll the active nav item into the visible area
     el.scrollIntoView({ behavior: 'smooth', block: 'nearest', inline: 'nearest' })
   }, [])
 
@@ -557,7 +557,7 @@ export default function ApiReference() {
     updateIndicator(activeNav)
   }, [activeNav, updateIndicator])
 
-  // 滚动时自动高亮当前可见的端点
+  // Highlight the currently visible endpoint while scrolling
   useEffect(() => {
     const ids = navItems.map(n => n.id)
     const observer = new IntersectionObserver(
@@ -590,10 +590,10 @@ export default function ApiReference() {
         description={t('apiRef.description')}
       />
 
-      {/* 悬浮导航栏 */}
+      {/* Floating nav bar */}
       <div className="sticky top-2 z-30 mb-4">
         <div className="relative flex items-center gap-x-0.5 px-3 py-2 rounded-2xl border border-border bg-background/80 backdrop-blur-lg shadow-sm overflow-x-auto [&::-webkit-scrollbar]:hidden [-ms-overflow-style:none] [scrollbar-width:none]">
-          {/* 滑动指示器 */}
+          {/* Sliding indicator */}
           <div
             className="absolute top-2 h-[calc(100%-16px)] rounded-xl bg-primary/8 border border-primary/15 transition-all duration-300 ease-out pointer-events-none"
             style={{ left: indicator.left, width: indicator.width }}
@@ -616,7 +616,7 @@ export default function ApiReference() {
         </div>
       </div>
 
-      {/* 认证说明 */}
+      {/* Authentication notes */}
       <Card id="auth" className="mb-6 scroll-mt-20">
         <CardContent className="p-6">
           <h3 className="text-base font-semibold text-foreground mb-2">{t('apiRef.authSection')}</h3>
@@ -702,7 +702,7 @@ export default function ApiReference() {
 }` },
           { code: 503, body: `{
   "error": {
-    "message": "无可用账号，请稍后重试",
+    "message": "No available accounts, please retry later",
     "type": "server_error",
     "code": "no_available_account"
   }
@@ -922,13 +922,13 @@ export default function ApiReference() {
         ]}
       />
 
-      {/* 账号管理分隔 */}
+      {/* Account management divider */}
       <div className="mt-10 mb-6">
         <h2 className="text-lg font-bold text-foreground mb-1">{t('apiRef.accountSection')}</h2>
         <p className="text-sm text-muted-foreground">{t('apiRef.accountSectionDesc')}</p>
       </div>
 
-      {/* POST /api/admin/accounts — RT 导入 */}
+      {/* POST /api/admin/accounts — RT import */}
       <EndpointDoc
         id="add-account"
         method="POST"
@@ -954,12 +954,12 @@ export default function ApiReference() {
 }'`}
         responseExamples={[
           { code: 200, body: `{
-  "message": "成功添加 1 个账号",
+  "message": "Successfully added 1 account",
   "success": 1,
   "failed": 0
 }` },
           { code: 400, body: `{
-  "error": "refresh_token 是必填字段"
+  "error": "refresh_token is required"
 }` },
           { code: 401, body: `{
   "error": "Unauthorized"
@@ -967,7 +967,7 @@ export default function ApiReference() {
         ]}
       />
 
-      {/* POST /api/admin/accounts — 批量 RT */}
+      {/* POST /api/admin/accounts — batch RT */}
       <EndpointDoc
         id="add-account-batch"
         method="POST"
@@ -993,14 +993,14 @@ export default function ApiReference() {
 }'`}
         responseExamples={[
           { code: 200, body: `{
-  "message": "成功添加 3 个账号",
+  "message": "Successfully added 3 accounts",
   "success": 3,
   "failed": 0
 }` },
         ]}
       />
 
-      {/* POST /api/admin/accounts/at — AT 导入 */}
+      {/* POST /api/admin/accounts/at — AT import */}
       <EndpointDoc
         id="add-account-at"
         method="POST"
@@ -1026,17 +1026,17 @@ export default function ApiReference() {
 }'`}
         responseExamples={[
           { code: 200, body: `{
-  "message": "成功添加 1 个 AT-only 账号",
+  "message": "Successfully added 1 AT-only account",
   "success": 1,
   "failed": 0
 }` },
           { code: 400, body: `{
-  "error": "access_token 是必填字段"
+  "error": "access_token is required"
 }` },
         ]}
       />
 
-      {/* POST /api/admin/accounts/import — 文件导入 */}
+      {/* POST /api/admin/accounts/import — file import */}
       <EndpointDoc
         id="import-accounts"
         method="POST"
@@ -1046,7 +1046,7 @@ export default function ApiReference() {
         apiKey={firstKey}
         baseUrl={baseUrl}
         allKeys={allKeys}
-        curlExample={`# TXT 格式（每行一个 Refresh Token）
+        curlExample={`# TXT format (one Refresh Token per line)
 curl --request POST \\
   --url ${baseUrl}/api/admin/accounts/import \\
   --header 'X-Admin-Key: <admin_secret>' \\
@@ -1054,7 +1054,7 @@ curl --request POST \\
   --form 'format=txt' \\
   --form 'proxy_url='
 
-# JSON 格式（兼容 CLIProxyAPI 凭证导出）
+# JSON format (compatible with CLIProxyAPI credential export)
 curl --request POST \\
   --url ${baseUrl}/api/admin/accounts/import \\
   --header 'X-Admin-Key: <admin_secret>' \\
@@ -1062,7 +1062,7 @@ curl --request POST \\
   --form 'format=json' \\
   --form 'proxy_url='
 
-# AT TXT 格式（每行一个 Access Token）
+# AT TXT format (one Access Token per line)
 curl --request POST \\
   --url ${baseUrl}/api/admin/accounts/import \\
   --header 'X-Admin-Key: <admin_secret>' \\
@@ -1071,14 +1071,14 @@ curl --request POST \\
   --form 'proxy_url='`}
         responseExamples={[
           { code: 200, body: `{
-  "message": "导入完成：成功 5，失败 0，重复 2",
+  "message": "Import complete: 5 succeeded, 0 failed, 2 duplicates",
   "total": 7,
   "success": 5,
   "failed": 0,
   "duplicate": 2
 }` },
           { code: 400, body: `{
-  "error": "请上传文件（字段名: file）"
+  "error": "please upload a file (field name: file)"
 }` },
         ]}
       />
@@ -1098,10 +1098,10 @@ curl --request POST \\
   --header 'X-Admin-Key: <admin_secret>'`}
         responseExamples={[
           { code: 200, body: `{
-  "message": "账号已删除"
+  "message": "Account deleted"
 }` },
           { code: 404, body: `{
-  "error": "账号不存在"
+  "error": "account does not exist"
 }` },
         ]}
       />

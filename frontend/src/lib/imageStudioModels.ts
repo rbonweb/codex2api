@@ -16,7 +16,7 @@ export function imageQualityOptions(model: string) {
   return values.map(value => ({ label: value === 'auto' ? 'Auto' : value, value }))
 }
 
-// 仅调整工作台的模型切换；公共 API 保留调用方显式传入的质量。
+// Only adjusts the workbench model switch; the public API keeps the quality the caller passes explicitly.
 export function normalizeImageQualityForModel(quality: string, model: string): string {
   return (quality === 'xhigh' || quality === 'max') && !isImage25Model(model) ? 'high' : quality
 }

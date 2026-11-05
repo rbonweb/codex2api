@@ -97,7 +97,7 @@ export default function Dashboard() {
   const showPoolRunwayRef = useRef(showPoolRunway)
   const poolDataRef = useRef<AccountAnalysisResponse | null>(null)
 
-  // 核心统计与号池分析解耦：百万级日志下账号聚合变慢时，不能阻塞整个仪表盘首屏。
+  // Core stats are decoupled from account pool analysis: when account aggregation slows down on million-row logs, it must not block the whole dashboard's first paint.
   const loadDashboardStats = useCallback(async () => {
     statsAbort.current?.abort()
     const controller = new AbortController()
@@ -161,7 +161,7 @@ export default function Dashboard() {
     setData((prev) => ({ ...prev, accountAnalysis }))
   }, [channel, setData])
 
-  // 偏好持久化 + 号池独立加载。号池失败只影响号池卡片，不拖死核心统计。
+  // Preference persistence + independent account pool loading. An account pool failure only affects the account pool card and does not take down the core stats.
   useEffect(() => {
     channelRef.current = channel
     showPoolRunwayRef.current = showPoolRunway
@@ -192,7 +192,7 @@ export default function Dashboard() {
     void reloadSilently()
   }, [timeRange, channel, reloadSilently])
 
-  // 加载服务端聚合的图表数据（12~48 个聚合点，非原始行）
+  // Load the server-aggregated chart data (12~48 aggregated points, not raw rows)
   const loadChartData = useCallback(async () => {
     chartAbort.current?.abort()
     const controller = new AbortController()
@@ -231,12 +231,12 @@ export default function Dashboard() {
     poolRequestGenerationRef.current += 1
   }, [])
 
-  // 首次加载 + timeRange 变更时重新拉取图表数据
+  // Fetch the chart data again on first load and whenever timeRange changes
   useEffect(() => {
     void loadChartData()
   }, [loadChartData])
 
-  // 仅在 1h（实时）模式下启用自动刷新
+  // Enable auto-refresh only in the 1h (real-time) mode
   useEffect(() => {
     if (timeRange !== '1h') return
 
@@ -251,8 +251,8 @@ export default function Dashboard() {
 
   const { stats, usageStats, settings, accountAnalysis } = data
   const showFullUsageNumbers = settings?.show_full_usage_numbers ?? false
-  // 渠道视图下账号池概览与统计卡切换为该渠道的计数；全部视图保持总量并展示分渠道徽标。
-  // 旧后端响应无 channels 字段时回退全量，有字段但该渠道无账号时如实显示 0。
+  // In channel view, the account pool overview and stat cards switch to that channel's counts; the all view keeps the totals and shows per-channel badges.
+  // When an older backend response has no channels field, fall back to the full totals; when the field exists but the channel has no accounts, show 0 as is.
   const emptyChannelCounts: StatsChannelCounts = {
     total: 0, available: 0, rate_limited: 0, error: 0, today_requests: 0,
   }
@@ -324,7 +324,7 @@ export default function Dashboard() {
           }
         />
 
-        {/* 渠道切换时整块内容淡入过渡（key 变化触发重播） */}
+        {/* On channel switch, the whole content block fades in (a key change replays the transition) */}
         <div key={channel || 'all'} className="animate-channel-switch-in">
         {/* Hero summary */}
         <div className="relative mb-5 overflow-hidden rounded-xl border border-border/80 bg-gradient-to-r from-primary/5 via-card to-card p-5 shadow-2xs sm:mb-6 sm:p-6">
@@ -417,7 +417,7 @@ export default function Dashboard() {
           <StatCard icon={icons.requests} iconClass="purple" label={t('dashboard.todayRequests')} value={todayRequests} className="col-span-2 min-[420px]:col-span-1 md:col-span-1" />
         </div>
 
-        {/* Pool runway（可开关）+ system health */}
+        {/* Pool runway (toggleable) + system health */}
         <div className="mb-6 space-y-3">
           {showPoolRunway && accountAnalysis ? (
             <PoolRunwayCard analysis={accountAnalysis} />

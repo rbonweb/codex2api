@@ -5,9 +5,9 @@ import { cn } from '../lib/utils'
 export type SegmentedTab = { value: string; label: ReactNode; to?: string }
 
 /**
- * 分段选择控件（互斥视图切换），统一各页手搓的 segmented control。
- * 滑块动画来自 PayloadRules/PromptFilter 的 tablist 实现。
- * tab 带 to 时渲染为 NavLink（路由页签），否则为按钮（onValueChange 驱动）。
+ * Segmented selection control (mutually exclusive view switch), replacing the hand-rolled segmented controls on each page.
+ * The sliding indicator animation comes from the tablist implementation in PayloadRules/PromptFilter.
+ * A tab with `to` renders as a NavLink (route tab); otherwise it renders as a button (driven by onValueChange).
  */
 export function SegmentedTabs({
   tabs,

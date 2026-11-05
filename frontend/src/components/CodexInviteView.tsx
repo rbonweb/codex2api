@@ -50,8 +50,8 @@ import {
 interface Props {
   accounts: AccountRow[]
   onClose: () => void
-  // loading 区分「账号还没拉回来」与「确实没有可用账号」。直接深链进本页（/accounts/invite）
-  // 时账号列表为空是正常的加载中状态，若按空列表渲染会误报「没有可用于邀请的账号」。
+  // loading distinguishes "accounts not fetched yet" from "really no usable accounts". Deep-linking straight into this page (/accounts/invite)
+  // while the account list is empty is a normal loading state; rendering it as empty would falsely report "no accounts available to invite".
   loading?: boolean
 }
 
@@ -65,7 +65,7 @@ interface ParsedEmails {
   duplicates: number
 }
 
-// 与后端 collectInviteEmails 保持一致：按分隔符切分、去重（忽略大小写）、正则校验。
+// Kept consistent with the backend collectInviteEmails: split on separators, de-duplicate (case-insensitive), validate with a regex.
 function parseEmails(text: string): ParsedEmails {
   const tokens = text.split(SPLIT_RE).map((s) => s.trim()).filter(Boolean)
   const seen = new Set<string>()
@@ -106,7 +106,7 @@ function accountSearchText(account: AccountRow): string {
     .toLowerCase()
 }
 
-// 状态圆点配色，与全局 StatusBadge 保持一致。
+// Status dot colors, kept consistent with the global StatusBadge.
 const STATUS_DOT_COLOR: Record<string, string> = {
   active: 'bg-emerald-500',
   ready: 'bg-emerald-500',
@@ -124,7 +124,7 @@ function statusDotColor(status?: string | null): string {
   return STATUS_DOT_COLOR[(status || '').toLowerCase()] ?? 'bg-gray-400'
 }
 
-// 邀请记录状态配色。上游 status 实测有 redeemed / pending，其余走兜底样式。
+// Colors for invite record status. Observed upstream status values are redeemed and pending; everything else uses the fallback style.
 const INVITE_STATUS_TONE: Record<string, string> = {
   redeemed: 'bg-emerald-500/10 text-emerald-600',
   accepted: 'bg-emerald-500/10 text-emerald-600',
@@ -138,19 +138,19 @@ function inviteStatusTone(status?: string): string {
   return INVITE_STATUS_TONE[(status || '').toLowerCase()] ?? 'bg-muted text-muted-foreground'
 }
 
-// 上游返回 ISO 时间串；解析失败时原样显示，不吞掉信息。
+// The upstream returns an ISO time string; when parsing fails, show it as is rather than hiding the information.
 function formatInviteTime(value?: string): string {
   if (!value) return '-'
   const date = new Date(value)
   return Number.isNaN(date.getTime()) ? value : date.toLocaleString()
 }
 
-// 从 time_frame_rules 里取指定维度的规则（send = 发送次数、reward = 奖励次数）。
+// Takes the rule for the given dimension from time_frame_rules (send = send count, reward = reward count).
 function findCapacityRule(eligibility: InviteEligibility | null, capacityType: string) {
   return eligibility?.time_frame_rules?.find((rule) => rule.capacity_type === capacityType) ?? null
 }
 
-// 锁定用于保护账号不被自动清理，并不代表邀请凭证失效，保留提示帮助用户辨认。
+// The lock protects the account from automatic cleanup and does not mean the invite credential has expired; keep the hint so users can tell them apart.
 function accountAbnormalKey(account: AccountRow): 'locked' | null {
   if (account.locked) return 'locked'
   return null
@@ -173,21 +173,21 @@ function resolveAccountInput(accounts: AccountRow[], input: string): AccountRow 
   }) ?? null
 }
 
-// CodexInviteView 是账号管理页内的「Codex 邀请」视图，入口与回收站一致。
+// CodexInviteView is the "Codex invites" view inside the account management page; its entry point matches the recycle bin.
 export default function CodexInviteView({ accounts, onClose, loading = false }: Props) {
   const { t } = useTranslation()
   const { showToast } = useToast()
 
-  // 引导弹窗跳转过来时会带 ?account=<邮箱>。用邮箱而不是 ID：选择器是服务端分页
-  // 搜索，邮箱当查询词能把目标账号捞进候选集；传 ID 的话账号若不在首页 100 条里，
-  // 会被下面「不在候选集就清空」的 effect 抹掉。
+  // When the guide modal jumps here it carries ?account=<email>. Email rather than ID: the picker is a server-side paginated
+  // search, and an email as the query brings the target account into the candidate set; with an ID, if the account is not in the first 100 results,
+  // the effect below that clears the selection when the account is not in the candidate set would wipe it out.
   const [searchParams] = useSearchParams()
   const presetAccount = (searchParams.get('account') ?? '').trim()
 
   const [pickerAccounts, setPickerAccounts] = useState<AccountRow[]>(accounts)
   const [pickerLoading, setPickerLoading] = useState(loading)
 
-  // 仅保留状态正常且可用于 referral 的 Codex OAuth 账号；选择器由服务端分页搜索驱动。
+  // Only keep Codex OAuth accounts that are in a normal state and usable for referrals; the picker is driven by server-side paginated search.
   const codexAccounts = useMemo(
     () => pickerAccounts.filter(isCodexInviteSenderCandidate),
     [pickerAccounts],
@@ -198,10 +198,10 @@ export default function CodexInviteView({ accounts, onClose, loading = false }: 
   const [accountQuery, setAccountQuery] = useState(() =>
     presetAccount || (firstAccount ? accountDisplayName(firstAccount) : ''))
   const [accountOpen, setAccountOpen] = useState(false)
-  // accountTyping 区分「用户正在输入搜索」与「输入框只是回显已选账号」。仅在输入时
-  // 才按文本过滤，否则展开下拉应显示全部账号（否则会被已选账号的邮箱过滤成只剩一条）。
+  // accountTyping tells apart "the user is typing a search" from "the input only echoes the selected account". Filter by text only while typing,
+  // otherwise opening the dropdown should show all accounts (otherwise the selected account's email would filter it down to one entry).
   const [accountTyping, setAccountTyping] = useState(Boolean(presetAccount))
-  // 下拉键盘导航的高亮项索引（指向 filteredAccounts）。-1 表示未高亮任何项。
+  // Index of the highlighted item for keyboard navigation in the dropdown (points into filteredAccounts). -1 means no item is highlighted.
   const [activeIndex, setActiveIndex] = useState(-1)
   const [emailsText, setEmailsText] = useState('')
   const [inviteRecipientIndex, setInviteRecipientIndex] = useState<InviteRecipientIndex>({})
@@ -218,19 +218,19 @@ export default function CodexInviteView({ accounts, onClose, loading = false }: 
   const [infoLoading, setInfoLoading] = useState(false)
   const [eligibilityError, setEligibilityError] = useState<string | null>(null)
   const [trackingError, setTrackingError] = useState<string | null>(null)
-  // 网关下发的数据新鲜度。source=upstream 是刚拉的，其余来自缓存，要把观测时刻
-  // 显示出来——否则用户看到的剩余次数可能是十几分钟前的，却毫无提示。
+  // The freshness of the data as reported by the gateway. source=upstream means it was just fetched; anything else comes from cache, so the observed time
+  // must be shown, otherwise the remaining count the user sees may be from a dozen or so minutes ago with no hint.
   const [eligibilityMeta, setEligibilityMeta] = useState<InviteCacheMeta | null>(null)
   const [trackingMeta, setTrackingMeta] = useState<InviteCacheMeta | null>(null)
-  // 下拉里每个账号的邀请积分。只读网关缓存，绝不在展开时顺手探测——一次下拉最多
-  // 100 个账号，自动探测等于开合一次就打 100 个 Cloudflare 防护端点。没有缓存的
-  // 账号不显示徽标，由用户点「探测积分」显式触发。
+  // The invite credits for each account in the dropdown. Read-only from the gateway cache; never probe upstream on expand. One dropdown can show up to
+  // 100 accounts, so auto-probing would fire 100 requests at Cloudflare-protected endpoints just by opening it. Accounts without cache show no badge,
+  // and the user triggers it explicitly by clicking "Probe credits".
   const [creditsMap, setCreditsMap] = useState<Record<number, InviteGuideAccountPlan>>({})
   const [creditsProbing, setCreditsProbing] = useState(false)
   const accountPickerRef = useRef<HTMLDivElement>(null)
-  // 代理走 ref：它只是查询时的可选参数，不该让每次输入都重新拉取上游。
+  // The proxy is held in a ref: it is only an optional parameter for queries, and changing it on every keystroke should not re-fetch from upstream.
   const proxyUrlRef = useRef(proxyUrl)
-  // 递增序号用于丢弃过期响应（快速切换账号时后到的旧响应不能覆盖新账号的数据）。
+  // An incrementing sequence number discards stale responses (when switching accounts quickly, late old responses must not overwrite the new account's data).
   const infoSeqRef = useRef(0)
 
   useEffect(() => {
@@ -264,8 +264,8 @@ export default function CodexInviteView({ accounts, onClose, loading = false }: 
     setInviteRecipientIndex((current) => mergeInviteRecipientIndex(current, recipients))
   }, [])
 
-  // 手动粘贴的邮箱也必须走持久化记录检查，不能只依赖下拉行上的 disabled。
-  // signature 让输入一变化就立即失去「已检查」状态，防止防抖窗口内误点发送。
+  // Manually pasted emails must also go through the persisted-record check; they cannot rely only on the disabled state of the dropdown row.
+  // The signature makes any input change immediately drop the "checked" state, preventing a click on send within the debounce window.
   useEffect(() => {
     if (!inputRecipientSignature) {
       setCheckedRecipientSignature('')
@@ -304,8 +304,8 @@ export default function CodexInviteView({ accounts, onClose, loading = false }: 
   )
   const recipientsChecked =
     inputRecipientSignature === '' || checkedRecipientSignature === inputRecipientSignature
-  // 收件人选择器的勾选状态直接派生自输入框文本（单一事实来源）：手动输入的邮箱
-  // 在下拉里自动呈已选态，勾选/取消即增删输入框内容，两个入口不会各存一份。
+  // The recipient picker's checked state is derived directly from the input text (single source of truth): manually entered emails
+  // show as selected in the dropdown automatically; checking or unchecking adds or removes them from the input, so the two entry points never keep separate copies.
   const selectedRecipientEmails = useMemo(() => {
     const set = new Set<string>()
     for (const token of emailsText.split(SPLIT_RE)) {
@@ -329,20 +329,20 @@ export default function CodexInviteView({ accounts, onClose, loading = false }: 
     [codexAccounts, accountId],
   )
   const filteredAccounts = useMemo(() => {
-    // 未在输入搜索时显示全部；正在输入才按文本过滤。
+    // Show all when not typing a search; filter by text only while typing.
     if (!accountTyping) return codexAccounts
     const query = accountQuery.trim().toLowerCase()
     if (!query) return codexAccounts
     return codexAccounts.filter((account) => accountSearchText(account).includes(query))
   }, [accountTyping, accountQuery, codexAccounts])
   const overLimit = parsed.valid.length > MAX_EMAILS
-  // 上游明确回 0 才算配额用尽；字段缺失（undefined）时不做任何拦截。
+  // Quota is only treated as exhausted when upstream explicitly returns 0; when the field is missing (undefined), nothing is blocked.
   const sendCapacity = eligibility?.remaining_send_capacity
   const rewardCapacity = eligibility?.remaining_reward_capacity
   const sendCapacityExhausted = sendCapacity === 0
   const rewardCapacityExhausted = rewardCapacity === 0
   const overCapacity = typeof sendCapacity === 'number' && sendCapacity > 0 && parsed.valid.length > sendCapacity
-  // should_show=false 是上游给的硬性无资格结论，直接拦住，省一次注定 4xx 的请求。
+  // should_show=false is a hard "not eligible" verdict from upstream; block it directly to save a request that is certain to return 4xx.
   const ineligible = eligibility != null && eligibility.ok && !eligibility.should_show
   const canSend =
     !sending &&
@@ -355,13 +355,13 @@ export default function CodexInviteView({ accounts, onClose, loading = false }: 
     duplicateInviteEmails.length === 0 &&
     !sendCapacityExhausted &&
     !ineligible
-  // 锁定账号仍可邀请，但保留其保护状态提示。
+  // A locked account can still be invited, but its protection status hint is kept.
   const selectedAbnormal = useMemo(
     () => (selectedAccount ? accountAbnormalKey(selectedAccount) : null),
     [selectedAccount],
   )
 
-  // 统一的选中逻辑：下拉点击、键盘回车共用。
+  // Shared selection logic: used by both dropdown clicks and Enter key presses.
   const selectAccount = (account: AccountRow) => {
     setAccountId(account.id)
     setAccountQuery(accountDisplayName(account))
@@ -371,7 +371,7 @@ export default function CodexInviteView({ accounts, onClose, loading = false }: 
     setError(null)
   }
 
-  // 打开下拉或过滤结果变化时，重置高亮到当前选中项（没有则不高亮）。
+  // When the dropdown opens or the filtered results change, reset the highlight to the current selection (no highlight if there is none).
   useEffect(() => {
     if (!accountOpen) {
       setActiveIndex(-1)
@@ -384,7 +384,7 @@ export default function CodexInviteView({ accounts, onClose, loading = false }: 
     })
   }, [accountOpen, filteredAccounts, accountId])
 
-  // 下拉键盘导航：↑↓ 移动高亮、回车确认、Esc 关闭。
+  // Dropdown keyboard navigation: arrow keys move the highlight, Enter confirms, Esc closes.
   const handlePickerKeyDown = (event: ReactKeyboardEvent<HTMLInputElement>) => {
     if (event.key === 'Escape') {
       if (accountOpen) {
@@ -416,8 +416,8 @@ export default function CodexInviteView({ accounts, onClose, loading = false }: 
     }
   }
 
-  // URL 预设账号只解析一次：等服务端搜索把它带回候选集后按精确匹配选中。
-  // 用 ref 上锁，避免用户随后手动改选时被这个 effect 拽回预设值。
+  // The URL-preset account is resolved only once: wait until server-side search brings it back into the candidate set, then select it by exact match.
+  // Use a ref lock so this effect does not snap back to the preset value when the user later changes the selection manually.
   const presetAppliedRef = useRef(false)
   useEffect(() => {
     if (presetAppliedRef.current || !presetAccount || accountId != null) return
@@ -440,11 +440,11 @@ export default function CodexInviteView({ accounts, onClose, loading = false }: 
     proxyUrlRef.current = proxyUrl
   }, [proxyUrl])
 
-  // 拉取资格与已发邀请。两个请求串行发出而非并发：上游端点在 Cloudflare bot 管理后面，
-  // 后端按账号复用 cookie，第一个请求拿到的 __cf_bm 能让第二个请求少被挑战。
-  // 一个失败不影响另一个展示。
-  // force=true 让网关绕过资格/记录缓存直连上游：手动刷新与发送邀请后的重拉都要带，
-  // 否则刚被消耗掉的配额会继续按缓存值显示。
+  // Fetch eligibility and sent invites. The two requests are sent serially rather than concurrently: the upstream endpoint sits behind Cloudflare bot management,
+  // and the backend reuses the cookie per account, so the __cf_bm the first request receives means the second request gets challenged less often.
+  // A failure in one does not affect displaying the other.
+  // force=true makes the gateway bypass the eligibility/record cache and go straight to upstream. Manual refresh and re-fetch after sending an invite both need it,
+  // otherwise a quota that was just consumed would keep showing the cached value.
   const loadInviteInfo = useCallback(async (id: number, force = false) => {
     const seq = ++infoSeqRef.current
     setInfoLoading(true)
@@ -481,9 +481,9 @@ export default function CodexInviteView({ accounts, onClose, loading = false }: 
     setInfoLoading(false)
   }, [t])
 
-  // 切换账号时重新拉取。清空必须发生在发起请求之前：序号守卫只防「后到的旧响应
-  // 覆盖新数据」，防不住「新账号还在路上时页面仍渲染着上一个账号的配额和记录」——
-  // 那一两秒里账号名已经变了，剩余次数却还是上一个号的，用户会照着错的数字发。
+  // Re-fetch when switching accounts. Clearing must happen before the request starts: the sequence guard only prevents "late old responses
+  // overwriting new data", and cannot prevent "while the new account is still in flight, the page still renders the previous account's quota and records" -
+  // in that one or two seconds the account name has already changed while the remaining count is still the previous account's, and the user would act on the wrong number.
   useEffect(() => {
     infoSeqRef.current++
     setEligibility(null)
@@ -499,7 +499,7 @@ export default function CodexInviteView({ accounts, onClose, loading = false }: 
     void loadInviteInfo(accountId)
   }, [accountId, loadInviteInfo])
 
-  // 合并而不是替换：翻页/改搜索词时保留已取到的值，避免徽标闪烁消失。
+  // Merge rather than replace: when paging or changing the search term, keep the values already fetched so badges do not flicker and disappear.
   const loadVisibleCredits = useCallback(async (ids: number[]) => {
     if (ids.length === 0) return
     try {
@@ -510,7 +510,7 @@ export default function CodexInviteView({ accounts, onClose, loading = false }: 
         return next
       })
     } catch {
-      /* 积分是附加信息，取不到就不显示，不打扰主流程 */
+      /* Credits are supplementary; if they cannot be fetched, do not show them and do not disrupt the main flow */
     }
   }, [])
 
@@ -521,8 +521,8 @@ export default function CodexInviteView({ accounts, onClose, loading = false }: 
     return () => window.clearTimeout(timer)
   }, [accountOpen, filteredAccounts, loadVisibleCredits])
 
-  // 只探当前可见且还没有结果的账号。后端按 50 封顶并走导入闸门排队，
-  // 这里探完后轮询几次回读，不做无限等待。
+  // Only probe accounts that are currently visible and have no results yet. The backend caps at 50 and queues through the import gate,
+  // so after probing here, poll a few times to read back the results, without waiting indefinitely.
   const probeCreditsByIds = async (candidateIds: number[]) => {
     const ids = candidateIds.filter((id) => !creditsMap[id] || creditsMap[id].state === 'pending')
     if (ids.length === 0 || creditsProbing) return
@@ -591,8 +591,8 @@ export default function CodexInviteView({ accounts, onClose, loading = false }: 
       } else {
         showToast(t('invite.sendUpstreamFailed', { code: res.result.status_code }), 'error')
       }
-      // 无论成败都刷新配额与记录：成功要扣减剩余次数，失败也可能是配额已被别处用掉。
-      // 强制回上游——网关侧虽然在发送后已清缓存，但这里再兜一次，避免任何一层残留。
+      // Refresh quota and records whether it succeeded or failed: success must decrement the remaining count, and failure may also mean the quota was used up elsewhere.
+      // Force a fetch from upstream: the gateway already cleared its cache after sending, but add another fallback here to avoid any layer keeping stale data.
       void loadInviteInfo(account.id, true)
     } catch (err) {
       setError(getErrorMessage(err))
@@ -617,7 +617,7 @@ export default function CodexInviteView({ accounts, onClose, loading = false }: 
         }
       />
 
-      {/* 宽屏水平三列：账号/资格 | 发送表单 | 邀请记录；窄屏纵向堆叠 */}
+      {/* Wide screens: three horizontal columns: account/eligibility | send form | invite records; narrow screens stack vertically */}
       <div className="mt-4 space-y-5">
         {codexAccounts.length === 0 ? (
           <div className="mx-auto max-w-2xl">
@@ -625,7 +625,7 @@ export default function CodexInviteView({ accounts, onClose, loading = false }: 
           </div>
         ) : (
           <div className="grid grid-cols-1 items-stretch gap-5 lg:grid-cols-2 xl:min-h-[calc(100dvh-12rem)] xl:grid-cols-12">
-            {/* 左列：账号选择 + 资格配额；与中/右列拉齐等高 */}
+            {/* Left column: account selection + eligibility and quota; aligned to the same height as the middle and right columns */}
             <section className="flex min-h-0 min-w-0 flex-col gap-5 xl:col-span-4">
               <div className="shrink-0 rounded-2xl border bg-card shadow-sm">
                 <div className="border-b px-5 py-4">
@@ -741,7 +741,7 @@ export default function CodexInviteView({ accounts, onClose, loading = false }: 
                           <span>{t('invite.creditsHint')}</span>
                           <button
                             type="button"
-                            // preventDefault 保持输入框焦点，否则点一下就把下拉关了。
+                            // preventDefault keeps focus in the input; otherwise a single click would close the dropdown.
                             onMouseDown={(event) => event.preventDefault()}
                             onClick={() => void probeVisibleCredits()}
                             disabled={creditsProbing}
@@ -786,7 +786,7 @@ export default function CodexInviteView({ accounts, onClose, loading = false }: 
               )}
             </section>
 
-            {/* 中列：邮箱输入与发送 */}
+            {/* Middle column: email input and send */}
             <section className="flex min-h-0 min-w-0 flex-col xl:col-span-4">
               <div className="flex h-full min-h-[22rem] flex-col rounded-2xl border bg-card shadow-sm">
                 <div className="shrink-0 border-b px-5 py-4">
@@ -878,7 +878,7 @@ export default function CodexInviteView({ accounts, onClose, loading = false }: 
                     </p>
                   )}
 
-                  {/* 配额提示：0 是硬拦截，超出剩余次数只警告（配额是月度累计，本地数据可能已过时）。 */}
+                  {/* Quota hint: 0 is a hard block; exceeding the remaining count only warns (quota is a monthly cumulative figure and local data may be stale). */}
                   {ineligible && (
                     <p className="mt-1.5 flex items-start gap-1.5 text-xs text-red-500">
                       <AlertTriangle className="mt-0.5 size-3.5 shrink-0" />
@@ -920,7 +920,7 @@ export default function CodexInviteView({ accounts, onClose, loading = false }: 
 
                   {error && <div className="mt-3 text-sm text-red-500">{error}</div>}
 
-                  {/* 次级操作(高级选项)与主 CTA 同一行:左 toggle、右发送,消除底部两行堆叠 */}
+                  {/* Secondary action (advanced options) and the primary CTA share one row: toggle on the left, send on the right, removing the two stacked rows at the bottom */}
                   <div className="mt-auto flex items-center justify-between gap-3 pt-4">
                     <button
                       type="button"
@@ -943,7 +943,7 @@ export default function CodexInviteView({ accounts, onClose, loading = false }: 
               </div>
             </section>
 
-            {/* 右列：邀请记录；中屏整行铺开，宽屏与左右列并排等高 */}
+            {/* Right column: invite records; full-width row on medium screens, side by side with the left and right columns at equal height on wide screens */}
             <section className="flex min-h-0 min-w-0 flex-col lg:col-span-2 xl:col-span-4">
               {accountId != null ? (
                 <TrackingCard
@@ -973,8 +973,8 @@ export default function CodexInviteView({ accounts, onClose, loading = false }: 
   )
 }
 
-// EligibilityPanel 展示上游给的资格结论、剩余配额与官方文案。
-// 文案由上游按 Oai-Language 下发（目前上游 i18n 不完整，会中英混排），原样透传不做二次翻译。
+// EligibilityPanel shows the eligibility verdict from upstream, remaining quota, and the official copy.
+// Copy is delivered by upstream according to Oai-Language (upstream i18n is currently incomplete and mixes Chinese and English); it is passed through as is with no second translation.
 function EligibilityPanel({
   eligibility,
   loading,
@@ -1018,8 +1018,8 @@ function EligibilityPanel({
 
   if (!eligibility) return null
 
-  // 上游非 2xx：把状态码摊开，不假装有资格。被 Cloudflare 挑战时状态码同为 403，
-  // 但含义是「没问到」而非「没资格」，必须分开说，否则会把正常账号误报成无权限。
+  // Upstream non-2xx: expose the status code and do not pretend the account is eligible. Cloudflare challenges also return 403,
+  // but that means "could not ask", not "not eligible", and must be stated separately, otherwise a normal account would be wrongly reported as lacking permission.
   if (!eligibility.ok) {
     return (
       <div className={`flex flex-col rounded-2xl border border-amber-500/30 bg-amber-500/5 p-5 text-sm text-amber-700 shadow-sm dark:text-amber-300 ${className ?? ''}`}>
@@ -1077,7 +1077,7 @@ function EligibilityPanel({
           </p>
         )}
 
-        {/* 两种配额分开展示：能发几封 ≠ 能拿几次奖励，后者才决定还有没有收益。 */}
+        {/* The two kinds of quota are shown separately: how many emails can be sent is not the same as how many rewards can be claimed; only the latter determines whether there is any benefit left. */}
         <div className="flex flex-wrap items-center gap-1.5">
           <CapacityPill
             label={t('invite.remainingSend')}
@@ -1109,8 +1109,8 @@ function EligibilityPanel({
   )
 }
 
-// CapacityPill 展示单个维度的剩余配额。remaining 为 undefined 表示上游没给这个字段，
-// 显示为「未知」而不是 0 —— 两者的处理方式完全不同。
+// CapacityPill shows the remaining quota for a single dimension. remaining being undefined means upstream did not provide this field,
+// and it displays as "unknown" rather than 0, since the two are handled completely differently.
 function CapacityPill({
   label,
   remaining,
@@ -1144,7 +1144,7 @@ function CapacityPill({
   )
 }
 
-// TrackingCard 展示该账号已发出的邀请及兑换状态（上游 90 天窗口）。
+// TrackingCard shows the invites this account has sent and their redemption status (upstream 90-day window).
 function TrackingCard({
   items,
   loading,
@@ -1231,8 +1231,8 @@ function TrackingCard({
   )
 }
 
-// FreshnessHint 只在数据来自缓存时出现。刚打过上游（source=upstream）不提示——
-// 那是默认预期，多挂一个「刚刚」标签只是噪音。
+// FreshnessHint only appears when the data comes from cache. Data just fetched from upstream (source=upstream) shows no hint,
+// since that is the default expectation and an extra "just now" tag would only be noise.
 function FreshnessHint({ meta }: { meta: InviteCacheMeta | null }) {
   const { t } = useTranslation()
   if (!meta || meta.source === 'upstream' || !meta.observed_at) return null
@@ -1249,12 +1249,12 @@ function FreshnessHint({ meta }: { meta: InviteCacheMeta | null }) {
   )
 }
 
-// InviteStatsInline 在下拉副行追加邀请维度的小信息：单次能拿多少积分、发了多少封、
-// 被接受了几封。没有数据的字段直接不渲染——用 0 占位会被读成「一封都没发过」。
+// InviteStatsInline appends small invite-related stats to the secondary line of the dropdown: how many credits a single invite earns, how many emails were sent,
+// and how many were accepted. Fields without data are not rendered at all; using 0 as a placeholder would be read as "none were ever sent".
 //
-// 「已发」优先取跟踪记录（近 90 天），此时和「已接受」同属一个窗口，两个数字可比；
-// 没有跟踪数据才退回资格接口的本月发送用量，并明确标注「本月」，避免让人以为
-// 这两个数来自同一个统计口径。
+// "Sent" prefers the tracking records (last 90 days), where it shares a window with "accepted" so the two numbers are comparable;
+// it falls back to the eligibility API's send usage for this month only when there is no tracking data, and labels it explicitly as "this month" so readers do not assume
+// the two numbers come from the same counting basis.
 function InviteStatsInline({ plan }: { plan?: InviteGuideAccountPlan }) {
   const { t } = useTranslation()
   if (!plan || plan.state === 'pending') return null
@@ -1263,8 +1263,8 @@ function InviteStatsInline({ plan }: { plan?: InviteGuideAccountPlan }) {
   if (typeof plan.grant_amount === 'number' && plan.grant_amount > 0) {
     parts.push(t('invite.statPerInvite', { amount: Math.round(plan.grant_amount).toLocaleString() }))
   }
-  // 无资格账号且从没发过邀请时不显示「已发 0 · 已接受 0」——行上已经有「无资格」
-  // 徽标，再挂两个 0 只是噪音。发过的仍然显示：那是有用的历史。
+  // An account that is ineligible and has never sent an invite does not show "Sent 0 · Accepted 0": the row already has an "ineligible"
+  // badge, and two extra zeros are just noise. Accounts that have sent invites still show the numbers, since that history is useful.
   const hideEmptyStats = plan.state === 'ineligible' && !plan.invites_sent
   if (typeof plan.invites_sent === 'number' && !hideEmptyStats) {
     parts.push(t('invite.statSent', { count: plan.invites_sent }))
@@ -1283,9 +1283,9 @@ function InviteStatsInline({ plan }: { plan?: InviteGuideAccountPlan }) {
   return <span className="shrink-0 whitespace-nowrap text-muted-foreground/80">· {parts.join(' · ')}</span>
 }
 
-// InviteCreditsBadge 显示该账号还能拿到多少邀请积分（单次奖励额度 × 剩余奖励次数）。
-// 没探测过（pending / 无数据）时不渲染任何东西——留白比显示一个「0」诚实，
-// 后者会被读成「这个号没积分了」。
+// InviteCreditsBadge shows how many invite credits this account can still earn (single reward amount × remaining reward count).
+// When it has not been probed (pending / no data), nothing is rendered: blank space is more honest than showing "0",
+// which would be read as "this account has no credits left".
 function InviteCreditsBadge({ plan }: { plan?: InviteGuideAccountPlan }) {
   const { t } = useTranslation()
   if (!plan || plan.state === 'pending') return null
@@ -1297,7 +1297,7 @@ function InviteCreditsBadge({ plan }: { plan?: InviteGuideAccountPlan }) {
       </span>
     )
   }
-  // 还能发但本月奖励次数已用尽：发了也拿不到积分，与「无资格」是两回事。
+  // Can still send but has used up this month's reward count: sending earns no credits, which is a different situation from "ineligible".
   if (plan.state === 'exhausted') {
     return (
       <span className="shrink-0 rounded-full bg-amber-500/10 px-1.5 py-0.5 text-[10px] font-medium text-amber-600">
@@ -1318,10 +1318,10 @@ function InviteCreditsBadge({ plan }: { plan?: InviteGuideAccountPlan }) {
   )
 }
 
-// RecipientAccountPicker 从账号列表挑选受邀邮箱，支持单选与连续多选（勾选不关闭
-// 下拉）。候选由服务端分页搜索驱动，与左列账号选择器同一条数据通道；排除禁用、
-// 错误和封禁账号，只展示有邮箱的账号，按邮箱去重（team 空间会让同一登录邮箱出现
-// 在多个账号行里），并排除当前发起账号自己——给自己发邀请必然被上游拒绝。
+// RecipientAccountPicker picks the invitee email from the account list, supporting single selection and continuous multi-select (checking does not close
+// the dropdown). Candidates are driven by server-side paginated search, on the same data channel as the left-column account picker. Excludes disabled,
+// error, and banned accounts; only shows accounts that have an email, de-duplicated by email (team workspaces can make the same login email appear
+// across several account rows), and excludes the account that is initiating the invite, since inviting oneself is always rejected by upstream.
 function RecipientAccountPicker({
   selectedEmails,
   onToggle,
@@ -1338,7 +1338,7 @@ function RecipientAccountPicker({
   excludeEmail?: string
   inviteRecipientIndex: InviteRecipientIndex
   onRecipientsChecked: (recipients: InviteRecipientRecord[]) => void
-  // 与发起方下拉共享同一份积分数据：任一侧探测过的账号，另一侧立即可见。
+  // Shares the same credits data with the initiator dropdown: any account probed on either side is immediately visible on the other.
   creditsMap: Record<number, InviteGuideAccountPlan>
   onLoadCredits: (ids: number[]) => void
   onProbeCredits: (ids: number[]) => void
@@ -1353,8 +1353,8 @@ function RecipientAccountPicker({
   const [recipientCheckError, setRecipientCheckError] = useState<string | null>(null)
   const containerRef = useRef<HTMLDivElement>(null)
 
-  // 只在展开时拉取，收起后不做任何后台请求。输入搜索词走 250ms 防抖，
-  // 首次展开立即取；AbortController 取消在途请求，防止慢响应覆盖新词的结果。
+  // Fetch only when expanded; no background requests after collapsing. Search input goes through a 250ms debounce,
+  // the first expand fetches immediately; AbortController cancels in-flight requests so a slow response cannot overwrite results for a newer term.
   useEffect(() => {
     if (!open) return
     const controller = new AbortController()
@@ -1400,8 +1400,8 @@ function RecipientAccountPicker({
     [candidates],
   )
 
-  // 下拉每一页候选一次批量查询邀请记录。返回列表只包含已经存在的邮箱；请求中的
-  // 其他邮箱在本轮完成后才允许选择，避免状态还没回来时短暂放行重复邀请。
+  // Each page of dropdown candidates gets one batch query for invite records. The returned list only contains emails that already exist; while the request is
+  // in flight, other emails are only selectable after this round completes, to avoid briefly allowing a duplicate invite before the state comes back.
   useEffect(() => {
     setCheckedCandidateEmails(new Set())
     setRecipientCheckError(null)
@@ -1429,8 +1429,8 @@ function RecipientAccountPicker({
     [candidates, checkedCandidateEmails, inviteRecipientIndex],
   )
 
-  // 候选可见时回读网关缓存里的积分（纯缓存读，零上游），让「单次 250」这类
-  // 信息直接标在行上——单次收益低的号更适合当受邀方，一眼可辨。
+  // When candidates are visible, read the credits back from the gateway cache (pure cache read, zero upstream), so that info like "250 per invite"
+  // shows directly on the row: accounts with low per-invite earnings are better suited as invitees, which is easy to spot at a glance.
   useEffect(() => {
     if (!open || creditCandidates.length === 0) return
     const ids = creditCandidates.map((row) => row.id)
@@ -1485,7 +1485,7 @@ function RecipientAccountPicker({
                     aria-selected={checked}
                     aria-disabled={disabled}
                     disabled={disabled}
-                    // preventDefault 保住输入框焦点，连续勾选时不触发下拉外的失焦。
+                    // preventDefault keeps input focus, so continuous checking does not trigger a blur outside the dropdown.
                     onMouseDown={(event) => event.preventDefault()}
                     onClick={() => onToggle(email)}
                     className="flex w-full items-center gap-2 rounded-md px-2.5 py-1.5 text-left text-sm transition-colors hover:bg-accent/70 hover:text-accent-foreground disabled:cursor-not-allowed disabled:opacity-60 disabled:hover:bg-transparent"
@@ -1542,9 +1542,9 @@ function RecipientAccountPicker({
   )
 }
 
-// RecipientCreditsHint 在收件人候选行上标注该账号「作为发起方」的单次邀请收益。
-// 这是挑受邀方的核心依据：单次只有 250 的号当发起方不划算，牺牲它当受邀方最优；
-// 「无资格」的号自己发不了邀请，当受邀方毫无机会成本。没探测过则留白，不编 0。
+// RecipientCreditsHint marks, on a recipient candidate row, the per-invite earnings of that account when it acts as the initiator.
+// This is the core basis for picking invitees: an account that only earns 250 per invite is a poor initiator, so sacrificing it as an invitee is optimal;
+// an "ineligible" account cannot send invites itself, so using it as an invitee has no opportunity cost. Left blank if not probed, never fabricating 0.
 function RecipientCreditsHint({ plan }: { plan?: InviteGuideAccountPlan }) {
   const { t } = useTranslation()
   if (!plan || plan.state === 'pending') return null
@@ -1617,7 +1617,7 @@ function InviteResultCard({ result }: { result: InviteResult }) {
       </div>
 
       <div className="space-y-3 p-5">
-        {/* 被 Cloudflare 挑战：状态码也是 403，但邀请并未发出，且与资格无关，提示重试。 */}
+        {/* Blocked by a Cloudflare challenge: the status code is also 403, but no invite was sent and it is unrelated to eligibility; prompt to retry. */}
         {!result.ok && result.challenged && (
           <div className="flex items-start gap-2 rounded-xl border border-amber-500/30 bg-amber-500/5 p-3 text-sm text-amber-700 dark:text-amber-300">
             <AlertTriangle className="mt-0.5 size-4 shrink-0" />
@@ -1625,8 +1625,8 @@ function InviteResultCard({ result }: { result: InviteResult }) {
           </div>
         )}
 
-        {/* 上游给了具体原因就直接显示它（如「此人已收到推荐邀请」），并列出被拒邮箱。
-            这类失败是收件人级的，账号资格完好，不能套用下面那条无资格提示。 */}
+        {/* When upstream gives a specific reason, show it directly (e.g. "this person has already received a referral invite"), and list the rejected emails.
+            Such failures are recipient-level; the account's eligibility is intact, so the ineligibility hint below must not be applied. */}
         {!result.ok && !result.challenged && result.upstream_message && (
           <div className="rounded-xl border border-amber-500/30 bg-amber-500/5 p-3 text-sm text-amber-700 dark:text-amber-300">
             <div className="flex items-start gap-2">
@@ -1641,7 +1641,7 @@ function InviteResultCard({ result }: { result: InviteResult }) {
           </div>
         )}
 
-        {/* 无资格的兜底提示：仅在既不是挑战、上游又没给具体原因时才用这句推测。 */}
+        {/* Fallback hint for ineligibility: only use this guess when it is neither a challenge nor does upstream give a specific reason. */}
         {!result.ok && !result.challenged && !result.upstream_message && result.status_code === 403 && (
           <div className="flex items-start gap-2 rounded-xl border border-amber-500/30 bg-amber-500/5 p-3 text-sm text-amber-700 dark:text-amber-300">
             <Sparkles className="mt-0.5 size-4 shrink-0" />
@@ -1649,7 +1649,7 @@ function InviteResultCard({ result }: { result: InviteResult }) {
           </div>
         )}
 
-        {/* 邀请明细 */}
+        {/* Invite details */}
         {result.invites && result.invites.length > 0 && (
           <div className="space-y-2">
             {result.invites.map((inv, i) => (
@@ -1676,7 +1676,7 @@ function InviteResultCard({ result }: { result: InviteResult }) {
           </div>
         )}
 
-        {/* 原始响应（折叠） */}
+        {/* Raw response (collapsed) */}
         {rawText && (
           <div>
             <button
@@ -1708,7 +1708,7 @@ function CopyButton({ text }: { text: string }) {
       setCopied(true)
       window.setTimeout(() => setCopied(false), 1500)
     } catch {
-      /* 忽略剪贴板权限错误 */
+      /* Ignore clipboard permission errors */
     }
   }
   return (

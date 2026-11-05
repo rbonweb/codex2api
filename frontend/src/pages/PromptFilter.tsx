@@ -463,10 +463,10 @@ const defaultForm: PromptFilterForm = {
   prompt_filter_review_fail_closed: true,
 }
 
-// 必须与后端 security/promptfilter/review.go 的 parseReviewAPIKeys 保持同一
-// 切分语义(空白/逗号/分号 + 去重保序):测试结果的 key_index 按后端解析顺序
-// 编号,前端用它反查草稿位置,两侧分词一旦分歧就会定位到错误的 Key。
-// U+0085(NEL)属 Go 的 unicode.IsSpace 但不在 JS 的 \s 内,需显式补上。
+// Must stay identical to parseReviewAPIKeys in the backend security/promptfilter/review.go
+// splitting semantics (whitespace/comma/semicolon, with deduplication that keeps order): the key_index of test results follows the backend parse order
+// numbering; the frontend uses it to look up the draft position, and if the two sides' tokenization diverges, it would point at the wrong key.
+// U+0085 (NEL) counts as whitespace in Go's unicode.IsSpace but not in JS's \s, so it must be added explicitly.
 function parsePromptReviewAPIKeyInput(raw: string): string[] {
   const seen = new Set<string>()
   return raw
@@ -568,9 +568,9 @@ function parseJSONList<T>(raw: string, fallback: T[] = []): T[] {
 
 function promptFilterSavePayload(form: PromptFilterForm): Partial<SystemSettings> {
   const payload: Partial<SystemSettings> = { ...form }
-  // 自定义规则使用独立的并发保护写入流程；普通设置保存不得回写旧快照。
+  // Custom rules use their own concurrency-protected write flow; normal settings saves must not write back an old snapshot.
   delete payload.prompt_filter_custom_patterns
-  // 展示用字段，不参与写入。
+  // Display-only field, not written.
   delete payload.prompt_filter_review_api_key_configured
   delete payload.prompt_filter_review_api_key_count
   if (!payload.prompt_filter_review_api_key?.trim()) {
@@ -1558,8 +1558,8 @@ function IntelligenceView() {
   const [draftTarget, setDraftTarget] = useState<PromptIntelligenceCandidate | null>(null)
   const [draftForm, setDraftForm] = useState({ name: '', pattern: '', weight: 35, category: 'cyber_abuse', strict: true, rationale: '' })
   const [draftSuggesting, setDraftSuggesting] = useState(false)
-  // 草案生成的提供方独立于 AI 归因：审核用的 Review Key 和生成用的账号池 Key 不是一回事，
-  // 默认走账号池，上次选择记在本地。
+  // The provider for draft generation is independent of AI attribution: the Review Key used for review and the account pool key used for generation are different things,
+  // Defaults to the account pool; the last choice is remembered locally.
   const [draftProvider, setDraftProvider] = useState<PromptIntelligenceAIProvider>(() => readDraftAIPreference().provider)
   const [draftModel, setDraftModel] = useState(() => readDraftAIPreference().model)
   const [draftAPIKeyID, setDraftAPIKeyID] = useState(() => readDraftAIPreference().apiKeyId)
@@ -1666,12 +1666,12 @@ function IntelligenceView() {
         const response = await api.getPromptIntelligenceAIProviders()
         setGatewayKeys(response.gateway_keys.filter((key) => key.status === 'active'))
       } catch {
-        // Key 列表加载失败不影响手工填写草案。
+        // A failure to load the key list does not block filling in the draft by hand.
       }
     }
   }
 
-  // 让模型基于候选的 CY 证据先写出草案，预填表单；校验结果只提示，人审核后再保存。
+  // Have the model first write a draft from the candidate's CY evidence to pre-fill the form; the validation result is only a hint, and a person reviews before saving.
   const suggestDraft = async () => {
     if (!draftTarget) return
     setDraftSuggesting(true)
@@ -1799,8 +1799,8 @@ function IntelligenceView() {
 
   const lifecycleLabel = (status: string) => t(`promptFilter.intelligence.lifecycle.${status}`, { defaultValue: status || '-' })
   const sourceLabel = (source?: string) => t(`promptFilter.intelligence.source.${source || 'unknown'}`, { defaultValue: source || '-' })
-  // 标题统一带上候选 ID（#417）：列表、证据 / 归因 / 草案 / 发布弹窗都用它，
-  // 与上游 CY 事件详情里的「候选 · #ID」一一对应。
+  // Titles always include the candidate ID (#417): the list and the evidence / attribution / draft / publish dialogs all use it,
+  // matching the "candidate · #ID" in the upstream CY event details one to one.
   const candidateTitle = (candidate: PromptIntelligenceCandidate) => `#${candidate.id} · ${candidate.kind === 'evidence'
     ? t(candidate.lifecycle_status === 'published' ? 'promptFilter.intelligence.attributedEvidence' : 'promptFilter.intelligence.awaitingAttribution')
     : candidate.name || t('promptFilter.intelligence.unnamedRule')}`
@@ -1838,7 +1838,7 @@ function IntelligenceView() {
               <span>{t('promptFilter.intelligence.candidates')}: {result.candidates.length}</span>
               <span>{t('promptFilter.intelligence.staged')}: {result.staged}</span>
             </div>
-            {result.errors.length ? <div className="mb-4 rounded-lg border border-destructive/30 p-3 text-sm text-destructive">{result.errors.join('；')}</div> : null}
+            {result.errors.length ? <div className="mb-4 rounded-lg border border-destructive/30 p-3 text-sm text-destructive">{result.errors.join('; ')}</div> : null}
             <p className="text-sm text-muted-foreground">{t('promptFilter.intelligence.resultHint')}</p>
           </CardContent>
         </Card>
@@ -1881,7 +1881,7 @@ function IntelligenceView() {
           </div>
           <div className="mb-3 text-xs text-muted-foreground">{t('promptFilter.intelligence.reviewCount', { count: candidateTotal })}</div>
           <div className="overflow-x-auto rounded-lg border border-border bg-card">
-            {/* 固定列宽：规则正则和说明只能在第一列内换行，不能横向压到来源 / 状态列上。 */}
+            {/* Fixed column widths: rule regexes and descriptions may only wrap within the first column and must not spill sideways onto the source / status columns. */}
             <Table className="min-w-[1280px] table-fixed">
             <TableHeader>
               <TableRow>
@@ -2014,7 +2014,7 @@ function IntelligenceView() {
                     </div>
                   </details>
                 ) : null}
-                {run.errors.length ? <div className="mt-3 text-sm text-destructive">{run.errors.join('；')}</div> : null}
+                {run.errors.length ? <div className="mt-3 text-sm text-destructive">{run.errors.join('; ')}</div> : null}
               </div>
             ))}
             {!historyLoading && !history.length ? <div className="py-8 text-center text-muted-foreground">{t('promptFilter.intelligence.noHistory')}</div> : null}
@@ -3174,8 +3174,8 @@ function OverviewView({
     try {
       const result = await api.deletePromptReviewAPIKey(keyID)
       setConfiguredReviewKeys(result.items)
-      // 保存触发的列表拉取可能仍在途,其删除前快照晚到会把已删 Key“复活”;
-      // 换代重拉一次,顺带让旧请求走 cancelled 丢弃。
+      // A list fetch triggered by saving may still be in flight, and its pre-delete snapshot arriving late would "revive" the deleted key;
+      // bump the generation and refetch once, which also makes the old request go through the cancelled path and be dropped.
       setReviewKeysRefreshTick((tick) => tick + 1)
       setForm((current) => ({
         ...current,
@@ -3202,8 +3202,8 @@ function OverviewView({
       if (draftIndex < 0 || draftIndex >= draftReviewKeys.length) return
       const remaining = draftReviewKeys.filter((_, index) => index !== draftIndex)
       setForm((current) => ({ ...current, prompt_filter_review_api_key: remaining.join('\n') }))
-      // key_index 是位置映射,移除后剩余卡片的下标即失效;整组测试结果作废,
-      // 保留会让下一次点击删错 Key。
+      // key_index is a position mapping: after a removal, the indexes of the remaining cards become invalid, so the whole set of test results is voided,
+      // keeping it would make the next click delete the wrong key.
       setReviewTestResult(null)
       showToast(t(remaining.length === 0 ? 'promptFilter.reviewKeyRemovedFromDraftEmpty' : 'promptFilter.reviewKeyRemovedFromDraft', { key: masked }))
       return
@@ -3499,7 +3499,7 @@ function OverviewView({
                       placeholder={form.prompt_filter_review_api_key_configured ? t('promptFilter.reviewApiKeyConfigured', { n: form.prompt_filter_review_api_key_count }) : t('promptFilter.reviewApiKeyPlaceholder')}
                       onChange={(event) => {
                         setForm((current) => ({ ...current, prompt_filter_review_api_key: event.target.value }))
-                        // 草稿变更后旧测试结果的 key_index 映射即失效,保留会误删。
+                        // After the draft changes, the key_index mapping of old test results is invalid; keeping it would delete the wrong key.
                         setReviewTestResult(null)
                       }}
                     />
@@ -3885,7 +3885,7 @@ function LogsView({ onPromptLogsChanged }: { onPromptLogsChanged: () => Promise<
       setRetentionDraft(next.retention_days)
       setRetentionRunning(next.running)
     } catch {
-      /* 保留设置读取失败不影响日志页其它功能 */
+      /* A failure to read the saved settings does not affect the other features of the log page */
     }
   }, [])
   useEffect(() => {
@@ -3964,7 +3964,7 @@ function LogsView({ onPromptLogsChanged }: { onPromptLogsChanged: () => Promise<
     }
   }, [reviewFilters, reviewPage, reviewPageSize])
 
-  // 后台清理进行中时轮询状态，跑完后刷新日志计数。
+  // While a background cleanup is running, poll its status and refresh the log count once it finishes.
   useEffect(() => {
     if (!retentionRunning) return
     const timer = window.setInterval(async () => {
@@ -4048,7 +4048,7 @@ function LogsView({ onPromptLogsChanged }: { onPromptLogsChanged: () => Promise<
       }
 
       await api.clearPromptFilterLogs(section === 'review' ? { reviewed: true } : { source: 'local_filter' })
-      // 清空现已改为后台分批执行：先刷新一次，再轮询到清理结束后自动再刷新。
+      // Clearing now runs as background batches: refresh once first, then poll until the cleanup ends and refresh again automatically.
       setRetentionRunning(true)
       // The two panels are projections of the same persisted rows. A reviewed
       // local-filter row appears in both, so either cleanup must refresh both
@@ -5528,8 +5528,8 @@ function PromptPolicyIncidentDetailButton({ incident, onDeleted }: { incident: P
   )
 }
 
-// CY 关联的画像主体列表：上游 CY 事件详情与 CY 学习审核的证据详情共用，
-// 人员主体排在最前，每个主体可直接打开画像详情。
+// The profile subject list linked to CY, shared by the upstream CY event details and the evidence details of CY learning review,
+// person subjects come first, and each subject can open its profile details directly.
 function PromptRiskSubjectList({ subjects, compact = false }: { subjects: PromptRiskIncidentSubject[]; compact?: boolean }) {
   const { t } = useTranslation()
   if (subjects.length === 0) {
@@ -5583,11 +5583,11 @@ function writeDraftAIPreference(value: DraftAIPreference) {
   try {
     window.localStorage.setItem(DRAFT_AI_PREFERENCE_KEY, JSON.stringify(value))
   } catch {
-    /* 本地偏好写入失败不影响生成 */
+    /* A failure to write the local preference does not affect generation */
   }
 }
 
-// CY 关联主体只有主体键和身份信息；画像详情按钮会用主体键拉取完整画像，这里只需一个占位对象。
+// CY-linked subjects only have a subject key and identity info; the profile details button uses the subject key to fetch the full profile, so only a placeholder object is needed here.
 function riskSubjectToProfileStub(subject: PromptRiskIncidentSubject): PromptRiskProfile {
   return {
     subject_type: subject.subject_type,

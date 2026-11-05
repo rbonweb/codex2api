@@ -8,7 +8,7 @@ export function normalizeInviteEmail(email: string): string {
   return email.trim().toLowerCase()
 }
 
-// 邀请收件人状态查询与后端唯一键使用同一口径：trim + lower，并在发请求前去重。
+// Invitee status lookups normalize emails the same way as the backend unique key: trim + lower, and duplicates are removed before the request is sent.
 export function normalizeInviteEmails(emails: string[]): string[] {
   const seen = new Set<string>()
   const normalized: string[] = []
@@ -21,7 +21,7 @@ export function normalizeInviteEmails(emails: string[]): string[] {
   return normalized
 }
 
-// 已邀请状态只增不减；将服务端结果或刚发送成功的邮箱合并进现有索引。
+// The invited status only moves forward; merge server results or emails just sent successfully into the existing index.
 export function mergeInviteRecipientIndex(
   current: InviteRecipientIndex,
   recipients: InviteRecipientRecord[],
@@ -54,9 +54,9 @@ export function alreadyInvitedEmails(
     .filter((email) => Boolean(email) && Boolean(inviteRecipientRecord(index, email)))
 }
 
-// 邀请页的两个账号选择器共享这条可见性规则。封禁/错误账号以及被禁用的账号
-// 不应再进入候选列表；锁定、限流和其他临时调度状态不影响账号作为受邀方，
-// 也不代表其 referral 凭证已经失效，因此继续保留。
+// The two account pickers on the invite page share this visibility rule. Banned/error accounts and disabled accounts
+// must not appear in the candidate list. Locked, rate-limited and other temporary scheduling states do not affect an account's role as an invitee,
+// nor do they mean its referral credential has expired, so they stay in the list.
 export function isInviteAccountSelectable(account: AccountRow): boolean {
   if (account.enabled === false) return false
 
@@ -69,7 +69,7 @@ export function isInviteAccountSelectable(account: AccountRow): boolean {
 export function isCodexInviteSenderCandidate(account: AccountRow): boolean {
   if (!isInviteAccountSelectable(account)) return false
 
-  // 中转号与 AT-only 账号没有可持续用于 referral 的 Codex OAuth 凭证。
+  // Relay accounts and AT-only accounts have no persistent Codex OAuth credential that can be used for referrals.
   return !account.at_only
 }
 

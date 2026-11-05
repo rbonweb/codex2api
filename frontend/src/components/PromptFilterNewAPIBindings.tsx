@@ -54,7 +54,7 @@ const emptyBindingForm: BindingForm = {
 }
 
 function apiKeyLabel(apiKey: APIKeyRow): string {
-  return `#${apiKey.id} ${apiKey.name || '未命名 Key'} · ${apiKey.key || '已脱敏'}`
+  return `#${apiKey.id} ${apiKey.name || 'Unnamed Key'} · ${apiKey.key || 'Redacted'}`
 }
 
 function BindingSwitch({
@@ -98,32 +98,32 @@ function BindingFormFields({
           <Select
             value={form.apiKeyId}
             disabled={editing}
-            placeholder="选择用于接入的 Codex2API Key"
+            placeholder="Select the Codex2API Key used for access"
             onValueChange={(apiKeyId) => setForm({ ...form, apiKeyId })}
             options={apiKeys.map((apiKey) => ({ value: String(apiKey.id), label: apiKeyLabel(apiKey) }))}
           />
           <span className="block text-xs leading-5 text-muted-foreground">
-            一个 Key 只能绑定一个调用方；未绑定 Key 不接受 NewAPI 签名身份。
+            One key can be bound to only one caller; a key with no binding does not accept NewAPI signed identities.
           </span>
         </label>
         <label className="space-y-1.5">
-          <span className="text-sm font-medium">调用方代码</span>
+          <span className="text-sm font-medium">Caller code</span>
           <Input
             value={form.platformCode}
-            placeholder="输入唯一接入标识"
+            placeholder="Enter a unique access identifier"
             maxLength={32}
             onChange={(event) => setForm({
               ...form,
               platformCode: event.target.value.toLowerCase().replace(/[^a-z0-9_-]/g, ''),
             })}
           />
-          <span className="block text-xs leading-5 text-muted-foreground">仅支持小写字母、数字、下划线和短横线，最长 32 字符且全局唯一。</span>
+          <span className="block text-xs leading-5 text-muted-foreground">Only lowercase letters, digits, underscores, and hyphens are allowed; up to 32 characters, and globally unique.</span>
         </label>
         <label className="space-y-1.5">
-          <span className="text-sm font-medium">调用方名称</span>
+          <span className="text-sm font-medium">Caller name</span>
           <Input
             value={form.platformName}
-            placeholder="输入便于识别的名称"
+            placeholder="Enter a name that is easy to recognize"
             maxLength={255}
             onChange={(event) => setForm({ ...form, platformName: event.target.value })}
           />
@@ -131,31 +131,31 @@ function BindingFormFields({
       </div>
       <div className="grid gap-3 sm:grid-cols-2">
         <BindingSwitch
-          label="启用此绑定"
-          description="关闭后，该 Key 不接受此调用方的签名身份，也不会使用其他 Key 的绑定。"
+          label="Enable this binding"
+          description="When off, this key does not accept this caller's signed identity, and it will not use another key's binding."
           checked={form.enabled}
           onCheckedChange={(enabled) => setForm({ ...form, enabled })}
         />
         <BindingSwitch
-          label="强制签名身份"
-          description="默认关闭。确认对应 NewAPI 已正确配置此绑定的密钥后再开启，否则请求会因缺少或签名错误而被拒绝。"
+          label="Require signed identity"
+          description="Off by default. Turn it on only after confirming that the corresponding NewAPI has this binding's key configured correctly; otherwise requests will be rejected for missing or wrong signatures."
           checked={form.requireSignedIdentity}
           onCheckedChange={(requireSignedIdentity) => setForm({ ...form, requireSignedIdentity })}
         />
       </div>
       <label className="block space-y-1.5 rounded-lg border border-border/70 bg-muted/20 p-3">
-        <span className="text-sm font-medium">该 Key 的 Prompt 检查范围</span>
+        <span className="text-sm font-medium">Prompt check scope for this key</span>
         <Select
           value={form.promptFilterScope}
           onValueChange={(promptFilterScope) => setForm({ ...form, promptFilterScope: promptFilterScope as PromptFilterScope })}
           options={[
-            { value: 'inherit', label: '继承全局：本地检测 + 远程模型复核' },
-            { value: 'local_only', label: '仅本地检测：跳过远程模型复核' },
-            { value: 'off', label: '完全跳过：不执行 Prompt 检查' },
+            { value: 'inherit', label: 'Inherit global: local detection + remote model review' },
+            { value: 'local_only', label: 'Local detection only: skip remote model review' },
+            { value: 'off', label: 'Skip entirely: do not run Prompt checks' },
           ]}
         />
         <span className="block text-xs leading-5 text-muted-foreground">
-          “仅本地检测”仍会执行高危规则、会话关联、审计记录与风险画像；“完全跳过”只保留 API Key 和签名身份校验，适合明确受控的内部调用方。
+          "Local detection only" still runs high-risk rules, session correlation, audit records, and risk profiling; "Skip entirely" only keeps the API key and signed identity checks, and suits clearly controlled internal callers.
         </span>
       </label>
     </div>
@@ -226,7 +226,7 @@ export default function PromptFilterNewAPIBindings() {
 
   const revealSecret = (platformName: string, secret?: string) => {
     if (!secret) {
-      showToast('操作成功，但服务器没有返回一次性密钥，请重新轮换。', 'error')
+      showToast('The operation succeeded, but the server did not return a one-time key. Please rotate again.', 'error')
       return
     }
     setSecretCopied(false)
@@ -236,14 +236,14 @@ export default function PromptFilterNewAPIBindings() {
   const createBinding = async () => {
     const apiKeyId = Number(createForm.apiKeyId)
     if (!Number.isInteger(apiKeyId) || apiKeyId <= 0 || !createForm.platformCode.trim()) {
-      showToast('请选择 Codex2API Key，并填写调用方代码。', 'error')
+      showToast('Select a Codex2API Key and enter a caller code.', 'error')
       return
     }
     if (createForm.promptFilterScope === 'off') {
       const approved = await confirm({
-        title: '确认让该 Key 跳过全部 Prompt 检查？',
-        description: '该 Key 的请求将不执行本地高危规则和远程模型复核。API Key 鉴权及可选的 NewAPI 签名身份校验仍会保留。',
-        confirmText: '确认完全跳过',
+        title: 'Skip all Prompt checks for this key?',
+        description: 'Requests from this key will skip local high-risk rules and remote model review. API key authentication and the optional NewAPI signed-identity check will still apply.',
+        confirmText: 'Confirm skip entirely',
         tone: 'warning',
       })
       if (!approved) return
@@ -272,22 +272,22 @@ export default function PromptFilterNewAPIBindings() {
     if (!editing || !editForm.platformCode.trim()) return
     if (!editing.require_signed_identity && editForm.requireSignedIdentity) {
       const approved = await confirm({
-        title: '确认开启强制签名身份？',
+        title: 'Enable required signed identity?',
         description: (
           <span>
-            必须先在“{editForm.platformName.trim() || editForm.platformCode.trim()}”对应的 NewAPI 配置此绑定的密钥；否则开启后，该 Codex2API Key 的请求会立即返回 401。签名失败属于身份校验错误，不会记为 Prompt 违规，也不会触发违规处罚。
+            The corresponding NewAPI for "{editForm.platformName.trim() || editForm.platformCode.trim()}" must first have this binding's key configured; otherwise, once enabled, requests from this Codex2API Key will immediately return 401. A signature failure is an identity verification error: it is not recorded as a Prompt violation and does not trigger violation penalties.
           </span>
         ),
-        confirmText: '已配置，确认开启',
+        confirmText: 'Configured, confirm enable',
         tone: 'warning',
       })
       if (!approved) return
     }
     if (editing.prompt_filter_scope !== 'off' && editForm.promptFilterScope === 'off') {
       const approved = await confirm({
-        title: '确认让该 Key 跳过全部 Prompt 检查？',
-        description: '保存后，该 Key 将不再执行本地高危规则和远程模型复核。API Key 鉴权及可选的 NewAPI 签名身份校验仍会保留。',
-        confirmText: '确认完全跳过',
+        title: 'Skip all Prompt checks for this key?',
+        description: 'After saving, this key will no longer run local high-risk rules and remote model review. API key authentication and the optional NewAPI signed-identity check will still apply.',
+        confirmText: 'Confirm skip entirely',
         tone: 'warning',
       })
       if (!approved) return
@@ -303,7 +303,7 @@ export default function PromptFilterNewAPIBindings() {
       })
       setEditing(null)
       await load()
-      showToast('审计身份绑定已更新。')
+      showToast('Audit identity binding updated.')
     } catch (updateError) {
       showToast(getErrorMessage(updateError), 'error')
     } finally {
@@ -315,7 +315,7 @@ export default function PromptFilterNewAPIBindings() {
     if (!rotating) return
     const grace = Number(graceSeconds)
     if (!Number.isInteger(grace) || grace < 60 || grace > 86400) {
-      showToast('自动生成新密钥时，宽限秒数必须是 60 到 86400 之间的整数。', 'error')
+      showToast('When auto-generating a new key, the grace period in seconds must be an integer between 60 and 86400.', 'error')
       return
     }
     setSaving(true)
@@ -333,13 +333,13 @@ export default function PromptFilterNewAPIBindings() {
 
   const deleteBinding = async (binding: PromptFilterNewAPIBinding) => {
     const approved = await confirm({
-      title: `删除“${binding.platform_name || binding.platform_code}”绑定？`,
+        title: `Delete binding "${binding.platform_name || binding.platform_code}"?`,
       description: (
         <span>
-          删除后，Key #{binding.api_key_id} 将不再接受 NewAPI 签名身份；请先确认该调用方已停止使用此 Key。
+          After deletion, Key #{binding.api_key_id} will no longer accept NewAPI signed identities; first confirm that the caller has stopped using this key.
         </span>
       ),
-      confirmText: '确认删除',
+      confirmText: 'Confirm delete',
       tone: 'destructive',
       confirmVariant: 'destructive',
     })
@@ -347,7 +347,7 @@ export default function PromptFilterNewAPIBindings() {
     try {
       await api.deletePromptFilterNewAPIBinding(binding.api_key_id)
       await load()
-      showToast('审计身份绑定已删除。')
+      showToast('Audit identity binding deleted.')
     } catch (deleteError) {
       showToast(getErrorMessage(deleteError), 'error')
     }
@@ -358,9 +358,9 @@ export default function PromptFilterNewAPIBindings() {
     try {
       await navigator.clipboard.writeText(secretReveal.secret)
       setSecretCopied(true)
-      showToast('绑定密钥已复制。')
+      showToast('Binding key copied.')
     } catch {
-      showToast('复制失败，请手动选择并复制密钥。', 'error')
+      showToast('Copy failed. Please select and copy the key manually.', 'error')
     }
   }
 
@@ -382,21 +382,21 @@ export default function PromptFilterNewAPIBindings() {
           <div>
             <div className="flex items-center gap-2">
               <KeyRound className="size-5 text-primary" />
-              <h4 id="newapi-key-bindings-title" className="text-sm font-semibold">按 Codex2API Key 绑定审计身份</h4>
+              <h4 id="newapi-key-bindings-title" className="text-sm font-semibold">Bind audit identities per Codex2API Key</h4>
             </div>
             <p className="mt-1 text-sm leading-6 text-muted-foreground">
-              将签名身份与实际请求使用的 Codex2API Key 对应起来，并可为指定 Key 缩小 Prompt 检查范围。
-              全局阈值和审核档位仍由 GuardPipeline 管理，调用方不能通过请求头或元数据修改此策略。
+              Matches signed identities to the Codex2API Key the request actually uses, and can narrow the Prompt check scope for a specific key.
+              Global thresholds and review tiers are still managed by GuardPipeline; callers cannot change this policy through request headers or metadata.
             </p>
           </div>
           <div className="flex gap-2">
             <Button variant="outline" size="sm" onClick={() => void load()} disabled={loading}>
               <RefreshCw className={`size-4 ${loading ? 'animate-spin' : ''}`} />
-              刷新
+              Refresh
             </Button>
             <Button size="sm" onClick={openCreate} disabled={loading || availableAPIKeys.length === 0}>
               <Plus className="size-4" />
-              新增绑定
+              Add binding
             </Button>
           </div>
         </div>
@@ -404,9 +404,9 @@ export default function PromptFilterNewAPIBindings() {
         <div className="flex items-start gap-3 rounded-lg border border-sky-500/25 bg-sky-500/[0.06] p-3">
           <ShieldCheck className="mt-0.5 size-5 shrink-0 text-sky-600 dark:text-sky-300" />
           <div className="text-sm leading-6">
-            <div className="font-medium">绑定后使用该 Key 的审计密钥</div>
+            <div className="font-medium">Use this key's audit key after binding</div>
             <div className="text-muted-foreground">
-              签名缺失、调用方代码错误或密钥不匹配时，不会借用其他 Key 的身份，也不会把审计记录关联到错误绑定。
+              If the signature is missing, the caller code is wrong, or the key does not match, the request will not borrow another key's identity and will not link audit records to the wrong binding.
             </div>
           </div>
         </div>
@@ -414,36 +414,36 @@ export default function PromptFilterNewAPIBindings() {
         {error ? (
           <div className="flex items-center justify-between gap-3 rounded-lg border border-destructive/25 bg-destructive/[0.05] p-3 text-sm text-destructive">
             <span>{error}</span>
-            <Button variant="outline" size="sm" onClick={() => void load()}>重试</Button>
+            <Button variant="outline" size="sm" onClick={() => void load()}>Retry</Button>
           </div>
         ) : null}
 
         {loading ? (
           <div className="flex min-h-28 items-center justify-center gap-2 text-sm text-muted-foreground">
-            <Loader2 className="size-4 animate-spin" />正在读取审计身份绑定…
+            <Loader2 className="size-4 animate-spin" />Reading audit identity bindings...
           </div>
         ) : bindings.length === 0 ? (
           <div className="rounded-lg border border-dashed border-border p-7 text-center">
-            <div className="text-sm font-medium">还没有按 Key 配置的审计身份</div>
+            <div className="text-sm font-medium">No per-key audit identities configured yet</div>
             <p className="mt-1 text-xs leading-5 text-muted-foreground">
-              新建后会自动生成 256 位绑定密钥，并且只展示一次。
+              A 256-bit binding key is generated automatically on creation and is shown only once.
             </p>
             <Button className="mt-4" size="sm" onClick={openCreate} disabled={availableAPIKeys.length === 0}>
-              <Plus className="size-4" />新增第一个绑定
+              <Plus className="size-4" />Add the first binding
             </Button>
-            {availableAPIKeys.length === 0 ? <p className="mt-2 text-xs text-amber-600">没有可绑定的 API Key，请先新建独立 Key。</p> : null}
+            {availableAPIKeys.length === 0 ? <p className="mt-2 text-xs text-amber-600">No API keys available to bind; create a dedicated key first.</p> : null}
           </div>
         ) : (
             <div className="overflow-x-auto rounded-lg border border-border">
               <table className="w-full min-w-[860px] text-sm">
                 <thead className="bg-muted/50 text-left text-xs text-muted-foreground">
                   <tr>
-                    <th className="px-3 py-2.5 font-medium">调用方</th>
+                    <th className="px-3 py-2.5 font-medium">Caller</th>
                     <th className="px-3 py-2.5 font-medium">Codex2API Key</th>
-                    <th className="px-3 py-2.5 font-medium">状态</th>
-                    <th className="px-3 py-2.5 font-medium">绑定密钥</th>
-                    <th className="px-3 py-2.5 font-medium">更新时间</th>
-                    <th className="px-3 py-2.5 text-right font-medium">操作</th>
+                    <th className="px-3 py-2.5 font-medium">Status</th>
+                    <th className="px-3 py-2.5 font-medium">Binding key</th>
+                    <th className="px-3 py-2.5 font-medium">Updated</th>
+                    <th className="px-3 py-2.5 text-right font-medium">Actions</th>
                   </tr>
                 </thead>
                 <tbody className="divide-y divide-border">
@@ -456,29 +456,29 @@ export default function PromptFilterNewAPIBindings() {
                           <div className="mt-0.5 font-mono text-xs text-muted-foreground">{binding.platform_code}</div>
                         </td>
                         <td className="px-3 py-3">
-                          <div className="font-medium">#{binding.api_key_id} {apiKey?.name || 'Key 已删除或不可见'}</div>
+                          <div className="font-medium">#{binding.api_key_id} {apiKey?.name || 'Key deleted or not visible'}</div>
                           <div className="mt-0.5 font-mono text-xs text-muted-foreground">{apiKey?.key || '—'}</div>
                         </td>
                         <td className="px-3 py-3">
                           <div className="flex flex-wrap gap-1.5">
-                            <Badge variant={binding.enabled ? 'default' : 'outline'}>{binding.enabled ? '已启用' : '已关闭'}</Badge>
+                            <Badge variant={binding.enabled ? 'default' : 'outline'}>{binding.enabled ? 'Enabled' : 'Off'}</Badge>
                             <Badge variant={binding.require_signed_identity ? 'default' : 'outline'}>
-                              {binding.require_signed_identity ? '强制签名' : '未强制签名'}
+                              {binding.require_signed_identity ? 'Signature required' : 'Signature not required'}
                             </Badge>
                             <Badge variant={binding.prompt_filter_scope === 'off' ? 'destructive' : 'outline'}>
                               {binding.prompt_filter_scope === 'local_only'
-                                ? '仅本地检测'
+                                ? 'Local detection only'
                                 : binding.prompt_filter_scope === 'off'
-                                  ? '跳过 Prompt 检查'
-                                  : '继承全局审核'}
+                                  ? 'Skip Prompt checks'
+                                  : 'Inherit global review'}
                             </Badge>
                           </div>
                         </td>
                         <td className="px-3 py-3">
-                          <div className="font-mono text-xs">{binding.secret_configured ? binding.secret_masked : '未配置'}</div>
+                          <div className="font-mono text-xs">{binding.secret_configured ? binding.secret_masked : 'Not configured'}</div>
                           {binding.previous_secret_active ? (
                             <div className="mt-1 text-xs text-amber-600">
-                              旧密钥宽限至 {formatBeijingTime(binding.previous_secret_expires_at)}
+                              Old key grace period ends {formatBeijingTime(binding.previous_secret_expires_at)}
                             </div>
                           ) : null}
                         </td>
@@ -486,12 +486,12 @@ export default function PromptFilterNewAPIBindings() {
                         <td className="px-3 py-3">
                           <div className="flex justify-end gap-1.5">
                             <Button variant="outline" size="sm" onClick={() => openEdit(binding)}>
-                              <Pencil className="size-3.5" />编辑
+                              <Pencil className="size-3.5" />Edit
                             </Button>
                             <Button variant="outline" size="sm" onClick={() => { setGraceSeconds('300'); setRotating(binding) }}>
-                              <RefreshCw className="size-3.5" />轮换
+                              <RefreshCw className="size-3.5" />Rotate
                             </Button>
-                            <Button variant="ghost" size="icon" className="text-destructive" aria-label="删除绑定" onClick={() => void deleteBinding(binding)}>
+                            <Button variant="ghost" size="icon" className="text-destructive" aria-label="Delete binding" onClick={() => void deleteBinding(binding)}>
                               <Trash2 className="size-4" />
                             </Button>
                           </div>
@@ -508,15 +508,15 @@ export default function PromptFilterNewAPIBindings() {
       <Dialog open={createOpen} onOpenChange={setCreateOpen}>
         <DialogContent className="sm:max-w-2xl">
           <DialogHeader>
-            <DialogTitle>新增 Key 审计身份绑定</DialogTitle>
-            <DialogDescription>选择请求实际使用的 Codex2API Key。保存后系统自动生成绑定密钥，并只展示一次。</DialogDescription>
+            <DialogTitle>Add Key audit identity binding</DialogTitle>
+            <DialogDescription>Choose the Codex2API Key the request actually uses. After saving, the system generates a binding key and shows it only once.</DialogDescription>
           </DialogHeader>
           <BindingFormFields form={createForm} setForm={setCreateForm} apiKeys={availableAPIKeys} editing={false} />
           <DialogFooter>
-            <Button variant="outline" onClick={() => setCreateOpen(false)}>取消</Button>
+            <Button variant="outline" onClick={() => setCreateOpen(false)}>Cancel</Button>
             <Button onClick={() => void createBinding()} disabled={saving || !createForm.apiKeyId || !createForm.platformCode.trim()}>
               {saving ? <Loader2 className="size-4 animate-spin" /> : <Plus className="size-4" />}
-              创建并生成密钥
+              Create and generate key
             </Button>
           </DialogFooter>
         </DialogContent>
@@ -525,15 +525,15 @@ export default function PromptFilterNewAPIBindings() {
       <Dialog open={Boolean(editing)} onOpenChange={(open) => { if (!open && !saving) setEditing(null) }}>
         <DialogContent className="sm:max-w-2xl">
           <DialogHeader>
-            <DialogTitle>编辑审计身份绑定</DialogTitle>
-            <DialogDescription>管理调用方身份及该 Key 的检查范围；全局拦截阈值和审核档位仍由统一 GuardPipeline 管理。</DialogDescription>
+            <DialogTitle>Edit audit identity binding</DialogTitle>
+            <DialogDescription>Manage the caller identity and the check scope for this key; global block thresholds and review tiers are still managed by the unified GuardPipeline.</DialogDescription>
           </DialogHeader>
           <BindingFormFields form={editForm} setForm={setEditForm} apiKeys={apiKeys.filter((key) => key.id === editing?.api_key_id)} editing />
           <DialogFooter>
-            <Button variant="outline" onClick={() => setEditing(null)} disabled={saving}>取消</Button>
+            <Button variant="outline" onClick={() => setEditing(null)} disabled={saving}>Cancel</Button>
             <Button onClick={() => void updateBinding()} disabled={saving || !editForm.platformCode.trim()}>
               {saving ? <Loader2 className="size-4 animate-spin" /> : <Check className="size-4" />}
-              保存修改
+              Save changes
             </Button>
           </DialogFooter>
         </DialogContent>
@@ -542,25 +542,25 @@ export default function PromptFilterNewAPIBindings() {
       <Dialog open={Boolean(rotating)} onOpenChange={(open) => { if (!open && !saving) setRotating(null) }}>
         <DialogContent className="sm:max-w-lg">
           <DialogHeader>
-            <DialogTitle>轮换“{rotating?.platform_name || rotating?.platform_code}”绑定密钥</DialogTitle>
-            <DialogDescription>系统会生成新密钥。宽限期内新旧密钥都可验证，便于无中断更新对应的 NewAPI 配置。</DialogDescription>
+            <DialogTitle>Rotate binding key for "{rotating?.platform_name || rotating?.platform_code}"</DialogTitle>
+            <DialogDescription>The system will generate a new key. During the grace period both old and new keys verify, so the corresponding NewAPI config can be updated without interruption.</DialogDescription>
           </DialogHeader>
           <div className="space-y-3">
             <label className="space-y-1.5">
-              <span className="text-sm font-medium">旧密钥宽限秒数</span>
+              <span className="text-sm font-medium">Old key grace period (seconds)</span>
               <Input type="number" min={60} max={86400} step={1} value={graceSeconds} onChange={(event) => setGraceSeconds(event.target.value)} />
-              <span className="block text-xs leading-5 text-muted-foreground">建议 300 秒，最少 60 秒；即使浏览器在响应返回前断开，旧密钥仍可用于恢复并重新轮换。</span>
+              <span className="block text-xs leading-5 text-muted-foreground">300 seconds is recommended, minimum 60; even if the browser disconnects before the response returns, the old key can still be used to recover and rotate again.</span>
             </label>
             <div className="flex items-start gap-2 rounded-lg border border-amber-500/25 bg-amber-500/[0.06] p-3 text-sm leading-6">
               <AlertTriangle className="mt-0.5 size-4 shrink-0 text-amber-600" />
-              轮换成功后，明文新密钥只展示一次。请在宽限期结束前更新对应调用方，其他绑定无需改动。
+              After a successful rotation, the new plaintext key is shown only once. Update the corresponding caller before the grace period ends; other bindings need no changes.
             </div>
           </div>
           <DialogFooter>
-            <Button variant="outline" onClick={() => setRotating(null)} disabled={saving}>取消</Button>
+            <Button variant="outline" onClick={() => setRotating(null)} disabled={saving}>Cancel</Button>
             <Button onClick={() => void rotateSecret()} disabled={saving}>
               {saving ? <Loader2 className="size-4 animate-spin" /> : <RefreshCw className="size-4" />}
-              确认轮换
+              Confirm rotation
             </Button>
           </DialogFooter>
         </DialogContent>
@@ -573,25 +573,25 @@ export default function PromptFilterNewAPIBindings() {
           onPointerDownOutside={(event) => { event.preventDefault(); requestCloseSecretReveal() }}
         >
           <DialogHeader>
-            <DialogTitle>{secretReveal?.platformName} 绑定密钥</DialogTitle>
-            <DialogDescription>密钥已经保存到 Codex2API 数据库，但明文只在本次响应中展示。列表不会再次回显。</DialogDescription>
+            <DialogTitle>{secretReveal?.platformName} binding key</DialogTitle>
+            <DialogDescription>The key has been saved to the Codex2API database, but the plaintext is shown only in this response. The list will not show it again.</DialogDescription>
           </DialogHeader>
           <div className="space-y-3">
             <div className="flex gap-2">
               <Input readOnly value={secretReveal?.secret ?? ''} className="font-mono text-xs" />
               <Button variant="outline" onClick={() => void copySecret()}>
                 {secretCopied ? <Check className="size-4" /> : <Copy className="size-4" />}
-                {secretCopied ? '已复制' : '复制密钥'}
+                {secretCopied ? 'Copied' : 'Copy key'}
               </Button>
             </div>
             <div className="rounded-lg border border-amber-500/25 bg-amber-500/[0.06] p-3 text-sm leading-6 text-amber-800 dark:text-amber-200">
-              请把此密钥只配置到“{secretReveal?.platformName}”对应的 NewAPI。关闭后无法重新获取明文，只能再次轮换。
+              Configure this key only in the NewAPI for "{secretReveal?.platformName}". After closing, the plaintext cannot be retrieved again; you can only rotate.
             </div>
           </div>
           <DialogFooter>
-            <Button variant="outline" onClick={requestCloseSecretReveal}>关闭</Button>
+            <Button variant="outline" onClick={requestCloseSecretReveal}>Close</Button>
             <Button onClick={() => void copySecret()}>
-              <Copy className="size-4" />{secretCopied ? '已复制' : '复制后配置'}
+              <Copy className="size-4" />{secretCopied ? 'Copied' : 'Copy and configure'}
             </Button>
           </DialogFooter>
         </DialogContent>
@@ -600,12 +600,12 @@ export default function PromptFilterNewAPIBindings() {
       <Dialog open={secretCloseConfirmOpen} onOpenChange={setSecretCloseConfirmOpen}>
         <DialogContent className="sm:max-w-md">
           <DialogHeader>
-            <DialogTitle>确认关闭密钥窗口？</DialogTitle>
-            <DialogDescription>关闭后将清除本次明文展示，列表不会再次显示。以后只能通过轮换获得新密钥。</DialogDescription>
+            <DialogTitle>Confirm closing the key window?</DialogTitle>
+            <DialogDescription>After closing, the plaintext display is cleared and the list will not show it again. A new key can only be obtained through rotation from now on.</DialogDescription>
           </DialogHeader>
           <DialogFooter>
-            <Button variant="outline" onClick={() => setSecretCloseConfirmOpen(false)}>返回复制</Button>
-            <Button variant="destructive" onClick={confirmCloseSecretReveal}>确认关闭</Button>
+            <Button variant="outline" onClick={() => setSecretCloseConfirmOpen(false)}>Go back to copy</Button>
+            <Button variant="destructive" onClick={confirmCloseSecretReveal}>Confirm close</Button>
           </DialogFooter>
         </DialogContent>
       </Dialog>

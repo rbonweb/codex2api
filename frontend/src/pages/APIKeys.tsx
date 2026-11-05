@@ -129,7 +129,7 @@ interface LimitsFormState {
   costLimit5h: string;
   costLimit7d: string;
   costLimit30d: string;
-  // 自然日(服务器时区,零点清零)限额,与上面的滑动窗口语义不同(issue #460)。
+  // Calendar-day limit (server time zone, resets at midnight), which differs in meaning from the sliding window above (issue #460).
   costLimitDaily: string;
   tokenLimit5h: string;
   tokenLimit5hUnit: TokenLimitUnit;
@@ -150,8 +150,8 @@ interface LimitsFormState {
 type ImageGenerationPolicy = "allow" | "strip" | "block";
 type UpstreamChannel = "auto" | "codex";
 
-// ScopeLimitFormState 是「该 Key × 某分组/账号」预算的一行表单（issue #439）。
-// 数值统一按字符串保存,空串表示不限,与其它限额字段一致。
+// ScopeLimitFormState is one form row for a "this Key × a group/account" budget (issue #439).
+// Values are always stored as strings; an empty string means no limit, matching the other limit fields.
 interface ScopeLimitFormState {
   scopeType: "group" | "account";
   scopeId: string;
@@ -289,12 +289,12 @@ export default function APIKeys() {
   const [creating, setCreating] = useState(false);
   const [deletingIds, setDeletingIds] = useState<Set<number>>(new Set());
   const [editingKey, setEditingKey] = useState<APIKeyRow | null>(null);
-  // 编辑抽屉里展示 scope 预算的当前用量（issue #439）；打开时按需拉一次。
+  // Shows the current usage of the scope budget in the edit drawer (issue #439); fetched once on demand when it opens.
   const [scopeUsage, setScopeUsage] = useState<APIKeyScopeUsageItem[]>([]);
   const [modelRequestUsage, setModelRequestUsage] = useState<APIKeyModelRequestUsage[]>([]);
   const [modelRequestUsageLoading, setModelRequestUsageLoading] = useState(false);
   const [modelRequestUsageError, setModelRequestUsageError] = useState("");
-  // 列表页的 scope 预算概览：按 Key ID 索引，仅在存在配了预算的 Key 时才有内容。
+  // Scope budget overview for the list page: indexed by Key ID, and only has content when some Key has a budget configured.
   const [scopeSummary, setScopeSummary] = useState<
     Record<string, APIKeyScopeSummaryItem[]>
   >({});
@@ -385,7 +385,7 @@ export default function APIKeys() {
     [data.promptBindings],
   );
 
-  // scope 预算概览单独拉：它需要跨 Key 的用量聚合，不该拖慢 Key 列表本身。
+  // The scope budget overview is fetched separately: it needs usage aggregated across Keys and should not slow down the Key list itself.
   const anyScopeBudget = keys.some(
     (keyRow) => (keyRow.limits?.scope_limits?.length ?? 0) > 0,
   );
@@ -1021,7 +1021,7 @@ export default function APIKeys() {
     setEditTab("basic");
   };
 
-  // 重置某条 scope 的累计额度：累计额度不随时间回落，用完必须手动重置。
+  // Resets the cumulative quota of one scope: cumulative quota does not decrease over time, so once used up it must be reset manually.
   const resetScopeQuota = async (
     scopeType: "group" | "account",
     scopeId: number,
@@ -1116,7 +1116,7 @@ export default function APIKeys() {
         ...expirationPayload,
       });
 
-      // 乐观更新列表行，再静默同步
+      // Optimistically update the list row, then sync silently
       setData((current) => ({
         ...current,
         keys: current.keys.map((item) => {
@@ -2722,8 +2722,8 @@ function limitsFromAPIKey(limits: APIKeyLimits | undefined): LimitsFormState {
   };
 }
 
-// scopeLimitsFromAPIKey 把后端的 scope 限额数组转成表单行。0 值统一还原成空串,
-// 保证「保存后再打开」不会把未配置的项显示成 0。
+// scopeLimitsFromAPIKey turns the backend's scope limit array into form rows. Zero values are always restored as empty strings,
+// so that "save, then reopen" never shows an unset item as 0.
 function scopeLimitsFromAPIKey(
   scopes: APIKeyScopeLimit[] | undefined,
 ): ScopeLimitFormState[] {
@@ -2750,8 +2750,8 @@ function scopeLimitsFromAPIKey(
   }));
 }
 
-// scopeLimitRowHasLimit 判断一行是否配了至少一个上限。没配上限的行不会被提交,
-// 后端也会丢弃(避免白白多跑一次窗口聚合查询)。
+// scopeLimitRowHasLimit checks whether a row has at least one limit set. Rows without a limit are not submitted,
+// and the backend drops them too (to avoid running a window aggregation query for nothing).
 function scopeLimitRowHasLimit(row: ScopeLimitFormState): boolean {
   return [
     row.cost5h,
@@ -2770,8 +2770,8 @@ function scopeLimitRowHasLimit(row: ScopeLimitFormState): boolean {
   ].some((value) => Number(value.trim()) > 0);
 }
 
-// UpstreamChannelPicker 是创建/编辑 Key 时的上游渠道选择。
-// 渠道决定 Key 的调度账号池，作为一级表单字段展示（不藏在高级限制里）。
+// UpstreamChannelPicker is the upstream channel picker used when creating or editing a Key.
+// The channel decides the Key's scheduling account pool, and is shown as a top-level form field (not hidden under advanced limits).
 function UpstreamChannelPicker({
   value,
   onChange,
@@ -2857,8 +2857,8 @@ function LimitSwitchField({
   );
 }
 
-// resolveImageGenerationPolicy 统一新旧两种后端配置：显式 image_generation_policy 优先，
-// 未设时旧的 disable_image_generation=true 视为 block，其余为 allow。
+// resolveImageGenerationPolicy unifies the old and new backend configs: an explicit image_generation_policy takes priority,
+// when it is unset, the old disable_image_generation=true counts as block, and everything else as allow.
 function resolveImageGenerationPolicy(
   limits: APIKeyLimits,
 ): ImageGenerationPolicy {
@@ -2900,9 +2900,9 @@ function parseTokenLimit(value: string, unit: TokenLimitUnit): number {
   return Number.isInteger(tokens) && tokens > 0 ? tokens : 0;
 }
 
-// limitsFormToPayload 把表单值转为后端期望的 APIKeyLimits。
-// 空字符串或 0 在后端被视为 "未配置";所以不一一过滤,直接把全部字段都发出去。
-// (sanitizeAPIKeyLimits 在后端会把负值与空白清理掉)
+// limitsFormToPayload converts form values into the APIKeyLimits the backend expects.
+// An empty string or 0 counts as "not configured" on the backend, so nothing is filtered one by one; every field is sent as is.
+// (sanitizeAPIKeyLimits on the backend strips negative values and blanks)
 function limitsFormToPayload(form: LimitsFormState, t: Translator): APIKeyLimits {
   const num = (s: string) => {
     const n = Number(s.trim());
@@ -2935,7 +2935,7 @@ function limitsFormToPayload(form: LimitsFormState, t: Translator): APIKeyLimits
       form.imageGenerationPolicy === "allow"
         ? undefined
         : form.imageGenerationPolicy,
-    // 兼容旧字段：block 时同步置位，其余留空由后端按 policy 归一。
+    // Kept for compatibility with the old field: set together when block; otherwise left empty and normalized by the backend from the policy.
     disable_image_generation:
       form.imageGenerationPolicy === "block" || undefined,
     allow_live: supportsChatGPTLive(form.upstreamChannel) && form.allowLive,
@@ -3037,7 +3037,7 @@ function UsageBar({
       </div>
       {showPercent ? (
         <div className="flex items-center justify-between text-[10px] font-semibold tabular-nums text-muted-foreground">
-          <span>用量比例</span>
+          <span>Usage ratio</span>
           <span className={cn(pct >= 90 ? "text-rose-500 font-bold" : pct >= 70 ? "text-amber-500 font-bold" : "text-emerald-600 dark:text-emerald-400 font-bold")}>
             {pct.toFixed(0)}%
           </span>
@@ -3086,8 +3086,8 @@ function KeyStatusBadge({
   );
 }
 
-// KeyScopeBudgetBadge 在列表里展示该 Key 的分组/账号预算状态：有耗尽的就标红并给数量，
-// 否则显示最紧那条的占比。详情（每个窗口、累计额度、命中次数）留在编辑抽屉里。
+// KeyScopeBudgetBadge shows this Key's group/account budget status in the list: if any is exhausted it is marked red with the count,
+// otherwise it shows the share of the tightest one. Details (each window, cumulative quota, hit count) stay in the edit drawer.
 function KeyScopeBudgetBadge({
   items,
   t,
@@ -3381,8 +3381,8 @@ function GroupMultiSelect({
   );
 }
 
-// LimitsEditor 渲染 API Key 的"高级限制"配置:模型策略 / 限流 / 成本 / Token 分区卡片。
-// 默认折叠,有任一字段非默认时展开。
+// LimitsEditor renders the API Key's "advanced limits" settings: model policy / rate limit / cost / token section cards.
+// Collapsed by default; expands when any field is not at its default.
 function LimitsEditor({
   value,
   onChange,
@@ -3793,8 +3793,8 @@ function APIKeysSkeleton() {
   );
 }
 
-// 套餐选项与后端 cleanPlanAllow 白名单保持一致(pro 与 prolite/promax 相互独立)。
-// 切渠道时只保留当前渠道能调度的套餐。
+// Plan options match the backend cleanPlanAllow allowlist (pro is independent of prolite/promax).
+// When the channel changes, keep only the plans the current channel can schedule.
 const CODEX_PLAN_FILTER_OPTIONS = [
   "free",
   "plus",
@@ -3828,7 +3828,7 @@ function prunePlanAllow(
   return plans.filter((plan) => allowed.has(plan.toLowerCase()));
 }
 
-// PlanMultiSelect 让 API Key 选择只调度哪些账号套餐。空表示不限套餐。
+// PlanMultiSelect lets an API Key choose which account plans it schedules. Empty means no plan restriction.
 function PlanMultiSelect({
   value,
   onChange,
@@ -3924,9 +3924,9 @@ function TokenLimitField({
   );
 }
 
-// ScopeLimitsEditor 编辑「该 Key × 某分组/账号」的用量预算（issue #439）。
-// 每张卡片一个 scope：先选分组（或填账号 ID），再填窗口上限；成本上限常用，
-// Token / 请求数上限收进「更多口径」里，避免默认铺满 9 个输入框。
+// ScopeLimitsEditor edits the usage budget for "this Key × a group/account" (issue #439).
+// Each card is one scope: pick a group (or enter an account ID), then fill in the window limits; the cost limit is the one most often used,
+// the token and request-count limits are tucked into "More metrics" so that 9 inputs are not all shown by default.
 function ScopeLimitsEditor({
   value,
   onChange,
@@ -4009,7 +4009,7 @@ function ScopeLimitsEditor({
   );
 }
 
-// formatScopeUsageWindow 把一个窗口的用量压成一行紧凑文本，优先展示配了上限的口径。
+// formatScopeUsageWindow condenses one window's usage into a compact single line, showing the metric with a limit set first.
 function formatScopeUsageWindow(window: APIKeyScopeUsageWindow): string {
   if (window.cost_limit && window.cost_limit > 0) {
     return `${window.window} $${window.user_billed.toFixed(2)} / $${window.cost_limit.toFixed(2)}`;
@@ -4023,7 +4023,7 @@ function formatScopeUsageWindow(window: APIKeyScopeUsageWindow): string {
   return `${window.window} $${window.user_billed.toFixed(2)}`;
 }
 
-// formatScopeCumulative 把累计额度状态压成一行：优先展示配了上限的那个口径。
+// formatScopeCumulative condenses the cumulative quota status into one line, showing the metric with a limit set first.
 function formatScopeCumulative(
   cumulative: APIKeyScopeCumulativeUsage,
   t: (key: string) => string,
@@ -4041,7 +4041,7 @@ function formatScopeCumulative(
   return `${prefix} $${cumulative.used_cost.toFixed(2)}`;
 }
 
-// findScopeUsage 用 (维度, 目标 ID) 把后端返回的用量对上表单行。
+// findScopeUsage matches the usage returned by the backend to a form row by (dimension, target ID).
 function findScopeUsage(
   scopeUsage: APIKeyScopeUsageItem[] | undefined,
   row: ScopeLimitFormState,
@@ -4088,7 +4088,7 @@ function ScopeLimitCard({
     row.scopeType === "group" &&
     row.scopeId !== "" &&
     !groups.some((group) => String(group.id) === row.scopeId);
-  // 唯一允许的分组又配了 skip 预算：预算耗尽后没有别的组可落，等价于整把 Key 停用。
+  // The only allowed group also has a skip budget: once that budget is exhausted there is no other group to fall back to, which is equivalent to disabling the whole Key.
   const selfLockWarning =
     row.scopeType === "group" &&
     row.onExhausted === "skip" &&

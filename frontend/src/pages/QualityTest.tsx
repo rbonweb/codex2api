@@ -28,7 +28,7 @@ function PlanBadge({ plan }: { plan: string }) {
   return <span className={`quality-test-plan quality-test-plan--${qualityTestPlanTone(plan)}`}>{plan || '—'}</span>
 }
 
-// 记录里的预设来源:内置按 key 取当前语言名称,自定义用快照名称,手写提示词显示"自定义"。
+// The preset source in a record: built-in presets use the current language name looked up by key, custom presets use the snapshot name, and hand-written prompts show "Custom".
 function PresetLabel({ job }: { job: Pick<QualityTestJob, 'preset_kind' | 'preset_ref' | 'preset_name'> }) {
   const { t } = useTranslation()
   if (!job.preset_kind) return <span className="quality-test-preset-chip is-custom">{t('qualityTest.presets.handwritten')}</span>
@@ -43,12 +43,12 @@ function AccountChoice({ account, compact = false }: { account: AccountRow; comp
   </span>
 }
 
-// 超过该体积的输出只显示纯文本,避免高亮阻塞主线程。
+// Output larger than this size is shown as plain text only, so highlighting does not block the main thread.
 const HIGHLIGHT_LIMIT = 200 * 1024
 
 function SourceView({ source }: { source: string }) {
   const { t } = useTranslation()
-  // 模型输出通常不带缩进,先格式化再高亮;格式化失败或超限时原样显示。
+  // Model output usually has no indentation, so format it before highlighting; if formatting fails or the size is exceeded, show it as is.
   const [formatted, setFormatted] = useState(source)
   useEffect(() => {
     let cancelled = false
@@ -61,7 +61,7 @@ function SourceView({ source }: { source: string }) {
   return <pre className="quality-test-source" tabIndex={0} aria-label={t('qualityTest.source')}><code>{formatted || t('qualityTest.sourceEmpty')}</code></pre>
 }
 
-// 一分钟内保留一位小数秒,更长的生成按"分 秒"显示,避免 441.0 s 这种难读的读数。
+// Within one minute, seconds keep one decimal place; longer generations are shown as "min sec" to avoid hard-to-read values like 441.0 s.
 function useDurationFormatter() {
   const { t } = useTranslation()
   return (ms?: number) => {
@@ -72,7 +72,7 @@ function useDurationFormatter() {
   }
 }
 
-// 运行中的计时用 mm:ss 时钟读数,逐秒跳动时宽度稳定。
+// The running timer uses an mm:ss clock reading, so its width stays stable as it ticks each second.
 function formatClock(ms: number) {
   const total = Math.max(0, Math.floor(ms / 1000))
   return `${String(Math.floor(total / 60)).padStart(2, '0')}:${String(total % 60).padStart(2, '0')}`
@@ -82,10 +82,10 @@ function timeoutProgress(job: Pick<QualityTestJob, 'duration_ms' | 'timeout_ms'>
   return job.timeout_ms ? Math.min(100, (job.duration_ms / job.timeout_ms) * 100) : 0
 }
 
-// 只渲染输出尾部:运行中每秒刷新,全文可达 1 MiB,整段重绘会拖慢页面。
+// Only the tail of the output is rendered: it refreshes every second while running, and the full text can reach 1 MiB, so redrawing it all would slow the page down.
 const LIVE_TAIL = 12000
 
-// 生成过程实况:阶段、接收字数与速度、用时/上限进度条,以及自动跟随滚动的输出尾部。
+// Live generation status: the stage, characters received and speed, an elapsed-time / limit progress bar, and the output tail that scrolls to follow automatically.
 function LiveOutput({ run }: { run: QualityTestJob }) {
   const { t } = useTranslation()
   const output = run.output ?? ''
@@ -93,7 +93,7 @@ function LiveOutput({ run }: { run: QualityTestJob }) {
   const truncated = output.length > LIVE_TAIL
   const tail = truncated ? output.slice(-LIVE_TAIL) : output
   const scrollRef = useRef<HTMLPreElement>(null)
-  // 用户上翻查看时不抢滚动;回到底部附近后恢复跟随。
+  // Do not steal the scroll while the user scrolls up to read; resume following once they are back near the bottom.
   const followRef = useRef(true)
   useLayoutEffect(() => {
     const element = scrollRef.current
@@ -132,12 +132,12 @@ function downloadQualityFile(content: string, type: string, extension: 'html' | 
   window.setTimeout(() => URL.revokeObjectURL(url), 1000)
 }
 
-// 结果画布:工作台与检测记录弹窗共用,预览 iframe 走隔离页 + postMessage 注入。
+// Result canvas: shared by the workbench and the check-record dialog; the preview iframe loads an isolated page and receives content via postMessage injection.
 function ResultCanvas({ run, view, html, svgExport, previewKey, narrow, loading }: { run: QualityTestJob | null; view: 'preview' | 'source'; html: string; svgExport: QualityTestSVGExport; previewKey: number; narrow: boolean; loading?: boolean }) {
   const { t } = useTranslation()
   const running = isQualityTestActive(run)
   const { frameRef, preview } = svgExport
-  // 预览页回传内容高度,画布跟随内容尺寸;换任务或重放时清零回到默认高度。
+  // The preview page reports its content height back, and the canvas follows the content size; reset to the default height when switching tasks or replaying.
   const [frameHeight, setFrameHeight] = useState<number>()
   const runID = run?.id
   useEffect(() => { setFrameHeight(undefined) }, [runID, previewKey])
@@ -190,7 +190,7 @@ function PreviewActions({ run, html, view, narrow, svgExport, onToggleNarrow, on
   </div>
 }
 
-// 运行结果提示:错误原文 + 中断时保留的部分输出 + 输出前自动重试次数。
+// Run result notice: the original error text, the partial output kept when interrupted, and the automatic retry count before output.
 function RunNotice({ run }: { run: QualityTestJob | null }) {
   const { t } = useTranslation()
   if (!run || (!run.error && !run.retries)) return null
@@ -204,7 +204,7 @@ function DetailMeta({ label, value, mono = true, hint }: { label: string; value:
   return <div className="quality-test-dialog-meta" title={hint}><dt>{label}</dt><dd className={mono ? 'is-mono' : ''}>{value}</dd></div>
 }
 
-// 检测记录的结果弹窗:全屏拟态窗口,左侧渲染动画,右侧列出账号/模型/耗时等详情。
+// Result dialog for a check record: a full-screen neumorphic window, with the animation rendered on the left and the account, model and duration details listed on the right.
 function ResultDialog({ id, revision, onClose, onOpenStudio, onRerun, rerunDisabled }: { id: number | undefined; revision: number; onClose: () => void; onOpenStudio: (id: number) => void; onRerun: (job: QualityTestJob) => void; rerunDisabled: (job: QualityTestJob) => boolean }) {
   const { t } = useTranslation()
   const { showToast } = useToast()
@@ -281,7 +281,7 @@ function ResultDialog({ id, revision, onClose, onOpenStudio, onRerun, rerunDisab
 type PresetDraft = { id?: number; name: string; prompt: string }
 const PROMPT_BYTE_LIMIT = 16000
 
-// 预设编辑弹窗:新建/编辑共用,名称留空由服务端取提示词开头。
+// Preset edit dialog: shared by create and edit; if the name is left empty, the server uses the start of the prompt.
 function PresetEditorDialog({ draft, saving, onChange, onClose, onSave }: { draft: PresetDraft | null; saving: boolean; onChange: (patch: Partial<PresetDraft>) => void; onClose: () => void; onSave: () => void }) {
   const { t } = useTranslation()
   const bytes = draft ? new TextEncoder().encode(draft.prompt).length : 0
@@ -351,7 +351,7 @@ export default function QualityTest() {
   const [presetDraft, setPresetDraft] = useState<PresetDraft | null>(null)
   const [presetSaving, setPresetSaving] = useState(false)
   const { confirm, confirmDialog } = useConfirmDialog()
-  // 当前提示词与哪条预设一致由文本推导:改过就是"自定义",不额外维护选中态。
+  // Which preset the current prompt matches is derived from the text: once edited it is "Custom", with no extra selection state to maintain.
   const activePreset = presets.find((item) => item.prompt === prompt)
   const activeBuiltin = activePreset ? undefined : QUALITY_TEST_BUILTIN_PRESETS.find((item) => item.prompt === prompt)
   const presetValue = activePreset ? String(activePreset.id) : activeBuiltin ? `builtin:${activeBuiltin.key}` : 'custom'
@@ -367,8 +367,8 @@ export default function QualityTest() {
   const records = useQualityTestJobs(recordPage, revision, recordFilter)
   const facets = records.facets ?? EMPTY_QUALITY_TEST_FACETS
   const requestedID = Number(searchParams.get('job'))
-  // 结果面板只跟随显式选中(URL job 参数)或正在运行的任务;不回退到历史第一条,
-  // 否则每次打开页面都会先看到上一次生成的结果。
+  // The result panel only follows an explicit selection (the URL job parameter) or a running task; it does not fall back to the first history item,
+  // otherwise every page open would first show the previous generation's result.
   const selectedID = requestedID > 0 ? requestedID : records.active_jobs[0]?.id
   const detail = useQualityTestDetail(pane === 'studio' ? selectedID : undefined, revision)
   const openRecord = (id: number) => setModalID(id)
@@ -461,7 +461,7 @@ export default function QualityTest() {
       const body = { name: presetDraft.name.trim(), prompt: presetDraft.prompt }
       const result = presetDraft.id ? await api.updateQualityTestPrompt(presetDraft.id, body) : await api.createQualityTestPrompt(body)
       if (!mountedRef.current) return
-      // 编辑中的预设若正被工作台使用,同步更新工作台文本,保持"已选中"关系。
+      // If the preset being edited is in use in the workbench, update the workbench text too, keeping the "selected" relationship.
       if (presetDraft.id && activePreset?.id === presetDraft.id) setPrompt(result.prompt.prompt)
       setPresetDraft(null)
       setPresetRevision((value) => value + 1)
@@ -499,7 +499,7 @@ export default function QualityTest() {
 
   const rerunDisabled = (job: QualityTestJob) => submitting || slotsFull || records.active_jobs.some((item) => item.account_id === job.account_id)
 
-  // 重新检测沿用原记录的账号/模型/强度/提示词/预设;超时取原记录与当前表单中较大者。
+  // Re-check reuses the original record's account, model, reasoning effort, prompt and preset; for the timeout, take the larger of the original record and the current form.
   function rerunJob(job: QualityTestJob) {
     if (!job.prompt || rerunDisabled(job)) return
     const previous = job.timeout_ms ? Math.round(job.timeout_ms / 60000) : 0

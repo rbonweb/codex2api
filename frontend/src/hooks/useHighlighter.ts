@@ -100,7 +100,7 @@ export function useHighlightedHtml(code: string, lang?: string) {
             (await import("shiki/langs/javascript.mjs")).default,
           );
         }
-        // html 语法包自带 css/javascript 嵌入语法,降智检测源码视图按需加载。
+        // The html grammar bundles the css/javascript embedding grammars; the intelligence check source view loads them on demand.
         if (
           resolvedLang === "html" &&
           !hl.getLoadedLanguages().includes("html")

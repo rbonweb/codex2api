@@ -1,6 +1,6 @@
-// 长窗口(7d 槽)的显示标签。plus/pro 为周窗(7d),free/team plan 实为月窗(约 30 天),
-// 标签写死 7d 会误导(issue #324)。优先用后端识别的窗口类型,其次按真实周期秒数推导,
-// 都未知时回退 '7d'(与后端槽位命名一致)。
+// Display label for the long window (7d slot). plus/pro are weekly windows (7d), while free/team plans are actually monthly windows (about 30 days),
+// A hard-coded 7d label is misleading (issue #324). Prefer the window type the backend detects, then derive it from the real period in seconds,
+// fall back to '7d' when both are unknown (matching the backend slot naming).
 export function formatLongUsageWindowLabel(account: {
   usage_window_7d_kind?: string
   usage_window_7d_seconds?: number
@@ -74,7 +74,7 @@ export function isUnsampledQuotaAccount(account: AccountStatusSource): boolean {
   if (status === 'unauthorized' || status === 'error') {
     return false
   }
-  // k12 等 team 型工作区可能只返回 5h 窗口：任一窗口有数据即算已采样。
+  // Team-type workspaces such as k12 may return only the 5h window: data in either window counts as sampled.
   const has7d =
     typeof account.usage_percent_7d === 'number' &&
     Number.isFinite(account.usage_percent_7d)
@@ -94,7 +94,7 @@ export function getAccountStatusBadgeStatus(account: AccountStatusSource): strin
   return status
 }
 
-// 官方结算通常在账号产生请求后的次日才出数。导入未满一天就拉上游只会空转。
+// Official billing usually produces data the day after an account makes requests. Pulling from upstream before a full day has passed only spins without results.
 export const officialCostMinAccountAgeMs = 24 * 60 * 60 * 1000
 
 export function isOfficialCostHiddenAccount(account: {
@@ -121,8 +121,8 @@ export function supportsOfficialUsage(account: {
 }): boolean {
   const isAT = (account.access_token_type || '').trim().toLowerCase() === 'codex_at'
   if (!isAT) return true
-  // codex_at 账号如果具备工作区 ID（whoami 补全或自定义头覆盖），则支持官方用量统计。
-  // 与后端 isCodexATAccount 一致：先看生效工作区（含请求头覆盖），再看凭证里的。
+  // A codex_at account that has a workspace ID (filled in by whoami or set by a custom header override) supports official usage stats.
+  // Matches the backend isCodexATAccount: check the effective workspace first (including the header override), then the one in the credentials.
   const workspaceID = (account.effective_workspace_id || account.chatgpt_account_id || '').trim()
   return workspaceID !== ''
 }
@@ -136,10 +136,10 @@ export function officialUsdValue(account: {
   return null
 }
 
-// Codex OAuth 账号的官方结算成本来自本地快照。列表打开时快照经常还是空的，
-// 需要重拉 page-stats 直到回补完成；codex_at 没有该链路，不要空转。
-// official_usage_synced 表示后端已成功同步过但上游没有数据（官方统计有
-// 滞后），这时继续重拉也不会有结果，交给后台小时级探针即可。
+// The official billing cost for Codex OAuth accounts comes from a local snapshot. When the list opens, the snapshot is often still empty,
+// so page-stats must be re-fetched until the backfill finishes; codex_at has no such path, so do not spin on it.
+// official_usage_synced means the backend has synced successfully but the upstream has no data (official stats are
+// delayed), so re-fetching will not produce a result; leave it to the background hourly probe.
 export function needsOfficialCostReload(account: {
   status?: string | null
   created_at?: string | null
@@ -154,8 +154,8 @@ export function needsOfficialCostReload(account: {
   return officialUsdValue(account) === null
 }
 
-// 列表「官方结算」跟官方统计页同一次同步对齐：把刚刷下来的按天快照全部累加。
-// windowDays > 0 时以上游最新一天为窗口终点截取，避免浏览器时区错一天。
+// The list's "official billing" lines up with the same sync as the official stats page: all the daily snapshots just refreshed are summed.
+// When windowDays > 0, the window ends at the upstream's latest day, so a browser time zone cannot be off by one day.
 export function officialUsdFromDailyItems(
   items: Array<{ day?: string | null; usd?: number | null }>,
   windowDays = 0,

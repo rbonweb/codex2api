@@ -2,7 +2,7 @@ import { Check, Hourglass, X } from "lucide-react";
 import { useTranslation } from "react-i18next";
 import type { OperationProgressState } from "../hooks/useOperationProgress";
 
-// 批量操作进度浮层（右上角）。账号页批量操作共用。
+// Batch operation progress overlay (top right). Shared by batch operations on the account page.
 export default function OperationProgressToast({
   progress,
   onClose,
@@ -10,7 +10,7 @@ export default function OperationProgressToast({
 }: {
   progress: OperationProgressState | null;
   onClose: () => void;
-  // 后台导入进行中不提供关闭，避免误以为任务已经停掉。
+  // Closing is not offered while a background import is running, to avoid the impression that the task has stopped.
   closable?: boolean;
 }) {
   const { t } = useTranslation();

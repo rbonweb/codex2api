@@ -9,18 +9,18 @@ import { getErrorMessage } from '../utils/error'
 
 interface Props {
   show: boolean
-  // 本次导入新建的账号 ID。后端会过滤掉不能发邀请的（中转 / AT-only / 非 Codex）。
+  // New account IDs created by this import. The backend filters out accounts that cannot send invites (relay / AT-only / non-Codex).
   accountIds: number[]
   onClose: () => void
-  // 传邮箱而不是 ID:邀请页的账号选择器是服务端搜索,邮箱既能当查询词把目标
-  // 账号捞进候选集,又能被精确匹配选中。
+  // Passes the email rather than the ID: the invite page's account picker is server-side search, so an email both works as a query that brings the target
+  // account into the candidate set and can be matched exactly for selection.
   onGoInvite: (accountEmail?: string) => void
 }
 
-// 探测在后台按导入闸门排队，结果陆续落库，这里轮询直到没有 pending。
+// Probing runs in the background, queued through the import gate, and results are written to the DB gradually; this polls until no account is pending.
 const POLL_INTERVAL_MS = 2500
-// 轮询上限：50 个账号 × 串行探测最坏情况约一分多钟，给到两分钟后停手，
-// 避免弹窗一直转圈——剩下的用户可以手动点「继续探测」。
+// Polling cap: 50 accounts probed serially in the worst case take about a minute or more, so stop after two minutes,
+// to avoid the modal spinning forever; the remaining users can click "Continue probing" manually.
 const POLL_TIMEOUT_MS = 120_000
 
 function stateTone(state: InviteGuideAccountPlan['state']): string {
@@ -47,12 +47,12 @@ export default function InviteGuideModal({ show, accountIds, onClose, onGoInvite
   const [loading, setLoading] = useState(false)
   const [dontShowAgain, setDontShowAgain] = useState(false)
   const [probing, setProbing] = useState(false)
-  // 受邀邮箱预算。空串表示不限，此时建议次数等于各账号剩余奖励次数。
+  // Invite budget for target emails. Empty string means unlimited, in which case the suggested count equals each account's remaining reward count.
   const [emailBudget, setEmailBudget] = useState('')
 
   const startedAtRef = useRef(0)
   const timerRef = useRef<number | null>(null)
-  // 递增序号丢弃过期响应：改预算会立刻重新拉取，慢的旧响应不能覆盖新结果。
+  // An incrementing sequence number discards stale responses: changing the budget re-fetches immediately, so a slow old response cannot overwrite the new result.
   const seqRef = useRef(0)
 
   const clearTimer = useCallback(() => {
@@ -71,7 +71,7 @@ export default function InviteGuideModal({ show, accountIds, onClose, onGoInvite
       if (seq !== seqRef.current) return
       setPlan(data)
       setError(null)
-      // 还有账号没探测出来就继续轮询，超时后停手交给手动按钮。
+      // If some accounts are still not probed, keep polling; on timeout stop and leave it to the manual button.
       if (data.pending > 0 && Date.now() - startedAtRef.current < POLL_TIMEOUT_MS) {
         clearTimer()
         timerRef.current = window.setTimeout(() => void fetchPlan(budget), POLL_INTERVAL_MS)
@@ -98,7 +98,7 @@ export default function InviteGuideModal({ show, accountIds, onClose, onGoInvite
     return clearTimer
   }, [show, fetchPlan, clearTimer])
 
-  // 预算变化时按新值重算。后端做贪心分配，前端不自己算，避免两边算法漂移。
+  // When the budget changes, recalculate with the new value. The backend does greedy allocation; the frontend does not compute it itself, to avoid the two algorithms drifting apart.
   useEffect(() => {
     if (!show || plan == null) return
     const parsed = Number.parseInt(emailBudget, 10)
@@ -106,14 +106,14 @@ export default function InviteGuideModal({ show, accountIds, onClose, onGoInvite
     if (budget === plan.email_budget) return
     const timer = window.setTimeout(() => void fetchPlan(budget), 350)
     return () => window.clearTimeout(timer)
-    // plan 故意不进依赖：它每次轮询都会换引用，进依赖会变成自触发循环。
+    // plan is intentionally not in the dependency list: it gets a new reference on every poll, so including it would create a self-triggering loop.
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [emailBudget, show, fetchPlan])
 
   const handleClose = useCallback(() => {
     clearTimer()
     if (dontShowAgain) {
-      // 失败也照常关闭：用户的意图是关掉这个弹窗，设置没存上不该把人堵在这里。
+      // Still close on failure: the user's intent is to close this modal, and a failed settings save should not trap them here.
       void api.updateInviteGuideSettings(false).catch(() => undefined)
     }
     onClose()
@@ -188,7 +188,7 @@ export default function InviteGuideModal({ show, accountIds, onClose, onGoInvite
         <p className="py-8 text-center text-sm text-muted-foreground">{t('inviteGuide.noCandidates')}</p>
       ) : (
         <div className="space-y-4">
-          {/* 收益汇总 */}
+          {/* Earnings summary */}
           <div className="rounded-2xl border bg-muted/30 px-4 py-3.5">
             <div className="flex items-end justify-between gap-3">
               <div className="min-w-0">
@@ -203,7 +203,7 @@ export default function InviteGuideModal({ show, accountIds, onClose, onGoInvite
             </div>
           </div>
 
-          {/* 受邀邮箱预算：邮箱有限时，把名额分给单次收益最高的号才是最优解。 */}
+          {/* Invitee email budget: when emails are limited, giving the slots to the accounts with the highest per-invite earnings is the optimal choice. */}
           <div className="flex flex-wrap items-center gap-2">
             <label className="text-xs text-muted-foreground" htmlFor="invite-guide-budget">
               {t('inviteGuide.emailBudgetLabel')}
@@ -219,7 +219,7 @@ export default function InviteGuideModal({ show, accountIds, onClose, onGoInvite
             {loading && <Loader2 className="size-3.5 animate-spin text-muted-foreground" />}
           </div>
 
-          {/* 账号列表，已按建议顺序排好 */}
+          {/* Account list, already sorted in suggested order */}
           <div className="space-y-2">
             {plan.accounts.map((account, index) => (
               <div key={account.id} className="rounded-xl border bg-background px-3 py-2.5">

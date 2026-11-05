@@ -122,7 +122,7 @@ export function BrandingProvider({ children }: PropsWithChildren) {
   const faviconHref = siteLogo || DEFAULT_FAVICON
 
   useEffect(() => {
-    document.title = `${siteName} 管理后台`
+    document.title = `${siteName} admin panel`
     setIconLink('icon', faviconHref)
     setIconLink('apple-touch-icon', faviconHref)
   }, [faviconHref, siteName])

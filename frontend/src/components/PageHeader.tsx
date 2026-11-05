@@ -6,9 +6,9 @@ import { cn } from '@/lib/utils'
 import { AutoRefreshButton } from './AutoRefreshButton'
 
 export interface PageHeaderAutoRefresh {
-  // 自动刷新回调；应静默刷新（不闪加载态），返回的 Promise 完成后才排下一轮。
+  // Auto-refresh callback; it should refresh silently (no loading state flash), and the next round is only scheduled after the returned Promise completes.
   onAutoRefresh: () => Promise<unknown>
-  // 可选间隔（秒），0 表示关闭。
+  // Optional interval in seconds; 0 means off.
   intervals: readonly number[]
   loadSeconds?: () => number
   saveSeconds?: (seconds: number) => void
@@ -18,17 +18,17 @@ interface PageHeaderProps {
   title: string
   description?: string
   onRefresh?: () => void
-  // 提供时刷新按钮变为分裂按钮，下拉可选择自动刷新间隔。
+  // When provided, the refresh button becomes a split button, and the dropdown lets the user pick an auto-refresh interval.
   autoRefresh?: PageHeaderAutoRefresh
   refreshLabel?: string
   actions?: ReactNode
   actionMeta?: ReactNode
-  // titleAdornment 渲染在标题文字右侧（如模式切换下拉）。
+  // titleAdornment is rendered to the right of the title text (e.g. a mode switch dropdown).
   titleAdornment?: ReactNode
-  // hideTitle 时标题文字视觉隐藏（保留在无障碍树），由 titleAdornment 占位。
+  // When hideTitle is set, the title text is visually hidden (kept in the accessibility tree), and titleAdornment fills its place.
   hideTitle?: boolean
-  // actionsBelow 时操作区独立成行渲染在标题行下方,
-  // 避免宽工具栏与 titleAdornment(如渠道切换器)争抢同一行宽度导致截断。
+  // When actionsBelow is set, the action area is rendered on its own row below the title row,
+  // to avoid a wide toolbar competing with titleAdornment (such as the channel switcher) for the same row width, which would cause truncation.
   actionsBelow?: boolean
   className?: string
 }

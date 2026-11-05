@@ -52,7 +52,7 @@ import { getErrorMessage } from '../utils/error'
 import { formatBeijingTime } from '../utils/time'
 import type { ObservedInstructionsSample } from '../types'
 
-// ==================== 规则模型 ====================
+// ==================== Rule model ====================
 
 export const PAYLOAD_RULE_GROUPS = ['default', 'default_raw', 'override', 'override_raw', 'append', 'filter'] as const
 type RuleGroup = (typeof PAYLOAD_RULE_GROUPS)[number]
@@ -77,17 +77,17 @@ interface RuleEntry {
   notMatch: Record<string, unknown>
   exist: string[]
   notExist: string[]
-  /** 下游 API Key 身份匹配门（字符串数组，支持通配符 *，组内 OR） */
+  /** Downstream API key identity match gate (string array, supports the * wildcard, OR within a group) */
   apiKeyIds: string[]
   apiKeyNames: string[]
-  /** 账号分组身份匹配门（字符串数组，支持通配符 *，组内 OR）——匹配 Key 允许的组 */
+  /** Account group identity match gate (string array, supports the * wildcard, OR within a group) — matches the groups the key allows */
   groupIds: string[]
   groupNames: string[]
-  /** 账号门——匹配本次实际调度选中账号的组/套餐（issue #410） */
+  /** Account gate — matches the group/plan of the account actually selected by this scheduling run (issue #410) */
   accountGroupIds: string[]
   accountGroupNames: string[]
   accountPlans: string[]
-  /** filter 组为字段路径数组，其余组为 路径→值 */
+  /** For the filter group, an array of field paths; for other groups, path → value */
   params: Record<string, unknown> | string[]
 }
 
@@ -164,7 +164,7 @@ function formatParamValue(value: unknown): string {
   return JSON.stringify(value)
 }
 
-/** 输入字符串还原为类型化值：合法 JSON 字面量按 JSON 解析，其余按字符串。 */
+/** Restores an input string to a typed value: valid JSON literals are parsed as JSON, anything else stays a string. */
 function coerceParamValue(text: string): unknown {
   const trimmed = text.trim()
   if (trimmed === '') return ''
@@ -175,7 +175,7 @@ function coerceParamValue(text: string): unknown {
   }
 }
 
-// ==================== 规则组视觉元数据 ====================
+// ==================== Rule group visual metadata ====================
 
 const GROUP_META: Record<RuleGroup, { labelKey: string; badge: string; bar: string }> = {
   default: {
@@ -212,7 +212,7 @@ const GROUP_META: Record<RuleGroup, { labelKey: string; badge: string; bar: stri
 
 const GROUP_OPTIONS = PAYLOAD_RULE_GROUPS.map((group) => ({ value: group, labelKey: GROUP_META[group].labelKey }))
 
-// ==================== 添加/编辑规则表单 ====================
+// ==================== Add/edit rule form ====================
 
 type TemplateKey = 'appendPrompt' | 'overridePrompt' | 'serviceTier' | 'effortMap' | 'fastGroup' | 'custom'
 
@@ -225,13 +225,13 @@ const TEMPLATES: Array<{ key: TemplateKey; icon: typeof Wand2; titleKey: string;
   { key: 'custom', icon: Braces, titleKey: 'payloadRules.tplCustomTitle', descKey: 'payloadRules.tplCustomDesc' },
 ]
 
-// 与系统设置思考强度别名、后端 normalizeReasoningEffort 对齐；max 仅 gpt-5.6+ 上游接受，旧模型会被钳到 xhigh。
+// Aligned with the system settings reasoning effort aliases and the backend normalizeReasoningEffort; max is only accepted by upstream gpt-5.6+, older models are clamped to xhigh.
 const EFFORT_LEVELS = ['none', 'minimal', 'low', 'medium', 'high', 'xhigh', 'ultra', 'max'].map((v) => ({ label: v, value: v }))
 
-// 上游实际只接受 priority（fast 会映射为 priority），其余值会在发往上游前被剔除
+// Upstream only accepts priority (fast maps to priority); other values are stripped before sending upstream.
 const SERVICE_TIER_OPTIONS = ['priority', 'fast', 'auto', 'default', 'flex', 'scale'].map((v) => ({ label: v, value: v }))
 
-// 账号套餐门候选值,与后端 knownAPIKeyPlanFilters / Key 限额的套餐白名单选项一致
+// Candidate values for the account plan gate, kept consistent with the backend knownAPIKeyPlanFilters and the plan allowlist options for key limits.
 const ACCOUNT_PLAN_OPTIONS = ['free', 'plus', 'pro', 'promax', 'prolite', 'team', 'k12', 'go']
 
 interface KVRow {
@@ -257,7 +257,7 @@ interface RuleFormState {
   accountGroupIds: string[]
   accountGroupNames: string[]
   accountPlans: string[]
-  /** 编辑时透传表单未暴露的条件字段，避免保存后静默丢失 */
+  /** When editing, pass through condition fields the form does not expose, so saving does not silently drop them */
   carry: Pick<RuleEntry, 'headers' | 'notMatch' | 'exist' | 'notExist'>
 }
 
@@ -280,15 +280,15 @@ function emptyFormState(template: TemplateKey): RuleFormState {
     groupIds: [],
     groupNames: [],
     accountGroupIds: [],
-    // fastGroup 模板默认对实际调度到名为 fast 的分组账号生效（issue #410：
-    // 按实际选中账号的组匹配，而非 Key 允许的组）
+    // The fastGroup template by default applies to accounts in the group named fast that are actually scheduled (issue #410:
+    // matches the group of the account actually selected, not the groups the key allows)
     accountGroupNames: template === 'fastGroup' ? ['fast'] : [],
     accountPlans: [],
     carry: EMPTY_CARRY,
   }
 }
 
-/** 编辑时反推规则最贴合的模板：无附加条件的单字段规则回到语义化表单，其余走 custom。 */
+/** When editing, infer the template that fits the rule best: single-field rules without extra conditions return to the semantic form; everything else uses custom. */
 function detectTemplate(entry: RuleEntry): TemplateKey {
   if (Array.isArray(entry.params)) return 'custom'
   const params = entry.params
@@ -397,8 +397,8 @@ function formStateToEntry(form: RuleFormState): RuleEntry | null {
       }
     }
     case 'fastGroup': {
-      // 按本次实际调度选中账号的组匹配（issue #410）：Key 允许多组时，
-      // 只有真正路由到目标组的账号才覆写 tier。
+      // Match on the group of the account actually selected for this dispatch (issue #410): when the key allows several groups,
+      // only accounts actually routed to the target group overwrite the tier.
       return {
         ...base,
         group: 'override',
@@ -426,7 +426,7 @@ function formStateToEntry(form: RuleFormState): RuleEntry | null {
   }
 }
 
-// ==================== 子组件 ====================
+// ==================== Sub-components ====================
 
 function GateChips({ entry }: { entry: RuleEntry }) {
   const { t } = useTranslation()
@@ -564,7 +564,7 @@ function KVRowsEditor({
   )
 }
 
-// ==================== 主页面 ====================
+// ==================== Main page ====================
 
 const PAYLOAD_RULES_VIEWS = ['editor', 'docs'] as const
 type PayloadRulesView = (typeof PAYLOAD_RULES_VIEWS)[number]
@@ -812,7 +812,7 @@ export default function PayloadRules() {
         <>
       <StateShell variant="page" loading={loading} error={loadError} onRetry={() => void load()}>
         <div className="space-y-4">
-          {/* 统计磁贴 */}
+          {/* Stat tiles */}
           <div className="grid grid-cols-2 gap-3 lg:grid-cols-4">
             <StatTile
               label={t('payloadRules.statStatus')}
@@ -826,13 +826,13 @@ export default function PayloadRules() {
             <StatTile label={t('payloadRules.statConditional')} value={String(conditionalRuleCount)} sub={t('payloadRules.statConditionalHint')} />
           </div>
 
-          {/* 风险提示 */}
+          {/* Risk notice */}
           <div className="flex items-start gap-2.5 rounded-xl border border-amber-500/30 bg-amber-500/[0.07] px-3.5 py-2.5">
             <AlertTriangle className="mt-0.5 size-4 shrink-0 text-amber-600 dark:text-amber-400" />
             <p className="text-xs leading-relaxed text-amber-700 dark:text-amber-300">{t('settings2.payloadRulesWarning')}</p>
           </div>
 
-          {/* 规则编辑主卡 */}
+          {/* Main rule editor card */}
           <div className="overflow-hidden rounded-xl border border-border bg-card/85 shadow-sm">
             <div className="flex flex-wrap items-center justify-between gap-2 border-b border-border/70 px-4 py-3">
               <div className="flex items-center gap-1 rounded-lg bg-muted/50 p-0.5">
@@ -938,7 +938,7 @@ export default function PayloadRules() {
             )}
           </div>
 
-          {/* 透传样本 */}
+          {/* Pass-through samples */}
           <div className="rounded-xl border border-border bg-card/85 p-4 shadow-sm">
             <div className="mb-1 flex items-center justify-between gap-2">
               <div className="flex items-center gap-2 text-sm font-semibold text-foreground">
@@ -997,7 +997,7 @@ export default function PayloadRules() {
         </div>
       </StateShell>
 
-      {/* 添加/编辑规则对话框 */}
+      {/* Add/edit rule dialog */}
       <Dialog open={dialogOpen} onOpenChange={setDialogOpen}>
         <DialogContent className="sm:max-w-[760px]">
           <DialogHeader>

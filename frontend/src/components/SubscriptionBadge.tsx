@@ -7,24 +7,24 @@ import { useToast } from "../hooks/useToast";
 import { cn } from "@/lib/utils";
 import type { SubscriptionRefreshResponse, SubscriptionStatus } from "../types";
 
-// SubscriptionBadge 订阅状态徽章(账号页共用)。
-// 只吃服务端按业务时区算好的 subscription 对象,不再在本机按 24h 粒度推算
-// "今天到期/已过期",避免前后端时区不一致。业务状态决定文案与颜色;同步状态
-// (failed/pending)只叠加标记,不改变文案含义——所有状态都有文字,不只靠颜色。
+// SubscriptionBadge is the subscription status badge (shared by the accounts page).
+// It only consumes the subscription object that the server computes in the business timezone, and no longer estimates days locally at 24-hour granularity.
+// "due today" / "expired", to avoid timezone mismatches between frontend and backend. The business status decides the text and color; the sync status
+// (failed/pending) only adds a marker and does not change the meaning of the text. Every status has text, not only color.
 //
-// 展示规则:
-//   active          到期/续费日期(>9 天绿、4~9 天黄、≤3 天红)
-//   expiring_today  今日到期(橙)
-//   expired         已超时 N 天(红)
-//   grace_period    宽限期 · 已超时 N 天(橙)
-//   unknown+pending 已续费 · 待确认(蓝;陈旧到期时间刚被清理、等权威同步)
-//   unknown         状态未知(灰;仅 canRefresh 时展示,给用户一个手动查询入口)
-//   sync=failed     徽章前置一个弱化的"云断开"小图标(不用警示三角,避免误读成账号异常)+ 悬停"数据可能已过期"
+// Display rules:
+//   active          expiry/renewal date (>9 days green, 4-9 days yellow, ≤3 days red)
+//   expiring_today  expires today (orange)
+//   expired         overdue by N days (red)
+//   grace_period    grace period · overdue by N days (orange)
+//   unknown+pending renewed · pending confirmation (blue; the stale expiry time was just cleared, waiting for the authoritative sync)
+//   unknown         status unknown (gray; shown only when canRefresh is set, to give the user a manual lookup entry point)
+//   sync=failed     a muted "cloud disconnected" icon is placed before the badge (not a warning triangle, to avoid being misread as an account error) + on hover, "data may be out of date"
 
 export interface SubscriptionBadgeProps {
   accountId: number;
   subscription?: SubscriptionStatus;
-  /** 是否提供"刷新订阅状态"按钮(只有 Codex/ChatGPT 账号有订阅提供方可查)。 */
+  /** Whether to show a "Refresh subscription status" button (only Codex/ChatGPT accounts have a subscription provider that can be queried). */
   canRefresh?: boolean;
   className?: string;
 }
@@ -57,14 +57,14 @@ function formatDateTime(iso: string | undefined, locale: string): string {
   });
 }
 
-/** 显示时区的 YYYY-MM-DD(徽章里只放日期,精确时刻放悬停提示)。 */
+/** YYYY-MM-DD in the display timezone (the badge only shows the date; the exact moment goes in the hover tooltip). */
 function formatDate(iso: string | undefined): string {
   if (!iso) return "-";
   if (Number.isNaN(Date.parse(iso))) return iso;
   return formatBeijingTime(iso).slice(0, 10);
 }
 
-/** 决定徽章文案与颜色;返回 null 表示这条账号不需要展示徽章。 */
+/** Decides the badge text and color; returns null when this account does not need a badge. */
 export function describeSubscription(
   sub: SubscriptionStatus | undefined,
   t: (key: string, opts?: Record<string, unknown>) => string,
@@ -93,7 +93,7 @@ export function describeSubscription(
       if (sub.sync_state === "pending") {
         return { label: t("accounts.subscriptionStatusPending"), tone: "blue" };
       }
-      // 从未拿到任何到期信息:只在能手动刷新的页面给一个入口,别在无数据源的页面刷一排"未知"。
+      // No expiry information has ever been received: only offer an entry point on pages where it can be refreshed manually, and do not fill pages without a data source with a row of "unknown".
       if (!canRefresh) return null;
       return { label: t("accounts.subscriptionStatusUnknown"), tone: "gray" };
   }
@@ -170,7 +170,7 @@ export function buildSubscriptionTooltip(
 export default function SubscriptionBadge({ accountId, subscription, canRefresh = false, className }: SubscriptionBadgeProps) {
   const { t, i18n } = useTranslation();
   const { showToast } = useToast();
-  // 刷新结果先落在本地覆盖层:列表整体重载前也能立刻看到新状态;父级数据更新后以父级为准。
+  // Refresh results land in a local overlay first, so the new status shows right away even before the whole list reloads; once the parent data updates, the parent wins.
   const [override, setOverride] = useState<SubscriptionStatus | undefined>(undefined);
   const [refreshing, setRefreshing] = useState(false);
   useEffect(() => {

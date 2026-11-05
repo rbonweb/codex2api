@@ -20,11 +20,11 @@ const ICON_TONE: Record<StatTileTone, string> = {
 }
 
 /**
- * 页面级 KPI 磁贴，统一各页各自手搓的统计磁贴。
- * 标签/数值排版跟随 Settings 页 StatusTile 的 house 规格
- * （uppercase tracking-wider 标签 + tabular-nums 数值）。
- * tone 默认只染图标芯片；toneSurface 时整块表面着色，用于健康态直陈。
- * 传 onClick 时渲染为可点击筛选磁贴（active 表示当前选中）。
+ * Page-level KPI tile, replacing the hand-rolled stat tiles on each page.
+ * Label and value typography follows the house spec of StatusTile on the Settings page
+ * (uppercase tracking-wider label + tabular-nums value).
+ * tone only tints the icon chip by default. With toneSurface, the whole surface is tinted, which shows a healthy state directly.
+ * With onClick, it renders as a clickable filter tile (active means currently selected).
  */
 export function StatTile({
   label,

@@ -10,8 +10,8 @@ interface UseDataLoaderOptions<T> {
   load: (options?: LoadOptions) => Promise<T>
   onError?: (message: string, error: unknown) => void
   /**
-   * 为 false 时不自动加载(手动 reload 仍可用)。用于同一组件承载多个视图时,
-   * 让隐藏视图的数据链整体停摆,而不是在后台空转打请求。
+   * When false, data does not load automatically (manual reload still works). Used when one component hosts several views,
+   * so the data chain of hidden views stops entirely instead of spinning in the background and sending requests.
    */
   enabled?: boolean
 }

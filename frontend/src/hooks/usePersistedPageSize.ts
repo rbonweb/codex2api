@@ -3,14 +3,14 @@ import { useCallback, useEffect, useState } from 'react'
 const STORAGE_PREFIX = 'codex2api_page_size_'
 
 /**
- * usePersistedPageSize 提供按 key 持久化的分页大小状态。
+ * usePersistedPageSize provides page size state persisted by key.
  *
- * - 初值优先使用 localStorage 中保存的值;若不在 allowed 中或非法则回落 fallback。
- * - 调用 setPageSize 时同步写回 localStorage。
+ * - The initial value prefers the value saved in localStorage; if it is not in allowed or is invalid, it falls back to fallback.
+ * - Calling setPageSize also writes the value back to localStorage.
  *
- * @param key       页面/表格的标识(写入 localStorage 时会加 codex2api_page_size_ 前缀)
- * @param fallback  默认值
- * @param allowed   合法 pageSize 集合;不在其中的持久化值会被忽略
+ * @param key       Identifier for the page/table (a codex2api_page_size_ prefix is added when writing to localStorage)
+ * @param fallback  Default value
+ * @param allowed   Valid pageSize set; persisted values not in it are ignored
  */
 export function usePersistedPageSize(
   key: string,
@@ -29,14 +29,14 @@ export function usePersistedPageSize(
         return parsed
       }
     } catch {
-      /* localStorage 不可用时静默回落 */
+      /* Silently fall back when localStorage is unavailable */
     }
     return fallback
   }
 
   const [pageSize, setPageSizeState] = useState<number>(readInitial)
 
-  // allowed 变化时,如果当前值不再合法则回落到 fallback
+  // When allowed changes, fall back to fallback if the current value is no longer valid
   useEffect(() => {
     if (!allowed.includes(pageSize)) {
       setPageSizeState(fallback)
@@ -51,7 +51,7 @@ export function usePersistedPageSize(
       try {
         window.localStorage.setItem(storageKey, String(next))
       } catch {
-        /* 静默 */
+        /* Silent */
       }
     },
     [storageKey, allowed],
@@ -60,5 +60,5 @@ export function usePersistedPageSize(
   return [pageSize, setPageSize]
 }
 
-/** 全站统一的可选分页大小,可在调用方按需裁剪。 */
+/** Site-wide shared page size options; callers can trim them as needed. */
 export const DEFAULT_PAGE_SIZE_OPTIONS = [10, 20, 50, 100, 200, 500]

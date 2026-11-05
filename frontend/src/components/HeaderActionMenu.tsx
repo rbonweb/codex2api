@@ -22,7 +22,7 @@ export interface HeaderActionMenuSection {
   items: HeaderActionMenuItem[];
 }
 
-// 页头和行内菜单共用 portal、视口避让与键盘焦点管理。
+// The header and inline menus share the portal, viewport avoidance, and keyboard focus management.
 export function HeaderActionMenu({
   label,
   icon,

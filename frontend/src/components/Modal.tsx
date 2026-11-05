@@ -36,9 +36,9 @@ export default function Modal({
       <DialogContent
         showCloseButton={showCloseButton}
         className={cn(
-          // p-0 必须带 sm:p-0:基础 DialogContent 的 sm:p-6 与 p-0 修饰符不同,
-          // tailwind-merge 不视为冲突,残留的 24px 内边距会把内层容器(max-h 按
-          // 无内边距计算)的底部 footer 挤出裁切区——内容顶满时保存按钮被切掉。
+          // p-0 must be paired with sm:p-0: the base DialogContent's sm:p-6 differs from the p-0 modifier, and
+          // tailwind-merge does not treat them as a conflict, so the leftover 24px padding pushes the bottom footer of the inner container (max-h calculated without padding)
+          // out of the clipping area; when the content fills the space, the save button gets clipped.
           'max-h-[calc(100dvh-1.5rem-env(safe-area-inset-top,0px)-env(safe-area-inset-bottom,0px))] overflow-hidden p-0 sm:p-0 sm:max-w-[520px]',
           contentClassName
         )}

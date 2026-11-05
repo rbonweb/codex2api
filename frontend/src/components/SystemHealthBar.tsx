@@ -5,22 +5,22 @@ import { Card, CardContent } from '@/components/ui/card'
 import { getBucketConfig, type TimeRangeKey } from '../lib/timeRange'
 import type { ChartAggregation } from '../types'
 
-// SystemHealthBar 是仪表盘的系统级「健康状态」条：把所选时间跨度内服务端聚合的
-// 时间线（每个桶的请求数 / 4xx / 5xx）渲染成一排成功率色块 + 总体成功率。
-// 复用 Dashboard 已加载的 chartData，无需额外请求；时间跨度跟随顶部选择器。
+// SystemHealthBar is the system-level "health status" bar on the dashboard. It takes the server-aggregated
+// timeline (request count / 4xx / 5xx per bucket) for the selected time span and renders it as a row of success-rate color blocks plus the overall success rate.
+// It reuses the chartData that the Dashboard has already loaded, so no extra request is needed; the time span follows the selector at the top.
 
 interface Block {
   success: number
   failure: number
-  rate: number // -1 表示该时段无请求（idle）
+  rate: number // -1 means no requests in this period (idle)
   startTime: number
   endTime: number
 }
 
 const COLOR_STOPS = [
-  { r: 239, g: 68, b: 68 }, // #ef4444 红
-  { r: 250, g: 204, b: 21 }, // #facc15 金黄
-  { r: 34, g: 197, b: 94 }, // #22c55e 绿
+  { r: 239, g: 68, b: 68 }, // #ef4444 red
+  { r: 250, g: 204, b: 21 }, // #facc15 gold
+  { r: 34, g: 197, b: 94 }, // #22c55e green
 ] as const
 
 function rateToColor(rate: number): string {
@@ -64,16 +64,16 @@ export default function SystemHealthBar({ chartData, timeRange, loading = false 
   const [activeTooltip, setActiveTooltip] = useState<number | null>(null)
   const blocksRef = useRef<HTMLDivElement>(null)
 
-  // 后端图表聚合按桶 GROUP BY，只返回「有请求的桶」，空桶不在结果里。这里按所选
-  // 跨度重建固定数量的栅格（如 7d=28 格），把 timeline 的点按时间落入对应格子，
-  // 缺数据的格子显示为灰色 idle —— 否则 7 天只画了寥寥几格，看不出空窗。
+  // The backend chart aggregation groups by bucket and only returns buckets that have requests; empty buckets are not in the result. Here, based on the selected
+  // span, we rebuild a fixed-size grid of cells (e.g. 7d = 28 cells) and place each timeline point into the matching cell by time,
+  // cells with no data show as gray idle; otherwise 7 days would only draw a few cells and the empty gaps would not be visible.
   const { bucketMinutes, bucketCount } = getBucketConfig(timeRange)
   const bucketDurationMs = bucketMinutes * 60 * 1000
   const isDayBucket = bucketMinutes >= 1440
   const withDate = timeRange === '24h' || timeRange === '7d' || timeRange === '30d'
 
-  // 把栅格对齐到本地时钟边界（天桶→当天 00:00，小时桶→整点），而不是锚定在
-  // 「现在」这个零碎时刻，否则长跨度的桶起点会出现 03:16 这种怪值。
+  // Align the grid to local clock boundaries (day buckets start at 00:00 of that day, hour buckets at the top of the hour), instead of anchoring to
+  // the arbitrary current moment, otherwise long-span bucket starts would show odd values such as 03:16.
   const tzOffsetMs = new Date().getTimezoneOffset() * 60 * 1000
   const alignToBucket = (ms: number) =>
     Math.floor((ms - tzOffsetMs) / bucketDurationMs) * bucketDurationMs + tzOffsetMs
@@ -151,7 +151,7 @@ export default function SystemHealthBar({ chartData, timeRange, loading = false 
         : idx >= total - 3
           ? 'right-0 left-auto translate-x-0'
           : 'left-1/2 -translate-x-1/2'
-    // 天粒度（30d）只显示日期；否则显示「[日期] 起 – 止」时间段。
+    // Day granularity (30d) shows only the date; otherwise show the time range as "[date] start – end".
     const timeRangeLabel = isDayBucket
       ? formatDate(block.startTime)
       : `${formatClock(block.startTime, withDate)} – ${formatClock(block.endTime, false)}`

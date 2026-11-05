@@ -1,14 +1,14 @@
 /**
- * 设置页自动保存的"服务器确认值"辅助函数。
+ * Helper for the settings page autosave's "server-confirmed values".
  *
- * 键入型字段（如 output guard 的 channel limit）在 blur 提交前就会把草稿同步
- * 到 settingsFormRef，所以自动保存失败时，"提交前的表单值"可能只是用户刚敲
- * 进去、从未被服务器确认过的取值。回滚必须回到最后一次服务器确认的快照，
- * 而不是回到这份草稿。
+ * Typed fields (such as the output guard channel limit) sync their draft
+ * to settingsFormRef before the blur commit, so if an autosave fails, the "form value before the commit" may only be what the user has just typed
+ * and was never confirmed by the server. Rollback must go back to the last server-confirmed snapshot,
+ * not to this draft.
  */
 
-/** 自动保存失败时用于回滚的字段值：优先取最后的服务器确认快照，快照尚未
- * 建立（首次加载完成前）时才退回提交前的表单值。 */
+/** Field values used for rollback when autosave fails: prefer the last server-confirmed snapshot; the snapshot is not yet
+ * built (before the first load completes), fall back to the form value from before the commit. */
 export function resolveAutoSaveRollbackValues<T extends object>(
   confirmed: T | null,
   submitted: T,
@@ -22,8 +22,8 @@ export function resolveAutoSaveRollbackValues<T extends object>(
   return values
 }
 
-/** 把一次成功请求返回的服务器确认值合并进快照，只覆盖该请求提交的字段，
- * 不整份覆盖其他尚未确认或由其他请求负责的字段。 */
+/** Merges the server-confirmed values returned by one successful request into the snapshot, overwriting only the fields that request submitted,
+ * and never overwriting the whole snapshot or fields that are not yet confirmed or belong to other requests. */
 export function mergeConfirmedSettingsValues<T extends object>(
   confirmed: T | null,
   confirmedValues: Partial<T>,
@@ -37,15 +37,15 @@ export interface ConfirmedSettingsVersionState<T extends object> {
 }
 
 /**
- * 带有版本或 output_guard_config_generation 检查的服务器确认值合并函数。
+ * Merges server-confirmed values, with checks on the version or output_guard_config_generation.
  *
- * 为每个字段记录"最后确认的请求版本"；合并时：
- * 1. 若字段属于 output guard，且 incomingValues 包含 output_guard_config_generation：
- *    比较 incomingValues.output_guard_config_generation 与 confirmed 中现有的 output_guard_config_generation。
- *    若响应中的 generation 更大（或相等且 incomingVer >= currentVer），说明服务器该提交更新，采纳该值；
- *    若响应中的 generation 更小，说明服务器先提交了该响应对应的配置，后提交了已确认的配置，忽略旧响应字段。
- * 2. 对于其他字段（或不带 generation 时），逐字段比较本次响应所携带的请求版本是否新于该字段最后确认版本。
- * 若旧响应晚于新响应到达，跳过旧字段值，防止回滚基线被冲回过期值。
+ * Records the "last confirmed request version" for each field; when merging:
+ * 1. If the field belongs to output guard and incomingValues contains output_guard_config_generation:
+ *    compare incomingValues.output_guard_config_generation with the existing output_guard_config_generation in confirmed.
+ *    if the response's generation is larger (or equal and incomingVer >= currentVer), the server's commit is newer, so adopt the value;
+ *    if the response's generation is smaller, the server committed this response's config first and the confirmed config later, so ignore the old response's fields.
+ * 2. For other fields (or when there is no generation), compare field by field whether the request version carried by this response is newer than the field's last confirmed version.
+ * If an old response arrives after a newer one, skip the old field values so the rollback baseline is not reverted to stale values.
  */
 export function mergeConfirmedSettingsWithVersions<T extends object>(
   confirmed: T | null,
@@ -67,7 +67,7 @@ export function mergeConfirmedSettingsWithVersions<T extends object>(
     const incomingVer = incomingVersions[fieldKey] ?? 0
     const currentVer = nextVersions[fieldKey] ?? 0
 
-    // 判断 output guard 字段
+    // Check whether this is an output guard field
     const isGuardKey = fieldKey.startsWith('output_guard_')
     if (isGuardKey && hasIncomingGuardGen && hasCurrentGuardGen) {
       if ((incomingGuardGen as number) > (currentGuardGen as number)) {
@@ -81,7 +81,7 @@ export function mergeConfirmedSettingsWithVersions<T extends object>(
           hasUpdate = true
         }
       }
-      // generation 更小则跳过
+      // Skip when the generation is smaller
       continue
     }
 

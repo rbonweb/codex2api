@@ -1,6 +1,6 @@
 import type { ChannelModelRefreshResult, RefreshAllModelsResponse } from '../types'
 
-// 「刷新账号模型」SSE 事件：start（渠道待探测分组数）/ progress（每组抽样账号的结果）/ complete（汇总）。
+// "Refresh account models" SSE events: start (number of channel groups waiting to be probed) / progress (result for a sampled account in each group) / complete (summary).
 export interface ModelRefreshProgressEvent {
   type: 'start' | 'progress'
   channel: string
@@ -41,7 +41,7 @@ function emptyChannelProgress(channel: string): ModelRefreshChannelProgress {
   return { channel, groups: 0, current: 0, total: 0, lastPlan: '', lastAccount: '', lastStatus: '', lastError: '', added: [], failed: 0, done: false, error: '' }
 }
 
-// 把一条流事件合并进进度状态；返回新对象以便 React 触发渲染。
+// Merges one stream event into the progress state; returns a new object so React re-renders.
 export function applyModelRefreshEvent(prev: ModelRefreshProgress, event: ModelRefreshStreamEvent): ModelRefreshProgress {
   const next: ModelRefreshProgress = { ...prev }
   if (event.type === 'complete') {
@@ -95,7 +95,7 @@ function parseSSELine(line: string): ModelRefreshStreamEvent | null {
   }
 }
 
-// 读取 SSE 响应体；每解析到一条事件就回调，返回最终的 complete 汇总（没有则 null）。
+// Reads the SSE response body; calls back for each parsed event and returns the final complete summary (or null if there is none).
 export async function readModelRefreshSSE(
   response: Response,
   onEvent: (event: ModelRefreshStreamEvent) => void,

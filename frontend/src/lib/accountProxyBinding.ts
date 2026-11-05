@@ -1,32 +1,32 @@
-// 账号代理绑定判定：把后端 resolveProxyForAccountSnapshot 的优先级
-// (账号自绑 > 分组 > 代理池 > 全局 > 直连) 翻译成列表徽章能显示的一个状态。
-// Resin 是这条链之上的整层覆盖(issue #679):启用时 Codex 账号一律报 resin,
-// 账号自绑的 URL 只随徽章提示告知"已被覆盖",不再参与判定。
+// Account proxy binding resolution: maps the priority of the backend resolveProxyForAccountSnapshot
+// (account self-bound > group > proxy pool > global > direct) into one status the list badge can show.
+// Resin is a full-layer override on top of this chain (issue #679): when enabled, Codex accounts always report resin,
+// and an account's self-bound URL is only mentioned in the badge tooltip as "overridden" and no longer takes part in the decision.
 //
-// 两条刻意的边界：
-//   1. 继承态只报来源、不报具体 URL。池内与组内都是按账号 ID 粘性散列选路的，
-//      前端复刻散列必然与调度器漂移——要精确到生效 URL 得由后端在列表投影下发。
-//   2. URL 只 trim、不做任何规范化。后端 buildProxyPoolSet 就是 trim 后精确匹配，
-//      两边必须恒等；任何"聪明"的归一化都会造出假的失配。
+// Two deliberate boundaries:
+//   1. The inherited state reports only the source, not a specific URL. Both within the pool and within the group, selection is sticky hashing by account ID,
+//      so a frontend copy of the hash would inevitably drift from the scheduler; to get the exact effective URL, the backend must send it in the list projection.
+//   2. URLs are only trimmed, with no other normalization. The backend buildProxyPoolSet does an exact match after trimming,
+//      so both sides must be identical; any "clever" normalization would create false mismatches.
 
 export type AccountProxyBindingKind =
-  // Resin 已启用:该账号所有出站经 Resin,下面各层配置暂不参与
+  // Resin is enabled: all outbound traffic for this account goes through Resin, and the layers below do not take part for now
   | "resin"
-  // 账号自绑到代理池里的一条健康条目
+  // Account self-bound to a healthy entry in the proxy pool
   | "bound"
-  // 账号自绑到托管代理，但该条已禁用/测试失败/被删除；代理池开启时无可用出口
+  // Account self-bound to a managed proxy, but that entry is disabled, failed its test or was deleted; with the proxy pool on, there is no usable egress
   | "bound_unusable"
-  // 账号自绑到未纳入代理池的 URL，不受池启停影响
+  // Account self-bound to a URL that is not part of the proxy pool; unaffected by the pool being on or off
   | "bound_custom"
-  // 未自绑，继承分组代理
+  // Not self-bound; inherits the group proxy
   | "group"
-  // 未自绑，按账号 ID 粘性从代理池选路
+  // Not self-bound; selected from the proxy pool by sticky account ID hashing
   | "pool"
-  // 未自绑，回落到全局代理
+  // Not self-bound; falls back to the global proxy
   | "global"
-  // 未自绑且无任何代理，直连上游
+  // Not self-bound and no proxy at all; connect directly to upstream
   | "direct"
-  // 代理池已开启却无可用条目、也没有全局代理：直连不被允许，账号会被跳过
+  // The proxy pool is on but has no usable entries, and there is no global proxy: direct connection is not allowed, so the account is skipped
   | "direct_blocked";
 
 export interface ProxyBindingProxy {
@@ -52,28 +52,28 @@ export interface ProxyBindingAccount {
 }
 
 export interface ProxyBindingContext {
-  /** Resin 反代已启用(仅 Codex 账号页传 true;中继型渠道不经 Resin)。 */
+  /** Resin reverse proxy is enabled (only the Codex accounts page passes true; relay-type channels do not go through Resin). */
   resinEnabled: boolean;
   poolEnabled: boolean;
   globalProxy: string;
-  /** 启用池条目数：enabled 且测试未失败，与后端 ListEnabledProxies 同口径。 */
+  /** Number of enabled pool entries: enabled and not failing its test, on the same basis as the backend ListEnabledProxies. */
   poolSize: number;
-  /** proxies 表全量条目(含禁用/测试失败)，用于识别"托管但不可用"。 */
+  /** All entries in the proxies table (including disabled or failed-test ones), used to identify "managed but unusable". */
   managed: Map<string, ProxyBindingProxy>;
-  /** 启用池 URL 集合。 */
+  /** Set of enabled pool URLs. */
   usable: Set<string>;
   groups: Map<number, ProxyBindingGroup>;
 }
 
 export interface AccountProxyBinding {
   kind: AccountProxyBindingKind;
-  /** 账号自绑时为该 URL；继承态为空串。 */
+  /** The URL when self-bound; an empty string when inherited. */
   url: string;
-  /** 命中 proxies 表条目时的那一行，供徽章显示 label/出口/延迟。 */
+  /** The row matched in the proxies table, used by the badge to show label / egress / latency. */
   proxy: ProxyBindingProxy | null;
-  /** kind === "group" 时的分组名。 */
+  /** Group name when kind === "group". */
   groupName: string;
-  /** 该账号当前是否有可用出口；false 表示会被调度器跳过。 */
+  /** Whether this account currently has a usable egress; false means the scheduler will skip it. */
   usable: boolean;
 }
 
@@ -81,7 +81,7 @@ function trimValue(value: string | null | undefined): string {
   return (value ?? "").trim();
 }
 
-/** 与后端 ListEnabledProxies 的 WHERE 同口径：启用且测试未失败。 */
+/** Same basis as the WHERE clause of the backend ListEnabledProxies: enabled and not failing its test. */
 export function proxyIsUsable(
   proxy: Pick<ProxyBindingProxy, "enabled" | "test_status">,
 ): boolean {
@@ -122,8 +122,8 @@ export function buildProxyBindingContext(input: {
 }
 
 /**
- * 托管但不可用：URL 在 proxies 表里、却不在启用池中。代理池关闭时该规则不生效
- * (此时禁用条目照样能用)，未纳入池的自定义 URL 也永远不受影响。
+ * Managed but unusable: the URL is in the proxies table but not in the enabled pool. This rule does not apply when the proxy pool is off
+ * (in that case disabled entries still work), and custom URLs not in the pool are never affected.
  */
 export function isManagedProxyUnavailable(
   url: string,
@@ -141,8 +141,8 @@ export function resolveAccountProxyBinding(
   const base = { url: "", proxy: null, groupName: "", usable: true } as const;
 
   const accountProxy = trimValue(account?.proxy_url);
-  // Resin 整层覆盖:出口由 Resin 提供,池空/绑定失效都不再让账号被跳过。
-  // 带上自绑 URL 只为提示"这条配置已被覆盖",不代表它在生效。
+  // Resin full-layer override: egress is provided by Resin, so an empty pool or an invalid binding no longer causes the account to be skipped.
+  // The self-bound URL is included only to indicate "this config has been overridden", not that it is in effect.
   if (ctx.resinEnabled) {
     return {
       ...base,
@@ -164,8 +164,8 @@ export function resolveAccountProxyBinding(
     };
   }
 
-  // 分组按 group_ids 顺序取第一个"有可用代理"的组；组内全不可用则继续下一个，
-  // 与后端组循环的跳过语义一致。
+  // Groups are taken in group_ids order, using the first group with a usable proxy; if every entry in a group is unusable, move on to the next,
+  // matching the skip semantics of the backend group loop.
   for (const groupID of account?.group_ids ?? []) {
     const group = ctx.groups.get(groupID);
     if (!group) continue;
@@ -183,14 +183,14 @@ export function resolveAccountProxyBinding(
   if (ctx.globalProxy) {
     return { ...base, kind: "global" };
   }
-  // 池开着却无处可走：后端此时不允许直连，账号被 AccountHasUsableEgress 过滤掉。
+  // The pool is on but there is nowhere to go: the backend does not allow direct connection at this point, and AccountHasUsableEgress filters the account out.
   if (ctx.poolEnabled) {
     return { ...base, kind: "direct_blocked", usable: false };
   }
   return { ...base, kind: "direct" };
 }
 
-/** 徽章里显示的短名：优先代理备注，其次 host:port，最后原样 URL。 */
+/** Short name shown in the badge: the proxy note first, then host:port, and finally the raw URL. */
 export function formatProxyShortName(
   proxy: ProxyBindingProxy | null,
   url: string,
@@ -208,9 +208,9 @@ export function formatProxyShortName(
 }
 
 /**
- * 悬浮提示里显示的 URL：保留 scheme/host/port 以便认出是哪条代理，但把账密打码。
- * 代理页对 URL 默认打码并配显隐开关，列表上的 hover 提示不该比它更宽松——用户
- * 没有"我要看凭据"的动作。真要看完整值，编辑弹窗的输入框里有。
+ * The URL shown in the hover tooltip: keeps scheme/host/port so the user can tell which proxy it is, but masks the credentials.
+ * The proxy page masks URLs by default and provides a show/hide toggle; the hover tooltip on the list should not be looser than that. The user
+ * has no "show credentials" action. To see the full value, use the input in the edit dialog.
  */
 export function formatProxyDisplayURL(url: string): string {
   const target = trimValue(url);
@@ -224,7 +224,7 @@ export function formatProxyDisplayURL(url: string): string {
   }
 }
 
-/** 代理池条目的出口信息摘要（IP / 地区 / 延迟），未测过则为空串。 */
+/** Summary of a proxy pool entry's egress info (IP / region / latency); an empty string if it has not been tested. */
 export function formatProxyEgressSummary(
   proxy: ProxyBindingProxy | null,
 ): string {

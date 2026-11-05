@@ -68,7 +68,7 @@ const CHANNEL_LABEL: Record<Exclude<ChannelFilter, 'all'>, string> = {
 function rowChannel(_r: Row): Exclude<ChannelFilter, 'all'> {
   return 'codex'
 }
-// 已见过的模型集(localStorage):用于给新出现的模型打"新"标。首次加载会播种、不标新。
+// The set of models already seen (localStorage), used to tag newly appearing models as "new". On first load it is seeded and nothing is tagged new.
 const SEEN_MODELS_KEY = 'model-pricing-seen-models-v1'
 function readSeenModels(): Set<string> | null {
   if (typeof window === 'undefined') return new Set()
@@ -310,9 +310,9 @@ function BillingRulePreview({ pricing }: { pricing: ModelPricingOverride }) {
   )
 }
 
-// ModelCatalogModal 是"模型目录"弹窗:按 provider 分组、可搜索、点击某模型直接定位到
-// 价格行;可刷新账号真实可用模型;新出现的模型标"新",便于快速锁定。
-// 刷新进度面板：每渠道一行，显示已探测的套餐分组数、当前抽样账号，以及刷出来的新模型。
+// ModelCatalogModal is the "model catalog" dialog: grouped by provider, searchable, and clicking a model jumps straight to
+// its price row; can refresh the models accounts can actually use; newly appearing models are tagged "new" for quick spotting.
+// Refresh progress panel: one row per channel, showing the number of plan groups probed so far, the account currently being sampled, and the new models found.
 function ModelRefreshProgressPanel({ progress, running }: { progress: ModelRefreshProgress; running: boolean }) {
   const { t } = useTranslation()
   const channels = CHANNEL_ORDER.filter((c) => progress[c]).map((c) => progress[c])
@@ -516,8 +516,8 @@ function mediaCostUnitKey(unit: MediaBillingUnit): string {
   return unit === 'second' ? 'settings.pricing.perSecondUnit' : 'settings.pricing.perImageUnit'
 }
 
-// MediaPricingSummary 在折叠行上展示媒体模型的上游单位成本与用户计费方式;
-// 单位成本为 0 时明确标"未定价",不让管理员误以为按 token 或免费结算。
+// MediaPricingSummary shows the upstream unit cost and the user billing method for media models on the collapsed row;
+// When the unit cost is 0, explicitly mark it "unpriced" so admins do not mistake it for per-token or free billing.
 function MediaPricingSummary({ unit, draft }: { unit: MediaBillingUnit; draft: ModelPricingOverride }) {
   const { t } = useTranslation()
   const cost = normalizePrice(draft.media_unit_cost)
@@ -853,7 +853,7 @@ export default function ModelPricing() {
       const result = await api.syncOfficialModelPricing({
         include_openai: officialConfig.include_openai,
       } as Parameters<typeof api.syncOfficialModelPricing>[0])
-      showToast([t('settings.pricing.officialSyncDone', { applied: result.applied, skipped: result.skipped }), ...(result.notices ?? [])].join('；'))
+      showToast([t('settings.pricing.officialSyncDone', { applied: result.applied, skipped: result.skipped }), ...(result.notices ?? [])].join('; '))
       await load()
     } catch (error) {
       showToast(`${t('settings.pricing.syncFailed')}: ${getErrorMessage(error)}`, 'error')
@@ -879,7 +879,7 @@ export default function ModelPricing() {
 
   const dirtyCount = counts.unsaved
 
-  // 各 provider(渠道)模型数量:仅当存在多于一个渠道时才显示渠道过滤条。
+  // Model count per provider (channel): the channel filter bar is shown only when there is more than one channel.
   const channelCounts = useMemo(() => {
     const m: Record<string, number> = { codex: 0 }
     for (const r of rows) m[rowChannel(r)] += 1
@@ -904,7 +904,7 @@ export default function ModelPricing() {
       .sort((a, b) => compareModelsNewestFirst(a.model, b.model))
   }, [drafts, query, rows, sourceFilter, channelFilter])
 
-  // 当前视图下按 provider 分组(用于分组小标题)。
+  // Group the current view by provider (for the group subheadings).
   const groupedRows = useMemo(() => {
     const groups = new Map<string, Row[]>()
     for (const r of filteredRows) {
@@ -916,7 +916,7 @@ export default function ModelPricing() {
     return CHANNEL_ORDER.filter((c) => groups.has(c)).map((c) => ({ channel: c, rows: groups.get(c)! }))
   }, [filteredRows])
 
-  // 新模型集:localStorage 里没见过的模型。首次加载(localStorage 为空)时播种、不标新。
+  // New model set: models not yet seen in localStorage. On first load (localStorage empty) it is seeded and nothing is tagged new.
   const newModels = useMemo(() => {
     const set = new Set<string>()
     if (rows.length === 0) return set
@@ -930,7 +930,7 @@ export default function ModelPricing() {
   }, [rows, seenBump])
 
   useEffect(() => {
-    // 首次加载后播种"已见"集,使后续新出现的模型才被标"新"。
+    // After the first load, seed the "seen" set so that only models appearing later are tagged "new".
     if (rows.length > 0 && readSeenModels() === null) {
       writeSeenModels(rows.map((r) => r.model))
     }
@@ -958,7 +958,7 @@ export default function ModelPricing() {
     }
     setRefreshProgress({})
     try {
-      // 统一刷新所有渠道：按套餐分组抽样探测，SSE 逐组推送进度，刷出新模型立刻显示。
+      // Refresh all channels together: probe a sample per plan group, push progress group by group over SSE, and show new models as soon as they are found.
       const response = await postAdminSSE('/models/refresh-all?stream=1')
       const res = await readModelRefreshSSE(response, (event) => {
         setRefreshProgress((prev) => applyModelRefreshEvent(prev ?? {}, event))

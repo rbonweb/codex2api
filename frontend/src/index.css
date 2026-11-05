@@ -1343,7 +1343,7 @@
     background: color-mix(in oklab, var(--color-muted) 58%, transparent);
   }
 
-  /* 使用记录表：内容多为单行徽章/数字，收紧行高避免上下留白偏大 */
+  /* Usage log table: the content is mostly single-line badges/numbers, so tighten the line height to avoid large vertical whitespace */
   .usage-logs-table [data-slot="table-head"],
   .usage-logs-table thead th {
     height: 2rem;
@@ -1440,15 +1440,15 @@
   }
 }
 
-/* 主题切换 — View Transition 圆形扩散动画 */
+/* Theme switch — View Transition circular reveal animation */
 ::view-transition-old(root),
 ::view-transition-new(root) {
   animation: none;
   mix-blend-mode: normal;
 }
 
-/* 切换期间冻结元素级过渡：新画面成为静态图层，扫过动画只做纹理合成。
-   （不影响 ::view-transition-new 上的 clip-path 动画——那是 WAAPI 驱动的。） */
+/* Freeze element-level transitions during the switch: the new view becomes a static layer, and the sweep animation only does texture compositing.
+   (This does not affect the clip-path animation on ::view-transition-new, which is driven by WAAPI.) */
 .theme-switching *,
 .theme-switching *::before,
 .theme-switching *::after {
@@ -1563,7 +1563,7 @@
   animation: image-studio-fade-in 0.35s ease-out 0.08s both;
 }
 
-/* 仪表盘/用量页渠道切换时的内容过渡（key 变化触发重播） */
+/* Content transition when switching channels on the dashboard/usage page (a key change replays it) */
 @keyframes channel-switch-in {
   from { opacity: 0; transform: translateY(6px); }
   to { opacity: 1; transform: translateY(0); }
@@ -1634,9 +1634,9 @@
   --tw-shadow-color: hsl(0 0% 0% / 0.22);
 }
 
-/* 账号状态遮罩：霜面 + 细斜纹淡化内容，徽章保持清晰。
-   卡片使用自身定位边界内的遮罩；表格直接绘制每个单元格的背景，
-   避免依赖 Safari 对 tr / td 绝对定位包含块的处理。 */
+/* Account status overlay: a frosted surface and fine diagonal stripes fade the content, while badges stay sharp.
+   Cards use an overlay within their own positioned bounds; tables paint each cell's background directly,
+   to avoid depending on how Safari handles absolute-positioning containing blocks for tr / td. */
 .account-state-surface {
   isolation: isolate;
 }
@@ -1756,8 +1756,8 @@
   );
 }
 
-/* 细滚动条:弹窗与显式标记的滚动容器统一使用。标准属性优先
-   (Chrome/Firefox),WebKit 伪元素兜底 Safari。 */
+/* Thin scrollbars: used uniformly for dialogs and explicitly marked scroll containers. Standard properties take precedence
+   (Chrome/Firefox), and WebKit pseudo-elements serve as the fallback for Safari. */
 [data-slot='dialog-content'],
 .thin-scrollbar {
   scrollbar-width: thin;
@@ -1786,9 +1786,9 @@
   background-color: color-mix(in oklab, var(--color-muted-foreground) 65%, transparent);
 }
 
-/* Codex Ultra 档的模型徽章:半透明玻璃质感 + 星空紫蓝渐变 + 闪烁星点
-   (对应 Codex 客户端的 Ultra 进度条视觉)。放在 layer 之外,稳定压过
-   Badge 自带的 outline 底色/文字色工具类。 */
+/* Model badge for the Codex Ultra tier: translucent glass look + starry purple-blue gradient + twinkling star dots
+   (matching the Ultra progress bar look in the Codex client). Placed outside any layer, so it reliably overrides
+   the outline background/text color utility classes that Badge ships with. */
 @keyframes usage-ultra-flow {
   0% { background-position: 0 0, 0% 50%; }
   100% { background-position: 0 0, 200% 50%; }
@@ -1804,7 +1804,7 @@
   isolation: isolate;
   color: #fff;
   border: 1px solid rgba(255, 255, 255, 0.42);
-  /* 顶层是玻璃高光,底层是流动的星空渐变;两层各自控制尺寸与位移。 */
+  /* The top layer is the glass highlight, and the bottom layer is the flowing starry gradient; each layer controls its own size and offset. */
   background-image:
     linear-gradient(180deg, rgba(255, 255, 255, 0.34) 0%, rgba(255, 255, 255, 0.08) 48%, rgba(255, 255, 255, 0) 100%),
     linear-gradient(

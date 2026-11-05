@@ -57,7 +57,7 @@ test('full-form saves omit every writable output guard field', () => {
   }
   assert.deepEqual(payload, {
     site_name: 'CodexProxy',
-    // 生成号由 buildWritableSettingsPayload 单独剔除，这里只验证不误删其他字段。
+    // The generation counter is removed separately by buildWritableSettingsPayload; this only checks that other fields are not deleted by mistake.
     output_guard_config_generation: 17,
   })
   assert.equal(settings.output_guard_enabled, true, 'the source settings object must not be mutated')
@@ -99,18 +99,18 @@ test('validateOutputGuardRanges validates individual ranges', () => {
 
   assert.ok(validateOutputGuardRanges({
     output_guard_max_tool_argument_bytes: 10 * KIB,
-  })?.includes('工具参数字节范围'))
+  })?.includes('tool argument byte range'))
 
   assert.ok(validateOutputGuardRanges({
     output_guard_max_tool_argument_deltas: 70000,
-  })?.includes('工具 Delta 次数'))
+  })?.includes('tool Delta count'))
 
   assert.equal(validateOutputGuardRanges({
     output_guard_max_channel_bytes: 128 * KIB,
   }), null)
   assert.ok(validateOutputGuardRanges({
     output_guard_max_channel_bytes: 64 * KIB,
-  })?.includes('单通道字节范围'))
+  })?.includes('channel byte range'))
 })
 
 test('unit conversions work accurately', () => {
@@ -294,7 +294,7 @@ test('preserveConfirmedGuardFields adopts server guard fields and generation whe
 })
 
 test('autosave success advances confirmed snapshot generation and prevents older manual save from overwriting confirmed guard values', () => {
-  // 1. 初始确认快照处于 generation 4
+  // 1. The initial confirmed snapshot is at generation 4
   const initialConfirmed = {
     site_name: 'MyProxy',
     output_guard_enabled: false,
@@ -305,7 +305,7 @@ test('autosave success advances confirmed snapshot generation and prevents older
     output_guard_config_generation: 4,
   }
 
-  // 2. autosave 提交 guard 更新成功，服务器响应将 generation 推进至 7
+  // 2. The autosave commit of the guard update succeeds, and the server response advances the generation to 7
   const autosaveServerResponse = {
     ...initialConfirmed,
     output_guard_enabled: true,
@@ -313,7 +313,7 @@ test('autosave success advances confirmed snapshot generation and prevents older
     output_guard_config_generation: 7,
   }
 
-  // autosave 成功推进确认快照的 generation
+  // The successful autosave advances the confirmed snapshot's generation
   const advancedConfirmed = {
     ...initialConfirmed,
     output_guard_enabled: true,
@@ -327,8 +327,8 @@ test('autosave success advances confirmed snapshot generation and prevents older
   assert.equal(advancedConfirmed.output_guard_enabled, true)
   assert.equal(advancedConfirmed.output_guard_max_channel_bytes, 8 * MIB)
 
-  // 3. 随后到达的手动保存响应携带较旧的 guard 值和较旧的 generation (5 < 7)
-  // 如果 generation 未推进（停留在 4），5 > 4 会错误覆盖；推进到 7 后，5 < 7 不得覆盖
+  // 3. A manual save response that arrives later carries an older guard value and an older generation (5 < 7)
+  // If the generation did not advance (it stayed at 4), 5 > 4 would wrongly overwrite; after advancing to 7, 5 < 7 must not overwrite
   const manualSaveResponseStale = {
     site_name: 'MyProxyUpdatedName',
     output_guard_enabled: false,
@@ -346,9 +346,9 @@ test('autosave success advances confirmed snapshot generation and prevents older
 
   const reconciledSnapshot = preserveConfirmedGuardFields(currentForm, advancedConfirmed, manualSaveResponseStale)
 
-  // 非 guard 字段更新
+  // Non-guard field update
   assert.equal(reconciledSnapshot.site_name, 'MyProxyUpdatedName')
-  // 确认的 guard 字段必须保留 autosave 推进后的最新值（true / 8MiB / gen 7），不得被旧响应冲回
+  // The confirmed guard fields must keep the latest values after the autosave advance (true / 8MiB / gen 7) and must not be reverted by the old response
   assert.equal(reconciledSnapshot.output_guard_enabled, true)
   assert.equal(reconciledSnapshot.output_guard_max_channel_bytes, 8 * MIB)
   assert.equal(reconciledSnapshot.output_guard_config_generation, 7)

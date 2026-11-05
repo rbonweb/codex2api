@@ -44,7 +44,7 @@ export function accountMatchesGroupFilter(
   return true;
 }
 
-// 分组被删除或列表刷新后，清理筛选中已不存在的分组 ID。
+// After a group is deleted or the list refreshes, clean up group IDs in the filter that no longer exist.
 export function pruneAccountGroupFilter(
   value: AccountGroupFilterValue,
   groups: AccountGroup[],

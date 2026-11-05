@@ -17,7 +17,7 @@ interface StateShellProps {
   errorTitle?: string
   emptyTitle?: string
   emptyDescription?: string
-  // emptyIcon 替换空态图标块里的默认 Inbox(如渠道品牌 logo),外框样式不变。
+  // emptyIcon replaces the default Inbox in the empty-state icon block (e.g. a channel brand logo); the outer frame style does not change.
   emptyIcon?: ReactNode
 }
 

@@ -23,7 +23,7 @@ export default function PublicAPIKeyConcurrencyBadge({ apiKey, limit }: { apiKey
         failures = 0
         if (!cancelled) setCurrent(response.current)
       } catch (err) {
-        // 密钥失效或功能关闭时立即清空快照；其他暂时性失败保留上次快照，连续失败多次后也清空，避免展示过期数据。
+        // Clear the snapshot immediately when the key becomes invalid or the feature is turned off; keep the last snapshot on other transient failures, and also clear it after several consecutive failures, to avoid showing stale data.
         failures += 1
         const unavailable = err instanceof AdminAPIError && (err.status === 401 || err.status === 404)
         if (!cancelled && (unavailable || failures >= MAX_CONSECUTIVE_FAILURES)) {

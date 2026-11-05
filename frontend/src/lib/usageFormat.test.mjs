@@ -101,7 +101,7 @@ test("official cost reload only retries Codex accounts missing the snapshot", ()
 });
 
 test("official cost reload stops once the backend reports a completed sync", () => {
-  // 同步成功但上游没有数据(官方统计滞后):继续重拉不会有结果,必须停。
+  // The sync succeeded but the upstream has no data (official stats lag): re-fetching will not produce a result, so it must stop.
   assert.equal(needsOfficialCostReload({ official_usage_synced: true }), false);
   assert.equal(
     needsOfficialCostReload({ official_usage_synced: false }),

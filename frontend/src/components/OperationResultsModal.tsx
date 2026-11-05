@@ -54,7 +54,7 @@ export default function OperationResultsModal({
 }: {
   state: AccountOperationResultsState | null;
   accounts: AccountRow[];
-  /** 保留给尚未迁移的调用方，结果弹窗只展示 Codex 渠道。 */
+  /** Kept for callers not yet migrated; the results modal only shows the Codex channel. */
   channel?: string;
   onClose: () => void;
 }) {

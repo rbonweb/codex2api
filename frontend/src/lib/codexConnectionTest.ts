@@ -1,4 +1,4 @@
-// Codex/Responses 测连诊断的类型与纯展示逻辑:字段语义按 Responses API 与 x-codex-* 用量头定义。
+// Types and pure display logic for Codex/Responses connection test diagnostics: field semantics follow the Responses API and the x-codex-* usage headers.
 
 export interface CodexTestWindow {
   used_percent?: number;
@@ -44,7 +44,7 @@ export interface CodexTestDiagnostics {
 
 export type CodexTestWindowKind = "5h" | "7d" | "short" | "unknown";
 
-// 与后端 windowMinutesToCooldown 同口径:>= 1 天算 7d,>= 1 小时算 5h。
+// Same basis as the backend windowMinutesToCooldown: >= 1 day counts as 7d, >= 1 hour counts as 5h.
 export function codexTestWindowKind(window?: CodexTestWindow): CodexTestWindowKind {
   const minutes = window?.window_minutes;
   if (typeof minutes !== "number" || !Number.isFinite(minutes) || minutes <= 0) return "unknown";
@@ -82,13 +82,13 @@ export function codexTestTokenMetrics(usage?: CodexTestUsage) {
   return metrics.map((item) => ({ ...item, percent: item.value === null ? 0 : (item.value / max) * 100 }));
 }
 
-// 首帧诊断只有响应头信息;带 duration_ms 的才是流结束后的最终帧。
+// The first-frame diagnostics only carry response header info; the frame that carries duration_ms is the final frame after the stream ends.
 export function isFinalCodexTestDiagnostics(diagnostics?: CodexTestDiagnostics | null): boolean {
   return typeof diagnostics?.duration_ms === "number";
 }
 
-// 上游按客户端版本放行新模型:模拟版本过旧时返回这两类 400,同步到最新版本常可恢复。
-// 同一文案也会出现在模型确实未对账号开放的场景,所以只能作为"可能"提示。
+// Upstream lets new models through by client version: when the simulated version is too old, these two kinds of 400 are returned, and syncing to the latest version can often fix it.
+// The same text also appears when the model really is not enabled for the account, so it can only be shown as a "possible" hint.
 const CODEX_VERSION_GATE_PATTERNS = [
   /model is not supported when using codex with a chatgpt account/i,
   /requires a newer version of codex/i,

@@ -13,7 +13,7 @@ function currentAccountLabel(event: OperationProgressMessageEvent): string | und
   return event.account_email?.trim() || event.account_name?.trim() || undefined;
 }
 
-// 清理进行中只展示当前账号或失败原因，整批完成后再出现总结。
+// While cleanup is running, only the current account or the failure reason is shown; the summary appears after the whole batch finishes.
 export function operationProgressMessage(
   event: OperationProgressMessageEvent,
   previous?: string,

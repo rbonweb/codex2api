@@ -35,7 +35,7 @@ import {
   Server,
 } from "lucide-react";
 
-// 与 AccountUsageModal 的分布色板保持一致,展开明细用色点区分上游账号。
+// Keeps the same distribution palette as AccountUsageModal; expanded details use color dots to tell upstream accounts apart.
 const ACCOUNT_COLORS = [
   "#0f766e",
   "#2563eb",
@@ -82,7 +82,7 @@ function startOfToday(): Date {
 function startOfWeek(): Date {
   const now = new Date();
   const d = new Date(now.getFullYear(), now.getMonth(), now.getDate());
-  // ISO 周：周一为第一天
+  // ISO week: Monday is the first day
   const day = d.getDay() || 7; // Sunday → 7
   d.setDate(d.getDate() - (day - 1));
   return d;
@@ -116,7 +116,7 @@ function SortIcon({ active, dir }: { active: boolean; dir: SortDir }) {
 }
 
 interface APIKeyTokenUsagePanelProps {
-  // 父页已拉取的系统设置；传入后优先使用，避免面板独立请求滞后/失败导致开关无效。
+  // System settings already fetched by the parent page; when passed in, they take priority, so the panel's own request cannot lag or fail and leave the switch ineffective.
   showFullUsageNumbers?: boolean;
 }
 
@@ -140,15 +140,15 @@ export default function APIKeyTokenUsagePanel({
   const [search, setSearch] = useState("");
   const [sortKey, setSortKey] = useState<SortKey>("total_tokens");
   const [sortDir, setSortDir] = useState<SortDir>("desc");
-  // 本地兜底：父页未传 prop 时自行读设置；父页传入后以 prop 为准。
+  // Local fallback: reads the settings itself when the parent page does not pass the prop; once the parent passes it, the prop takes precedence.
   const [showFullUsageNumbersLocal, setShowFullUsageNumbersLocal] = useState(false);
   const showFullUsageNumbers =
     typeof showFullUsageNumbersProp === "boolean"
       ? showFullUsageNumbersProp
       : showFullUsageNumbersLocal;
 
-  // 展开 Key 行时按需拉取上游账号明细；支持多行同时展开。
-  // 缓存按 api_key_id,切换时间范围时整体清空(下方 reload 内重置)。
+  // Fetches upstream account details on demand when a key row is expanded; multiple rows can be expanded at once.
+  // Cache is keyed by api_key_id; it is cleared entirely when the time range changes (reset inside reload below).
   const [expandedIds, setExpandedIds] = useState<Set<number>>(() => new Set());
   const [accountData, setAccountData] = useState<Record<number, APIKeyAccountStat[]>>({});
   const [groupData, setGroupData] = useState<Record<number, APIKeyAccountGroupUsage[]>>({});
@@ -180,7 +180,7 @@ export default function APIKeyTokenUsagePanel({
   }, [rangeKey, customStart, customEnd]);
 
   const refreshFullUsageSetting = async () => {
-    // 父页已传 prop 时无需再拉；刷新按钮/切回前台时仍可同步兜底状态。
+    // No need to fetch again when the parent page already passed the prop; the refresh button, or switching back to the foreground, can still sync the fallback state.
     if (typeof showFullUsageNumbersProp === "boolean") return;
     try {
       const settings = await api.getSettings();
@@ -198,7 +198,7 @@ export default function APIKeyTokenUsagePanel({
     const controller = new AbortController();
     reloadAbort.current = controller;
     setLoading(true);
-    // 范围变化或手动刷新：已展开的账号明细缓存作废。
+    // On range change or manual refresh: the cached details of expanded accounts are invalidated.
     setExpandedIds(new Set());
     setAccountLoadingIds(new Set());
     setAccountData({});
@@ -220,7 +220,7 @@ export default function APIKeyTokenUsagePanel({
 
   const toggleExpand = async (item: APIKeyTokenStat) => {
     const id = item.api_key_id;
-    // 已展开 → 收起；其它行保持展开状态。
+    // Already expanded → collapse; other rows stay expanded.
     if (expandedIds.has(id)) {
       setExpandedIds((prev) => {
         const next = new Set(prev);
@@ -234,7 +234,7 @@ export default function APIKeyTokenUsagePanel({
       next.add(id);
       return next;
     });
-    // 已缓存则直接展开，不重复请求。
+    // If already cached, expand directly without requesting again.
     if (accountData[id] || !range) return;
     accountAbort.current.get(id)?.abort();
     const controller = new AbortController();
@@ -274,7 +274,7 @@ export default function APIKeyTokenUsagePanel({
     }
   };
 
-  // 切换 range 自动加载
+  // Switching range loads automatically
   useEffect(() => {
     void reload();
     // eslint-disable-next-line react-hooks/exhaustive-deps
@@ -304,7 +304,7 @@ export default function APIKeyTokenUsagePanel({
     };
   }, [showFullUsageNumbersProp]);
 
-  // 从设置页改完开关再切回本页时，若组件仍挂载则靠可见性同步一次。
+  // When you change the switch on the settings page and switch back to this page, the component syncs once via visibility if it is still mounted.
   useEffect(() => {
     if (typeof showFullUsageNumbersProp === "boolean") return;
     const onVisible = () => {
@@ -372,7 +372,7 @@ export default function APIKeyTokenUsagePanel({
       setSortDir((d) => (d === "asc" ? "desc" : "asc"));
     } else {
       setSortKey(key);
-      // 字符串列默认升序，数值列默认降序
+      // String columns sort ascending by default; numeric columns sort descending by default
       setSortDir(key === "label" ? "asc" : "desc");
     }
   };
@@ -668,7 +668,7 @@ export default function APIKeyTokenUsagePanel({
 }
 
 function accountPrimaryLabel(a: APIKeyAccountStat): string {
-  // 优先邮箱；无邮箱时再退回 name / id。不额外展示 name 副标题（常为 account-1 这类占位名）。
+  // Email first; if there is no email, fall back to name / id. The name subtitle is not shown separately (it is often a placeholder name such as account-1).
   return a.account_email?.trim() || a.account_name?.trim() || `#${a.account_id}`;
 }
 
@@ -732,8 +732,8 @@ function accountGroupSortKey(a: APIKeyAccountStat): string {
     .join("\0");
 }
 
-// KeyAccountBreakdown 渲染某个 Key 展开后的"各上游账号"明细：
-// 卡片网格 + 色点占比条,视觉对齐账号用量里的 Key 分布。
+// KeyAccountBreakdown renders the "per-upstream-account" details of an expanded key:
+// a card grid plus a color-dot share bar, visually aligned with the key distribution in account usage.
 function KeyAccountBreakdown({
   loading,
   error,

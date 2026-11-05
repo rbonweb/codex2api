@@ -1,8 +1,8 @@
-// 账号列表的页面偏好：排序（标签页级）与自动刷新间隔（浏览器级）。
+// Page preferences for the account list: sort order (per tab) and auto-refresh interval (per browser).
 //
-// 排序存 sessionStorage：同一标签页内切换菜单、F5 刷新都会保留，关闭标签页或
-// 新开标签页回到默认排序，避免“记住了但自己不知道”的长期意外。
-// 自动刷新间隔是用户显式开启的选项且按钮上始终可见，存 localStorage。
+// The sort order is stored in sessionStorage: switching menus or pressing F5 within the same tab keeps it; closing the tab or
+// opening a new tab returns to the default sort, avoiding the long-term surprise of "remembered but unknown to the user".
+// The auto-refresh interval is an option the user turns on explicitly and its button is always visible, so it is stored in localStorage.
 
 export const ACCOUNT_LIST_SORT_STORAGE_KEY = "codex2api:accounts:sort";
 export const ACCOUNT_AUTO_REFRESH_STORAGE_KEY =
@@ -24,13 +24,13 @@ export type AccountListSort = {
   dir: AccountListSortDir;
 };
 
-// 0 表示关闭自动刷新。
+// 0 means auto-refresh is off.
 export const ACCOUNT_AUTO_REFRESH_INTERVALS = [0, 5, 10, 30] as const;
 export type AccountAutoRefreshSeconds =
   (typeof ACCOUNT_AUTO_REFRESH_INTERVALS)[number];
 
-// page-stats 会对近 7 天 usage_logs 做多条聚合且没有服务端缓存，
-// 自动刷新时最多按这个间隔重拉，短间隔只刷新列表本身。
+// page-stats runs several aggregations over the last 7 days of usage_logs and has no server-side cache,
+// so during auto-refresh it re-fetches at most at this interval; with a shorter interval only the list itself refreshes.
 export const ACCOUNT_PAGE_STATS_MIN_REFRESH_MS = 30_000;
 
 type PreferenceStorage = Pick<Storage, "getItem" | "setItem" | "removeItem">;
@@ -132,7 +132,7 @@ export function writeAccountAutoRefreshSeconds(
   }
 }
 
-// shouldRefreshPageStats 判断自动刷新这一轮是否顺带重拉 page-stats。
+// shouldRefreshPageStats decides whether this auto-refresh round also re-fetches page-stats.
 export function shouldRefreshPageStats(
   lastRefreshAt: number,
   now: number,

@@ -248,9 +248,9 @@ import ChipInput from "../components/ChipInput";
 
 const OPERATION_PROGRESS_FLUSH_INTERVAL_MS = 200;
 
-// 账号导入的体积约束。后端对导入端点放宽到 200MB;单个文件无法再切分,超过
-// 上限直接拒绝。多文件按累计大小切成多批,每批控制在 150MB 内(留余量给
-// multipart 边界与其它表单字段),避免单个请求体触发后端上限。
+// Size limits for account import. The backend relaxes the import endpoint to 200MB; a single file cannot be split further, and anything exceeding
+// the limit is rejected outright. Multiple files are split into batches by cumulative size, each batch kept within 150MB (leaving headroom for
+// the multipart boundary and other form fields), so a single request body does not hit the backend limit.
 const IMPORT_MAX_FILE_BYTES = 200 * 1024 * 1024;
 const IMPORT_BATCH_MAX_BYTES = 150 * 1024 * 1024;
 const formatMB = (bytes: number): string =>
@@ -297,8 +297,8 @@ function AccountConcurrencyBadge({ account }: { account: AccountRow }) {
   );
 }
 
-// splitFilesIntoBatches 按累计字节大小把文件分批。单个文件即便超过 batchMax
-// 也自成一批(交由后端上限兜底),保证每个文件都被投递。
+// splitFilesIntoBatches splits files into batches by cumulative byte size. A single file that exceeds batchMax
+// still forms a batch of its own (the backend limit acts as the fallback), so every file is delivered.
 function splitFilesIntoBatches(files: File[], batchMax: number): File[][] {
   const batches: File[][] = [];
   let current: File[] = [];
@@ -454,15 +454,15 @@ function persistAccountViewMode(mode: AccountViewMode) {
   }
 }
 
-// 账号管理页面级模式：号池模式（pool，默认，完整管理布局）/ 自用模式
-// （personal，主体列表改为每行 2 列卡片）。
+// Page-level mode for account management: pool mode (pool, default, full management layout) / personal mode
+// (personal, the main list becomes 2-column cards per row).
 const ACCOUNT_PAGE_MODE_KEY = "codex2api:accounts:page-mode";
 type AccountPageMode = "pool" | "personal";
 
-// 自用模式自动判定阈值：用户从未手动设置过时，号池账号数 < 该值则默认自用模式。
+// Auto-detect threshold for personal mode: when the user has never set it manually, personal mode is the default if the pool has fewer accounts than this value.
 const ACCOUNT_PERSONAL_MODE_AUTO_THRESHOLD = 10;
 
-// 返回用户保存过的页面模式；从未设置过返回 null（用于触发按账号数自动判定）。
+// Returns the page mode the user saved; returns null if it was never set (this triggers auto-detection by account count).
 function getStoredAccountPageMode(): AccountPageMode | null {
   try {
     const raw = window.localStorage.getItem(ACCOUNT_PAGE_MODE_KEY);
@@ -497,19 +497,19 @@ function formatAccessTokenBadge(account: AccountRow): string {
   return account.access_token_type === "codex_at" ? "codex_at" : "AT";
 }
 
-// getCreditBalanceDisplay 返回 credits 积分余额徽标应显示的文本；无余额（或未探测、已达硬限制）返回 null。
+// getCreditBalanceDisplay returns the text the credits balance badge should show; returns null when there is no balance (or it has not been probed, or it has hit the hard limit).
 function getCreditBalanceDisplay(account: AccountRow): string | null {
   if (account.credits_valid === false) return null;
   if (isWorkspaceCreditHardStop(account) || account.credits_overage_limit_reached) return null;
   if (account.credits_unlimited) return "∞";
   if (!account.credits_has_credits) return null;
   const balance = (account.credits_balance ?? "").trim();
-  if (!balance) return "✓"; // 上游隐藏了余额（Team 成员）：有积分但看不到数字
+  if (!balance) return "✓"; // Upstream hides the balance (Team member): has credits, but the number is not visible
   const parsed = Number.parseFloat(balance);
   if (Number.isFinite(parsed) && parsed > 0) {
     return balance;
   }
-  // 余额已知且为 0：与后端 creditsAvailableLocked 一致，不算可用积分
+  // Balance is known to be 0: consistent with the backend creditsAvailableLocked, this does not count as usable credits
   return null;
 }
 
@@ -576,7 +576,7 @@ interface TimezoneOption {
   label: string;
 }
 
-/** 常用 IANA 时区，列出 UTC 偏移，便于不熟悉 IANA 名称的运维直接选择；接口仍接受任意有效的 IANA 名称。 */
+/** Common IANA time zones, listed with their UTC offsets so operators unfamiliar with IANA names can pick one directly; the API still accepts any valid IANA name. */
 const TIMEZONE_OPTIONS: TimezoneOption[] = [
   { value: "UTC", label: "UTC+00:00 · UTC" },
   { value: "America/Los_Angeles", label: "UTC−08:00 (standard) · America/Los_Angeles" },
@@ -617,7 +617,7 @@ interface TimezoneSelectProps {
   disabled?: boolean;
 }
 
-/** 绑定时区下拉：常用 IANA 时区 + 自定义输入。 */
+/** Bound timezone dropdown: common IANA time zones plus a custom input. */
 function TimezoneSelect({
   value,
   custom,
@@ -820,7 +820,7 @@ function isOAuthAccount(account: AccountRow | null): boolean {
   return account?.account_type === "oauth";
 }
 
-// 跳转链接图标仅在已配置自定义链接时显示（否则没有打开/清除入口）。
+// The jump-link icon is shown only when a custom link is configured (otherwise there is no open/clear entry point).
 function showsAccountHrefLink(account: AccountRow): boolean {
   return Boolean(account.account_href?.trim());
 }
@@ -965,7 +965,7 @@ async function readOperationSSE(
       try {
         onEvent(JSON.parse(line.slice(6)) as BatchOperationEvent);
       } catch {
-        /* 忽略格式异常的进度帧 */
+        /* Ignore progress frames with an invalid format */
       }
     }
   }
@@ -1002,8 +1002,8 @@ async function postAdminSSE(path: string, body?: unknown): Promise<Response> {
   return res;
 }
 
-// 搜索框草稿态隔离在本组件内:宿主 Accounts 有上百个 state,若每次击键都写
-// 宿主 state,一个字符就是一次 1.3 万行组件的整树重渲染。这里只在去抖后上抛。
+// The search box draft state is isolated inside this component: the host Accounts has hundreds of states, and if every keystroke wrote
+// to host state, one character would re-render the whole tree of a 13,000-line component. Here it is only passed up after debounce.
 const AccountSearchInput = memo(function AccountSearchInput({
   value,
   onCommit,
@@ -1017,7 +1017,7 @@ const AccountSearchInput = memo(function AccountSearchInput({
 }) {
   const [draft, setDraft] = useState(value);
 
-  // 外部重置(如"清除筛选")时同步草稿,让输入框跟着清空。
+  // When reset from outside (e.g. "clear filters"), sync the draft so the input box clears along with it.
   useEffect(() => {
     setDraft(value);
   }, [value]);
@@ -1038,8 +1038,8 @@ const AccountSearchInput = memo(function AccountSearchInput({
   );
 });
 
-// 行操作统一走稳定引用的 actions 对象:memo 行组件的 props 里不能出现宿主每轮
-// 渲染新建的闭包,否则 memo 形同虚设。实现由宿主用 ref 每轮刷新,转发层只建一次。
+// Row actions always go through a stable-reference actions object: the props of memo row components must not contain closures the host creates on every
+// render, otherwise memo is useless. The host refreshes the implementation through a ref on every render; the forwarding layer is created only once.
 interface AccountRowActions {
   toggleSelect: (id: number) => void;
   openDetail: (account: AccountRow) => void;
@@ -1050,7 +1050,7 @@ interface AccountRowActions {
   openHrefEditor: (account: AccountRow) => void;
   openHref: (account: AccountRow) => void;
   openUsage: (account: AccountRow) => void;
-  // 直接打开用量弹窗的官方统计 tab（成本列的官方胶囊）。
+  // Open the usage dialog straight to its official stats tab (the official pill in the cost column).
   openOfficialUsage: (account: AccountRow) => void;
   openTesting: (account: AccountRow) => void;
   openDetector: (account: AccountRow) => void;
@@ -1100,8 +1100,8 @@ function useCountdownRemaining(until?: string): string {
   return remaining;
 }
 
-// memo 边界:宿主 Accounts 组件有上百个 state,任何弹窗/表单/进度条状态变化都会
-// 整树重渲染;行数据没变时这里直接跳过,交互卡顿的大头就在这。
+// Memo boundary: the host Accounts component has hundreds of states, and any dialog, form or progress bar state change will
+// re-render the whole tree; when the row data has not changed, this is skipped here, which is where most of the interaction lag comes from.
 const AccountTableRow = memo(function AccountTableRow({
   account,
   sequence,
@@ -1240,8 +1240,8 @@ const AccountTableRow = memo(function AccountTableRow({
                                         title={t("accounts.hrefClickHint")}
                                         onClick={(event) => {
                                           event.stopPropagation();
-                                          // 点击 = 跳转（account_href）；
-                                          // Alt/Option+点击 = 打开配置弹窗。
+                                          // Click = jump to account_href;
+                                          // Alt/Option+click = open the settings dialog.
                                           if (event.altKey) {
                                             actions.openHrefEditor(account);
                                           } else {
@@ -1547,7 +1547,7 @@ const AccountTableRow = memo(function AccountTableRow({
                                     size="icon-sm"
                                     className="size-8 text-muted-foreground hover:text-primary"
                                     onClick={() => actions.openQuickConfig(account)}
-                                    title="账号指纹与快捷配置"
+                                    title="Account fingerprint and quick settings"
                                   >
                                     <Fingerprint className="size-3.5 text-primary" />
                                   </Button>
@@ -1622,8 +1622,8 @@ const AccountTableRow = memo(function AccountTableRow({
   );
 });
 
-// AccountMobileCard 的 memo 包装:内联回调只在本组件重渲染时重建,
-// 行数据不变则整卡跳过。
+// Memo wrapper for AccountMobileCard: inline callbacks are only rebuilt when this component re-renders,
+// so the whole card is skipped when the row data is unchanged.
 const AccountCardItem = memo(function AccountCardItem({
   account,
   sequence,
@@ -1709,7 +1709,7 @@ export default function Accounts() {
   const [showAdd, setShowAdd] = useState(false);
   const location = useLocation();
   const navigate = useNavigate();
-  // ?groupManager=1 深链直接打开分组管理器。
+  // ?groupManager=1 deep link opens the group manager directly.
   useEffect(() => {
     const params = new URLSearchParams(location.search);
     if (params.get("groupManager") === "1") {
@@ -1723,7 +1723,7 @@ export default function Accounts() {
     }
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [location.search]);
-  // ?pending=1 落到 Codex 账号页审核区（API Keys 门户卡片共用）。
+  // ?pending=1 lands on the review section of the Codex accounts page (shared with the API Keys portal card).
   useEffect(() => {
     const params = new URLSearchParams(location.search);
     if (params.get("pending") !== "1") return;
@@ -1738,8 +1738,8 @@ export default function Accounts() {
     return () => window.clearTimeout(timer);
   }, [location.pathname, location.search, navigate]);
   const normalizedPath = location.pathname.replace(/\/+$/, "");
-  // Codex 邀请视图由路由驱动（/accounts/invite）：
-  // 可直接分享链接、刷新浏览器停在原处、浏览器返回键能退回账号列表。
+  // The Codex invite view is driven by the route (/accounts/invite):
+  // the link can be shared directly, refreshing the browser stays on the same view, and the browser back button returns to the account list.
   const showInvite = normalizedPath.endsWith("/accounts/invite");
   const setShowInvite = useCallback(
     (open: boolean) => {
@@ -1765,19 +1765,19 @@ export default function Accounts() {
     | "disabled"
     | "locked"
   >("all");
-  // 搜索词只保留去抖后的提交值;草稿态在 AccountSearchInput 内部,击键不触发本组件渲染。
+  // The search term keeps only the debounced committed value; the draft state lives inside AccountSearchInput, so keystrokes do not re-render this component.
   const [debouncedSearchQuery, setDebouncedSearchQuery] = useState("");
   const accountPageAbortRef = useRef<AbortController | null>(null);
   const [planFilter, setPlanFilter] = useState<
     "all" | "pro" | "promax" | "prolite" | "plus" | "team" | "k12" | "free"
   >("all");
-  // 订阅状态筛选：按服务端算好的业务/同步状态过滤（到期临近、已过期、待确认等）。
+  // Subscription status filter: filters by the business/sync status computed on the server (nearing expiry, expired, pending confirmation, etc.).
   const [subscriptionFilter, setSubscriptionFilter] = useState<SubscriptionFilter>("all");
-  // 账号类型：oauth=官方 OAuth 账号，api_key=Responses API 中转账号（issue #522）
+  // Account type: oauth = official OAuth account, api_key = Responses API relay account (issue #522)
   const [authFilter, setAuthFilter] = useState<"all" | "oauth" | "api_key">(
     "all",
   );
-  // 排序按标签页记住（sessionStorage）：切换菜单再回来不丢，新标签页恢复默认。
+  // The sort order is remembered per tab (sessionStorage): it is kept when you switch menus and come back, and a new tab restores the default.
   const [initialSort] = useState(readAccountListSort);
   const [sortKey, setSortKey] = useState<AccountListSortKey | null>(
     initialSort.key,
@@ -1860,8 +1860,8 @@ export default function Accounts() {
   const [detectorAccount, setDetectorAccount] = useState<AccountRow | null>(null);
   const [quickConfigAccount, setQuickConfigAccount] = useState<AccountRow | null>(null);
   const [usageAccount, setUsageAccount] = useState<AccountRow | null>(null);
-  // 用量弹窗打开时停在哪个 tab。列表里点「官方结算」成本直接落到官方统计,
-  // 其余入口保持默认的概览。
+  // Which tab the usage dialog opens on. Clicking the "Official billed" cost in the list lands directly on the official stats tab,
+  // other entry points keep the default overview.
   const [usageInitialPage, setUsageInitialPage] = useState<
     "overview" | "official"
   >("overview");
@@ -1903,8 +1903,8 @@ export default function Accounts() {
     useState<CodexFingerprintMode>("off");
   const [editTimezone, setEditTimezone] = useState("");
   const [editTimezoneCustom, setEditTimezoneCustom] = useState(false);
-  // 代理池条目：账号表单里"从代理池选择"下拉的数据源。加载失败静默留空
-  // （选择器为空时自动隐藏，不影响手动填代理）。
+  // Proxy pool entries: the data source for the "pick from proxy pool" dropdown in the account form. A failed load is silently left empty
+  // (the picker hides itself when empty and does not affect entering a proxy manually).
   const [proxyPool, setProxyPool] = useState<ProxyRow[]>([]);
   useEffect(() => {
     let cancelled = false;
@@ -1931,8 +1931,8 @@ export default function Accounts() {
   const [dragging, setDragging] = useState(false);
   const dragCounter = useRef(0);
   const [showExportPicker, setShowExportPicker] = useState(false);
-  // 导出时是否带上账号绑定的代理。默认关闭：代理 URL 常含明文用户名密码，
-  // 只有在确实要迁移「号池 + 代理绑定关系」时才该打开。
+  // Whether the export includes each account's bound proxy. Off by default: proxy URLs often contain a plaintext username and password,
+  // so it should only be turned on when you really need to migrate the "pool + proxy binding" relationships.
   const [exportIncludeProxy, setExportIncludeProxy] = useState(false);
   const [exporting, setExporting] = useState(false);
   const [showMigrate, setShowMigrate] = useState(false);
@@ -1970,7 +1970,7 @@ export default function Accounts() {
     failed: 0,
     done: false,
   });
-  // 导入后的邀请积分引导。ids 是本次导入新建的账号,后端会过滤出能发邀请的。
+  // Invite-credit guide shown after import. ids are the accounts created by this import; the backend filters them down to the ones that can send invites.
   const [inviteGuide, setInviteGuide] = useState<{ show: boolean; ids: number[] }>({
     show: false,
     ids: [],
@@ -1995,10 +1995,10 @@ export default function Accounts() {
   });
   const [sessionJson, setSessionJson] = useState("");
   const [sessionProxyUrl, setSessionProxyUrl] = useState("");
-  // 允许重复添加：勾选后本次添加/导入跳过去重，强制新建（添加弹窗与导入弹窗共用）。
+  // Allow duplicate adds: when checked, this add/import skips de-duplication and forces new records (shared by the add dialog and the import dialog).
   const [allowDuplicate, setAllowDuplicate] = useState(false);
-  // 采用文件内代理：勾选后 JSON 文件里带的 proxy_url 生效，并自动注册进代理池。
-  // 只对 JSON 系格式有意义，TXT 一行一个 token 物理上带不了代理。
+  // Use the in-file proxy: when checked, the proxy_url in the JSON file takes effect and is registered in the proxy pool automatically.
+  // Only meaningful for JSON-based formats: a TXT file with one token per line physically cannot carry a proxy.
   const [importFileProxies, setImportFileProxies] = useState(false);
   const [oauthStep, setOauthStep] = useState<"generate" | "exchange">(
     "generate",
@@ -2030,20 +2030,20 @@ export default function Accounts() {
   );
   const [quickGroupIds, setQuickGroupIds] = useState<number[]>([]);
   const [quickGroupSubmitting, setQuickGroupSubmitting] = useState(false);
-  // 代理徽章点开的快速绑定弹窗：只改 proxy_url 一个字段。
+  // Quick-bind dialog opened from the proxy badge: it only changes the proxy_url field.
   const [quickProxyAccount, setQuickProxyAccount] = useState<AccountRow | null>(
     null,
   );
-  // 跳转地址快捷编辑：配置 account_href。
+  // Quick edit of the jump address: configures account_href.
   const [hrefAccount, setHrefAccount] = useState<AccountRow | null>(null);
-  // OAuth 账号“支持模型”白名单编辑器状态;空白名单表示该账号可调度所有模型。
+  // OAuth account "supported models" allowlist editor state; an empty allowlist means the account can schedule all models.
   const [modelsAccount, setModelsAccount] = useState<AccountRow | null>(null);
   const [modelsDraft, setModelsDraft] = useState<string[]>([]);
   const [modelsInputDraft, setModelsInputDraft] = useState("");
   const [modelsSyncing, setModelsSyncing] = useState(false);
   const [modelsProbing, setModelsProbing] = useState(false);
   const [modelsSaving, setModelsSaving] = useState(false);
-  // 探测看板：逐模型的实时测试状态（pending→testing→结果）。
+  // Probe board: live test status per model (pending → testing → result).
   const [probeBoard, setProbeBoard] = useState<ModelProbeItem[]>([]);
   const [tagFilter, setTagFilter] = useState<string>("");
   const [domainFilter, setDomainFilter] = useState<string>("");
@@ -2051,23 +2051,23 @@ export default function Accounts() {
     EMPTY_ACCOUNT_GROUP_FILTER,
   );
   const [allGroups, setAllGroups] = useState<AccountGroup[]>([]);
-  // 分组按渠道隔离(issue #487):Codex 页的所有分组选择器只出 codex 渠道分组;
-  // 管理器仍显示全部渠道(带徽标),徽标解析也用全量以兼容迁移前的跨渠道成员。
+  // Groups are isolated by channel (issue #487): every group picker on the Codex page only lists codex channel groups;
+  // the group manager still shows all channels (with badges), and badge resolution also uses the full set to stay compatible with cross-channel members from before the migration.
   const codexGroups = useMemo(
     () => allGroups.filter((group) => group.channel === "codex"),
     [allGroups],
   );
   const [apiKeys, setAPIKeys] = useState<APIKeyRow[]>([]);
-  // 代理徽章的判定上下文。fail-closed(钉住的托管代理已不在启用池)只在代理池
-  // 开启时成立,所以开关与全局代理都得跟着代理池一起进来。
+  // Decision context for the proxy badge. Fail-closed (a pinned managed proxy is no longer in the enabled pool) only holds while the proxy pool
+  // is on, so the switch and the global proxy must both come in together with the proxy pool.
   const [proxyPoolEnabled, setProxyPoolEnabled] = useState(false);
   const [globalProxyURL, setGlobalProxyURL] = useState("");
-  // Resin 启用时 Codex 账号出站整层改经 Resin,徽章要报 resin 而不是下面任何一层。
+  // When Resin is enabled, the whole Codex account outbound layer goes through Resin, so the badge must report resin rather than any of the layers below.
   const [resinEnabled, setResinEnabled] = useState(false);
-  // 单个对象且引用稳定:memo 行组件的 props 里不能出现每轮新建的数组/对象,
-  // 否则整表 memo 失效(账号页性能优化的既有教训)。
-  // 分组用全量而非 codexGroups:后端解析组代理时不看渠道,迁移前挂在别的渠道组里
-  // 的存量成员照样吃那条组代理,按渠道过滤会把它误报成"无组代理"。
+  // A single object with a stable reference: the props of memo row components must not contain arrays/objects created on every render,
+  // otherwise the whole-table memo is invalidated (a known lesson from the account page performance work).
+  // Groups use the full set instead of codexGroups: the backend ignores channel when resolving group proxies, so members attached to groups in other channels before the migration
+  // still use that group proxy, and filtering by channel would wrongly report them as "no group proxy".
   const proxyBindingCtx = useMemo<ProxyBindingContext>(
     () =>
       buildProxyBindingContext({
@@ -2082,7 +2082,7 @@ export default function Accounts() {
   const [lazyMode, setLazyMode] = useState(false);
   const [accountPortalEnabled, setAccountPortalEnabled] = useState(false);
   const [panelPendingCount, setPanelPendingCount] = useState(0);
-  // 导入/添加账号时直接绑定的分组（记住上次选择，添加弹窗与导入弹窗共用，与 allowDuplicate 同风格）。
+  // Group bound directly when importing or adding accounts (remembers the last choice; shared by the add dialog and the import dialog, same style as allowDuplicate).
   const {
     groupIds: importGroupIds,
     setGroupIds: setImportGroupIds,
@@ -2151,9 +2151,9 @@ export default function Accounts() {
   const [pageMode, setPageMode] = useState<AccountPageMode>(
     () => getStoredAccountPageMode() ?? "pool",
   );
-  // 用户是否手动设置过页面模式（设置过则一律尊重用户，不再按账号数自动判定）。
+  // Whether the user has set the page mode manually (if so, their choice is always respected and it is no longer auto-detected by account count).
   const pageModeUserSetRef = useRef(getStoredAccountPageMode() !== null);
-  // 自动判定只在首次（账号加载完成后）应用一次。
+  // Auto-detection is applied only once, the first time (after accounts finish loading).
   const pageModeAutoAppliedRef = useRef(false);
   const isDesktopLayout = useMediaQuery("(min-width: 1024px)");
   const fileInputRef = useRef<HTMLInputElement>(null);
@@ -2164,7 +2164,7 @@ export default function Accounts() {
   const selectAllRef = useRef<HTMLInputElement>(null);
   const { toast, showToast } = useToast();
   const { confirm, confirmDialog } = useConfirmDialog();
-  // 代理字段统一走 ProxyField(手填+测试+代理池下拉)。
+  // Proxy fields all use ProxyField (manual entry + test + proxy pool dropdown).
   const renderProxyInput = ({
     value,
     onChange,
@@ -2199,7 +2199,7 @@ export default function Accounts() {
     <div>
       <div className="flex items-center justify-between mb-2">
         <label className="block text-sm font-semibold text-muted-foreground">
-          上游自定义请求头 JSON
+          Upstream custom request headers JSON
         </label>
         <Button
           type="button"
@@ -2207,7 +2207,7 @@ export default function Accounts() {
           size="sm"
           onClick={() => onChange(CUSTOM_HEADERS_PLACEHOLDER)}
         >
-          插入模板
+          Insert template
         </Button>
       </div>
       <textarea
@@ -2221,7 +2221,7 @@ export default function Accounts() {
         spellCheck={false}
       />
       <p className="mt-1.5 text-xs text-muted-foreground">
-        留空表示不设置；JSON 必须是对象，所有请求头值都必须是字符串。
+        Leave empty to leave it unset; JSON must be an object, and all request header values must be strings.
       </p>
     </div>
   );
@@ -2538,10 +2538,10 @@ export default function Accounts() {
     },
     [disabledSorts, showToast, t],
   );
-  // 禁用窗口(冷启动首轮聚合)只拦截新的排序点击,不清用户已选的排序:
-  // 后端会把被禁用的排序静默降级成默认序,聚合完成后自动按原选择恢复。
-  // data.snapshotAt 变化说明列表快照重建过(含删除/封禁后的缓存失效),
-  // 分析图跟着重取,避免统计卡已更新而额度分布仍显示旧账号集。
+  // The disabled window (first aggregation after a cold start) only blocks new sort clicks and does not clear the sort the user selected:
+  // the backend silently downgrades a disabled sort to the default order, and it is restored to the original choice automatically once aggregation completes.
+  // A change in data.snapshotAt means the list snapshot was rebuilt (including cache invalidation after a delete or ban),
+  // so the analysis chart is re-fetched too, to avoid the stats cards being updated while the quota distribution still shows the old account set.
   useEffect(() => {
     if (!showAnalysisCharts) {
       accountAnalysisAbortRef.current?.abort();
@@ -2559,8 +2559,8 @@ export default function Accounts() {
     }));
     return account;
   }, [setData]);
-  // 删除后先本地摘行,再静默对齐统计卡。reload() 会把顶部打成「加载中」,
-  // 大号池上连点删除等于反复整页转圈。
+  // After a delete, remove the row locally first, then silently align the stats cards. reload() would put the top bar into "loading",
+  // and on a large pool, clicking delete repeatedly would mean the whole page spinning again and again.
   const refreshAfterAccountRemoval = useCallback((ids: number[]) => {
     if (ids.length === 0) {
       void reloadSilently();
@@ -2611,15 +2611,15 @@ export default function Accounts() {
       account.detail_loaded ? Promise.resolve(account) : api.getAccount(account.id),
     [],
   );
-  // page-stats 存独立 state 并在渲染时合并:分页基础行不含成本/用量明细,
-  // 若把 stats 写回 data.accounts,任何静默列表刷新都会用基础行整体覆盖,
-  // 成本列在 ID 不变时永久变 "-" (issue #499)。
+  // page-stats keeps its own state and merges it at render time: the paginated base rows do not include cost/usage details,
+  // so if stats were written back to data.accounts, any silent list refresh would overwrite them wholesale with the base rows,
+  // and the cost column would stay "-" forever while the ID is unchanged (issue #499).
   const [accountPageStats, setAccountPageStats] = useState<Record<string, AccountPageStatsItem>>({});
-  // 用量弹窗里手动刷新官方统计后 bump 一次,强制重拉本页 stats——
-  // 否则官方成本胶囊要等翻页/改筛选才出现,看起来像刷新没生效。
+  // After a manual refresh of the official stats in the usage dialog, bump once to force a re-fetch of this page's stats —
+  // otherwise the official cost pill would only appear after paging or changing filters, which looks like the refresh did nothing.
   const [pageStatsReloadToken, setPageStatsReloadToken] = useState(0);
-  // 顶部刷新同时要重拉 page-stats。列表和 page-stats 是两条独立请求链,
-  // 账号 ID 不变时仅 reload 列表不会触发 page-stats effect,今日统计就会留在旧快照。
+  // The top refresh must also re-fetch page-stats. The list and page-stats are two independent request chains,
+  // so when account IDs are unchanged, reloading only the list does not trigger the page-stats effect, and today's stats would stay on the old snapshot.
   const refreshAccountPage = useCallback(async () => {
     await reload();
     setPageStatsReloadToken((token) => token + 1);
@@ -2647,10 +2647,10 @@ export default function Accounts() {
     return data.accounts.map((account) => {
       const stats = accountPageStats[String(account.id)];
       if (!stats) return account;
-      // 行自身已带的字段优先(如 refreshAccountRow 拉回的完整详情比
-      // 本页 stats 快照更新),page-stats 只补基础行缺失的部分。
-      // 官方结算例外：点进官方统计刷新后必须以最新快照为准，
-      // 否则行上的旧额度会挡住这次同步时间点。
+      // Fields the row already carries take priority (e.g. the full details returned by refreshAccountRow are newer than
+      // this page's stats snapshot), and page-stats only fills in what the base row is missing.
+      // Exception for official billing: after opening and refreshing the official stats, the latest snapshot must win,
+      // otherwise the old quota on the row would block this sync time point.
       const billed5h =
         account.billed_5h == null && stats.billed_5h != null
           ? stats.billed_5h
@@ -2685,8 +2685,8 @@ export default function Accounts() {
         !account.usage_today_detail && stats.usage_today_detail
           ? stats.usage_today_detail
           : account.usage_today_detail;
-      // page-stats 对本页每个账号都有条目；合并结果没变时保留行对象，
-      // 否则 1 秒 live 更新会让整页行级 memo 每秒全部失效。
+      // page-stats has an entry for every account on this page; when the merged result is unchanged, keep the row object,
+      // otherwise every 1-second live update would invalidate all row-level memos on the page every second.
       if (
         sameOptional(billed5h, account.billed_5h) &&
         sameOptional(billed7d, account.billed_7d) &&
@@ -2712,8 +2712,8 @@ export default function Accounts() {
     });
   }, [data.accounts, accountPageStats]);
   const accounts = allAccounts;
-  // 只随“缺用量、需要补探”的账号集合变化，而不是随 1 秒 live 合并产生的
-  // 数组身份变化；否则下面的补探 effect 每秒被清理重建，定时器永远不触发。
+  // Changes only with the set of accounts that are "missing usage and need a probe", not with the new array identity produced by each 1-second live merge
+  // the array identity changes; otherwise the probe effect below would be torn down and rebuilt every second, so its timer never fires.
   const usageReloadIdsKey = useMemo(
     () =>
       accounts
@@ -2728,7 +2728,7 @@ export default function Accounts() {
     [accounts],
   );
   const healthBars = pagedHealthBars;
-  // 自动刷新按节流 bump,账号 ID 不变时也能刷新健康条。
+  // Auto-refresh bumps on a throttle, so the health bar can refresh even when account IDs are unchanged.
   const [healthBarsReloadToken, setHealthBarsReloadToken] = useState(0);
 
   useEffect(() => {
@@ -2743,7 +2743,7 @@ export default function Accounts() {
         if (!cancelled) setPagedHealthBars(response.buckets ?? {});
       })
       .catch((err: unknown) => {
-        // 健康条缺失只是降级显示,但失败必须留痕,否则无从排查(issue #493)。
+        // A missing health bar only degrades the display, but a failure must leave a trace, otherwise there is nothing to investigate (issue #493).
         console.warn("account health bars load failed:", err);
       });
     return () => { cancelled = true; };
@@ -2751,7 +2751,7 @@ export default function Accounts() {
 
   const { bars: intelligenceBars, error: intelligenceBarsError } = useIntelligenceBars(accountPageIDsKey, healthBarsReloadToken);
 
-  // 最近一次拉取 page-stats 的时间,供自动刷新节流(任何来源触发都会更新)。
+  // Time of the last page-stats fetch, used to throttle auto-refresh (updated by any trigger).
   const pageStatsLoadedAtRef = useRef(0);
   useEffect(() => {
     if (!accountPageIDsKey) {
@@ -2768,13 +2768,13 @@ export default function Accounts() {
       })
       .catch((err: unknown) => {
         if (controller.signal.aborted) return;
-        // 该请求失败时成本/用量列会静默空白,必须留痕(issue #493)。
+        // When this request fails, the cost/usage columns go silently blank, so the failure must leave a trace (issue #493).
         console.warn("account page stats load failed:", err);
       });
     return () => controller.abort();
   }, [accountPageIDsKey, pageStatsReloadToken]);
-  // 自动刷新:列表静默重拉(不闪加载态、失败不弹错);page-stats 与健康条
-  // 是 usage_logs 聚合查询,按 ACCOUNT_PAGE_STATS_MIN_REFRESH_MS 节流。
+  // Auto-refresh: the list is silently re-fetched (no loading flash, no error popup on failure); page-stats and the health bar
+  // are usage_logs aggregation queries, throttled by ACCOUNT_PAGE_STATS_MIN_REFRESH_MS.
   const autoRefreshAccountPage = useCallback(async () => {
     await reloadSilently();
     const now = Date.now();
@@ -2808,8 +2808,8 @@ export default function Accounts() {
   useEffect(() => {
     officialCostReloadAttemptsRef.current = 0;
   }, [accountPageIDsKey]);
-  // 官方结算只存在于 page-stats 的快照字段。后台探针有启动延迟，列表打开时
-  // 经常还是空的；后端会给当前页做即时回补，这里按缺字段重拉，直到胶囊出现。
+  // Official billing exists only in the page-stats snapshot fields. The background probe has a startup delay, so when the list opens
+  // it is often still empty; the backend backfills the current page immediately, and here we re-fetch on missing fields until the pill appears.
   useEffect(() => {
     if (!missingOfficialCostKey) return undefined;
     if (officialCostReloadAttemptsRef.current >= 6) return undefined;
@@ -2823,10 +2823,10 @@ export default function Accounts() {
     return () => window.clearTimeout(timer);
   }, [missingOfficialCostKey, pageStatsReloadToken]);
   const usageReloadAttemptsRef = useRef<Map<number, number>>(new Map());
-  // 测试连接后需要强制刷新用量的账号 id：即使其用量数据已存在（如已显示 100%），
-  // 也要在后台探针跑完后重新拉取，确保进度条更新为最新值。
+  // IDs of accounts whose usage must be force-refreshed after a connection test: even when their usage data already exists (e.g. already showing 100%),
+  // it must be re-fetched after the background probe finishes, so the progress bar shows the latest value.
   const forceUsageReloadRef = useRef<Set<number>>(new Set());
-  // 强制刷新是命令式信号，ref 本身不触发 effect；用计数器明确唤醒补探调度。
+  // A forced refresh is an imperative signal, and a ref by itself does not trigger an effect; a counter explicitly wakes the probe scheduling.
   const [usageReloadTick, setUsageReloadTick] = useState(0);
 
   useEffect(() => {
@@ -2845,9 +2845,9 @@ export default function Accounts() {
     persistAccountViewMode(viewMode);
   }, [viewMode]);
 
-  // 首次升级（用户从未手动设置过页面模式）时，按号池账号数自动判定：
-  // 账号数 < 阈值则默认开启自用模式。等账号加载完成后只应用一次；之后用户在
-  // 下拉里手动切换才会持久化并一律尊重用户选择。
+  // On first upgrade (the user has never set the page mode manually), auto-detect by the pool's account count:
+  // personal mode is on by default when the account count is below the threshold. It is applied only once, after accounts finish loading; after that, the user
+  // switching it in the dropdown is what persists it, and the user's choice is always respected.
   useEffect(() => {
     if (pageModeUserSetRef.current) return;
     if (pageModeAutoAppliedRef.current) return;
@@ -2855,8 +2855,8 @@ export default function Accounts() {
     pageModeAutoAppliedRef.current = true;
     const personal = data.total < ACCOUNT_PERSONAL_MODE_AUTO_THRESHOLD;
     setPageMode(personal ? "personal" : "pool");
-    // 静默换布局曾被当成"排序/成本功能消失"上报(issue #493),
-    // 自动切换必须告知用户以及怎么切回去。
+    // A silent layout switch was once reported as "sort/cost feature disappeared" (issue #493),
+    // so an automatic switch must tell the user, and explain how to switch back.
     if (personal) {
       showToast(t("accounts.personalModeAutoApplied"));
     }
@@ -2871,8 +2871,8 @@ export default function Accounts() {
     const missingUsageIds = usageReloadIdsKey
       ? usageReloadIdsKey.split(",").map(Number)
       : [];
-    // 测试连接后被标记强制刷新的账号也要参与重拉，即使其用量数据已存在。
-    // 仅保留仍在当前列表中的 id，避免泄漏。
+    // Accounts marked for a forced refresh after a connection test also take part in the re-fetch, even if their usage data already exists.
+    // Keep only the IDs still in the current list, to avoid leaks.
     const accountIdSet = new Set(
       accountPageIDsKey ? accountPageIDsKey.split(",").map(Number) : [],
     );
@@ -2902,31 +2902,31 @@ export default function Accounts() {
         usageReloadAttemptsRef.current.get(id) ?? 0,
       );
     }
-    // 指数退避:2.5s/5s/10s/20s/40s/80s。固定 2.5s 会让列表加载后的十几秒里
-    // 反复整树重渲染;退避既压低churn,又把慢探针的覆盖窗口拉长到 ~2.5 分钟。
-    // 测试连接触发的强制刷新保持首档延迟,用户在等即时反馈。
+    // Exponential backoff: 2.5s/5s/10s/20s/40s/80s. A fixed 2.5s would make the whole tree re-render over and over during the dozen or so seconds after the list loads,
+    // repeated whole-tree re-renders; backoff both lowers churn and stretches the coverage window for slow probes to about 2.5 minutes.
+    // A forced refresh triggered by a connection test keeps the first-tier delay, because the user is waiting for immediate feedback.
     const delay =
       forceIds.length > 0 ? 2500 : 2500 * 2 ** Math.min(minAttempt, 5);
     const fire = () => {
-      // 只在真正发起重拉时消耗重试次数；被 live 更新取消的定时器不算一次。
+      // Only consume a retry when a re-fetch actually starts; a timer cancelled by a live update does not count.
       for (const id of retryIds) {
         usageReloadAttemptsRef.current.set(
           id,
           (usageReloadAttemptsRef.current.get(id) ?? 0) + 1,
         );
       }
-      // 强制刷新的账号已安排本轮重拉，移除标记，避免无谓地反复重拉到上限。
-      // 若重拉后数据仍未更新且该账号确实缺数据，会由 needsUsageReload 接管继续重试。
+      // Accounts marked for forced refresh are already scheduled for this round's re-fetch, so remove the mark to avoid pointlessly re-fetching up to the limit.
+      // If the data is still not updated after the re-fetch and the account really is missing data, needsUsageReload takes over and keeps retrying.
       for (const id of forceIds) {
         forceUsageReloadRef.current.delete(id);
       }
       void reloadSilently();
-      // 集合不变时也要把下一档退避排上；否则一次尝试后重试链会断。
+      // Even when the set is unchanged, the next backoff tier must still be scheduled; otherwise the retry chain breaks after one attempt.
       setUsageReloadTick((tick) => tick + 1);
     };
     let visibilityHandler: (() => void) | null = null;
     const timer = window.setTimeout(() => {
-      // 页面在后台时挂起本轮重拉,回到前台再补,不在不可见标签页里空转打请求。
+      // While the page is in the background, hold this round's re-fetch and resume it when the page is back in front; do not spin sending requests from a hidden tab.
       if (document.hidden) {
         visibilityHandler = () => {
           if (document.hidden || visibilityHandler === null) return;
@@ -2947,8 +2947,8 @@ export default function Accounts() {
         visibilityHandler = null;
       }
     };
-    // 不依赖 accounts：1 秒 live 合并会不断产生新的数组身份，但只有
-    // “需要补探的 id 集合 / 页面 id 集合 / 强制刷新信号”变化时才应重建定时器。
+    // Does not depend on accounts: the 1-second live merge keeps producing new array identities, but the timer should be rebuilt only when
+    // "the set of IDs needing a probe / the page ID set / the forced-refresh signal" changes.
   }, [
     usageReloadIdsKey,
     usageReloadTick,
@@ -2956,13 +2956,13 @@ export default function Accounts() {
     reloadSilently,
   ]);
 
-  // stats_state 补拉:统计缓存分两层(请求数缓存→列表快照)且都是"先返回旧值
-  // 后台重建",从 stale 转 ready 需要连续两三次轮询。上面的静默刷新退避后间隔
-  // 最长 80s,不补拉的话「统计刷新中…」会常驻几分钟。这里在非 ready 时用 3s
-  // 短间隔追到 ready 为止;带次数上限,防后端统计查询持续失败时退化成常驻轮询。
+  // stats_state backfill: the stats cache has two layers (request-count cache, then list snapshot), and both "return the old value first
+  // while rebuilding in the background". Going from stale to ready takes two or three polls in a row. After the silent refresh above backs off, the interval
+  // can grow to 80s, so without a backfill, "Refreshing stats..." would stay for several minutes. Here, while not ready, a 3s
+  // short interval keeps polling until ready; it has a retry cap, so that a persistently failing backend stats query does not degrade into permanent polling.
   const statsStaleRetriesRef = useRef(0);
-  // 自增触发重试链，不依赖 data 对象身份：1 秒 live 合并会不断替换 data，
-  // 但 statsState 可能连续多次都是 stale，字符串不变时也必须继续补拉。
+  // The retry chain is triggered by an increment and does not depend on the identity of the data object: the 1-second live merge keeps replacing data,
+  // but statsState may be stale several times in a row, so backfill must keep going even when the string does not change.
   const [statsRetryTick, setStatsRetryTick] = useState(0);
   useEffect(() => {
     if (loading) return undefined;
@@ -3049,7 +3049,7 @@ export default function Accounts() {
     ungrouped: groupFilter.ungrouped || undefined,
   }), [authFilter, debouncedSearchQuery, domainFilter, groupFilter.exclude, groupFilter.include, groupFilter.ungrouped, planFilter, statusFilter, subscriptionFilter, tagFilter]);
 
-  // 服务端已完成全池筛选、排序和分页。
+  // The server has already completed full-pool filtering, sorting and pagination.
   const filteredAccounts = accounts;
   const sortedAccounts = accounts;
 
@@ -3131,7 +3131,7 @@ export default function Accounts() {
     setDetailAccountData(account ?? null);
     setDetailAccountId(account?.id ?? null);
   }, [accounts, data.page, page]);
-  // 自用模式（personal）下，主体列表强制走每行 2 列卡片，桌面端也不渲染表格。
+  // In personal mode, the main list is forced to 2-column cards per row, and the table is not rendered even on desktop.
   const isPersonalMode = pageMode === "personal";
   const shouldRenderMobileCards =
     isPersonalMode || viewMode === "grid" || !isDesktopLayout;
@@ -3201,7 +3201,7 @@ export default function Accounts() {
   const handleAdd = async (credential: "rt" | "st" = "rt") => {
     const parsedCustomHeaders = parseCustomHeadersText(addCustomHeadersText);
     if (!parsedCustomHeaders.ok) {
-      showToast("自定义请求头必须是 JSON 对象，且所有值必须是字符串", "error");
+      showToast("Custom request headers must be a JSON object, and all values must be strings", "error");
       return;
     }
     const payload: AddAccountRequest =
@@ -3273,13 +3273,13 @@ export default function Accounts() {
     if (!atForm.access_token.trim()) return;
     const parsedCustomHeaders = parseCustomHeadersText(addCustomHeadersText);
     if (!parsedCustomHeaders.ok) {
-      showToast("自定义请求头必须是 JSON 对象，且所有值必须是字符串", "error");
+      showToast("Custom request headers must be a JSON object, and all values must be strings", "error");
       return;
     }
     setSubmitting(true);
     try {
-      // 始终走流式：即使只添加一个 access_token 也展示进度条，并能反映
-      // 身份去重/合并结果（已有账号更新、重复跳过）。
+      // Always use streaming: even when only one access_token is added, show the progress bar, and be able to reflect
+      // identity de-duplication/merge results (existing accounts updated, duplicates skipped).
       const res = await postAdminSSE("/accounts/at?stream=true", {
         ...atForm,
         allow_duplicate: allowDuplicate,
@@ -3309,10 +3309,10 @@ export default function Accounts() {
     if (!sessionJson.trim() || importing) return;
     setSubmitting(true);
     try {
-      // 解析 session JSON，构造为文件导入
+      // Parse the session JSON and build it as a file import
       const trimmed = sessionJson.trim();
       const parsed = JSON.parse(trimmed) as Record<string, unknown>;
-      // 支持单个对象或数组
+      // Supports a single object or an array
       const items = Array.isArray(parsed) ? parsed : [parsed];
       const blob = new Blob([JSON.stringify(items)], { type: "application/json" });
       const file = new File([blob], "session.json", { type: "application/json" });
@@ -3579,8 +3579,8 @@ export default function Accounts() {
     }
   };
 
-  // maybeOpenInviteGuide 在导入结束后按设置决定是否弹出邀请积分引导。
-  // 开关读失败时不弹:宁可少一次引导,也不要在设置不可用时打扰用户。
+  // maybeOpenInviteGuide decides, based on settings, whether to open the invite-credit guide after an import finishes.
+  // Do not open it when reading the switch fails: better to skip one guide than to bother the user when settings are unavailable.
   const maybeOpenInviteGuide = useCallback(async (ids: number[]) => {
     try {
       const settings = await api.getInviteGuideSettings();
@@ -3591,9 +3591,9 @@ export default function Accounts() {
     setInviteGuide({ show: true, ids });
   }, []);
 
-  // readImportSSE 读取单批导入的 SSE 进度流。baseline 是此前已完成批次的累计值,
-  // 本批实时进度叠加其上;markDoneOnComplete=false 时(还有后续批次)不置 done,
-  // 让进度条跨批保持运行态。本批结束后把本批终值累加进 baseline(原地修改)。
+  // readImportSSE reads the SSE progress stream of a single import batch. baseline is the cumulative value of batches already completed,
+  // and this batch's live progress is layered on top of it; when markDoneOnComplete=false (more batches to come), done is not set,
+  // so the progress bar stays in the running state across batches. When this batch ends, its final value is added into baseline (modified in place).
   const readImportSSE = async (
     res: Response,
     baseline?: {
@@ -3605,11 +3605,11 @@ export default function Accounts() {
       failed: number;
     },
     markDoneOnComplete = true,
-    // createdIDs 原地收集本次导入新建的账号 ID(complete 事件下发),跨批累加,
-    // 供导入结束后拉取邀请收益方案。
+    // createdIDs collects in place the IDs of accounts created by this import (sent in the complete event), accumulated across batches,
+    // used to fetch the invite earnings plan after the import ends.
     createdIDs?: number[],
-    // proxySummary 原地累加代理注册结果(complete 事件下发),跨批累加,
-    // 供导入结束后在 toast 里汇报。
+    // proxySummary accumulates in place the proxy registration results (sent in the complete event), across batches,
+    // and is reported in the toast after the import ends.
     proxySummary?: { imported: number; skipped: number; warnings: string[] },
   ) => {
     const base = baseline ?? {
@@ -3637,7 +3637,7 @@ export default function Accounts() {
     }
     const decoder = new TextDecoder();
     let buffer = "";
-    // 本批最后一次事件的终值,用于结束后累加进 baseline。
+    // The final value of this batch's last event, used to add into baseline when the batch ends.
     let last = {
       current: 0,
       total: 0,
@@ -3674,7 +3674,7 @@ export default function Accounts() {
           if (event.type === "complete" && proxySummary) {
             proxySummary.imported += event.proxies_imported ?? 0;
             proxySummary.skipped += event.proxies_skipped ?? 0;
-            // 同一条告警在多批之间会重复出现，去重后再展示。
+            // The same alert can appear repeatedly across batches; de-duplicate it before showing.
             if (event.warning && !proxySummary.warnings.includes(event.warning)) {
               proxySummary.warnings.push(event.warning);
             }
@@ -3697,11 +3697,11 @@ export default function Accounts() {
             failed: base.failed + last.failed,
             done: markDoneOnComplete && event.type === "complete",
           }));
-          // 单批(旧调用方)或分批最后一批完成时刷新列表;中间批不刷新,
-          // 避免多批导入反复整表重载。
+          // Refresh the list when a single batch (old callers) or the last of several batches completes; intermediate batches do not refresh,
+          // to avoid reloading the whole table again and again during multi-batch imports.
           if (markDoneOnComplete && event.type === "complete") void reload();
         } catch {
-          /* 忽略解析异常 */
+          /* Ignore parse errors */
         }
       }
     }
@@ -3724,11 +3724,11 @@ export default function Accounts() {
   ) => {
     const parsedCustomHeaders = parseCustomHeadersText(customHeadersText ?? "");
     if (!parsedCustomHeaders.ok) {
-      showToast("自定义请求头必须是 JSON 对象，且所有值必须是字符串", "error");
+      showToast("Custom request headers must be a JSON object, and all values must be strings", "error");
       return;
     }
 
-    // 单个文件超过后端导入上限(200MB)无法再切分,直接拒绝并提示。
+    // A single file over the backend import limit (200MB) cannot be split further, so reject it directly and show a message.
     const oversized = files.find((f) => f.size > IMPORT_MAX_FILE_BYTES);
     if (oversized) {
       showToast(
@@ -3741,8 +3741,8 @@ export default function Accounts() {
       return;
     }
 
-    // 按累计大小把文件切成多批,每批控制在 IMPORT_BATCH_MAX_BYTES 内,避免单个
-    // 请求体过大触发后端限制;后端导入无状态且按凭据幂等去重,分批完全安全。
+    // Split files into batches by cumulative size, keeping each batch within IMPORT_BATCH_MAX_BYTES, to avoid a single
+    // request body growing large enough to hit the backend limit. The backend import is stateless and de-duplicates idempotently by credential, so batching is completely safe.
     const batches = splitFilesIntoBatches(files, IMPORT_BATCH_MAX_BYTES);
 
     setImporting(true);
@@ -3757,7 +3757,7 @@ export default function Accounts() {
       done: false,
     });
 
-    // 跨批累加的基线:每批的 SSE/JSON 进度都是相对本批的,叠加到已完成批次之上。
+    // Baseline accumulated across batches: each batch's SSE/JSON progress is relative to that batch, and is layered on top of the completed batches.
     const totals = {
       current: 0,
       total: 0,
@@ -3766,11 +3766,11 @@ export default function Accounts() {
       duplicate: 0,
       failed: 0,
     };
-    // 本次导入(含所有批次)新建的账号 ID,用于导入完成后的邀请收益引导。
+    // IDs of accounts created by this import (across all batches), used for the invite-earnings guide after the import completes.
     const importedAccountIDs: number[] = [];
-    // 本次导入注册进代理池的代理统计,跨批累加后在结束 toast 里汇报。
+    // Proxy statistics registered into the proxy pool by this import, accumulated across batches and reported in the final toast.
     const proxySummary = { imported: 0, skipped: 0, warnings: [] as string[] };
-    // 只有 JSON 系格式的文件才可能携带代理,后端也只对这两种格式认这个开关。
+    // Only JSON-based files can carry a proxy, and the backend only honors this switch for those two formats.
     const carriesFileProxies =
       importFileProxies && (format === "json" || format === "json_at");
 
@@ -3801,7 +3801,7 @@ export default function Accounts() {
           headers: getAdminKey() ? { "X-Admin-Key": getAdminKey() } : {},
         });
 
-        // 只有最后一批完成后才标记 done,让进度条在多批之间保持运行态。
+        // Mark done only after the last batch completes, so the progress bar stays in the running state across batches.
         const isLastBatch = i === batches.length - 1;
         if (res.headers.get("content-type")?.includes("text/event-stream")) {
           await readImportSSE(
@@ -3829,7 +3829,7 @@ export default function Accounts() {
           totals.updated += data.updated ?? 0;
           totals.duplicate += data.duplicate ?? 0;
           totals.failed += data.failed ?? 0;
-          // 纯 Agent Identity 文件走的是这条非流式分支,代理统计同样在这里下发。
+          // Pure Agent Identity files take this non-streaming branch, and proxy statistics are also sent down here.
           proxySummary.imported += data.proxies_imported ?? 0;
           proxySummary.skipped += data.proxies_skipped ?? 0;
           if (data.warning && !proxySummary.warnings.includes(data.warning)) {
@@ -3839,7 +3839,7 @@ export default function Accounts() {
           if (isLastBatch) void reload();
         }
       }
-      // Toast 只有一个槽位,连续调用会互相顶掉——代理结果和告警必须拼进同一条。
+      // The toast has only one slot, and consecutive calls push each other out, so the proxy result and alerts must be combined into one message.
       if (carriesFileProxies) {
         const parts = [
           t("accounts.importCompleted"),
@@ -3856,8 +3856,8 @@ export default function Accounts() {
       } else {
         showToast(t("accounts.importCompleted"));
       }
-      // 引导只在有新建账号时触发;开关状态由后端判定,前端拿到 enabled=false
-      // 就不展示,避免把开关语义复制两份。
+      // The guide only triggers when accounts were created; the switch state is decided by the backend, and when the frontend gets enabled=false
+      // it does not show, so the switch semantics are not duplicated in two places.
       if (importedAccountIDs.length > 0) {
         void maybeOpenInviteGuide(importedAccountIDs);
       }
@@ -3938,7 +3938,7 @@ export default function Accounts() {
     setDragging(false);
     if (importing) return;
 
-    // 检测是否拖入了文件夹
+    // Detect whether a folder was dragged in
     const items = e.dataTransfer.items;
     const hasDirectories =
       items &&
@@ -3988,7 +3988,7 @@ export default function Accounts() {
       return;
     }
 
-    // 原有的文件拖放逻辑
+    // Existing file drag-and-drop logic
     const files = Array.from(e.dataTransfer.files).filter((f) => f.size > 0);
     if (files.length === 0) return;
 
@@ -4160,7 +4160,7 @@ export default function Accounts() {
       } = {
         filter: scope === "healthy" ? "healthy" : "all",
         channel: "codex",
-        // TXT 只导出 refresh_token,带上代理也写不进去,徒然让响应多带一份明文口令。
+        // TXT exports only refresh_token; a proxy cannot be written into it anyway, and including one would only add a second plaintext secret to the response.
         includeProxy: format === "json" && exportIncludeProxy,
       };
       if (scope === "selected") {
@@ -4394,7 +4394,7 @@ export default function Accounts() {
     }
   };
 
-  // 通过审核:启用自助提交的账号(enabled=true)。
+  // Approve: enable the self-submitted account (enabled=true).
   const handleApprovePending = async (account: AccountRow) => {
     try {
       await api.toggleAccountEnabled(account.id, true);
@@ -4408,7 +4408,7 @@ export default function Accounts() {
     }
   };
 
-  // 拒绝:删除自助提交的账号。
+  // Reject: delete the self-submitted account.
   const handleRejectPending = async (account: AccountRow) => {
     const confirmed = await confirm({
       title: t("accounts.pendingReview.rejectTitle"),
@@ -4432,7 +4432,7 @@ export default function Accounts() {
     }
   };
 
-  // 保存账号备注(PATCH /accounts/:id/note)。
+  // Save the account note (PATCH /accounts/:id/note).
   const handleSaveNote = async (account: AccountRow, note: string) => {
     await api.updateAccountNote(account.id, note);
     showToast(t("accounts.pendingReview.noteSaved"));
@@ -4639,7 +4639,7 @@ export default function Accounts() {
     }
   };
 
-  // 主动重置额度：消耗 1 次「主动重置次数」立即重置该账号额度（带二次确认）。
+  // Manual quota reset: consumes one manual reset and immediately resets this account's quota (with a second confirmation).
   const handleResetCredits = async (account: AccountRow) => {
     const confirmed = await confirm({
       title: t("accounts.resetCreditsButton"),
@@ -4889,7 +4889,7 @@ export default function Accounts() {
               available = ev.available ?? [];
             }
           } catch {
-            /* 忽略解析异常 */
+            /* Ignore parse errors */
           }
         }
       }
@@ -5396,7 +5396,7 @@ export default function Accounts() {
     }
     const parsedCustomHeaders = parseCustomHeadersText(editCustomHeadersText);
     if (!parsedCustomHeaders.ok) {
-      showToast("自定义请求头必须是 JSON 对象，且所有值必须是字符串", "error");
+      showToast("Custom request headers must be a JSON object, and all values must be strings", "error");
       return;
     }
 
@@ -5600,8 +5600,8 @@ export default function Accounts() {
     }
   };
 
-  // 行操作实现每轮渲染都刷进 ref(始终指向最新闭包),对外暴露的 rowActions
-  // 只创建一次,保证 memo 行组件的 props 引用稳定。
+  // The row action implementation is written into a ref on every render (always pointing at the latest closure), and the exposed rowActions
+  // is created only once, keeping the props references of memo row components stable.
   const rowActionsImplRef = useRef<AccountRowActions | null>(null);
   rowActionsImplRef.current = {
     toggleSelect,
@@ -5736,7 +5736,7 @@ export default function Accounts() {
                   value={pageMode}
                   onValueChange={(value) => {
                     const mode = value === "personal" ? "personal" : "pool";
-                    // 用户手动选择：标记并持久化，之后一律尊重用户、不再自动判定。
+                    // The user chose manually: mark and persist it, and from then on always respect the user and stop auto-detecting.
                     pageModeUserSetRef.current = true;
                     persistAccountPageMode(mode);
                     setPageMode(mode);
@@ -5751,7 +5751,7 @@ export default function Accounts() {
             actions={
               <>
                 {(() => {
-                  // 「管理」只收低频项；测试连接 / 导入 / 导出 / 清理常驻在外。
+                  // The "Manage" menu holds only low-frequency items; test connection / import / export / cleanup stay visible outside it.
                   const manageSections: HeaderActionMenuSection[] = [
                     {
                       key: "maintenance",
@@ -6263,7 +6263,7 @@ export default function Accounts() {
                 ))}
               </div>
 
-              {/* 账号类型：快速把 Responses API 中转账号从 OAuth 官方账号里筛出来（issue #522） */}
+              {/* Account type: quickly filter Responses API relay accounts out of official OAuth accounts (issue #522) */}
               <div className="flex max-w-full shrink-0 items-center gap-0.5 overflow-x-auto rounded-lg border border-border bg-muted/30 p-0.5 [-ms-overflow-style:none] [scrollbar-width:none] [&::-webkit-scrollbar]:hidden">
                 {(
                   [
@@ -6407,9 +6407,9 @@ export default function Accounts() {
                     </span>
                   ) : null}
                 </Button>
-                {/* 排序会按标签页记住;表头与分组/优先级按钮只能切换方向,
-                    这里给出当前排序与一键恢复默认。卡片布局的排序下拉已含
-                    「默认排序」,只在它覆盖不到的分组/优先级排序时显示。 */}
+                {/* Sorting is remembered per tab; the table header and the group/priority buttons can only toggle direction,
+                    here we show the current sort and a one-click restore of the default. The card layout's sort dropdown already includes
+                    "Default sort", and this only shows for group/priority sorts that it does not cover. */}
                 {sortKey !== null &&
                   (shouldRenderDesktopTable ||
                     sortKey === "group" ||
@@ -6442,8 +6442,8 @@ export default function Accounts() {
                     <X className="size-3.5 shrink-0" aria-hidden />
                   </Button>
                 )}
-                {/* 卡片布局(自用模式/网格/移动端)没有可排序表头,这里补一个
-                    紧凑排序入口,避免升级后"排序功能消失"(issue #493)。 */}
+                {/* The card layout (personal mode / grid / mobile) has no sortable table header, so add a
+                    compact sort entry here, to avoid the "sort feature disappeared" report after upgrading (issue #493). */}
                 {!shouldRenderDesktopTable && (
                   <div className="col-span-2 flex items-center gap-1.5 sm:col-span-1 sm:w-auto">
                     <Select
@@ -6739,7 +6739,7 @@ export default function Accounts() {
                 {t("common.selected", { count: selected.size })}
               </span>
               <div className="flex flex-wrap items-center justify-end gap-1.5 max-lg:justify-start">
-                {/* 卡片视图（移动端/grid/自用）没有表头全选框，这里是唯一的全选入口（issue #522） */}
+                {/* The card view (mobile / grid / personal) has no header select-all checkbox, so this is the only select-all entry point (issue #522) */}
                 {!allPageSelected && (
                   <Button
                     variant="outline"
@@ -7560,7 +7560,7 @@ export default function Accounts() {
                   </p>
                 </div>
 
-                {/* 多文件批量导入 */}
+                {/* Batch import of multiple files */}
                 <div className="rounded-xl border border-dashed border-border bg-muted/20 px-4 py-3">
                   <div className="flex flex-wrap items-center justify-between gap-2">
                     <div className="min-w-0">
@@ -7996,7 +7996,7 @@ export default function Accounts() {
             onClose={() => setShowExportPicker(false)}
           >
             <div className="space-y-4">
-              {/* 健康账号导出 */}
+              {/* Export healthy accounts */}
               <div>
                 <div className="text-xs font-semibold text-muted-foreground mb-2">
                   {t("accounts.exportScopeHealthy")}
@@ -8028,7 +8028,7 @@ export default function Accounts() {
                   </button>
                 </div>
               </div>
-              {/* 已选账号导出 */}
+              {/* Export selected accounts */}
               <div>
                 <div className="text-xs font-semibold text-muted-foreground mb-2">
                   {t("accounts.exportScopeSelected", { count: selected.size })}
@@ -8062,7 +8062,7 @@ export default function Accounts() {
                   </button>
                 </div>
               </div>
-              {/* 代理配置只对 JSON 导出生效，TXT 只有 refresh_token 一列。 */}
+              {/* Proxy config only applies to JSON exports; TXT has only one refresh_token column. */}
               <div className="border-t border-border pt-3">
                 <label className="flex cursor-pointer items-start gap-2 text-xs text-muted-foreground">
                   <input
@@ -8213,7 +8213,7 @@ export default function Accounts() {
             <TestConnectionModal
               account={testingAccount}
               onSettled={() => {
-                // 标记该账号强制刷新用量，配合后台探针确保进度条更新为最新值。
+                // Mark this account for a forced usage refresh; together with the background probe it ensures the progress bar shows the latest value.
                 forceUsageReloadRef.current.add(testingAccount.id);
                 usageReloadAttemptsRef.current.delete(testingAccount.id);
                 setUsageReloadTick((tick) => tick + 1);
@@ -8241,17 +8241,17 @@ export default function Accounts() {
           {usageAccount && (
             <AccountUsageModal
               account={usageAccount}
-              // key 让不同入口切换时重建弹窗,否则 initialPage 只在首次挂载生效,
-              // 先开概览再点官方成本会停在旧 tab。
+              // The key rebuilds the dialog when different entry points switch; otherwise initialPage only takes effect on first mount,
+              // so opening the overview first and then clicking the official cost would stay on the old tab.
               key={`${usageAccount.id}-${usageInitialPage}`}
               initialPage={usageInitialPage}
               onClose={() => {
                 setUsageAccount(null);
                 setUsageInitialPage("overview");
               }}
-              // 必须静默重拉：reload() 会把 StateShell 切成整页 loading，
-              // 而这个弹窗就渲染在 StateShell 里 —— 一开积分开关整个界面连同弹窗
-              // 就被卸载重建（用量数据重新拉、滚动位置丢失），观感就是"闪一下全刷新"。
+              // It must re-fetch silently: reload() would switch StateShell to a full-page loading state,
+              // and this dialog is rendered inside StateShell — turning on the credits switch would unmount and remount the whole screen, dialog included,
+              // (usage data re-fetched, scroll position lost), and it would look like a "flash and full refresh".
               onCreditsReset={() => void reloadSilently()}
               onOfficialUsageRefreshed={handleOfficialUsageRefreshed}
             />
@@ -8427,7 +8427,7 @@ export default function Accounts() {
           >
             {editingAccount && editPreview ? (
               <div className="space-y-6">
-                {/* 顶栏：账号状态与简要概览 */}
+                {/* Top bar: account status and a brief overview */}
                 <div className="relative overflow-hidden rounded-xl border border-border/80 bg-gradient-to-r from-primary/5 via-muted/30 to-background p-4 shadow-2xs">
                   <div className="flex flex-wrap items-center justify-between gap-3">
                     <div className="min-w-0 space-y-1">
@@ -8453,7 +8453,7 @@ export default function Accounts() {
                   </div>
                 </div>
 
-                {/* 选项卡切换 */}
+                {/* Tab switcher */}
                 {isOAuthAccount(editingAccount) && (
                   <div className="flex gap-1.5 rounded-xl border border-border/60 bg-muted/40 p-1.5 shadow-2xs">
                     <button
@@ -8582,7 +8582,7 @@ export default function Accounts() {
                   </div>
                 ) : (
                   <div className="space-y-6">
-                    {/* 分组 1: 调度与并发加权 */}
+                    {/* Group 1: scheduling and concurrency weighting */}
                     <div className="space-y-3">
                       <div className="flex items-center gap-2 text-xs font-bold uppercase tracking-wider text-muted-foreground/80">
                         <Gauge className="size-3.5 text-primary" />
@@ -8591,7 +8591,7 @@ export default function Accounts() {
                       </div>
 
                       <div className="grid gap-4 md:grid-cols-2">
-                        {/* 权重分 */}
+                        {/* Weight score */}
                         <div className="rounded-xl border border-border/70 bg-card p-4.5 shadow-2xs hover:border-border/90 transition-colors">
                           <div className="flex items-center gap-2 font-semibold text-foreground text-sm">
                             <Gauge className="size-4 text-blue-500" />
@@ -8614,7 +8614,7 @@ export default function Accounts() {
                           </div>
                           {scoreMode === "default" ? (
                             <div className="mt-3 flex items-center justify-between rounded-lg border border-border/60 bg-muted/20 px-3.5 py-2.5 text-xs">
-                              <span className="text-muted-foreground font-medium">当前默认加权</span>
+                              <span className="text-muted-foreground font-medium">Current default weighting</span>
                               <span className="font-mono font-semibold text-blue-600 dark:text-blue-400 bg-blue-500/10 px-2 py-0.5 rounded border border-blue-500/20">
                                 {formatSignedNumber(getDefaultScoreBias(editingAccount.plan_type))}
                               </span>
@@ -8647,7 +8647,7 @@ export default function Accounts() {
                           )}
                         </div>
 
-                        {/* 基础并发 */}
+                        {/* Base concurrency */}
                         <div className="rounded-xl border border-border/70 bg-card p-4.5 shadow-2xs hover:border-border/90 transition-colors">
                           <div className="flex items-center gap-2 font-semibold text-foreground text-sm">
                             <Zap className="size-4 text-amber-500" />
@@ -8670,7 +8670,7 @@ export default function Accounts() {
                           </div>
                           {concurrencyMode === "default" ? (
                             <div className="mt-3 flex items-center justify-between rounded-lg border border-border/60 bg-muted/20 px-3.5 py-2.5 text-xs">
-                              <span className="text-muted-foreground font-medium">当前基础并发</span>
+                              <span className="text-muted-foreground font-medium">Current base concurrency</span>
                               <span className="font-mono font-semibold text-amber-600 dark:text-amber-400 bg-amber-500/10 px-2 py-0.5 rounded border border-amber-500/20">
                                 {getEffectiveBaseConcurrency(editingAccount)}
                               </span>
@@ -8704,7 +8704,7 @@ export default function Accounts() {
                           )}
                         </div>
 
-                        {/* 调度优先级 */}
+                        {/* Scheduling priority */}
                         <div className="rounded-xl border border-border/70 bg-card p-4.5 shadow-2xs hover:border-border/90 transition-colors md:col-span-2">
                           <div className="flex items-center gap-2 font-semibold text-foreground text-sm">
                             <Sliders className="size-4 text-indigo-500" />
@@ -8736,7 +8736,7 @@ export default function Accounts() {
                       </div>
                     </div>
 
-                    {/* 分组 2: 熔断与限流 */}
+                    {/* Group 2: circuit breaker and rate limiting */}
                     <div className="space-y-3">
                       <div className="flex items-center gap-2 text-xs font-bold uppercase tracking-wider text-muted-foreground/80 pt-1">
                         <ShieldCheck className="size-3.5 text-primary" />
@@ -8745,7 +8745,7 @@ export default function Accounts() {
                       </div>
 
                       <div className="grid gap-4 md:grid-cols-2">
-                        {/* 跳过预热层级 */}
+                        {/* Skip warm tier */}
                         <div className="rounded-xl border border-border/70 bg-card p-4.5 shadow-2xs hover:border-border/90 transition-colors">
                           <div className="flex items-start justify-between gap-4">
                             <div className="space-y-1">
@@ -8774,7 +8774,7 @@ export default function Accounts() {
                           </div>
                         </div>
 
-                        {/* 降级不降并发 (issue #772) */}
+                        {/* Keep concurrency when degraded (issue #772) */}
                         <div className="rounded-xl border border-border/70 bg-card p-4.5 shadow-2xs hover:border-border/90 transition-colors">
                           <div className="flex items-start justify-between gap-4">
                             <div className="space-y-1">
@@ -8803,7 +8803,7 @@ export default function Accounts() {
                           </div>
                         </div>
 
-                        {/* 请求次数限流 */}
+                        {/* Request count rate limit */}
                         <div className="rounded-xl border border-border/70 bg-card p-4.5 shadow-2xs hover:border-border/90 transition-colors">
                           <div className="flex items-center gap-2 font-semibold text-foreground text-sm">
                             <Timer className="size-4 text-purple-500" />
@@ -8849,7 +8849,7 @@ export default function Accounts() {
                           </div>
                         </div>
 
-                        {/* 用量自动暂停 */}
+                        {/* Auto-pause on usage */}
                         <div className="rounded-xl border border-border/70 bg-card p-4.5 shadow-2xs hover:border-border/90 transition-colors md:col-span-2">
                           <div className="flex items-center gap-2 font-semibold text-foreground text-sm">
                             <ShieldAlert className="size-4 text-rose-500" />
@@ -8925,7 +8925,7 @@ export default function Accounts() {
                       </div>
                     </div>
 
-                    {/* 分组 3: 网络、路由与身份 */}
+                    {/* Group 3: network, routing and identity */}
                     <div className="space-y-3">
                       <div className="flex items-center gap-2 text-xs font-bold uppercase tracking-wider text-muted-foreground/80 pt-1">
                         <Globe className="size-3.5 text-primary" />
@@ -8934,7 +8934,7 @@ export default function Accounts() {
                       </div>
 
                       <div className="grid gap-4 md:grid-cols-2">
-                        {/* 允许绑定的 API Keys */}
+                        {/* API Keys allowed to bind */}
                         <div className="rounded-xl border border-border/70 bg-card p-4.5 shadow-2xs hover:border-border/90 transition-colors md:col-span-2">
                           <div className="flex items-center gap-2 font-semibold text-foreground text-sm">
                             <KeyRound className="size-4 text-emerald-500" />
@@ -8963,7 +8963,7 @@ export default function Accounts() {
                           </div>
                         </div>
 
-                        {/* 代理服务器 */}
+                        {/* Proxy server */}
                         <div className="rounded-xl border border-border/70 bg-card p-4.5 shadow-2xs hover:border-border/90 transition-colors md:col-span-2">
                           {renderProxyInput({
                             value: editProxyUrl,
@@ -8971,7 +8971,7 @@ export default function Accounts() {
                           })}
                         </div>
 
-                        {/* 设备指纹收敛 */}
+                        {/* Device fingerprint convergence */}
                         {(
                           <div className="rounded-xl border border-border/70 bg-card p-4.5 shadow-2xs hover:border-border/90 transition-colors md:col-span-2">
                             <div className="flex items-center gap-2 font-semibold text-foreground text-sm">
@@ -9000,7 +9000,7 @@ export default function Accounts() {
                           </div>
                         )}
 
-                        {/* 绑定时区 */}
+                        {/* Bound timezone */}
                         {(
                           <div className="rounded-xl border border-border/70 bg-card p-4.5 shadow-2xs hover:border-border/90 transition-colors md:col-span-2">
                             <div className="flex items-center gap-2 font-semibold text-foreground text-sm">
@@ -9019,7 +9019,7 @@ export default function Accounts() {
                           </div>
                         )}
 
-                        {/* 自定义请求头 */}
+                        {/* Custom request headers */}
                         <div className="rounded-xl border border-border/70 bg-card p-4.5 shadow-2xs hover:border-border/90 transition-colors md:col-span-2">
                           {renderCustomHeadersTextarea({
                             value: editCustomHeadersText,
@@ -9029,7 +9029,7 @@ export default function Accounts() {
                       </div>
                     </div>
 
-                    {/* 分组 4: 组织与属性 */}
+                    {/* Group 4: organization and attributes */}
                     <div className="space-y-3">
                       <div className="flex items-center gap-2 text-xs font-bold uppercase tracking-wider text-muted-foreground/80 pt-1">
                         <Tag className="size-3.5 text-primary" />
@@ -9038,7 +9038,7 @@ export default function Accounts() {
                       </div>
 
                       <div className="grid gap-4 md:grid-cols-2">
-                        {/* 标签 */}
+                        {/* Tags */}
                         <div className="rounded-xl border border-border/70 bg-card p-4.5 shadow-2xs hover:border-border/90 transition-colors">
                           <div className="flex items-center gap-2 font-semibold text-foreground text-sm">
                             <Tag className="size-4 text-violet-500" />
@@ -9056,7 +9056,7 @@ export default function Accounts() {
                           />
                         </div>
 
-                        {/* 分组 */}
+                        {/* Groups */}
                         <div className="rounded-xl border border-border/70 bg-card p-4.5 shadow-2xs hover:border-border/90 transition-colors">
                           <div className="flex items-start justify-between gap-3">
                             <div>
@@ -9101,7 +9101,7 @@ export default function Accounts() {
                       </div>
                     </div>
 
-                    {/* 实时调度预览栏 */}
+                    {/* Live scheduling preview bar */}
                     <div className="rounded-xl border border-border/80 bg-gradient-to-r from-muted/40 via-background to-muted/20 p-4.5 shadow-2xs">
                       <div className="flex items-center gap-2 font-semibold text-foreground text-sm">
                         <Activity className="size-4 text-primary" />
@@ -9271,7 +9271,7 @@ export default function Accounts() {
                 <div className="mt-1">{t("accounts.supportedModelsDesc")}</div>
               </div>
 
-              {/* 自动获取：探测/同步按钮 + 说明，成一体 */}
+              {/* Auto-fetch: probe/sync button plus description, as one unit */}
               <div className="rounded-lg border border-border bg-muted/10 p-3">
                 <div className="flex flex-wrap gap-2">
                   <Button
@@ -9313,7 +9313,7 @@ export default function Accounts() {
                 )}
               </div>
 
-              {/* 手动添加 */}
+              {/* Manual add */}
               <div className="flex gap-2">
                 <Input
                   placeholder={t("accounts.openaiModelsPlaceholder")}
@@ -9347,7 +9347,7 @@ export default function Accounts() {
                 </Button>
               </div>
 
-              {/* 白名单列表：计数 + 清空 在上，紧凑 pills 在下 */}
+              {/* Allowlist: count + clear on top, compact pills below */}
               <div className="space-y-2">
                 <div className="flex items-center justify-between gap-2">
                   <span className="text-xs text-muted-foreground">
@@ -10527,7 +10527,7 @@ function RecycleBinView({
           next ? "1" : "0",
         );
       } catch {
-        /* localStorage 不可用时仅保留会话内状态 */
+        /* When localStorage is unavailable, keep only the in-session state */
       }
       return next;
     });
@@ -10578,9 +10578,9 @@ function RecycleBinView({
     }
     setExporting(true);
     try {
-      // 回收站导出不带代理:这里是"恢复误删账号"的入口,不是迁移入口,没有
-      // 承载勾选项的弹窗,默认不外泄代理里的明文口令。需要迁移代理绑定关系
-      // 请用账号页的导出。
+      // Recycle bin exports do not include proxies: this is the entry point for "restore an accidentally deleted account", not a migration entry point, so there is no
+      // dialog that carries the checkboxes, and by default it does not leak plaintext secrets in proxies. To migrate proxy binding relationships
+      // use the export on the accounts page.
       const data = await api.exportRecycleBinAccounts(ids);
       if (data.length === 0) {
         showToast(t("accounts.exportNoAccounts"), "error");
@@ -10594,7 +10594,7 @@ function RecycleBinView({
         });
         downloadBlob(blob, `codex2api-recycle-${ts}-${data.length}.json`);
       } else {
-        // TXT：每行一个邮箱（无邮箱则用 account_id 兜底），不导出 token。
+        // TXT: one email per line (falls back to account_id when there is no email); no token is exported.
         const lines = data
           .map((e) => {
             const email = (e.email || "").trim();
@@ -11127,7 +11127,7 @@ function RecycleBinView({
 
 const RECYCLE_BIN_AUTO_RESTORE_KEY = "codex2api_recycle_bin_auto_restore";
 
-// recycleBinRowToAccountRow 将回收站行转换为 TestConnectionModal 需要的最小 AccountRow。
+// recycleBinRowToAccountRow converts a recycle bin row into the minimal AccountRow that TestConnectionModal needs.
 function recycleBinRowToAccountRow(row: RecycleBinAccountRow): AccountRow {
   return {
     id: row.id,
@@ -11338,7 +11338,7 @@ type ModelProbeItem = {
   detail?: string;
 };
 
-// ModelProbeBoard 逐模型实时探测看板：每个模型显示 等待/测试中/结果 的动画状态。
+// ModelProbeBoard is the live per-model probe board: each model shows an animated state of waiting / testing / result.
 function ModelProbeBoard({
   items,
   t,
@@ -11632,15 +11632,15 @@ function getSchedulerPriority(account: AccountRow): number {
     : 0;
 }
 
-// UsingCreditsBadge 紧跟在限流徽章后面：账号显示仍是「限流」（用量窗口客观上确实打满了），
-// 这个积分徽章表示"正在用积分顶替限流，因此仍在参与调度"。
-// 后端 using_credits 已经算过全部前提（两个开关 + 当下确有余额 + 窗口真打满），
-// 这里只负责显示，不重算，避免两边判定漂移。
+// UsingCreditsBadge sits right after the rate-limit badge: the account still shows "rate limited" (the usage window is objectively full),
+// and this credits badge means "credits are currently replacing the rate limit, so it is still taking part in scheduling".
+// The backend using_credits has already evaluated all the preconditions (both switches + a balance right now + the window really full),
+// so this component only displays it and does not recompute, to avoid the two sides' decisions drifting apart.
 function UsingCreditsBadge({ account }: { account: AccountRow }) {
   const { t } = useTranslation();
   if (!account.using_credits) return null;
-  // 纯图标：余额已经在邮箱下方的徽章里显示过，这里再写一遍是重复信息，
-  // 而且会把「限流 | 7d」和倒计时之间撑开。语义靠 title / aria-label 承载。
+  // Icon only: the balance is already shown in the badge below the email, so writing it again here would be duplicate information,
+  // and it would stretch the gap between "rate limit | 7d" and the countdown. The meaning is carried by title / aria-label.
   return (
     <span
       className="inline-flex size-5 shrink-0 items-center justify-center rounded-md border border-teal-500/30 bg-teal-500/10 text-teal-700 dark:text-teal-300"
@@ -11749,9 +11749,9 @@ function isPremiumUsagePlan(planType?: string): boolean {
 type RateLimitWindow = "5h" | "7d";
 
 function isRateLimitedAccount(account: AccountRow): boolean {
-  // 积分顶替限流的账号：状态徽章仍写「限流」（用量窗口客观上确实打满了），但调度侧
-  // 照常放行。健康分类与筛选按"可用"计，否则一个正在正常干活的账号会被算进限流数、
-  // 被「限流」筛选捞出来，与旁边的积分徽章互相矛盾。
+  // For accounts where credits replace the rate limit: the status badge still says "rate limited" (the usage window is objectively full), but the scheduler side
+  // still lets them through. Health classification and filtering count them as "available"; otherwise an account that is working normally would be counted in the rate-limit total,
+  // and picked up by the "rate limited" filter, contradicting the credits badge next to it.
   if (account.using_credits) return false;
   return getAccountRateLimitWindow(account) !== null;
 }
@@ -11844,8 +11844,8 @@ function getRateLimitedWindowStats(accounts: AccountRow[]): {
 } {
   const stats = accounts.reduce(
     (stats, account) => {
-      // 走 isRateLimitedAccount 而不是直接取窗口：积分顶替限流的账号按可用计，
-      // 这样 5h + 7d 仍然等于总限流数，不会比汇总里的「限流」多出几个。
+      // Use isRateLimitedAccount instead of reading the window directly: accounts whose credits replace the rate limit count as available,
+      // so 5h + 7d still equals the total rate-limit count, and there are not more of them than the "rate limited" total in the summary.
       const window = isRateLimitedAccount(account)
         ? getAccountRateLimitWindow(account)
         : null;
@@ -12640,7 +12640,7 @@ function AccountMobileCard({
   onEditModels?: () => void;
   onDelete: () => void;
   onUsageRefreshed?: () => void;
-  // 成本列的官方胶囊点击后跳到用量弹窗的官方统计 tab。
+  // Clicking the official pill in the cost column jumps to the official stats tab of the usage dialog.
   onOpenOfficialUsage?: () => void;
 }) {
   const displayName = formatAccountListEmail(account);
@@ -12713,7 +12713,7 @@ function AccountMobileCard({
                   title={t("accounts.hrefClickHint")}
                   onClick={(event) => {
                     event.stopPropagation();
-                    // 与表格行同口径：点击跳转，Alt/Option+点击配置。
+                    // Same rules as the table row: click to jump, Alt/Option+click to configure.
                     if (event.altKey) {
                       onOpenHrefEditor();
                     } else {
@@ -13113,7 +13113,7 @@ interface ResetTimeLabel {
   title: string;
 }
 
-// 格式化重置时间为具体时间，列表显示到秒，tooltip 保留完整日期。
+// Format the reset time as an exact time; the list shows it down to the second, and the tooltip keeps the full date.
 function formatResetAt(resetAt: string | undefined): ResetTimeLabel | null {
   if (!resetAt) return null;
   const d = new Date(resetAt);
@@ -13140,14 +13140,14 @@ function hasUsageWindowDetail(detail?: AccountRow["usage_5h_detail"]): boolean {
   );
 }
 
-// 用量进度条颜色
+// Usage progress bar color
 function usageBarColor(pct: number): string {
   if (pct >= 90) return "bg-red-500";
   if (pct >= 70) return "bg-amber-500";
   return "bg-emerald-500";
 }
 
-// 标签 / 条 / 百分比 三列固定，避免 7d 与 spark 把进度条拉成不同长度。
+// Label / bar / percentage are three fixed columns, so that 7d and spark do not stretch the progress bars to different lengths.
 const USAGE_BAR_LABEL_CLASS =
   "w-10 shrink-0 text-[11px] font-medium text-muted-foreground";
 const USAGE_BAR_TRACK_CLASS =
@@ -13155,7 +13155,7 @@ const USAGE_BAR_TRACK_CLASS =
 const USAGE_BAR_META_CLASS =
   "account-usage-meta text-[11px] font-medium text-muted-foreground mt-0.5 pl-[46px]";
 
-// 单行用量进度条
+// Single-line usage progress bar
 function UsageBar({
   label,
   pct,
@@ -13252,9 +13252,9 @@ function UsageWindowStat({
   );
 }
 
-// 今日统计列:网关侧口径,服务器时区当天 0 点起(参考 sub2api 的今日统计列)。
-// page-stats 对本页每个账号必回该字段,零值是真实的"今天没跑";
-// 字段缺失说明 stats 还没到(加载中/失败),显示占位而不是 0。
+// Today's stats column: gateway-side basis, counted from 0:00 of the current day in the server time zone (modeled on the sub2api today-stats column).
+// page-stats always returns this field for every account on the page, so a zero value is a real "did not run today";
+// a missing field means the stats have not arrived yet (loading or failed), so show a placeholder rather than 0.
 function TodayStatsCell({ account }: { account: AccountRow }) {
   const { t } = useTranslation();
   const detail = account.usage_today_detail;
@@ -13396,12 +13396,12 @@ function TodayStatsCell({ account }: { account: AccountRow }) {
   );
 }
 
-// 用量列组件
+// Usage column component
 //
-// 显示策略不再单独依赖 plan_type:
-// 当 plan_type 还停留在按 RT 刷新出来的旧值(例如 "free")、但账号实际已订阅、
-// 后端已经返回 5h 窗口数据时,只看 plan_type 会把 5h 吞掉。
-// 因此这里以"是否真的存在 5h / 7d 数据(含 reset 时间)"作为主判据。
+// The display policy no longer depends on plan_type alone:
+// when plan_type still holds an old value from an RT refresh (for example "free") even though the account is actually subscribed,
+// and the backend has already returned 5h window data, looking only at plan_type would swallow the 5h window.
+// So here, whether 5h / 7d data really exists (including the reset time) is the primary criterion.
 function UsageCell({
   account,
   wide = false,
@@ -13458,9 +13458,9 @@ function UsageCell({
 
   const fiveHourPresent = has5h || has5hReset;
   const sevenDayPresent = has7d || has7dDetail || has7dReset;
-  // 长窗口标签:free/team plan 实为月窗(约 30 天),按真实周期显示 30d 而非误标 7d (issue #324)
+  // Long-window label: free/team plans are actually monthly windows (about 30 days), so show the real period as 30d rather than mislabeling it 7d (issue #324)
   const longWindowLabel = formatLongUsageWindowLabel(account);
-  // 5h 是上游可选窗口：仅数据存在时展示，不再因 premium plan 强制占位（issue #382）
+  // 5h is an optional upstream window: show it only when its data exists, and no longer force a placeholder because of the premium plan (issue #382)
   const showFiveHour = fiveHourPresent;
 
   const sparkBar = showSpark ? (
@@ -13569,30 +13569,30 @@ function UsageCell({
   );
 }
 
-// 官方胶囊转圈的兜底超时:页面级重拉最多 6 次退避(累计约 95 秒)就会停,
-// 超过这个时间还没有数据说明上游拉不到(鉴权失败/官方统计滞后),
-// 再转下去只会让用户以为一直在加载。
+// Fallback timeout for the official pill spinner: page-level re-fetches stop after at most 6 backoff retries (about 95 seconds in total),
+// if there is still no data after that, the upstream cannot be reached (auth failure / official stats lagging),
+// and spinning longer would only make the user think it is loading forever.
 const OFFICIAL_PENDING_SPIN_TIMEOUT_MS = 100_000;
 
-// 成本列并排两套账,颜色区分口径:
-// 上行(石板色)是网关自己的日志算出来的,只含经由本网关转发的请求;
-// 下行(琥珀色)是 OpenAI 官方结算数,还包含用户直接用官方客户端的消耗。
-// 两者不该相等,差额就是账号在网关之外的用量。
+// The cost column shows two ledgers side by side, with colors telling the basis apart:
+// the top line (slate color) is computed from the gateway's own logs and includes only requests forwarded through this gateway;
+// the bottom line (amber color) is the official OpenAI billed amount, and also includes usage from users who use the official client directly.
+// The two should not be equal; the difference is the account's usage outside the gateway.
 function BilledCell({
   account,
   onOpenOfficial,
 }: {
   account: AccountRow;
-  // 传了才把官方胶囊变成可点按钮（跳到用量弹窗的官方统计 tab）。
+  // Only when passed does the official pill become a clickable button (jumps to the official stats tab of the usage dialog).
   onOpenOfficial?: (account: AccountRow) => void;
 }) {
   const { t } = useTranslation();
   const official = officialUsdValue(account);
   const showOfficial =
     supportsOfficialUsage(account) && !isOfficialCostHiddenAccount(account);
-  // synced 表示后端已成功同步过但上游没有数据(官方统计有滞后):
-  // 这是确定的"暂无数据",不是"还在加载",不该转圈。
-  // 导入未满一天、封禁/错误号也不转圈：官方结算要到次日才出数。
+  // synced means the backend has synced successfully but the upstream has no data (the official stats are lagging):
+  // this is a definite "no data yet", not "still loading", so it should not spin.
+  // Also do not spin for accounts imported less than a day ago, or for banned / error accounts: official billing only produces figures the next day.
   const officialSynced = account.official_usage_synced === true;
   const officialPending =
     showOfficial &&
@@ -13658,7 +13658,7 @@ function BilledCell({
         (onOpenOfficial ? (
           <button
             type="button"
-            // 行本身点击会打开账号详情，成本胶囊要抢在它前面并阻断冒泡。
+            // Clicking the row itself opens account details; the cost pill must take precedence over it and stop event propagation.
             onClick={(event) => {
               event.stopPropagation();
               onOpenOfficial(account);
@@ -13689,7 +13689,7 @@ function BilledCell({
   );
 }
 
-// 官方成本可能很小(几分钱)也可能上千,统一两位小数,极小值不显示成 $0.00。
+// Official cost can be very small (a few cents) or in the thousands; use two decimal places throughout, and do not show a tiny value as $0.00.
 function formatOfficialUSD(value: number): string {
   if (!Number.isFinite(value) || value === 0) return "$0";
   if (Math.abs(value) < 0.01) return "<$0.01";
@@ -13717,9 +13717,9 @@ function getAccountStatusCountdownUntil(
   ) {
     return account.cooldown_until;
   }
-  // 限流态但没有 cooldown：积分顶替限流会主动释放本地用量判罚（cooldown_until 被清空），
-  // premium 5h 打满也是直接由用量窗口判定、从不落 cooldown。这两种情况下倒计时改用窗口
-  // 重置时间——徽章上写着「限流 | 7d」，右边就该显示它多久恢复，而不是整个消失。
+  // Rate-limited state with no cooldown: when credits stand in for the rate limit, local usage penalties are released proactively (cooldown_until is cleared),
+  // a fully used premium 5h window is also judged directly by the usage window and never sets a cooldown. In both cases the countdown uses the window
+  // reset time. The badge reads "Rate limited | 7d", so the right side should show how long until it recovers rather than disappearing.
   if (rateLimited || status === "quota_paused") {
     const window = getAccountRateLimitWindow(account);
     if (window === "7d") {
@@ -13741,7 +13741,7 @@ function AccountStatusCountdown({ account }: { account: AccountRow }) {
   return <CooldownTimer until={until} />;
 }
 
-// 冷却倒计时组件
+// Cooldown countdown component
 function CooldownTimer({ until }: { until: string }) {
   const remaining = useCountdownRemaining(until);
   const title = formatBeijingTime(until);
@@ -13758,8 +13758,8 @@ function CooldownTimer({ until }: { until: string }) {
   );
 }
 
-// 自助提交待审核面板:列出 enabled=false 且带 self-service 标签的账号,
-// 支持查看/编辑备注、通过(启用)与拒绝(删除)。
+// Self-service pending review panel: lists accounts with enabled=false that carry the self-service tag,
+// supports viewing/editing notes, approving (enable) and rejecting (delete).
 const SELF_SERVICE_TAG = "self-service";
 
 function PendingSelfServiceReviewPanel({

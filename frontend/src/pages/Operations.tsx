@@ -127,7 +127,7 @@ export default function Operations() {
             </div>
 
             <div className="space-y-6">
-              {/* 分组 1：基础硬件与依赖 */}
+              {/* Group 1: base hardware and dependencies */}
               <div className="space-y-3">
                 <div className="flex items-center gap-2 text-sm font-semibold text-foreground">
                   <Cpu className="size-4 text-primary" />
@@ -219,7 +219,7 @@ export default function Operations() {
                 </div>
               </div>
 
-              {/* 分组 2：流量与吞吐表现 */}
+              {/* Group 2: traffic and throughput */}
               <div className="space-y-3">
                 <div className="flex items-center gap-2 text-sm font-semibold text-foreground">
                   <Gauge className="size-4 text-primary" />
@@ -262,7 +262,7 @@ export default function Operations() {
                 </div>
               </div>
 
-              {/* 分组 3：并发与运行时负载 */}
+              {/* Group 3: concurrency and runtime load */}
               <div className="space-y-3">
                 <div className="flex items-center gap-2 text-sm font-semibold text-foreground">
                   <Layers className="size-4 text-primary" />

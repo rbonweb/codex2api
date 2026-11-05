@@ -58,9 +58,9 @@ function usageRequestedModelTitle(
   return parts.join('\n')
 }
 
-// ===== 上游响应模型审计（移植自 sub2api）=====
-// 变体归一化：剥掉 -latest 与日期后缀（-20250101 / -2025-01-01）后比较。
-// 归一化相等 → 「疑似变体」（琥珀）；否则 → 「模型不一致」（橙）。
+// ===== Upstream response model audit (ported from sub2api) =====
+// Variant normalization: strip the -latest and date suffixes (-20250101 / -2025-01-01) before comparing.
+// Normalized values equal → "suspected variant" (amber); otherwise → "model mismatch" (orange).
 function normalizeModelVariant(model: string): string {
   return model
     .trim()
@@ -84,7 +84,7 @@ function UpstreamResponseModelBadge({
   sentModel: string
 }) {
   const { t } = useTranslation()
-  // 三态语义：mismatch 非真（未自报为 null/undefined）一律不显示。
+  // Tri-state semantics: when mismatch is not true (not self-reported, i.e. null/undefined), nothing is shown.
   if (log.upstream_model_mismatch !== true || !log.upstream_response_model) return null
   const responseModel = log.upstream_response_model
   const variant = isLikelyModelVariant(sentModel, responseModel)
@@ -93,8 +93,8 @@ function UpstreamResponseModelBadge({
     `${t('usage.sentUpstreamModel')}: ${sentModel || '-'}`,
     `${t('usage.upstreamResponseModel')}: ${responseModel}`,
   ]
-  // Fast 档 + 模型不一致的组合提示：上游若同时降档（换便宜模型 + 降档），
-  // 仅看 Fast 徽章或仅看 mismatch 徽章都会漏掉组合情况。
+  // Combined hint for the Fast tier plus model mismatch: if the upstream also downgrades the tier (cheaper model + downgraded tier),
+  // looking only at the Fast badge or only at the mismatch badge would miss the combined case.
   if (isFastTier(log.billing_service_tier || log.service_tier)) {
     titleLines.push(t('usage.modelMismatchFastTierHint'))
   }
@@ -126,8 +126,8 @@ function UpstreamResponseModelBadge({
   )
 }
 
-// 网关自身发起的请求按 internal_reason 细分:测连 / 降智检测 / 超窗摘要,
-// 其余未知原因统一显示为"内部请求"。
+// Requests the gateway itself initiates are broken down by internal_reason: test connection / intelligence-degradation check / over-window summary,
+// all other unknown reasons are shown uniformly as "internal request".
 const INTERNAL_REQUEST_PRESENTATION: Record<string, { labelKey: string; tooltipKey: string; Icon: typeof Brain }> = {
   scheduled_connection_test: { labelKey: 'usage.internalScheduledActivation', tooltipKey: 'usage.internalScheduledActivationTooltip', Icon: PlugZap },
   connection_test: { labelKey: 'usage.internalConnectionTest', tooltipKey: 'usage.internalConnectionTestTooltip', Icon: PlugZap },
@@ -187,7 +187,7 @@ type UsageStatusFilter = '' | '2xx' | 'error' | '4xx' | '5xx' | `${number}`
 type UsageRetryFilter = '' | 'false' | 'true'
 type UsageTransportFilter = '' | 'http' | 'ws'
 
-// 本页面局部的"自定义"区间标记。不污染全局 TimeRangeKey 类型 (Dashboard 等仍只识别预设档)。
+// A page-local "custom" range marker. It does not pollute the global TimeRangeKey type (Dashboard and others still recognize only the preset tiers).
 type UsageTimeRangeKey = UsagePresetRangeKey | 'custom'
 interface CustomRange {
   start: string // RFC3339 with offset
@@ -196,7 +196,7 @@ interface CustomRange {
 const CUSTOM_RANGE_MAX_DAYS = 90
 const CUSTOM_RANGE_MAX_MS = CUSTOM_RANGE_MAX_DAYS * 24 * 60 * 60 * 1000
 
-// datetime-local input 的字面值 ↔ Date 转换。input 本身没有时区,按本地时间解释。
+// Conversion between the literal value of a datetime-local input and Date. The input itself has no time zone, so it is read as local time.
 function dateToLocalInputValue(date: Date): string {
   const pad = (n: number) => String(n).padStart(2, '0')
   return `${date.getFullYear()}-${pad(date.getMonth() + 1)}-${pad(date.getDate())}T${pad(date.getHours())}:${pad(date.getMinutes())}`
@@ -307,12 +307,12 @@ function formatUsageAPIKeyLabel(name?: string, maskedKey?: string): string {
   return `${trimmedKey.slice(0, 4)}...${trimmedKey.slice(-4)}`
 }
 
-// 表格里可点击进入筛选的单元格(账号/模型):悬停变主色并加下划线提示可点。
+// Table cells that can be clicked to filter (account/model): on hover they switch to the primary color and get an underline to show they are clickable.
 const usageClickableFilterClass = 'cursor-pointer transition-colors hover:text-primary hover:underline underline-offset-2 decoration-dotted'
 
 function formatUsageAccountLabel(log: UsageLog): string {
-  // 邮箱优先：身份账号一律显示邮箱，账号名仅作为无邮箱账号的兜底。
-  // 避免 AT 导入未命名时的占位名（at-account-N 等）盖过真实邮箱身份。
+  // Email first: identity accounts always show their email; the account name is only a fallback for accounts without an email.
+  // Avoid letting the placeholder name used when an AT import is unnamed (at-account-N, etc.) override the real email identity.
   const accountEmail = log.account_email?.trim()
   if (accountEmail) {
     return formatCompactEmail(accountEmail)
@@ -411,8 +411,8 @@ function UsageCostCell({ log }: { log: UsageLog }) {
   const displayCost = userBilled > 0 ? userBilled : accountBilled
   const longContextThreshold = safeNumber(log.long_context_threshold)
   const requestedTier = log.requested_service_tier || ''
-  // legacy 行（三字段拆分前）只有 service_tier 可用；新行 actual 为空表示上游未回传，
-  // 不能回退到偏好请求意图的 legacy 列冒充“上游回传 Tier”。
+  // Legacy rows (from before the three-field split) only have service_tier available; for new rows, an empty actual means the upstream did not send it back,
+  // so it must not fall back to the legacy column that records the requested preference and pass it off as the "upstream returned tier".
   const actualTier = log.actual_service_tier || (requestedTier ? '' : log.service_tier || '')
   const billingTier = log.billing_service_tier || log.service_tier || ''
   const hasCostContext = log.status_code < 400 && (
@@ -520,8 +520,8 @@ function UsageCostCell({ log }: { log: UsageLog }) {
   )
 }
 
-// MediaUsageCost 是媒体行(用户按上游成本计费)的价格列:展示计费单位
-// (张数 / 视频秒数)与上游成本;视频提交行在完成时才结算,成功但无单价的行标"未定价"。
+// MediaUsageCost is the price column for media rows (the user is billed at upstream cost): it shows the billing unit
+// (image count / video seconds) and the upstream cost; video submission rows are settled only on completion, and rows that succeed but have no unit price are labeled "unpriced".
 function MediaUsageCost({ log, unit }: { log: UsageLog; unit: MediaBillingUnit }) {
   const { t } = useTranslation()
   const accountBilled = safeNumber(log.account_billed)
@@ -751,7 +751,7 @@ function EndpointStatsPanel({
       items={stats.map((item) => ({
         key: item.endpoint,
         label: item.endpoint,
-        // 端点是 URL 路径，用等宽字体更清晰
+        // The endpoint is a URL path, so a monospace font is clearer
         mono: true,
         requests: item.requests,
         tokens: item.tokens,
@@ -835,7 +835,7 @@ function DistributionPanel({
                     <div
                       className={cn(
                         "truncate text-sm font-semibold leading-tight tracking-tight text-foreground",
-                        // 端点是路径（代码性质）保留等宽；密钥名等宽显糙，用常规字体
+                        // The endpoint is a path (code-like), so keep it monospace; monospace makes key names look coarse, so use the regular font for them
                         item.mono && "font-geist-mono text-[13px]",
                       )}
                       title={item.label}
@@ -1036,7 +1036,7 @@ function UserAgentCell({ log, mobile = false }: { log: UsageLog; mobile?: boolea
       {statusLabel}
     </Badge>
   ) : null
-  // 客户端与上游 UA 完全一致且未改写:合成一行(C=U),两行会重复同一串字符串白占行高。
+  // The client and upstream UA are identical and not rewritten: merge them into one line (C=U); two lines would repeat the same string and waste row height.
   const sameUA = !log.user_agent_overridden && Boolean(clientUserAgent) && clientUserAgent === upstreamUserAgent
 
   const idLine = log.request_id ? (
@@ -1243,7 +1243,7 @@ const usageTableTextClass = 'text-[14px]'
 const usageTableMonoClass = 'font-mono text-[13px] tabular-nums'
 const usageTableBadgeClass = 'text-[13px]'
 
-// UsageTimeCell 时间列双色:日期弱化、时分秒突出,扫表时先看到时间;整串仍在 title。
+// UsageTimeCell time column in two colors: the date is muted and the hours, minutes and seconds stand out, so the time is seen first when scanning the table; the full string is still in the title.
 function UsageTimeCell({ value }: { value?: string | null }) {
   const full = formatBeijingTime(value)
   const m = /^(\d{4}-\d{2}-\d{2}) (\d{2}:\d{2}:\d{2})$/.exec(full)
@@ -1256,7 +1256,7 @@ function UsageTimeCell({ value }: { value?: string | null }) {
   )
 }
 
-// UsageEndpointText 端点列双色:公共前缀 /v1/ 弱化,真正区分请求类型的尾段突出。
+// UsageEndpointText endpoint column in two colors: the shared prefix /v1/ is muted, and the tail segment that actually tells request types apart stands out.
 function UsageEndpointText({ value }: { value: string }) {
   const m = /^(\/v\d+\/)(.+)$/.exec(value)
   if (!m) return <span className="text-muted-foreground">{value}</span>
@@ -1277,7 +1277,7 @@ function StreamBadge({ stream }: { stream: boolean }) {
         'border-transparent',
         stream
           ? 'bg-indigo-500/12 text-indigo-600 dark:bg-indigo-500/20 dark:text-indigo-400'
-          // 非流式是少数派,给琥珀色让它在一列 stream 里能被一眼挑出来
+          // Non-streaming is the minority, so it gets amber to stand out at a glance in a column of stream values
           : 'bg-amber-500/12 text-amber-700 dark:bg-amber-500/20 dark:text-amber-300',
       )}
     >
@@ -1356,12 +1356,12 @@ const USAGE_COLUMN_DEFINITIONS: Array<{ key: UsageTableColumn; labelKey: string 
   { key: 'timing', labelKey: 'usage.tableTiming' },
   { key: 'tokensPerSec', labelKey: 'usage.tableTokensPerSec' },
   { key: 'cost', labelKey: 'usage.tableCost' },
-  // 错误摘要宽度随内容波动，放倒数第二列避免撑开中段（issue #522）
+  // The error summary width varies with its content, so it goes in the second-to-last column to avoid stretching the middle (issue #522)
   { key: 'error', labelKey: 'usage.tableError' },
   { key: 'time', labelKey: 'usage.tableTime' },
 ]
 
-// 列设置菜单按这个顺序列出可选列，与表头顺序一致。
+// The column settings menu lists the optional columns in this order, matching the header order.
 const USAGE_TABLE_COLUMN_ORDER: readonly UsageTableColumn[] = USAGE_COLUMN_DEFINITIONS.map((column) => column.key)
 
 const USAGE_VISIBLE_COLUMNS_KEY = 'codex2api:usage:visible-columns'
@@ -1378,10 +1378,10 @@ const DEFAULT_USAGE_VISIBLE_COLUMNS: Record<UsageTableColumn, boolean> = {
   token: true,
   cost: true,
   cached: true,
-  // 取得连接耗时属于深挖排障信息，默认隐藏，需在列设置中手动开启
+  // Connection acquisition time is deep troubleshooting detail, so it is hidden by default and must be turned on manually in the column settings
   wsAcquire: false,
   tokensPerSec: true,
-  // 首字 + 总耗时聚合为「用时」一列
+  // First token and total duration are merged into one "time" column
   timing: true,
   time: true,
 }
@@ -1396,7 +1396,7 @@ function getInitialUsageVisibleColumns(): Record<UsageTableColumn, boolean> {
         for (const key of Object.keys(defaults) as UsageTableColumn[]) {
           if (key in parsed) defaults[key] = Boolean(parsed[key])
         }
-        // 兼容旧版独立「首字 / 总耗时」列：任一开启则聚合列开启
+        // Compatibility with the old separate "first token / total time" columns: if either is on, the merged column is on
         if (!('timing' in parsed)) {
           const oldFirst = 'firstToken' in parsed ? Boolean(parsed.firstToken) : true
           const oldDuration = 'duration' in parsed ? Boolean(parsed.duration) : true
@@ -1435,12 +1435,12 @@ export default function Usage() {
   const [filterEndpoint, setFilterEndpoint] = useState('')
   const [filterApiKeyId, setFilterApiKeyId] = useState('')
   const [filterAccountId, setFilterAccountId] = useState(getInitialUsageAccountID)
-  // 从表格行点击进入账号筛选时记住邮箱/名称,筛选 chip 显示可读身份而不是裸 ID;URL 带入的只有 ID。
+  // When an account filter is entered by clicking a table row, remember the email/name so the filter chip shows a readable identity instead of a bare ID; only the ID comes in from the URL.
   const [filterAccountLabel, setFilterAccountLabel] = useState('')
   const [filterFast, setFilterFast] = useState('')
   const [filterUltra, setFilterUltra] = useState('')
   const [filterModelMismatch, setFilterModelMismatch] = useState(false)
-  // 关闭「显示上游模型不一致」后，筛选参数不再带上这项；ref 让筛选回调不用等设置加载完再重建。
+  // After "show upstream model mismatch" is turned off, the filter parameters no longer include this item; the ref lets the filter callback avoid waiting for settings to load before it is rebuilt.
   const showUpstreamModelMismatchRef = useRef(true)
   const [filterType, setFilterType] = useState<UsageTypeFilter>('')
   const [filterErrorKind, setFilterErrorKind] = useState('')
@@ -1454,14 +1454,14 @@ export default function Usage() {
   const pageSizeOptions = DEFAULT_PAGE_SIZE_OPTIONS
   const searchTimer = useRef<ReturnType<typeof setTimeout>>(null)
   const [visibleColumns, setVisibleColumns] = useState<Record<UsageTableColumn, boolean>>(getInitialUsageVisibleColumns)
-  // 列设置菜单与账号管理页共用同一个组件，标签按当前语言从列定义里取。
+  // The column settings menu and the account management page share the same component; labels are taken from the column definitions in the current language.
   const usageColumnLabels = useMemo(
     () => Object.fromEntries(USAGE_COLUMN_DEFINITIONS.map((column) => [column.key, t(column.labelKey)])) as Record<UsageTableColumn, string>,
     [t],
   )
   const [showAnalysis, setShowAnalysis] = useState(getInitialAnalysisVisibility)
 
-  // 搜索防抖：输入停止 400ms 后触发查询
+  // Search debounce: the query fires 400ms after typing stops
   const handleSearchChange = useCallback((value: string) => {
     setSearchInput(value)
     if (searchTimer.current) clearTimeout(searchTimer.current)
@@ -1486,8 +1486,8 @@ export default function Usage() {
     }
   }, [])
 
-  // 维度筛选(时间范围 + 账号/密钥/模型/端点/搜索/形态):顶部区间卡片与下方请求记录共用。
-  // 状态类筛选(成功/错误/状态码)单独拼进列表参数,不影响卡片——卡片本身就按成功/错误拆分。
+  // Dimension filters (time range + account/key/model/endpoint/search/shape): shared by the top range cards and the request log below.
+  // Status filters (success/error/status code) are added to the list parameters separately and do not affect the cards, since the cards already split by success/error.
   const buildDimensionFilterParams = useCallback(() => {
     const { start, end } = resolveRangeISO(timeRange, customRange)
     return {
@@ -1518,14 +1518,14 @@ export default function Usage() {
     }
   }, [buildDimensionFilterParams, filterStatus, filterErrorKind])
 
-  // 选中某个账号(或密钥/模型/搜索)后,卡片只统计命中的请求;累计字段始终全局。
-  // 若 loadStats 依赖 buildDimensionFilterParams,则每次筛选变化都会让 useDataLoader
-  // 以非静默方式自动重跑,把整页换成骨架屏、卸载搜索框并丢失焦点,表现为"每输入一个字都像刷新页面"。
-  // 因此 loadStats 保持稳定引用(从 ref 读取最新筛选),首次加载仍走全页骨架屏,
-  // 后续筛选变化由下方 useEffect 用 reloadSilently 原地静默刷新,搜索框焦点不丢失。
+  // After selecting an account (or key/model/search), the cards count only the matching requests; cumulative fields are always global.
+  // If loadStats depends on buildDimensionFilterParams, every filter change makes useDataLoader
+  // automatically re-run in non-silent mode, swapping the whole page for a skeleton, unmounting the search box and losing focus, so it looks like "the page refreshes with every character typed".
+  // So loadStats keeps a stable reference (it reads the latest filters from a ref); the first load still shows the full-page skeleton,
+  // and later filter changes are refreshed in place and silently by the useEffect below using reloadSilently, so the search box keeps its focus.
   const statsFilterParamsRef = useRef(buildDimensionFilterParams)
   statsFilterParamsRef.current = buildDimensionFilterParams
-  // 每次维度筛选变化加一;加载结果带上发起时的版本号,用来判断卡片上的数字是不是当前筛选的。
+  // Incremented on each dimension filter change; load results carry the version number from when they started, which tells whether the numbers on the cards belong to the current filter.
   const statsFiltersVersionRef = useRef(0)
   const [statsFiltersVersion, setStatsFiltersVersion] = useState(0)
   const [statsLoadError, setStatsLoadError] = useState<string | null>(null)
@@ -1553,8 +1553,8 @@ export default function Usage() {
     setStatsLoadError(null)
   }, [data])
 
-  // 维度筛选(时间范围/账号/密钥/模型/端点/搜索/形态)变化时,静默原地刷新统计卡片:
-  // 保留页面与搜索框焦点,避免整页骨架屏闪烁;首次加载已由 useDataLoader 全页骨架屏承担。
+  // When dimension filters (time range/account/key/model/endpoint/search/shape) change, silently refresh the stat cards in place:
+  // keep the page and search box focus, avoiding a full-page skeleton flicker; the first load is already handled by useDataLoader's full-page skeleton.
   const statsFiltersFirstRunRef = useRef(true)
   useEffect(() => {
     if (statsFiltersFirstRunRef.current) {
@@ -1567,7 +1567,7 @@ export default function Usage() {
     void reloadSilently()
   }, [buildDimensionFilterParams, reloadSilently])
 
-  // 服务端分页加载日志
+  // Load logs with server-side pagination
   const loadLogs = useCallback(async () => {
     setLogsLoading(true)
     try {
@@ -1579,7 +1579,7 @@ export default function Usage() {
       setLogs(res.logs ?? [])
       setLogsTotal(res.total ?? 0)
     } catch {
-      // 静默容错
+      // Silently tolerate errors
     } finally {
       setLogsLoading(false)
     }
@@ -1599,7 +1599,7 @@ export default function Usage() {
     }
   }, [buildLogFilterParams])
 
-  // 首次加载 + timeRange/page 变更时重新拉取日志
+  // Fetch logs again on first load and whenever timeRange/page changes
   useEffect(() => {
     void loadLogs()
   }, [loadLogs])
@@ -1650,8 +1650,8 @@ export default function Usage() {
   }, [showAnalysis])
 
   const { stats, settings } = data
-  // 卡片还停留在上一组筛选的结果上:加载中先压暗,加载失败(慢库超时等)就遮住旧数字,
-  // 不能让旧区间的数字顶着新区间的标签显示。
+  // The cards still show the results of the previous filter set: dim them while loading, and if loading fails (e.g. a slow DB timeout), hide the old numbers,
+  // so old-range numbers are never shown under a new-range label.
   const statsOutdated = data.version !== statsFiltersVersion
   const statsOutdatedFailed = statsOutdated && statsLoadError !== null
   const showFullUsageNumbers = settings?.show_full_usage_numbers ?? false
@@ -1684,8 +1684,8 @@ export default function Usage() {
   const rangeAccountBilled = stats?.today_account_billed ?? 0
   const rangeUserBilled = stats?.today_user_billed ?? 0
   const modelStats = stats?.model_stats ?? []
-  // 统计现在跟随模型/账号等筛选,选中某个模型后 model_stats 只剩它自己;
-  // 下拉选项按渠道累积本会话见过的模型,避免筛选一次就把其它模型从下拉里挤掉。
+  // Stats now follow filters such as model/account; after selecting a model, model_stats contains only that model;
+  // dropdown options accumulate, per channel, the models seen in this session, so one filter does not push the other models out of the dropdown.
   const seenModelsRef = useRef<string[]>([])
   const seenModels = useMemo(() => {
     const merged = [...seenModelsRef.current]
@@ -1696,7 +1696,7 @@ export default function Usage() {
     seenModelsRef.current = merged
     return merged
   }, [modelStats])
-  // 下拉选项为 Codex manifest 目录，再并上当前范围实际用过的模型（统计已按渠道过滤），去重后目录顺序优先。
+  // Dropdown options are the Codex manifest catalog, merged with the models actually used in the current range (stats are already filtered by channel); after deduplication, catalog order takes precedence.
   const modelFilterOptions = useMemo(() => {
     const seen = new Set<string>()
     const merged: string[] = []
@@ -1708,7 +1708,7 @@ export default function Usage() {
     for (const key of seenModels) {
       if (!seen.has(key)) { seen.add(key); merged.push(key) }
     }
-    // 从表格行点进来的模型可能不在目录里,补进选项让下拉能显示当前选中值。
+    // A model reached by clicking a table row may not be in the catalog, so add it to the options so the dropdown can show the currently selected value.
     if (filterModel && !seen.has(filterModel)) merged.push(filterModel)
     return merged
   }, [modelOptions, seenModels, filterModel])
@@ -1761,7 +1761,7 @@ export default function Usage() {
     { label: t('usage.allApiKeys'), value: '' },
     ...apiKeys.map((apiKey) => ({ label: formatAPIKeyOptionLabel(apiKey), value: String(apiKey.id) })),
   ]
-  // 顶部主卡片展示当前区间; total_* 保留为清空日志基线叠加后的累计值。
+  // The top main card shows the current range; total_* stays as the cumulative value on top of the baseline set when logs were cleared.
   const rangeLabel = timeRange === 'custom'
     ? t('usage.customRange')
     : timeRange === 'today'
@@ -1789,7 +1789,7 @@ export default function Usage() {
     setPage(1)
   }
 
-  // 表格行的账号/模型可点击:点一下按它筛选,再点同一个取消。
+  // Account and model in table rows are clickable: one click filters by it, and clicking the same one again clears the filter.
   const toggleAccountFilter = useCallback((log: UsageLog) => {
     if (!(log.account_id > 0)) return
     const nextId = String(log.account_id)
@@ -2076,7 +2076,7 @@ export default function Usage() {
               </div>
             </div>
 
-            {/* 状态快速筛选 */}
+            {/* Quick status filter */}
             <div className="mb-3 flex flex-wrap items-center gap-1.5">
               {statusFilterOptions.map((option) => (
                 <button
@@ -2107,7 +2107,7 @@ export default function Usage() {
               ) : null}
             </div>
 
-            {/* 错误摘要：不受上方状态按钮影响，便于在各错误类别之间快速切换 */}
+            {/* Error summary: not affected by the status buttons above, so you can quickly switch between error categories */}
             {errorSummary && errorSummary.total_errors > 0 ? (
               <div className="mb-3 grid grid-cols-2 gap-2 sm:grid-cols-4 xl:grid-cols-7">
                 {[
@@ -2141,7 +2141,7 @@ export default function Usage() {
               </div>
             ) : null}
 
-            {/* 主筛选栏 */}
+            {/* Main filter bar */}
             <div className="toolbar-surface mb-4 overflow-visible">
               <div className="flex flex-wrap items-center gap-2 max-lg:gap-1.5">
                 <div className="relative min-w-60 flex-1 max-sm:w-full">
@@ -2363,7 +2363,7 @@ export default function Usage() {
               emptyTitle={t('usage.emptyTitle')}
               emptyDescription={hasActiveFilters ? t('usage.emptyFilteredDesc') : t('usage.emptyDesc')}
             >
-              {/* 手机日志卡片：显式单列避免长 UA / 模型名撑宽隐式 Grid 列。 */}
+              {/* Mobile log card: an explicit single column stops long UA / model names from widening the implicit grid column. */}
               <TooltipProvider>
               <div className="grid grid-cols-1 gap-3 lg:hidden">
                 {logs.map((log: UsageLog) => {
@@ -2374,7 +2374,7 @@ export default function Usage() {
                       key={log.id}
                       className="min-w-0 rounded-xl border border-border bg-background/70 p-3.5 shadow-sm"
                     >
-                      {/* flex-wrap + nowrap 时间：徽标再多也只会把时间挤到下一行，不会挤出视口（issue #522） */}
+                      {/* flex-wrap + nowrap time: however many badges there are, they only push the time onto the next line and never push it out of the viewport (issue #522) */}
                       <div className="flex flex-wrap items-start justify-between gap-2">
                         <div className="flex min-w-0 max-w-full flex-wrap items-center gap-1.5">
                           {visibleColumns.status && (
@@ -2710,7 +2710,7 @@ export default function Usage() {
                         {visibleColumns.endpoint && <TableCell>
                           <div
                             className={`${usageTableMonoClass} leading-relaxed`}
-                            // 完整上游 URL 收进 tooltip，列内只显示入站端点
+                            // The full upstream URL goes into the tooltip; the column shows only the inbound endpoint
                             title={
                               log.upstream_endpoint && log.upstream_endpoint !== log.inbound_endpoint
                                 ? `→ ${log.upstream_endpoint}`
@@ -2810,8 +2810,8 @@ export default function Usage() {
   )
 }
 
-// CustomRangePopover 通过 React portal 渲染在 body 下,不受外层 overflow 裁切。
-// 位置根据触发按钮 rect 计算,自动避开右边界。
+// CustomRangePopover renders under body through a React portal, so outer overflow does not clip it.
+// The position is computed from the trigger button's rect, and it automatically avoids the right edge.
 function CustomRangePopover({
   anchorRef,
   initial,
@@ -2842,7 +2842,7 @@ function CustomRangePopover({
     if (!anchor) return
     const rect = anchor.getBoundingClientRect()
     const top = rect.bottom + 6
-    // 默认让 popover 右边对齐 anchor 右边;若超出窗口左边,夹到 8px 边距。
+    // By default the popover's right edge aligns with the anchor's right edge; if it would overflow the window's left edge, clamp it to an 8px margin.
     const desiredLeft = rect.right - POPOVER_WIDTH
     const left = Math.max(8, Math.min(window.innerWidth - POPOVER_WIDTH - 8, desiredLeft))
     setPosition({ top, left })
