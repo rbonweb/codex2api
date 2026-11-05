@@ -20,8 +20,6 @@ import {
 } from "../lib/accountProxyBinding";
 import Modal from "../components/Modal";
 import ChannelLogo from "../components/ChannelLogo";
-import { useVisibleChannels } from "../visibleChannels";
-import ModelLogo from "../components/ModelLogo";
 import OperationResultsModal from "../components/OperationResultsModal";
 import { cn } from "@/lib/utils";
 import TestConnectionModal from "../components/TestConnectionModal";
@@ -33,9 +31,6 @@ import {
   isConnectionTestModel,
   uniqueTestModels,
 } from "../lib/connectionTestModels";
-import GrokAccounts from "./GrokAccounts";
-import AntigravityAccounts from "./AntigravityAccounts";
-import ClaudeAccounts from "./ClaudeAccounts";
 import { mergeAccountLiveState, useAccountLiveState } from "../hooks/useAccountLiveState";
 import PageHeader from "../components/PageHeader";
 import {
@@ -64,12 +59,7 @@ import type {
   AccountHealthBucket,
   AddAccountRequest,
   AddATAccountRequest,
-  AddOpenAIResponsesAccountRequest,
-  CodexClientMetadataMode,
-  CodexPassthroughMode,
-  ResponsesUpstreamTransport,
   CodexFingerprintMode,
-  UpdateOpenAIResponsesAccountRequest,
   APIKeyRow,
   AccountAnalysisResponse,
   AccountGroup,
@@ -82,8 +72,6 @@ import type {
   AccountPageStatsItem,
   AccountLiveStateResponse,
   UpstreamChannel,
-  OpenAIResponsesBalanceResponse,
-  ChannelMonitorBillingSnapshot,
   SubscriptionFilter,
 } from "../types";
 import { SUBSCRIPTION_FILTER_OPTIONS } from "../types";
@@ -102,10 +90,6 @@ import {
   type AccountOperationResultsState,
 } from "../lib/accountOperationResults";
 import { operationProgressMessage } from "../lib/operationProgressMessage";
-import {
-  formatChannelMonitorMultiplier,
-  resolveChannelMonitorRate,
-} from "../lib/channelMonitorBilling";
 import {
   readOperationResultsVisibility,
   writeOperationResultsVisibility,
@@ -230,16 +214,8 @@ import {
   Activity,
   Shield,
   ArrowUpRight,
-  Settings2,
   ListChecks,
-  RadioTower,
 } from "lucide-react";
-import {
-  CLAUDE_TIMEZONE_CUSTOM,
-  CLAUDE_TIMEZONE_OPTIONS,
-  claudeTimezoneLabel,
-  findClaudeTimezoneOption,
-} from "../lib/claudeAccountOptions";
 import { useTranslation } from "react-i18next";
 import AccountUsageModal from "../components/AccountUsageModal";
 import AccountHealthBar from "../components/AccountHealthBar";
@@ -260,7 +236,6 @@ import AccountQuotaDistributionChart from "../components/AccountQuotaDistributio
 import AccountRateLimitRecoveryChart from "../components/AccountRateLimitRecoveryChart";
 import AccountGroupMultiSelect from "../components/AccountGroupMultiSelect";
 import AccountQuickConfigSheet from "../components/AccountQuickConfigSheet";
-import ChannelMonitorConfigDialog from "../components/ChannelMonitorConfigDialog";
 import { useImportGroupIds } from "../hooks/useImportGroupIds";
 import AccountGroupFilterSelect, {
   EMPTY_ACCOUNT_GROUP_FILTER,
@@ -278,67 +253,6 @@ const OPERATION_PROGRESS_FLUSH_INTERVAL_MS = 200;
 // multipart 边界与其它表单字段),避免单个请求体触发后端上限。
 const IMPORT_MAX_FILE_BYTES = 200 * 1024 * 1024;
 const IMPORT_BATCH_MAX_BYTES = 150 * 1024 * 1024;
-const API_BALANCE_CACHE_TTL_MS = 60_000;
-const API_BALANCE_ERROR_CACHE_TTL_MS = 15_000;
-
-type APIBalanceLoadState = {
-  loading: boolean;
-  data?: OpenAIResponsesBalanceResponse;
-  error?: string;
-};
-
-const apiBalanceCache = new Map<
-  number,
-  { expiresAt: number; state: APIBalanceLoadState }
->();
-const apiBalanceInflight = new Map<number, Promise<APIBalanceLoadState>>();
-
-function invalidateAPIAccountBalance(accountId: number) {
-  apiBalanceCache.delete(accountId);
-}
-
-function loadAPIAccountBalance(
-  accountId: number,
-  force = false,
-): Promise<APIBalanceLoadState> {
-  if (force) invalidateAPIAccountBalance(accountId);
-  const cached = apiBalanceCache.get(accountId);
-  if (cached && cached.expiresAt > Date.now()) {
-    return Promise.resolve(cached.state);
-  }
-  if (!force) {
-    const inflight = apiBalanceInflight.get(accountId);
-    if (inflight) return inflight;
-  }
-
-  let promise: Promise<APIBalanceLoadState>;
-  promise = api
-    .getOpenAIResponsesBalance(accountId, undefined, force)
-    .then<APIBalanceLoadState>((data) => ({ loading: false, data }))
-    .catch<APIBalanceLoadState>((error) => ({
-      loading: false,
-      error: getErrorMessage(error),
-    }))
-    .then((state) => {
-      if (apiBalanceInflight.get(accountId) === promise) {
-        apiBalanceCache.set(accountId, {
-          expiresAt:
-            Date.now() +
-            (state.data ? API_BALANCE_CACHE_TTL_MS : API_BALANCE_ERROR_CACHE_TTL_MS),
-          state,
-        });
-      }
-      return state;
-    })
-    .finally(() => {
-      if (apiBalanceInflight.get(accountId) === promise) {
-        apiBalanceInflight.delete(accountId);
-      }
-    });
-  apiBalanceInflight.set(accountId, promise);
-  return promise;
-}
-
 const formatMB = (bytes: number): string =>
   `${Math.round(bytes / (1024 * 1024))}MB`;
 
@@ -655,9 +569,44 @@ function parseModelTokens(value: string): string[] {
     });
 }
 
-/** Codex 官方 OAuth/AT 账号（非 OpenAI Responses 中转、非 Grok），即走 Codex 出站路径的账号。 */
-function isCodexOfficialAccount(account: AccountRow): boolean {
-  return !account.openai_responses_api && !account.grok_api;
+const TIMEZONE_CUSTOM = "__custom__";
+
+interface TimezoneOption {
+  value: string;
+  label: string;
+}
+
+/** 常用 IANA 时区，列出 UTC 偏移，便于不熟悉 IANA 名称的运维直接选择；接口仍接受任意有效的 IANA 名称。 */
+const TIMEZONE_OPTIONS: TimezoneOption[] = [
+  { value: "UTC", label: "UTC+00:00 · UTC" },
+  { value: "America/Los_Angeles", label: "UTC−08:00 (standard) · America/Los_Angeles" },
+  { value: "America/Denver", label: "UTC−07:00 (standard) · America/Denver" },
+  { value: "America/Chicago", label: "UTC−06:00 (standard) · America/Chicago" },
+  { value: "America/New_York", label: "UTC−05:00 (standard) · America/New_York" },
+  { value: "America/Sao_Paulo", label: "UTC−03:00 · America/Sao_Paulo" },
+  { value: "Europe/London", label: "UTC+00:00 (standard) · Europe/London" },
+  { value: "Europe/Berlin", label: "UTC+01:00 (standard) · Europe/Berlin" },
+  { value: "Europe/Moscow", label: "UTC+03:00 · Europe/Moscow" },
+  { value: "Asia/Dubai", label: "UTC+04:00 · Asia/Dubai" },
+  { value: "Asia/Kolkata", label: "UTC+05:30 · Asia/Kolkata" },
+  { value: "Asia/Bangkok", label: "UTC+07:00 · Asia/Bangkok" },
+  { value: "Asia/Shanghai", label: "UTC+08:00 · Asia/Shanghai" },
+  { value: "Asia/Singapore", label: "UTC+08:00 · Asia/Singapore" },
+  { value: "Asia/Tokyo", label: "UTC+09:00 · Asia/Tokyo" },
+  { value: "Australia/Sydney", label: "UTC+10:00 (standard) · Australia/Sydney" },
+  { value: "Pacific/Auckland", label: "UTC+12:00 (standard) · Pacific/Auckland" },
+];
+
+function findTimezoneOption(value: string | null | undefined): TimezoneOption | undefined {
+  const normalized = value?.trim() ?? "";
+  if (!normalized) return undefined;
+  return TIMEZONE_OPTIONS.find((option) => option.value === normalized);
+}
+
+function timezoneLabel(value: string | null | undefined): string {
+  const normalized = value?.trim() ?? "";
+  if (!normalized) return "";
+  return findTimezoneOption(normalized)?.label ?? normalized;
 }
 
 interface TimezoneSelectProps {
@@ -668,7 +617,7 @@ interface TimezoneSelectProps {
   disabled?: boolean;
 }
 
-/** 绑定时区下拉：常用 IANA 时区 + 自定义输入，与 Claude 账号页同一套选项。 */
+/** 绑定时区下拉：常用 IANA 时区 + 自定义输入。 */
 function TimezoneSelect({
   value,
   custom,
@@ -678,18 +627,18 @@ function TimezoneSelect({
 }: TimezoneSelectProps) {
   const { t } = useTranslation();
   const choice = custom
-    ? CLAUDE_TIMEZONE_CUSTOM
-    : (findClaudeTimezoneOption(value)?.value ??
-      (value.trim() ? CLAUDE_TIMEZONE_CUSTOM : ""));
+    ? TIMEZONE_CUSTOM
+    : (findTimezoneOption(value)?.value ??
+      (value.trim() ? TIMEZONE_CUSTOM : ""));
   return (
     <div className="mt-3 space-y-1.5">
       <Select
         value={choice}
         disabled={disabled}
         onValueChange={(next) => {
-          if (next === CLAUDE_TIMEZONE_CUSTOM) {
+          if (next === TIMEZONE_CUSTOM) {
             onCustomChange(true);
-            if (findClaudeTimezoneOption(value)) onChange("");
+            if (findTimezoneOption(value)) onChange("");
             return;
           }
           onCustomChange(false);
@@ -697,13 +646,13 @@ function TimezoneSelect({
         }}
         options={[
           { value: "", label: t("accounts.codexTimezoneUnset") },
-          ...CLAUDE_TIMEZONE_OPTIONS,
-          { value: CLAUDE_TIMEZONE_CUSTOM, label: t("accounts.codexTimezoneCustom") },
+          ...TIMEZONE_OPTIONS,
+          { value: TIMEZONE_CUSTOM, label: t("accounts.codexTimezoneCustom") },
         ]}
       />
-      {findClaudeTimezoneOption(value) ? (
+      {findTimezoneOption(value) ? (
         <p className="text-[10px] text-muted-foreground">
-          {claudeTimezoneLabel(value)}
+          {timezoneLabel(value)}
         </p>
       ) : null}
       {custom ? (
@@ -853,16 +802,6 @@ function serializeModelMappingEntries(
   return { ok: true, value: JSON.stringify(out, null, 2) };
 }
 
-function resolveModelMappingValue(
-  mode: ModelMappingMode,
-  text: string,
-  entries: ModelMappingEntry[],
-): ModelMappingParseResult {
-  return mode === "json"
-    ? parseModelMappingText(text)
-    : serializeModelMappingEntries(entries);
-}
-
 function mergeModelLists(current: string[], incoming: string[]): string[] {
   const seen = new Set<string>();
   const result: string[] = [];
@@ -881,14 +820,9 @@ function isOAuthAccount(account: AccountRow | null): boolean {
   return account?.account_type === "oauth";
 }
 
-// 跳转链接图标只给 API Key 类账号（有 api-base 可回退）；OAuth 账号不显示，
-// 除非已配置过自定义链接（否则失去打开/清除入口）。
+// 跳转链接图标仅在已配置自定义链接时显示（否则没有打开/清除入口）。
 function showsAccountHrefLink(account: AccountRow): boolean {
-  return Boolean(
-    account.openai_responses_api ||
-      account.grok_api ||
-      account.account_href?.trim(),
-  );
+  return Boolean(account.account_href?.trim());
 }
 
 function parseOAuthCallbackParams(rawUrl: string): { code: string; state: string } {
@@ -1111,7 +1045,6 @@ interface AccountRowActions {
   openDetail: (account: AccountRow) => void;
   openSchedulerEditor: (account: AccountRow) => void;
   openQuickConfig: (account: AccountRow) => void;
-  openChannelMonitor: (account: AccountRow) => void;
   openQuickGroupEditor: (account: AccountRow) => void;
   openQuickProxyEditor: (account: AccountRow) => void;
   openHrefEditor: (account: AccountRow) => void;
@@ -1171,7 +1104,6 @@ function useCountdownRemaining(until?: string): string {
 // 整树重渲染;行数据没变时这里直接跳过,交互卡顿的大头就在这。
 const AccountTableRow = memo(function AccountTableRow({
   account,
-  channelMonitorBilling,
   sequence,
   selected,
   detailOpen,
@@ -1189,7 +1121,6 @@ const AccountTableRow = memo(function AccountTableRow({
   actions,
 }: {
   account: AccountRow;
-  channelMonitorBilling?: ChannelMonitorBillingSnapshot;
   sequence: number;
   selected: boolean;
   detailOpen: boolean;
@@ -1287,11 +1218,7 @@ const AccountTableRow = memo(function AccountTableRow({
                               <TableCell className="min-w-[220px] whitespace-normal text-[14px] text-muted-foreground">
                                 <div className="flex min-w-0 items-center gap-2.5">
                                 <span className="flex size-8 shrink-0 items-center justify-center overflow-hidden rounded-lg bg-card ring-1 ring-border shadow-sm">
-                                  {account.openai_responses_api ? (
-                                    <ModelLogo model="openai" variant="plain" size={17} />
-                                  ) : (
-                                    <ChannelLogo channel="codex" size={32} className="rounded-lg" />
-                                  )}
+                                  <ChannelLogo channel="codex" size={32} className="rounded-lg" />
                                 </span>
                                 <div className="flex min-w-0 flex-col items-start gap-1">
                                   <div className="flex max-w-full items-start gap-1">
@@ -1304,9 +1231,7 @@ const AccountTableRow = memo(function AccountTableRow({
                                         actions.openDetail(account);
                                       }}
                                     >
-                                      {account.openai_responses_api || account.grok_api
-                                        ? formatAccountName(account)
-                                        : formatAccountListEmail(account)}
+                                      {formatAccountListEmail(account)}
                                     </button>
                                     {showsAccountHrefLink(account) && (
                                       <button
@@ -1315,8 +1240,8 @@ const AccountTableRow = memo(function AccountTableRow({
                                         title={t("accounts.hrefClickHint")}
                                         onClick={(event) => {
                                           event.stopPropagation();
-                                          // 点击 = 跳转（account_href → base_url
-                                          // 回退）；Alt/Option+点击 = 打开配置弹窗。
+                                          // 点击 = 跳转（account_href）；
+                                          // Alt/Option+点击 = 打开配置弹窗。
                                           if (event.altKey) {
                                             actions.openHrefEditor(account);
                                           } else {
@@ -1359,8 +1284,6 @@ const AccountTableRow = memo(function AccountTableRow({
                                     <DaybreakBadge models={account.daybreak_models} />
                                   </div>
                                   {(account.at_only ||
-                                    account.openai_responses_api ||
-                                    account.grok_api ||
                                     account.agent_identity ||
                                     account.locked ||
                                     (account.rate_limit_reset_credits ?? 0) >
@@ -1377,17 +1300,6 @@ const AccountTableRow = memo(function AccountTableRow({
                                         <span className="inline-flex items-center gap-0.5 rounded-md bg-blue-50 px-1.5 py-0.5 text-[10px] font-medium text-blue-700 ring-1 ring-inset ring-blue-600/20 dark:bg-blue-950 dark:text-blue-400 dark:ring-blue-400/20">
                                           <Fingerprint className="size-2.5" />
                                           Agent Identity
-                                        </span>
-                                      )}
-                                      {account.openai_responses_api && (
-                                        <span className="inline-flex items-center rounded-md bg-emerald-50 px-1.5 py-0.5 text-[10px] font-medium text-emerald-700 ring-1 ring-inset ring-emerald-600/20 dark:bg-emerald-950 dark:text-emerald-400 dark:ring-emerald-400/20">
-                                          Responses API
-                                        </span>
-                                      )}
-                                      {account.grok_api && (
-                                        <span className="inline-flex items-center gap-0.5 rounded-md bg-zinc-900 px-1.5 py-0.5 text-[10px] font-medium text-white ring-1 ring-inset ring-zinc-700 dark:bg-white dark:text-zinc-900 dark:ring-zinc-300">
-                                          <Sparkles className="size-2.5" />
-                                          Grok
                                         </span>
                                       )}
                                       {account.locked && (
@@ -1592,7 +1504,6 @@ const AccountTableRow = memo(function AccountTableRow({
                               <TableCell className="text-[13px] text-muted-foreground whitespace-nowrap">
                                 <BilledCell
                                   account={account}
-                                  channelMonitorBilling={channelMonitorBilling}
                                   onOpenOfficial={actions.openOfficialUsage}
                                 />
                               </TableCell>
@@ -1685,9 +1596,6 @@ const AccountTableRow = memo(function AccountTableRow({
                                     includeDelete={false}
                                     onTest={() => actions.openTesting(account)}
                                     onDetect={() => actions.openDetector(account)}
-                                    onChannelMonitor={() =>
-                                      actions.openChannelMonitor(account)
-                                    }
                                     onRefresh={() => actions.refresh(account)}
                                     onGenerateAuthJson={() =>
                                       actions.generateAuthJson(account)
@@ -1718,7 +1626,6 @@ const AccountTableRow = memo(function AccountTableRow({
 // 行数据不变则整卡跳过。
 const AccountCardItem = memo(function AccountCardItem({
   account,
-  channelMonitorBilling,
   sequence,
   selected,
   detailOpen,
@@ -1737,7 +1644,6 @@ const AccountCardItem = memo(function AccountCardItem({
   actions,
 }: {
   account: AccountRow;
-  channelMonitorBilling?: ChannelMonitorBillingSnapshot;
   sequence: number;
   selected: boolean;
   detailOpen: boolean;
@@ -1758,7 +1664,6 @@ const AccountCardItem = memo(function AccountCardItem({
   return (
     <AccountMobileCard
       account={account}
-      channelMonitorBilling={channelMonitorBilling}
       sequence={sequence}
       selected={selected}
       detailOpen={detailOpen}
@@ -1783,7 +1688,6 @@ const AccountCardItem = memo(function AccountCardItem({
       onEditProxy={() => actions.openQuickProxyEditor(account)}
       onUsage={() => actions.openUsage(account)}
       onOpenOfficialUsage={() => actions.openOfficialUsage(account)}
-      onChannelMonitor={() => actions.openChannelMonitor(account)}
       onTest={() => actions.openTesting(account)}
       onDetect={() => actions.openDetector(account)}
       onRefresh={() => actions.refresh(account)}
@@ -1803,10 +1707,9 @@ export default function Accounts() {
   const { t } = useTranslation();
   const pageSizeOptions = DEFAULT_PAGE_SIZE_OPTIONS;
   const [showAdd, setShowAdd] = useState(false);
-  // providerView 由路由驱动，刷新浏览器后停留在当前上游视图。
   const location = useLocation();
   const navigate = useNavigate();
-  // ?groupManager=1 深链直接打开分组管理器(Grok 页的「管理分组」跳转入口,issue #487)。
+  // ?groupManager=1 深链直接打开分组管理器。
   useEffect(() => {
     const params = new URLSearchParams(location.search);
     if (params.get("groupManager") === "1") {
@@ -1820,12 +1723,12 @@ export default function Accounts() {
     }
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [location.search]);
-  // ?pending=1 落到 Codex 账号页审核区（API Keys 门户卡片 / Grok 横幅共用）。
+  // ?pending=1 落到 Codex 账号页审核区（API Keys 门户卡片共用）。
   useEffect(() => {
     const params = new URLSearchParams(location.search);
     if (params.get("pending") !== "1") return;
     const path = location.pathname.replace(/\/+$/, "");
-    if (path.endsWith("/accounts/grok") || path.endsWith("/accounts/invite")) {
+    if (path.endsWith("/accounts/invite")) {
       navigate({ pathname: "/accounts", search: "?pending=1" }, { replace: true });
       return;
     }
@@ -1835,33 +1738,7 @@ export default function Accounts() {
     return () => window.clearTimeout(timer);
   }, [location.pathname, location.search, navigate]);
   const normalizedPath = location.pathname.replace(/\/+$/, "");
-  const providerView: UpstreamChannel = normalizedPath.endsWith("/accounts/grok")
-    ? "grok"
-    : normalizedPath.endsWith("/accounts/antigravity")
-      ? "antigravity"
-      : normalizedPath.endsWith("/accounts/claude")
-        ? "claude"
-        : "codex";
-  const { channels: visibleChannels, isChannelVisible } = useVisibleChannels();
-  // 设置页隐藏了某个渠道后，直接打开它的账号路由要回落到 Codex 视图。
-  useEffect(() => {
-    if (!isChannelVisible(providerView)) navigate("/accounts", { replace: true });
-  }, [isChannelVisible, navigate, providerView]);
-  const setProviderView = useCallback(
-    (view: UpstreamChannel) => {
-      navigate(
-        view === "grok"
-          ? "/accounts/grok"
-          : view === "antigravity"
-            ? "/accounts/antigravity"
-            : view === "claude"
-              ? "/accounts/claude"
-              : "/accounts",
-      );
-    },
-    [navigate],
-  );
-  // Codex 邀请视图同样由路由驱动（/accounts/invite），与 Grok 视图一致：
+  // Codex 邀请视图由路由驱动（/accounts/invite）：
   // 可直接分享链接、刷新浏览器停在原处、浏览器返回键能退回账号列表。
   const showInvite = normalizedPath.endsWith("/accounts/invite");
   const setShowInvite = useCallback(
@@ -1982,7 +1859,6 @@ export default function Accounts() {
   const [testingAccount, setTestingAccount] = useState<AccountRow | null>(null);
   const [detectorAccount, setDetectorAccount] = useState<AccountRow | null>(null);
   const [quickConfigAccount, setQuickConfigAccount] = useState<AccountRow | null>(null);
-  const [channelMonitorAccount, setChannelMonitorAccount] = useState<AccountRow | null>(null);
   const [usageAccount, setUsageAccount] = useState<AccountRow | null>(null);
   // 用量弹窗打开时停在哪个 tab。列表里点「官方结算」成本直接落到官方统计,
   // 其余入口保持默认的概览。
@@ -2031,7 +1907,6 @@ export default function Accounts() {
   // （选择器为空时自动隐藏，不影响手动填代理）。
   const [proxyPool, setProxyPool] = useState<ProxyRow[]>([]);
   useEffect(() => {
-    if (providerView !== "codex") return;
     let cancelled = false;
     void api
       .listProxies()
@@ -2044,28 +1919,7 @@ export default function Accounts() {
     return () => {
       cancelled = true;
     };
-  }, [providerView]);
-  const [editOpenAIForm, setEditOpenAIForm] =
-    useState<UpdateOpenAIResponsesAccountRequest>({
-      name: "",
-      base_url: "https://api.openai.com",
-      api_key: "",
-      balance_query_url: "",
-      models: [],
-      codex_client_metadata_mode: "auto",
-      codex_passthrough_mode: "off",
-      responses_upstream_transport: "http",
-      proxy_url: "",
-    });
-  const [openAIModelDraft, setOpenAIModelDraft] = useState("");
-  const [editOpenAIModelDraft, setEditOpenAIModelDraft] = useState("");
-  const [editOpenAIModelMappingText, setEditOpenAIModelMappingText] =
-    useState("");
-  const [editOpenAIModelMappingMode, setEditOpenAIModelMappingMode] =
-    useState<ModelMappingMode>("form");
-  const [editOpenAIModelMappingEntries, setEditOpenAIModelMappingEntries] =
-    useState<ModelMappingEntry[]>(emptyModelMappingEntries);
-  const [editOpenAIModelsLoading, setEditOpenAIModelsLoading] = useState(false);
+  }, []);
   const [importing, setImporting] = useState(false);
   const [showImportPicker, setShowImportPicker] = useState(false);
   const [importProxyUrl, setImportProxyUrl] = useState("");
@@ -2122,7 +1976,7 @@ export default function Accounts() {
     ids: [],
   });
   const [addMethod, setAddMethod] = useState<
-    "rt" | "st" | "at" | "session" | "openai" | "oauth" | "agentIdentity"
+    "rt" | "st" | "at" | "session" | "oauth" | "agentIdentity"
   >("oauth");
   const [agentIdentityJson, setAgentIdentityJson] = useState("");
   const [agentIdentityProxyUrl, setAgentIdentityProxyUrl] = useState("");
@@ -2146,24 +2000,6 @@ export default function Accounts() {
   // 采用文件内代理：勾选后 JSON 文件里带的 proxy_url 生效，并自动注册进代理池。
   // 只对 JSON 系格式有意义，TXT 一行一个 token 物理上带不了代理。
   const [importFileProxies, setImportFileProxies] = useState(false);
-  const [openAIForm, setOpenAIForm] =
-    useState<AddOpenAIResponsesAccountRequest>({
-      base_url: "https://api.openai.com",
-      api_key: "",
-      balance_query_url: "",
-      models: [],
-      codex_client_metadata_mode: "auto",
-      codex_passthrough_mode: "off",
-      responses_upstream_transport: "http",
-      proxy_url: "",
-    });
-  const [openAIModelMappingText, setOpenAIModelMappingText] = useState("");
-  const [openAIModelMappingMode, setOpenAIModelMappingMode] =
-    useState<ModelMappingMode>("form");
-  const [openAIModelMappingEntries, setOpenAIModelMappingEntries] = useState<
-    ModelMappingEntry[]
-  >(emptyModelMappingEntries);
-  const [openAIModelsLoading, setOpenAIModelsLoading] = useState(false);
   const [oauthStep, setOauthStep] = useState<"generate" | "exchange">(
     "generate",
   );
@@ -2198,7 +2034,7 @@ export default function Accounts() {
   const [quickProxyAccount, setQuickProxyAccount] = useState<AccountRow | null>(
     null,
   );
-  // 跳转地址快捷编辑：配置 account_href 或回退打开 base_url。
+  // 跳转地址快捷编辑：配置 account_href。
   const [hrefAccount, setHrefAccount] = useState<AccountRow | null>(null);
   // OAuth 账号“支持模型”白名单编辑器状态;空白名单表示该账号可调度所有模型。
   const [modelsAccount, setModelsAccount] = useState<AccountRow | null>(null);
@@ -2246,7 +2082,6 @@ export default function Accounts() {
   const [lazyMode, setLazyMode] = useState(false);
   const [accountPortalEnabled, setAccountPortalEnabled] = useState(false);
   const [panelPendingCount, setPanelPendingCount] = useState(0);
-  const [grokSelfServicePending, setGrokSelfServicePending] = useState(0);
   // 导入/添加账号时直接绑定的分组（记住上次选择，添加弹窗与导入弹窗共用，与 allowDuplicate 同风格）。
   const {
     groupIds: importGroupIds,
@@ -2329,7 +2164,7 @@ export default function Accounts() {
   const selectAllRef = useRef<HTMLInputElement>(null);
   const { toast, showToast } = useToast();
   const { confirm, confirmDialog } = useConfirmDialog();
-  // 代理字段统一走 ProxyField(手填+测试+代理池下拉),与 Grok/Claude/Antigravity 同构。
+  // 代理字段统一走 ProxyField(手填+测试+代理池下拉)。
   const renderProxyInput = ({
     value,
     onChange,
@@ -2417,193 +2252,6 @@ export default function Accounts() {
       </p>
     </div>
   );
-
-  const renderModelMappingEditor = ({
-    value,
-    onChange,
-    mode,
-    onModeChange,
-    entries,
-    onEntriesChange,
-  }: {
-    value: string;
-    onChange: (value: string) => void;
-    mode: ModelMappingMode;
-    onModeChange: (value: ModelMappingMode) => void;
-    entries: ModelMappingEntry[];
-    onEntriesChange: (value: ModelMappingEntry[]) => void;
-  }) => {
-    const switchToForm = () => {
-      const parsed = parseModelMappingEntries(value);
-      if (!parsed.ok) {
-        showToast("当前 JSON 无法转成填空模式，请先修正 JSON", "error");
-        return;
-      }
-      onEntriesChange(parsed.entries);
-      onModeChange("form");
-    };
-
-    const switchToJSON = () => {
-      const serialized = serializeModelMappingEntries(entries);
-      if (!serialized.ok) {
-        showToast("模型映射行必须成对填写，源模型不能重复", "error");
-        return;
-      }
-      onChange(serialized.value);
-      onModeChange("json");
-    };
-
-    const updateEntry = (
-      index: number,
-      field: keyof ModelMappingEntry,
-      nextValue: string,
-    ) => {
-      onEntriesChange(
-        entries.map((entry, entryIndex) =>
-          entryIndex === index ? { ...entry, [field]: nextValue } : entry,
-        ),
-      );
-    };
-
-    const removeEntry = (index: number) => {
-      const next = entries.filter((_, entryIndex) => entryIndex !== index);
-      onEntriesChange(next.length > 0 ? next : emptyModelMappingEntries());
-    };
-
-    const insertTemplate = () => {
-      if (mode === "json") {
-        onChange(MODEL_MAPPING_PLACEHOLDER);
-        return;
-      }
-      onEntriesChange([
-        { from: "client-model", to: "upstream-model" },
-        { from: "legacy-*", to: "gpt-4.1" },
-      ]);
-    };
-
-    return (
-      <div>
-      <div className="flex items-center justify-between mb-2">
-        <label className="block text-sm font-semibold text-muted-foreground">
-          单渠道模型映射
-        </label>
-        <div className="flex items-center gap-2">
-          <div className="inline-flex rounded-lg border border-border bg-muted/40 p-0.5">
-            <button
-              type="button"
-              onClick={switchToForm}
-              className={`rounded-md px-2.5 py-1 text-xs font-semibold transition-colors ${
-                mode === "form"
-                  ? "bg-background text-foreground shadow-sm"
-                  : "text-muted-foreground hover:text-foreground"
-              }`}
-            >
-              填空
-            </button>
-            <button
-              type="button"
-              onClick={switchToJSON}
-              className={`rounded-md px-2.5 py-1 text-xs font-semibold transition-colors ${
-                mode === "json"
-                  ? "bg-background text-foreground shadow-sm"
-                  : "text-muted-foreground hover:text-foreground"
-              }`}
-            >
-              JSON
-            </button>
-          </div>
-          <Button
-            type="button"
-            variant="outline"
-            size="sm"
-            onClick={insertTemplate}
-          >
-            插入模板
-          </Button>
-        </div>
-      </div>
-      {mode === "form" ? (
-        <div className="space-y-2">
-          {entries.map((entry, index) => (
-            <div
-              key={index}
-              className="grid grid-cols-1 gap-2 sm:grid-cols-[minmax(0,1fr)_minmax(0,1fr)_auto]"
-            >
-              <Input
-                placeholder="客户端模型，如 client-model / legacy-*"
-                value={entry.from}
-                onChange={(event: ChangeEvent<HTMLInputElement>) =>
-                  updateEntry(index, "from", event.target.value)
-                }
-              />
-              <Input
-                placeholder="上游模型，如 gpt-4.1"
-                value={entry.to}
-                onChange={(event: ChangeEvent<HTMLInputElement>) =>
-                  updateEntry(index, "to", event.target.value)
-                }
-              />
-              <Button
-                type="button"
-                variant="outline"
-                size="icon"
-                className="h-10 w-10"
-                onClick={() => removeEntry(index)}
-                disabled={
-                  entries.length === 1 && !entry.from.trim() && !entry.to.trim()
-                }
-                title="删除映射"
-              >
-                <X className="size-4" />
-              </Button>
-            </div>
-          ))}
-          <Button
-            type="button"
-            variant="outline"
-            size="sm"
-            onClick={() =>
-              onEntriesChange([...entries, { from: "", to: "" }])
-            }
-          >
-            <Plus className="size-3.5" />
-            添加映射
-          </Button>
-        </div>
-      ) : (
-        <textarea
-          className="w-full min-h-[140px] p-3 border border-input rounded-xl bg-background text-sm resize-y font-mono focus:outline-none focus:ring-2 focus:ring-ring"
-          placeholder={MODEL_MAPPING_PLACEHOLDER}
-          value={value}
-          onChange={(event: ChangeEvent<HTMLTextAreaElement>) =>
-            onChange(event.target.value)
-          }
-          rows={6}
-          spellCheck={false}
-        />
-      )}
-      <p className="mt-1.5 text-xs text-muted-foreground">
-        留空表示使用原模型；左侧是客户端请求模型，右侧是该渠道上游模型，支持 * 通配。JSON 模式格式为 {"{"}"client-model":"upstream-model"{"}"}。
-      </p>
-    </div>
-    );
-  };
-
-  useEffect(() => {
-    return () => {
-      if (operationProgressHideTimer.current !== null) {
-        window.clearTimeout(operationProgressHideTimer.current);
-      }
-      if (operationProgressFrame.current !== null) {
-        window.cancelAnimationFrame(operationProgressFrame.current);
-      }
-      if (operationProgressFlushTimer.current !== null) {
-        window.clearTimeout(operationProgressFlushTimer.current);
-      }
-      pendingOperationProgress.current = null;
-      operationResultMap.current.clear();
-    };
-  }, []);
 
   const closeOperationProgress = useCallback(() => {
     if (operationProgressHideTimer.current !== null) {
@@ -2817,7 +2465,6 @@ export default function Accounts() {
   // Auxiliary data is intentionally independent from the account page request:
   // failures or slow settings/overview/group calls must not hold up the first row.
   useEffect(() => {
-    if (providerView !== "codex") return;
     let cancelled = false;
     void api.getAPIKeys({ view: 'lite' })
       .then((response) => { if (!cancelled) setAPIKeys(response.keys ?? []); })
@@ -2836,24 +2483,7 @@ export default function Accounts() {
       })
       .catch(() => undefined);
     return () => { cancelled = true; };
-  }, [providerView]);
-
-  useEffect(() => {
-    if (providerView !== "grok") return;
-    let cancelled = false;
-    void api.getAccountsPage({
-      channel: "codex",
-      page: 1,
-      pageSize: 1,
-      status: "disabled",
-      tag: "self-service",
-    })
-      .then((response) => {
-        if (!cancelled) setGrokSelfServicePending(response.total ?? 0);
-      })
-      .catch(() => undefined);
-    return () => { cancelled = true; };
-  }, [providerView]);
+  }, []);
 
   const { data, setData, loading, error, reload, reloadSilently } = useDataLoader<{
     accounts: AccountRow[];
@@ -2876,9 +2506,6 @@ export default function Accounts() {
       disabledSorts: [],
     },
     load: loadAccounts,
-    // Grok 视图与本组件共用挂载:此时 codex 列表链(列表→health-bars→page-stats
-    // →静默重载循环)必须整体停摆,否则在 Grok 页后台空转并连带整树重渲染。
-    enabled: providerView === "codex",
   });
   const disabledSorts = useMemo(
     () => resolveDisabledAccountSorts(data.disabledSorts, data.summary?.total),
@@ -2900,13 +2527,13 @@ export default function Accounts() {
   // data.snapshotAt 变化说明列表快照重建过(含删除/封禁后的缓存失效),
   // 分析图跟着重取,避免统计卡已更新而额度分布仍显示旧账号集。
   useEffect(() => {
-    if (!showAnalysisCharts || providerView !== "codex") {
+    if (!showAnalysisCharts) {
       accountAnalysisAbortRef.current?.abort();
       return undefined;
     }
     void loadAccountAnalysis();
     return () => accountAnalysisAbortRef.current?.abort();
-  }, [loadAccountAnalysis, showAnalysisCharts, data.snapshotAt, providerView]);
+  }, [loadAccountAnalysis, showAnalysisCharts, data.snapshotAt]);
   const refreshAccountRow = useCallback(async (id: number) => {
     const account = await api.getAccount(id);
     setDetailAccountData((current) => current?.id === id ? account : current);
@@ -2956,52 +2583,13 @@ export default function Accounts() {
     () => data.accounts.map((account) => account.id),
     [data.accounts],
   );
-  const responsesAccountIDsKey = useMemo(
-    () => data.accounts
-      .filter((account) => account.openai_responses_api)
-      .map((account) => account.id)
-      .join(","),
-    [data.accounts],
-  );
-  const [channelMonitorBillingByAccount, setChannelMonitorBillingByAccount] = useState<
-    Record<number, ChannelMonitorBillingSnapshot>
-  >({});
-  const refreshChannelMonitorBilling = useCallback(async (signal?: AbortSignal) => {
-    try {
-      const response = await api.getChannelMonitorBillingRates(signal);
-      if (signal?.aborted) return;
-      const next: Record<number, ChannelMonitorBillingSnapshot> = {};
-      for (const item of response.items) {
-        if (item.billing.data) next[item.account_id] = item.billing;
-      }
-      setChannelMonitorBillingByAccount(next);
-    } catch (error) {
-      if (!signal?.aborted) console.warn("channel monitor billing rates load failed:", error);
-    }
-  }, []);
-
-  useEffect(() => {
-    if (providerView !== "codex" || !responsesAccountIDsKey) {
-      setChannelMonitorBillingByAccount({});
-      return undefined;
-    }
-    const controller = new AbortController();
-    void refreshChannelMonitorBilling(controller.signal);
-    const timer = window.setInterval(() => {
-      if (!document.hidden) void refreshChannelMonitorBilling(controller.signal);
-    }, 60_000);
-    return () => {
-      window.clearInterval(timer);
-      controller.abort();
-    };
-  }, [providerView, refreshChannelMonitorBilling, responsesAccountIDsKey]);
   const applyAccountLiveState = useCallback((response: AccountLiveStateResponse) => {
     setData((current) => {
       const accounts = mergeAccountLiveState(current.accounts, response);
       return accounts === current.accounts ? current : { ...current, accounts };
     });
   }, [setData]);
-  useAccountLiveState(visibleAccountIDs, applyAccountLiveState, providerView === "codex");
+  useAccountLiveState(visibleAccountIDs, applyAccountLiveState, true);
   const loadAccountDetail = useCallback(
     (account: AccountRow) =>
       account.detail_loaded ? Promise.resolve(account) : api.getAccount(account.id),
@@ -3037,8 +2625,6 @@ export default function Accounts() {
     },
     [],
   );
-  // Codex 视图的统计卡/额度分布/列表/批量操作一律排除 Grok 账号
-  // （Grok 账号由顶部切换后的 Grok 页单独统计与管理）。
   const allAccounts = useMemo(() => {
     const sameOptional = (a: unknown, b: unknown) =>
       (a ?? undefined) === (b ?? undefined);
@@ -3109,10 +2695,7 @@ export default function Accounts() {
       return merged;
     });
   }, [data.accounts, accountPageStats]);
-  const accounts = useMemo(
-    () => allAccounts.filter((account) => !account.grok_api),
-    [allAccounts],
-  );
+  const accounts = allAccounts;
   // 只随“缺用量、需要补探”的账号集合变化，而不是随 1 秒 live 合并产生的
   // 数组身份变化；否则下面的补探 effect 每秒被清理重建，定时器永远不触发。
   const usageReloadIdsKey = useMemo(
@@ -3212,7 +2795,6 @@ export default function Accounts() {
   // 官方结算只存在于 page-stats 的快照字段。后台探针有启动延迟，列表打开时
   // 经常还是空的；后端会给当前页做即时回补，这里按缺字段重拉，直到胶囊出现。
   useEffect(() => {
-    if (providerView !== "codex") return undefined;
     if (!missingOfficialCostKey) return undefined;
     if (officialCostReloadAttemptsRef.current >= 6) return undefined;
     const attempt = officialCostReloadAttemptsRef.current;
@@ -3223,7 +2805,7 @@ export default function Accounts() {
       setPageStatsReloadToken((token) => token + 1);
     }, delay);
     return () => window.clearTimeout(timer);
-  }, [missingOfficialCostKey, pageStatsReloadToken, providerView]);
+  }, [missingOfficialCostKey, pageStatsReloadToken]);
   const usageReloadAttemptsRef = useRef<Map<number, number>>(new Map());
   // 测试连接后需要强制刷新用量的账号 id：即使其用量数据已存在（如已显示 100%），
   // 也要在后台探针跑完后重新拉取，确保进度条更新为最新值。
@@ -3270,7 +2852,6 @@ export default function Accounts() {
   }, [allGroups, pruneImportGroupIds]);
 
   useEffect(() => {
-    if (providerView !== "codex") return;
     const missingUsageIds = usageReloadIdsKey
       ? usageReloadIdsKey.split(",").map(Number)
       : [];
@@ -3357,7 +2938,6 @@ export default function Accounts() {
     usageReloadTick,
     accountPageIDsKey,
     reloadSilently,
-    providerView,
   ]);
 
   // stats_state 补拉:统计缓存分两层(请求数缓存→列表快照)且都是"先返回旧值
@@ -3560,7 +3140,6 @@ export default function Accounts() {
   }, [page, totalPages]);
 
   useEffect(() => {
-    if (providerView !== "codex") return;
     if (!accounts.some((account) => account.status === "refreshing")) {
       return;
     }
@@ -3570,7 +3149,7 @@ export default function Accounts() {
     }, 2000);
 
     return () => window.clearTimeout(timer);
-  }, [accounts, reloadSilently, providerView]);
+  }, [accounts, reloadSilently]);
 
   useEffect(() => {
     if (selectAllRef.current) {
@@ -3710,78 +3289,6 @@ export default function Accounts() {
     }
   };
 
-  const addOpenAIModelValues = useCallback((raw: string) => {
-    const nextModels = parseModelTokens(raw);
-    if (nextModels.length === 0) return;
-    setOpenAIForm((form) => ({
-      ...form,
-      models: mergeModelLists(form.models, nextModels),
-    }));
-    setOpenAIModelDraft("");
-  }, []);
-
-  const removeOpenAIModel = useCallback((model: string) => {
-    setOpenAIForm((form) => ({
-      ...form,
-      models: form.models.filter((item) => item !== model),
-    }));
-  }, []);
-
-  const clearOpenAIModels = useCallback(() => {
-    setOpenAIForm((form) => ({ ...form, models: [] }));
-  }, []);
-
-  const addEditOpenAIModelValues = useCallback((raw: string) => {
-    const nextModels = parseModelTokens(raw);
-    if (nextModels.length === 0) return;
-    setEditOpenAIForm((form) => ({
-      ...form,
-      models: mergeModelLists(form.models, nextModels),
-    }));
-    setEditOpenAIModelDraft("");
-  }, []);
-
-  const removeEditOpenAIModel = useCallback((model: string) => {
-    setEditOpenAIForm((form) => ({
-      ...form,
-      models: form.models.filter((item) => item !== model),
-    }));
-  }, []);
-
-  const clearEditOpenAIModels = useCallback(() => {
-    setEditOpenAIForm((form) => ({ ...form, models: [] }));
-  }, []);
-
-  const handleFetchOpenAIModels = async () => {
-    if (!openAIForm.api_key.trim()) return;
-    setOpenAIModelsLoading(true);
-    try {
-      const result = await api.fetchOpenAIResponsesModels({
-        base_url: openAIForm.base_url,
-        api_key: openAIForm.api_key,
-        proxy_url: openAIForm.proxy_url,
-      });
-      const models = result.models ?? [];
-      setOpenAIForm((form) => ({
-        ...form,
-        base_url: result.base_url || form.base_url,
-        models,
-      }));
-      showToast(
-        t("accounts.openaiModelsFetchSuccess", { count: models.length }),
-      );
-    } catch (error) {
-      showToast(
-        t("accounts.openaiModelsFetchFailed", {
-          error: getErrorMessage(error),
-        }),
-        "error",
-      );
-    } finally {
-      setOpenAIModelsLoading(false);
-    }
-  };
-
   const handleAddSession = async () => {
     if (!sessionJson.trim() || importing) return;
     setSubmitting(true);
@@ -3875,134 +3382,6 @@ export default function Accounts() {
       setAgentIdentityFilesImporting(false);
       if (agentIdentityFileInputRef.current)
         agentIdentityFileInputRef.current.value = "";
-    }
-  };
-
-  const handleAddOpenAIResponses = async () => {
-    const models = openAIForm.models;
-    if (!openAIForm.api_key.trim() || models.length === 0) return;
-    const parsedCustomHeaders = parseCustomHeadersText(addCustomHeadersText);
-    if (!parsedCustomHeaders.ok) {
-      showToast("自定义请求头必须是 JSON 对象，且所有值必须是字符串", "error");
-      return;
-    }
-    const parsedModelMapping = resolveModelMappingValue(
-      openAIModelMappingMode,
-      openAIModelMappingText,
-      openAIModelMappingEntries,
-    );
-    if (!parsedModelMapping.ok) {
-      showToast("单渠道模型映射必须成对填写；JSON 模式必须是字符串对象，源模型不能重复", "error");
-      return;
-    }
-    setSubmitting(true);
-    try {
-      await api.addOpenAIResponsesAccount({
-        ...openAIForm,
-        models,
-        model_mapping: parsedModelMapping.value,
-        custom_headers: parsedCustomHeaders.value,
-      });
-      showToast(t("accounts.addSuccess"));
-      setShowAdd(false);
-      setOpenAIForm({
-        base_url: "https://api.openai.com",
-        api_key: "",
-        balance_query_url: "",
-        models: [],
-        codex_client_metadata_mode: "auto",
-        codex_passthrough_mode: "off",
-        responses_upstream_transport: "http",
-        proxy_url: "",
-      });
-      setOpenAIModelDraft("");
-      setOpenAIModelMappingText("");
-      setOpenAIModelMappingMode("form");
-      setOpenAIModelMappingEntries(emptyModelMappingEntries());
-      setAddCustomHeadersText("");
-      void reload();
-    } catch (error) {
-      showToast(
-        t("accounts.addFailed", { error: getErrorMessage(error) }),
-        "error",
-      );
-    } finally {
-      setSubmitting(false);
-    }
-  };
-
-  const handleFetchEditOpenAIModels = async () => {
-    if (!editingAccount?.openai_responses_api) return;
-    setEditOpenAIModelsLoading(true);
-    try {
-      const result = await api.fetchOpenAIResponsesModels({
-        account_id: editingAccount.id,
-        base_url: editOpenAIForm.base_url,
-        api_key: editOpenAIForm.api_key ?? "",
-        proxy_url: editOpenAIForm.proxy_url,
-      });
-      const models = result.models ?? [];
-      setEditOpenAIForm((form) => ({
-        ...form,
-        base_url: result.base_url || form.base_url,
-        models,
-      }));
-      showToast(
-        t("accounts.openaiModelsFetchSuccess", { count: models.length }),
-      );
-    } catch (error) {
-      showToast(
-        t("accounts.openaiModelsFetchFailed", {
-          error: getErrorMessage(error),
-        }),
-        "error",
-      );
-    } finally {
-      setEditOpenAIModelsLoading(false);
-    }
-  };
-
-  const handleSaveOpenAIAccountSettings = async () => {
-    if (!editingAccount?.openai_responses_api) return;
-    if (!editOpenAIForm.base_url.trim() || editOpenAIForm.models.length === 0) {
-      showToast(t("accounts.openaiAccountInvalid"), "error");
-      return;
-    }
-    const parsedCustomHeaders = parseCustomHeadersText(editCustomHeadersText);
-    if (!parsedCustomHeaders.ok) {
-      showToast("自定义请求头必须是 JSON 对象，且所有值必须是字符串", "error");
-      return;
-    }
-    const parsedModelMapping = resolveModelMappingValue(
-      editOpenAIModelMappingMode,
-      editOpenAIModelMappingText,
-      editOpenAIModelMappingEntries,
-    );
-    if (!parsedModelMapping.ok) {
-      showToast("单渠道模型映射必须成对填写；JSON 模式必须是字符串对象，源模型不能重复", "error");
-      return;
-    }
-    setEditSubmitting(true);
-    try {
-      await api.updateOpenAIResponsesAccount(editingAccount.id, {
-        ...editOpenAIForm,
-        api_key: editOpenAIForm.api_key?.trim() || undefined,
-        model_mapping: parsedModelMapping.value,
-        custom_headers: parsedCustomHeaders.value,
-      });
-      invalidateAPIAccountBalance(editingAccount.id);
-      showToast(t("accounts.openaiAccountSaveSuccess"));
-      await reload();
-      closeSchedulerEditor(true);
-    } catch (error) {
-      showToast(
-        t("accounts.openaiAccountSaveFailed", {
-          error: getErrorMessage(error),
-        }),
-        "error",
-      );
-    } finally {
-      setEditSubmitting(false);
     }
   };
 
@@ -4757,8 +4136,6 @@ export default function Accounts() {
     setExporting(true);
     setShowExportPicker(false);
     try {
-      // Codex 账号页只导出 codex 渠道:不带 channel 时后端会把 Grok 账号一并
-      // 打进 codex 命名的导出文件(Grok 页有专属导出入口)。
       const params: {
         filter: "healthy" | "all";
         ids?: number[];
@@ -5857,33 +5234,10 @@ export default function Accounts() {
     setEditCodexFingerprintMode(account.codex_fingerprint_mode ?? "off");
     setEditTimezone(account.timezone ?? "");
     setEditTimezoneCustom(
-      Boolean(account.timezone && !findClaudeTimezoneOption(account.timezone)),
+      Boolean(account.timezone && !findTimezoneOption(account.timezone)),
     );
     setEditTags(account.tags ?? []);
     setEditGroupIds(account.group_ids ?? []);
-    setEditOpenAIForm({
-      name: account.name ?? "",
-      base_url: account.base_url || "https://api.openai.com",
-      api_key: "",
-      balance_query_url: account.balance_query_url ?? "",
-      models: account.models ?? [],
-      codex_client_metadata_mode:
-        account.codex_client_metadata_mode ?? "auto",
-      codex_passthrough_mode:
-        account.codex_passthrough_mode ?? "off",
-      responses_upstream_transport:
-        account.responses_upstream_transport ?? "http",
-      proxy_url: account.proxy_url ?? "",
-    });
-    setEditOpenAIModelDraft("");
-    setEditOpenAIModelMappingText(account.model_mapping ?? "");
-    setEditOpenAIModelMappingMode("form");
-    {
-      const parsedMapping = parseModelMappingEntries(account.model_mapping ?? "");
-      setEditOpenAIModelMappingEntries(
-        parsedMapping.ok ? parsedMapping.entries : emptyModelMappingEntries(),
-      );
-    }
     setEditOAuthStep("generate");
     setEditOAuthSession(null);
     setEditOAuthProxyUrl(account.proxy_url ?? "");
@@ -5923,21 +5277,6 @@ export default function Accounts() {
     setEditTimezoneCustom(false);
     setEditTags([]);
     setEditGroupIds([]);
-    setEditOpenAIForm({
-      name: "",
-      base_url: "https://api.openai.com",
-      api_key: "",
-      balance_query_url: "",
-      models: [],
-      codex_client_metadata_mode: "auto",
-      codex_passthrough_mode: "off",
-      responses_upstream_transport: "http",
-      proxy_url: "",
-    });
-    setEditOpenAIModelDraft("");
-    setEditOpenAIModelMappingText("");
-    setEditOpenAIModelMappingMode("form");
-    setEditOpenAIModelMappingEntries(emptyModelMappingEntries());
     setEditOAuthStep("generate");
     setEditOAuthSession(null);
     setEditOAuthProxyUrl("");
@@ -5983,11 +5322,6 @@ export default function Accounts() {
   );
   const batchAutoPause7dThresholdInvalid = isPercentThresholdInputInvalid(
     batchAutoPause7dThresholdInput,
-  );
-  const openAIAccountInputInvalid = Boolean(
-    editingAccount?.openai_responses_api &&
-    editTab === "account" &&
-    (!editOpenAIForm.base_url.trim() || editOpenAIForm.models.length === 0),
   );
 
   const editPreview = useMemo(() => {
@@ -6081,13 +5415,8 @@ export default function Accounts() {
           editSchedulerPriorityInput,
         ),
         custom_headers: parsedCustomHeaders.value,
-        // 指纹收敛只作用于 Codex 官方出站路径，中转/Grok 账号不下发该字段。
-        ...(isCodexOfficialAccount(editingAccount)
-          ? {
-              codex_fingerprint_mode: editCodexFingerprintMode,
-              timezone: editTimezone.trim(),
-            }
-          : {}),
+        codex_fingerprint_mode: editCodexFingerprintMode,
+        timezone: editTimezone.trim(),
       };
       await api.updateAccountScheduler(editingAccount.id, payload);
       showToast(t("accounts.schedulerSaveSuccess"));
@@ -6104,10 +5433,6 @@ export default function Accounts() {
   };
 
   const handleSaveAccountEditor = async () => {
-    if (editingAccount?.openai_responses_api && editTab === "account") {
-      await handleSaveOpenAIAccountSettings();
-      return;
-    }
     if (isOAuthAccount(editingAccount) && editTab === "account") {
       await handleUpdateOAuthAccount();
       return;
@@ -6267,7 +5592,6 @@ export default function Accounts() {
     openDetail: openAccountDetail,
     openSchedulerEditor,
     openQuickConfig: (account) => setQuickConfigAccount(account),
-    openChannelMonitor: (account) => setChannelMonitorAccount(account),
     openQuickGroupEditor,
     openQuickProxyEditor: (account) => setQuickProxyAccount(account),
     openHrefEditor: (account) => setHrefAccount(account),
@@ -6302,7 +5626,6 @@ export default function Accounts() {
       openDetail: (a) => rowActionsImplRef.current?.openDetail(a),
       openSchedulerEditor: (a) => rowActionsImplRef.current?.openSchedulerEditor(a),
       openQuickConfig: (a) => rowActionsImplRef.current?.openQuickConfig(a),
-      openChannelMonitor: (a) => rowActionsImplRef.current?.openChannelMonitor(a),
       openQuickGroupEditor: (a) => rowActionsImplRef.current?.openQuickGroupEditor(a),
       openQuickProxyEditor: (a) => rowActionsImplRef.current?.openQuickProxyEditor(a),
       openHrefEditor: (a) => rowActionsImplRef.current?.openHrefEditor(a),
@@ -6323,107 +5646,6 @@ export default function Accounts() {
     }),
     [],
   );
-
-  // 四个账号视图共用同一切换器（独立页面通过 headerSlot 注入）。
-  // 滑块动画 + 品牌 logo，与仪表盘渠道过滤器视觉一致。
-  // useMemo 保持引用稳定,否则每轮渲染的新元素会击穿独立账号页的 memo 边界。
-  const providerSwitcherOptions = useMemo(
-    () =>
-      (
-        [
-          ["codex", t("accounts.providerViewCodex")],
-          ["grok", t("accounts.providerViewGrok")],
-          ["antigravity", t("accounts.providerViewAntigravity")],
-          ["claude", t("accounts.providerViewClaude")],
-        ] as const
-      ).filter(([key]) => visibleChannels.includes(key)),
-    [t, visibleChannels],
-  );
-  const providerSwitcher = useMemo(() => (
-    <div
-      className="relative grid w-full max-w-[560px] items-center rounded-lg border border-border bg-muted/40 p-0.5"
-      style={{ gridTemplateColumns: `repeat(${providerSwitcherOptions.length}, minmax(0, 1fr))` }}
-    >
-      <span
-        aria-hidden
-        className="absolute inset-y-0.5 left-0.5 rounded-md bg-background shadow-sm transition-transform duration-300 ease-out"
-        style={{
-          width: `calc((100% - 4px) / ${providerSwitcherOptions.length})`,
-          transform: `translateX(${Math.max(0, providerSwitcherOptions.findIndex(([key]) => key === providerView)) * 100}%)`,
-        }}
-      />
-      {providerSwitcherOptions.map(([key, label]) => (
-        <button
-          key={key}
-          type="button"
-          onClick={() => setProviderView(key)}
-          aria-pressed={providerView === key}
-          className={cn(
-            "relative z-10 inline-flex min-w-0 items-center justify-center gap-1 rounded-md px-1.5 py-2 text-xs font-semibold transition-all duration-200 active:scale-[0.97] sm:gap-2 sm:px-3 sm:text-sm",
-            providerView === key
-              ? "text-foreground"
-              : "text-muted-foreground opacity-75 grayscale hover:opacity-100 hover:grayscale-0 hover:text-foreground",
-          )}
-        >
-          <ChannelLogo channel={key} size={18} />
-          <span className="min-w-0 truncate">{label}</span>
-        </button>
-      ))}
-    </div>
-  ), [providerView, setProviderView, t, providerSwitcherOptions]);
-
-  if (providerView === "grok") {
-    // key 触发渠道切换时整块内容淡入过渡，切换器由 headerSlot 常驻不闪。
-    return (
-      <div key="provider-grok" className="animate-channel-switch-in">
-        {grokSelfServicePending > 0 ? (
-          <button
-            type="button"
-            onClick={() => navigate("/accounts?pending=1")}
-            className="mb-3 flex w-full items-center gap-2.5 rounded-xl border border-amber-500/40 bg-amber-500/[0.06] px-3 py-2.5 text-left shadow-sm transition-colors hover:bg-amber-500/[0.1]"
-          >
-            <span className="flex size-9 shrink-0 items-center justify-center rounded-xl bg-amber-500/15 text-amber-600 dark:text-amber-300">
-              <Hourglass className="size-4" />
-            </span>
-            <span className="min-w-0">
-              <span className="block text-sm font-semibold tracking-tight text-foreground">
-                {t("accounts.pendingReview.grokBanner", { count: grokSelfServicePending })}
-              </span>
-              <span className="block text-[11px] text-muted-foreground">
-                {t("accounts.pendingReview.jumpHint")}
-              </span>
-            </span>
-          </button>
-        ) : null}
-        <GrokAccounts
-          headerSlot={providerSwitcher}
-          showOperationResults={showOperationResults}
-          onShowOperationResultsChange={
-            handleOperationResultsVisibilityChange
-          }
-        />
-      </div>
-    );
-  }
-
-  if (providerView === "antigravity") {
-    return (
-      <div key="provider-antigravity" className="animate-channel-switch-in">
-        <AntigravityAccounts
-          headerSlot={providerSwitcher}
-          showOperationResults={showOperationResults}
-        />
-      </div>
-    );
-  }
-
-  if (providerView === "claude") {
-    return (
-      <div key="provider-claude" className="animate-channel-switch-in">
-        <ClaudeAccounts headerSlot={providerSwitcher} />
-      </div>
-    );
-  }
 
   return (
     <div
@@ -6492,7 +5714,6 @@ export default function Accounts() {
             autoRefresh={accountAutoRefresh}
             titleAdornment={
               <div className="flex items-center gap-2">
-                {providerSwitcher}
                 <Select
                   className="w-32"
                   compact
@@ -7663,7 +6884,6 @@ export default function Accounts() {
                       <AccountCardItem
                         key={account.id}
                         account={account}
-                        channelMonitorBilling={channelMonitorBillingByAccount[account.id]}
                         sequence={(currentPage - 1) * pageSize + index + 1}
                         selected={selected.has(account.id)}
                         detailOpen={detailAccountId === account.id}
@@ -7947,7 +7167,6 @@ export default function Accounts() {
                         <AccountTableRow
                           key={account.id}
                           account={account}
-                          channelMonitorBilling={channelMonitorBillingByAccount[account.id]}
                           sequence={(currentPage - 1) * pageSize + index + 1}
                           selected={selected.has(account.id)}
                           detailOpen={detailAccountId === account.id}
@@ -7997,16 +7216,6 @@ export default function Accounts() {
               setOauthSession(null);
               setOauthCallbackUrl("");
               setOauthName("");
-              setOpenAIForm({
-                base_url: "https://api.openai.com",
-                api_key: "",
-                models: [],
-                proxy_url: "",
-              });
-              setOpenAIModelDraft("");
-              setOpenAIModelMappingText("");
-              setOpenAIModelMappingMode("form");
-              setOpenAIModelMappingEntries(emptyModelMappingEntries());
               setSessionJson("");
               setSessionProxyUrl("");
               setAddCustomHeadersText("");
@@ -8038,16 +7247,6 @@ export default function Accounts() {
                     setOauthSession(null);
                     setOauthCallbackUrl("");
                     setOauthName("");
-                    setOpenAIForm({
-                      base_url: "https://api.openai.com",
-                      api_key: "",
-                      models: [],
-                      proxy_url: "",
-                    });
-                    setOpenAIModelDraft("");
-                    setOpenAIModelMappingText("");
-                    setOpenAIModelMappingMode("form");
-                    setOpenAIModelMappingEntries(emptyModelMappingEntries());
                     setSessionJson("");
                     setSessionProxyUrl("");
                     setAddCustomHeadersText("");
@@ -8081,17 +7280,6 @@ export default function Accounts() {
                   <Button
                     onClick={() => void handleAddSession()}
                     disabled={importing || submitting || !sessionJson.trim()}
-                  >
-                    {submitting ? t("accounts.adding") : t("accounts.submit")}
-                  </Button>
-                ) : addMethod === "openai" ? (
-                  <Button
-                    onClick={() => void handleAddOpenAIResponses()}
-                    disabled={
-                      submitting ||
-                      !openAIForm.api_key.trim() ||
-                      openAIForm.models.length === 0
-                    }
                   >
                     {submitting ? t("accounts.adding") : t("accounts.submit")}
                   </Button>
@@ -8187,17 +7375,6 @@ export default function Accounts() {
               >
                 <ExternalLink className="size-3.5" />
                 {t("accounts.addMethodSession")}
-              </button>
-              <button
-                onClick={() => setAddMethod("openai")}
-                className={`min-w-0 flex-1 flex items-center justify-center gap-1.5 rounded-lg px-2 py-2 text-sm font-semibold whitespace-nowrap transition-all ${
-                  addMethod === "openai"
-                    ? "bg-background shadow-sm text-foreground"
-                    : "text-muted-foreground hover:text-foreground"
-                }`}
-              >
-                <KeyRound className="size-3.5" />
-                {t("accounts.addMethodOpenAI")}
               </button>
               <button
                 onClick={() => setAddMethod("agentIdentity")}
@@ -8339,266 +7516,6 @@ export default function Accounts() {
                   onChange: setSessionProxyUrl,
                 })}
                 {renderWorkspaceRouteInput()}
-                {renderCustomHeadersTextarea({
-                  value: addCustomHeadersText,
-                  onChange: setAddCustomHeadersText,
-                })}
-              </div>
-            ) : addMethod === "openai" ? (
-              <div className="space-y-4">
-                <div className="rounded-xl border border-border bg-muted/30 px-4 py-3 text-sm text-muted-foreground">
-                  <p className="font-semibold text-foreground mb-1">
-                    {t("accounts.openaiResponsesTitle")}
-                  </p>
-                  <p>{t("accounts.openaiResponsesDesc")}</p>
-                </div>
-                <div>
-                  <label className="block mb-2 text-sm font-semibold text-muted-foreground">
-                    {t("accounts.openaiNameLabel")}
-                  </label>
-                  <Input
-                    placeholder={t("accounts.openaiNamePlaceholder")}
-                    value={openAIForm.name ?? ""}
-                    onChange={(event: ChangeEvent<HTMLInputElement>) =>
-                      setOpenAIForm((form) => ({
-                        ...form,
-                        name: event.target.value,
-                      }))
-                    }
-                  />
-                </div>
-                <div>
-                  <label className="block mb-2 text-sm font-semibold text-muted-foreground">
-                    {t("accounts.openaiBaseUrl")} *
-                  </label>
-                  <Input
-                    placeholder="https://api.openai.com"
-                    value={openAIForm.base_url}
-                    onChange={(event: ChangeEvent<HTMLInputElement>) =>
-                      setOpenAIForm((form) => ({
-                        ...form,
-                        base_url: event.target.value,
-                      }))
-                    }
-                  />
-                </div>
-                <div>
-                  <label className="block mb-2 text-sm font-semibold text-muted-foreground">
-                    {t("accounts.openaiApiKey")} *
-                  </label>
-                  <Input
-                    type="password"
-                    placeholder="sk-proj-..."
-                    value={openAIForm.api_key}
-                    onChange={(event: ChangeEvent<HTMLInputElement>) =>
-                      setOpenAIForm((form) => ({
-                        ...form,
-                        api_key: event.target.value,
-                      }))
-                    }
-                  />
-                </div>
-                <div>
-                  <label className="block mb-2 text-sm font-semibold text-muted-foreground">
-                    {t("accounts.apiBalanceQueryUrl")}
-                  </label>
-                  <Input
-                    placeholder="/v1/usage"
-                    value={openAIForm.balance_query_url ?? ""}
-                    onChange={(event: ChangeEvent<HTMLInputElement>) =>
-                      setOpenAIForm((form) => ({
-                        ...form,
-                        balance_query_url: event.target.value,
-                      }))
-                    }
-                  />
-                  <p className="mt-1.5 text-xs text-muted-foreground">
-                    {t("accounts.apiBalanceQueryUrlHint")}
-                  </p>
-                </div>
-                <div>
-                  <label className="block mb-2 text-sm font-semibold text-muted-foreground">
-                    {t("accounts.codexClientMetadataMode")}
-                  </label>
-                  <Select
-                    value={
-                      openAIForm.codex_client_metadata_mode ?? "auto"
-                    }
-                    onValueChange={(value) =>
-                      setOpenAIForm((form) => ({
-                        ...form,
-                        codex_client_metadata_mode:
-                          value as CodexClientMetadataMode,
-                      }))
-                    }
-                    options={[
-                      {
-                        value: "auto",
-                        label: t("accounts.codexClientMetadataAuto"),
-                      },
-                      {
-                        value: "always",
-                        label: t("accounts.codexClientMetadataAlways"),
-                      },
-                      {
-                        value: "off",
-                        label: t("accounts.codexClientMetadataOff"),
-                      },
-                    ]}
-                  />
-                </div>
-                <div>
-                  <label className="block mb-2 text-sm font-semibold text-muted-foreground">
-                    {t("accounts.codexPassthroughMode")}
-                  </label>
-                  <Select
-                    value={openAIForm.codex_passthrough_mode ?? "off"}
-                    onValueChange={(value) =>
-                      setOpenAIForm((form) => ({
-                        ...form,
-                        codex_passthrough_mode:
-                          value as CodexPassthroughMode,
-                      }))
-                    }
-                    options={[
-                      {
-                        value: "off",
-                        label: t("accounts.codexPassthroughOff"),
-                      },
-                      {
-                        value: "auto",
-                        label: t("accounts.codexPassthroughAuto"),
-                      },
-                      {
-                        value: "always",
-                        label: t("accounts.codexPassthroughAlways"),
-                      },
-                    ]}
-                  />
-                  <p className="mt-1.5 text-xs text-muted-foreground">
-                    {t("accounts.codexPassthroughHint")}
-                  </p>
-                </div>
-                <div>
-                  <label className="block mb-2 text-sm font-semibold text-muted-foreground">
-                    {t("accounts.responsesUpstreamTransport")}
-                  </label>
-                  <Select
-                    value={openAIForm.responses_upstream_transport ?? "http"}
-                    onValueChange={(value) =>
-                      setOpenAIForm((form) => ({
-                        ...form,
-                        responses_upstream_transport:
-                          value as ResponsesUpstreamTransport,
-                      }))
-                    }
-                    options={[
-                      {
-                        value: "http",
-                        label: t("accounts.responsesUpstreamHTTP"),
-                      },
-                      {
-                        value: "websocket",
-                        label: t("accounts.responsesUpstreamWebsocket"),
-                      },
-                    ]}
-                  />
-                  <p className="mt-1.5 text-xs text-muted-foreground">
-                    {t("accounts.responsesUpstreamTransportHint")}
-                  </p>
-                </div>
-                <div>
-                  <div className="mb-2 flex items-center justify-between gap-2">
-                    <label className="text-sm font-semibold text-muted-foreground">
-                      {t("accounts.openaiModels")} *
-                    </label>
-                    <Button
-                      type="button"
-                      variant="outline"
-                      size="sm"
-                      onClick={() => void handleFetchOpenAIModels()}
-                      disabled={
-                        openAIModelsLoading || !openAIForm.api_key.trim()
-                      }
-                    >
-                      <RefreshCw
-                        className={`size-3.5 ${openAIModelsLoading ? "animate-spin" : ""}`}
-                      />
-                      {openAIModelsLoading
-                        ? t("accounts.openaiModelsFetching")
-                        : t("accounts.openaiModelsFetch")}
-                    </Button>
-                  </div>
-                  <div className="mb-3 flex gap-2">
-                    <Input
-                      placeholder={t("accounts.openaiModelsPlaceholder")}
-                      value={openAIModelDraft}
-                      onChange={(event: ChangeEvent<HTMLInputElement>) =>
-                        setOpenAIModelDraft(event.target.value)
-                      }
-                      onKeyDown={(event) => {
-                        if (event.key === "Enter") {
-                          event.preventDefault();
-                          addOpenAIModelValues(openAIModelDraft);
-                        }
-                      }}
-                      onPaste={(event) => {
-                        const pasted = event.clipboardData.getData("text");
-                        if (parseModelTokens(pasted).length > 1) {
-                          event.preventDefault();
-                          addOpenAIModelValues(pasted);
-                        }
-                      }}
-                    />
-                    <Button
-                      type="button"
-                      variant="outline"
-                      onClick={() => addOpenAIModelValues(openAIModelDraft)}
-                      disabled={!openAIModelDraft.trim()}
-                    >
-                      <Plus className="size-3.5" />
-                      {t("accounts.openaiModelsAdd")}
-                    </Button>
-                  </div>
-                  <ModelChipGrid
-                    models={openAIForm.models}
-                    onRemove={removeOpenAIModel}
-                    emptyLabel={t("accounts.openaiModelsEmpty")}
-                  />
-                  <div className="mt-1.5 flex items-center justify-between gap-2">
-                    <p className="text-xs text-muted-foreground">
-                      {t("accounts.openaiModelsHint", {
-                        count: openAIForm.models.length,
-                      })}
-                    </p>
-                    {openAIForm.models.length > 0 && (
-                      <button
-                        type="button"
-                        className="shrink-0 text-xs text-muted-foreground transition-colors hover:text-foreground disabled:opacity-50"
-                        disabled={openAIModelsLoading || submitting}
-                        onClick={clearOpenAIModels}
-                      >
-                        {t("accounts.supportedModelsClearAll")}
-                      </button>
-                    )}
-                  </div>
-                </div>
-                {renderModelMappingEditor({
-                  value: openAIModelMappingText,
-                  onChange: setOpenAIModelMappingText,
-                  mode: openAIModelMappingMode,
-                  onModeChange: setOpenAIModelMappingMode,
-                  entries: openAIModelMappingEntries,
-                  onEntriesChange: setOpenAIModelMappingEntries,
-                })}
-                {renderProxyInput({
-                  value: openAIForm.proxy_url,
-                  onChange: (value) =>
-                    setOpenAIForm((form) => ({
-                      ...form,
-                      proxy_url: value,
-                    })),
-                })}
                 {renderCustomHeadersTextarea({
                   value: addCustomHeadersText,
                   onChange: setAddCustomHeadersText,
@@ -9374,11 +8291,6 @@ export default function Accounts() {
               if (!detailAccount) return;
               setQuickConfigAccount(detailAccount);
             }}
-            onChannelMonitor={
-              detailAccount?.openai_responses_api && !detailAccount.grok_api
-                ? () => setChannelMonitorAccount(detailAccount)
-                : undefined
-            }
             onEdit={() => {
               if (!detailAccount) return;
               openSchedulerEditor(detailAccount);
@@ -9441,13 +8353,6 @@ export default function Accounts() {
             onSaved={() => void reloadSilently()}
           />
 
-          <ChannelMonitorConfigDialog
-            account={channelMonitorAccount}
-            show={Boolean(channelMonitorAccount)}
-            onClose={() => setChannelMonitorAccount(null)}
-            onSaved={() => void refreshChannelMonitorBilling()}
-          />
-
           <Modal
             show={Boolean(editingAccount)}
             title={t("accounts.schedulerEditTitle")}
@@ -9495,8 +8400,7 @@ export default function Accounts() {
                           editAutoPause5hThresholdInvalid ||
                           editAutoPause7dThresholdInvalid ||
                           editDispatchCountLimitInvalid ||
-                          editSchedulerPriorityInvalid)) ||
-                      openAIAccountInputInvalid
+                          editSchedulerPriorityInvalid))
                     }
                   >
                     {editSubmitting ? t("common.saving") : t("common.save")}
@@ -9534,8 +8438,7 @@ export default function Accounts() {
                 </div>
 
                 {/* 选项卡切换 */}
-                {(editingAccount.openai_responses_api ||
-                  isOAuthAccount(editingAccount)) && (
+                {isOAuthAccount(editingAccount) && (
                   <div className="flex gap-1.5 rounded-xl border border-border/60 bg-muted/40 p-1.5 shadow-2xs">
                     <button
                       type="button"
@@ -9564,274 +8467,7 @@ export default function Accounts() {
                   </div>
                 )}
 
-                {editTab === "account" &&
-                editingAccount.openai_responses_api ? (
-                  <div className="space-y-4">
-                    <div className="rounded-xl border border-border/70 bg-card p-4.5 shadow-2xs space-y-4">
-                      <div className="flex items-center gap-2 font-semibold text-foreground text-sm border-b border-border/50 pb-3">
-                        <Settings2 className="size-4 text-primary" />
-                        <span>OpenAI Responses API 参数</span>
-                      </div>
-                      <div>
-                        <label className="block mb-2 text-xs font-semibold text-muted-foreground">
-                          {t("accounts.openaiNameLabel")}
-                        </label>
-                        <Input
-                          placeholder={t("accounts.openaiNamePlaceholder")}
-                          value={editOpenAIForm.name ?? ""}
-                          onChange={(event: ChangeEvent<HTMLInputElement>) =>
-                            setEditOpenAIForm((form) => ({
-                              ...form,
-                              name: event.target.value,
-                            }))
-                          }
-                        />
-                      </div>
-                      <div>
-                        <label className="block mb-2 text-xs font-semibold text-muted-foreground">
-                          {t("accounts.openaiBaseUrl")} *
-                        </label>
-                        <Input
-                          placeholder="https://api.openai.com"
-                          value={editOpenAIForm.base_url}
-                          onChange={(event: ChangeEvent<HTMLInputElement>) =>
-                            setEditOpenAIForm((form) => ({
-                              ...form,
-                              base_url: event.target.value,
-                            }))
-                          }
-                        />
-                      </div>
-                      <div>
-                        <label className="block mb-2 text-xs font-semibold text-muted-foreground">
-                          {t("accounts.openaiApiKey")}
-                        </label>
-                        <Input
-                          type="password"
-                          placeholder={t("accounts.openaiApiKeyKeepPlaceholder")}
-                          value={editOpenAIForm.api_key ?? ""}
-                          onChange={(event: ChangeEvent<HTMLInputElement>) =>
-                            setEditOpenAIForm((form) => ({
-                              ...form,
-                              api_key: event.target.value,
-                            }))
-                          }
-                        />
-                      </div>
-                      <div>
-                        <label className="block mb-2 text-xs font-semibold text-muted-foreground">
-                          {t("accounts.apiBalanceQueryUrl")}
-                        </label>
-                        <Input
-                          placeholder="/v1/usage"
-                          value={editOpenAIForm.balance_query_url ?? ""}
-                          onChange={(event: ChangeEvent<HTMLInputElement>) =>
-                            setEditOpenAIForm((form) => ({
-                              ...form,
-                              balance_query_url: event.target.value,
-                            }))
-                          }
-                        />
-                        <p className="mt-1.5 text-xs text-muted-foreground">
-                          {t("accounts.apiBalanceQueryUrlHint")}
-                        </p>
-                      </div>
-                      <div>
-                        <label className="block mb-2 text-xs font-semibold text-muted-foreground">
-                          {t("accounts.codexClientMetadataMode")}
-                        </label>
-                        <Select
-                          value={
-                            editOpenAIForm.codex_client_metadata_mode ?? "auto"
-                          }
-                          onValueChange={(value) =>
-                            setEditOpenAIForm((form) => ({
-                              ...form,
-                              codex_client_metadata_mode:
-                                value as CodexClientMetadataMode,
-                            }))
-                          }
-                          options={[
-                            {
-                              value: "auto",
-                              label: t("accounts.codexClientMetadataAuto"),
-                            },
-                            {
-                              value: "always",
-                              label: t("accounts.codexClientMetadataAlways"),
-                            },
-                            {
-                              value: "off",
-                              label: t("accounts.codexClientMetadataOff"),
-                            },
-                          ]}
-                        />
-                      </div>
-                    </div>
-                    <div>
-                      <label className="block mb-2 text-xs font-semibold text-muted-foreground">
-                        {t("accounts.codexPassthroughMode")}
-                      </label>
-                      <Select
-                        value={editOpenAIForm.codex_passthrough_mode ?? "off"}
-                        onValueChange={(value) =>
-                          setEditOpenAIForm((form) => ({
-                            ...form,
-                            codex_passthrough_mode:
-                              value as CodexPassthroughMode,
-                          }))
-                        }
-                        options={[
-                          {
-                            value: "off",
-                            label: t("accounts.codexPassthroughOff"),
-                          },
-                          {
-                            value: "auto",
-                            label: t("accounts.codexPassthroughAuto"),
-                          },
-                          {
-                            value: "always",
-                            label: t("accounts.codexPassthroughAlways"),
-                          },
-                        ]}
-                      />
-                      <p className="mt-1.5 text-xs text-muted-foreground">
-                        {t("accounts.codexPassthroughHint")}
-                      </p>
-                    </div>
-                    <div>
-                      <label className="block mb-2 text-xs font-semibold text-muted-foreground">
-                        {t("accounts.responsesUpstreamTransport")}
-                      </label>
-                      <Select
-                        value={editOpenAIForm.responses_upstream_transport ?? "http"}
-                        onValueChange={(value) =>
-                          setEditOpenAIForm((form) => ({
-                            ...form,
-                            responses_upstream_transport:
-                              value as ResponsesUpstreamTransport,
-                          }))
-                        }
-                        options={[
-                          {
-                            value: "http",
-                            label: t("accounts.responsesUpstreamHTTP"),
-                          },
-                          {
-                            value: "websocket",
-                            label: t("accounts.responsesUpstreamWebsocket"),
-                          },
-                        ]}
-                      />
-                      <p className="mt-1.5 text-xs text-muted-foreground">
-                        {t("accounts.responsesUpstreamTransportHint")}
-                      </p>
-                    </div>
-
-                    <div className="rounded-xl border border-border/70 bg-card p-4.5 shadow-2xs space-y-4">
-                      <div>
-                        <div className="mb-2 flex items-center justify-between gap-2">
-                          <label className="text-xs font-semibold text-muted-foreground">
-                            {t("accounts.openaiModels")} *
-                          </label>
-                          <Button
-                            type="button"
-                            variant="outline"
-                            size="sm"
-                            onClick={() => void handleFetchEditOpenAIModels()}
-                            disabled={editOpenAIModelsLoading}
-                          >
-                            <RefreshCw
-                              className={`size-3.5 ${editOpenAIModelsLoading ? "animate-spin" : ""}`}
-                            />
-                            {editOpenAIModelsLoading
-                              ? t("accounts.openaiModelsFetching")
-                              : t("accounts.openaiModelsFetch")}
-                          </Button>
-                        </div>
-                        <div className="mb-3 flex gap-2">
-                          <Input
-                            placeholder={t("accounts.openaiModelsPlaceholder")}
-                            value={editOpenAIModelDraft}
-                            onChange={(event: ChangeEvent<HTMLInputElement>) =>
-                              setEditOpenAIModelDraft(event.target.value)
-                            }
-                            onKeyDown={(event) => {
-                              if (event.key === "Enter") {
-                                event.preventDefault();
-                                addEditOpenAIModelValues(editOpenAIModelDraft);
-                              }
-                            }}
-                            onPaste={(event) => {
-                              const pasted = event.clipboardData.getData("text");
-                              if (parseModelTokens(pasted).length > 1) {
-                                event.preventDefault();
-                                addEditOpenAIModelValues(pasted);
-                              }
-                            }}
-                          />
-                          <Button
-                            type="button"
-                            variant="outline"
-                            onClick={() =>
-                              addEditOpenAIModelValues(editOpenAIModelDraft)
-                            }
-                            disabled={!editOpenAIModelDraft.trim()}
-                          >
-                            <Plus className="size-3.5" />
-                            {t("accounts.openaiModelsAdd")}
-                          </Button>
-                        </div>
-                        <ModelChipGrid
-                          models={editOpenAIForm.models}
-                          onRemove={removeEditOpenAIModel}
-                          emptyLabel={t("accounts.openaiModelsEmpty")}
-                        />
-                        <div className="mt-1.5 flex items-center justify-between gap-2">
-                          <p className="text-xs text-muted-foreground">
-                            {t("accounts.openaiModelsHint", {
-                              count: editOpenAIForm.models.length,
-                            })}
-                          </p>
-                          {editOpenAIForm.models.length > 0 && (
-                            <button
-                              type="button"
-                              className="shrink-0 text-xs text-muted-foreground transition-colors hover:text-foreground disabled:opacity-50"
-                              disabled={editOpenAIModelsLoading || editSubmitting}
-                              onClick={clearEditOpenAIModels}
-                            >
-                              {t("accounts.supportedModelsClearAll")}
-                            </button>
-                          )}
-                        </div>
-                      </div>
-                      {renderModelMappingEditor({
-                        value: editOpenAIModelMappingText,
-                        onChange: setEditOpenAIModelMappingText,
-                        mode: editOpenAIModelMappingMode,
-                        onModeChange: setEditOpenAIModelMappingMode,
-                        entries: editOpenAIModelMappingEntries,
-                        onEntriesChange: setEditOpenAIModelMappingEntries,
-                      })}
-                    </div>
-
-                    <div className="rounded-xl border border-border/70 bg-card p-4.5 shadow-2xs space-y-4">
-                      {renderProxyInput({
-                        value: editOpenAIForm.proxy_url,
-                        onChange: (value) =>
-                          setEditOpenAIForm((form) => ({
-                            ...form,
-                            proxy_url: value,
-                          })),
-                      })}
-                      {renderCustomHeadersTextarea({
-                        value: editCustomHeadersText,
-                        onChange: setEditCustomHeadersText,
-                      })}
-                    </div>
-                  </div>
-                ) : editTab === "account" && isOAuthAccount(editingAccount) ? (
+                {editTab === "account" && isOAuthAccount(editingAccount) ? (
                   <div className="space-y-4">
                     <div className="rounded-xl border border-border/80 bg-muted/30 p-4.5 text-sm text-muted-foreground">
                       <p className="font-semibold text-foreground mb-1">
@@ -10320,7 +8956,7 @@ export default function Accounts() {
                         </div>
 
                         {/* 设备指纹收敛 */}
-                        {isCodexOfficialAccount(editingAccount) ? (
+                        {(
                           <div className="rounded-xl border border-border/70 bg-card p-4.5 shadow-2xs hover:border-border/90 transition-colors md:col-span-2">
                             <div className="flex items-center gap-2 font-semibold text-foreground text-sm">
                               <Fingerprint className="size-4 text-teal-500" />
@@ -10346,10 +8982,10 @@ export default function Accounts() {
                               )}
                             </div>
                           </div>
-                        ) : null}
+                        )}
 
                         {/* 绑定时区 */}
-                        {isCodexOfficialAccount(editingAccount) ? (
+                        {(
                           <div className="rounded-xl border border-border/70 bg-card p-4.5 shadow-2xs hover:border-border/90 transition-colors md:col-span-2">
                             <div className="flex items-center gap-2 font-semibold text-foreground text-sm">
                               <Globe className="size-4 text-sky-500" />
@@ -10365,7 +9001,7 @@ export default function Accounts() {
                               onCustomChange: setEditTimezoneCustom,
                             })}
                           </div>
-                        ) : null}
+                        )}
 
                         {/* 自定义请求头 */}
                         <div className="rounded-xl border border-border/70 bg-card p-4.5 shadow-2xs hover:border-border/90 transition-colors md:col-span-2">
@@ -11266,25 +9902,9 @@ export default function Accounts() {
                               <span className="truncate text-sm font-semibold text-foreground">
                                 {group.name}
                               </span>
-                              <span
-                                className={`inline-flex shrink-0 items-center gap-1 rounded-md px-1.5 py-0.5 text-[11px] font-semibold ${
-                                  group.channel === "grok"
-                                    ? "bg-violet-50 text-violet-700 dark:bg-violet-950 dark:text-violet-300"
-                                    : group.channel === "antigravity"
-                                      ? "bg-emerald-50 text-emerald-700 dark:bg-emerald-950 dark:text-emerald-300"
-                                      : group.channel === "claude"
-                                        ? "bg-orange-50 text-orange-700 dark:bg-orange-950 dark:text-orange-300"
-                                        : "bg-sky-50 text-sky-700 dark:bg-sky-950 dark:text-sky-300"
-                                }`}
-                              >
-                                <ChannelLogo channel={group.channel} size={11} />
-                                {group.channel === "grok"
-                                  ? t("accounts.providerViewGrok")
-                                  : group.channel === "antigravity"
-                                    ? t("accounts.providerViewAntigravity")
-                                    : group.channel === "claude"
-                                      ? t("accounts.providerViewClaude")
-                                      : t("accounts.providerViewCodex")}
+                              <span className="inline-flex shrink-0 items-center gap-1 rounded-md bg-sky-50 px-1.5 py-0.5 text-[11px] font-semibold text-sky-700 dark:bg-sky-950 dark:text-sky-300">
+                                <ChannelLogo channel="codex" size={11} />
+                                {t("accounts.providerViewCodex")}
                               </span>
                               <span className="shrink-0 rounded-md bg-muted px-1.5 py-0.5 text-[11px] font-semibold text-muted-foreground">
                                 {t("accounts.groupMembers")}{" "}
@@ -11366,55 +9986,6 @@ export default function Accounts() {
                       maxLength={80}
                     />
                   </label>
-                  <div className="space-y-1.5">
-                    <span className="text-xs font-semibold text-muted-foreground">
-                      {t("accounts.groupChannelLabel")}
-                    </span>
-                    {(() => {
-                      const channelLocked =
-                        groupDraft.id !== null &&
-                        (allGroups.find((g) => g.id === groupDraft.id)
-                          ?.member_count ?? 0) > 0;
-                      return (
-                        <>
-                          <div className="flex gap-2">
-                            {(["codex", "grok", "antigravity", "claude"] as const).map((channel) => (
-                              <button
-                                key={channel}
-                                type="button"
-                                disabled={channelLocked}
-                                className={`inline-flex items-center gap-1.5 rounded-lg border px-3 py-1.5 text-xs font-semibold transition-colors disabled:cursor-not-allowed disabled:opacity-50 ${
-                                  groupDraft.channel === channel
-                                    ? "border-primary bg-primary/10 text-primary"
-                                    : "border-border text-muted-foreground hover:bg-muted/50"
-                                }`}
-                                onClick={() =>
-                                  setGroupDraft((draft) => ({
-                                    ...draft,
-                                    channel,
-                                  }))
-                                }
-                              >
-                                <ChannelLogo channel={channel} size={14} />
-                                {channel === "grok"
-                                  ? t("accounts.providerViewGrok")
-                                  : channel === "antigravity"
-                                    ? t("accounts.providerViewAntigravity")
-                                    : channel === "claude"
-                                      ? t("accounts.providerViewClaude")
-                                      : t("accounts.providerViewCodex")}
-                              </button>
-                            ))}
-                          </div>
-                          <p className="text-[11px] text-muted-foreground">
-                            {channelLocked
-                              ? t("accounts.groupChannelLocked")
-                              : t("accounts.groupChannelHint")}
-                          </p>
-                        </>
-                      );
-                    })()}
-                  </div>
                   <label className="block space-y-1.5">
                     <span className="text-xs font-semibold text-muted-foreground">
                       {t("accounts.groupDescription")}
@@ -11746,7 +10317,6 @@ function RecycleBinView({
   }, [load]);
 
   const stats = useMemo(() => {
-    const relay = rows.filter((row) => row.openai_responses_api).length;
     const dayAgo = Date.now() - 24 * 60 * 60 * 1000;
     const recent24h = rows.filter((row) => {
       if (!row.deleted_at) return false;
@@ -11762,8 +10332,6 @@ function RecycleBinView({
     const plans = [...planCounts.entries()].sort((a, b) => b[1] - a[1]);
     return {
       total: rows.length,
-      oauth: rows.length - relay,
-      relay,
       recent24h,
       plans,
     };
@@ -11786,7 +10354,7 @@ function RecycleBinView({
         }
       }
       if (!keyword) return true;
-      return [row.email, row.name, row.base_url, row.plan_type]
+      return [row.email, row.name, row.plan_type]
         .filter(Boolean)
         .some((field) => String(field).toLowerCase().includes(keyword));
     });
@@ -12154,10 +10722,6 @@ function RecycleBinView({
           label={t("accounts.recycleBinStatTotal")}
           value={stats.total}
           tone="neutral"
-          details={[
-            { label: t("accounts.recycleBinTypeOauth"), value: stats.oauth },
-            { label: t("accounts.recycleBinTypeRelay"), value: stats.relay },
-          ]}
         />
         <CompactStat
           label={t("accounts.recycleBinStatPlans")}
@@ -12351,11 +10915,6 @@ function RecycleBinView({
                             <span className="font-medium">
                               {row.email || row.name || `ID ${row.id}`}
                             </span>
-                            {row.openai_responses_api && row.base_url ? (
-                              <span className="text-xs text-muted-foreground">
-                                {row.base_url}
-                              </span>
-                            ) : null}
                           </div>
                         </TableCell>
                         <TableCell>
@@ -12366,11 +10925,7 @@ function RecycleBinView({
                         </TableCell>
                         <TableCell>
                           <Badge variant="secondary">
-                            {row.claude_api
-                              ? t("accounts.providerViewClaude")
-                              : row.openai_responses_api
-                                ? t("accounts.recycleBinTypeRelay")
-                                : t("accounts.recycleBinTypeOauth")}
+                            {t("accounts.recycleBinTypeOauth")}
                           </Badge>
                         </TableCell>
                         <TableCell>
@@ -12564,10 +11119,6 @@ function recycleBinRowToAccountRow(row: RecycleBinAccountRow): AccountRow {
     email: row.email,
     plan_type: row.plan_type,
     status: "deleted",
-    openai_responses_api: row.openai_responses_api,
-    claude_api: row.claude_api,
-    base_url: row.base_url,
-    models: row.models,
     proxy_url: "",
     created_at: row.created_at,
     updated_at: row.deleted_at || row.created_at,
@@ -13693,7 +12244,6 @@ function AccountRowActionsMenu({
   includeDelete = true,
   onTest,
   onDetect,
-  onChannelMonitor,
   onRefresh,
   onGenerateAuthJson,
   onToggleEnabled,
@@ -13711,7 +12261,6 @@ function AccountRowActionsMenu({
   includeDelete?: boolean;
   onTest: () => void;
   onDetect?: () => void;
-  onChannelMonitor?: () => void;
   onRefresh: () => void;
   onGenerateAuthJson: () => void;
   onToggleEnabled: () => void;
@@ -13721,14 +12270,9 @@ function AccountRowActionsMenu({
   onEditModels?: () => void;
   onDelete: () => void;
 }) {
-  const refreshDisabled =
-    refreshing || account.at_only || account.openai_responses_api;
+  const refreshDisabled = refreshing || account.at_only;
   const authJsonDisabled =
-    authJsonExporting ||
-    account.at_only ||
-    account.openai_responses_api ||
-    account.grok_api ||
-    account.agent_identity;
+    authJsonExporting || account.at_only || account.agent_identity;
   const resetCredits = account.rate_limit_reset_credits ?? 0;
 
   const items: HeaderActionMenuItem[] = [
@@ -13742,24 +12286,13 @@ function AccountRowActionsMenu({
           },
         ]
       : []),
-    // 与测连弹窗内的入口一致:Grok / Antigravity 不支持 ModelTrace 指纹检测。
-    ...(onDetect && !account.grok_api && !account.antigravity_api
+    ...(onDetect
       ? [
           {
             key: "model-detector",
             label: t("accounts.detectorOpen"),
             icon: <ShieldCheck className="size-3.5" />,
             onSelect: onDetect,
-          },
-        ]
-      : []),
-    ...(account.openai_responses_api && !account.grok_api && onChannelMonitor
-      ? [
-          {
-            key: "channel-monitor",
-            label: "渠道监控",
-            icon: <RadioTower className="size-3.5" />,
-            onSelect: onChannelMonitor,
           },
         ]
       : []),
@@ -13772,10 +12305,7 @@ function AccountRowActionsMenu({
         />
       ),
       disabled: refreshDisabled,
-      title:
-        account.at_only || account.openai_responses_api
-          ? t("accounts.atRefreshDisabled")
-          : undefined,
+      title: account.at_only ? t("accounts.atRefreshDisabled") : undefined,
       onSelect: onRefresh,
     },
     {
@@ -13784,10 +12314,7 @@ function AccountRowActionsMenu({
       icon: <FileJson className="size-3.5" />,
       disabled: authJsonDisabled,
       title:
-        account.at_only ||
-        account.openai_responses_api ||
-        account.grok_api ||
-        account.agent_identity
+        account.at_only || account.agent_identity
           ? t("accounts.authJsonDisabled")
           : undefined,
       onSelect: onGenerateAuthJson,
@@ -13834,8 +12361,7 @@ function AccountRowActionsMenu({
       disabled: resetCredits <= 0,
       onSelect: onResetCredits,
     },
-    // 支持模型白名单仅适用于 OAuth(ChatGPT)账号,relay/Grok 账号不显示。
-    ...(onEditModels && !account.openai_responses_api && !account.grok_api
+    ...(onEditModels
       ? [
           {
             key: "edit-models",
@@ -14026,7 +12552,6 @@ function GroupChipList({
 
 function AccountMobileCard({
   account,
-  channelMonitorBilling,
   sequence,
   selected,
   detailOpen = false,
@@ -14062,10 +12587,8 @@ function AccountMobileCard({
   onDelete,
   onUsageRefreshed,
   onOpenOfficialUsage,
-  onChannelMonitor,
 }: {
   account: AccountRow;
-  channelMonitorBilling?: ChannelMonitorBillingSnapshot;
   sequence: number;
   selected: boolean;
   detailOpen?: boolean;
@@ -14102,11 +12625,8 @@ function AccountMobileCard({
   onUsageRefreshed?: () => void;
   // 成本列的官方胶囊点击后跳到用量弹窗的官方统计 tab。
   onOpenOfficialUsage?: () => void;
-  onChannelMonitor?: () => void;
 }) {
-  const displayName = account.openai_responses_api
-    ? formatAccountName(account)
-    : formatAccountListEmail(account);
+  const displayName = formatAccountListEmail(account);
   const fullName = formatAccountName(account);
   const groups = resolveAccountGroups(account.group_ids ?? [], allGroups);
   const isPersonal = variant === "personal";
@@ -14243,15 +12763,6 @@ function AccountMobileCard({
                 <span className="codex-account-card__flag">
                   <KeyRound className="size-3" />
                   {formatAccessTokenBadge(account)}
-                </span>
-              )}
-              {account.openai_responses_api && (
-                <span className="codex-account-card__flag">Responses API</span>
-              )}
-              {account.grok_api && (
-                <span className="codex-account-card__flag">
-                  <Sparkles className="size-3" />
-                  Grok · {account.grok_auth_kind === "api_key" ? "API Key" : "OAuth"}
                 </span>
               )}
               {showColumn("status") && (
@@ -14397,7 +12908,6 @@ function AccountMobileCard({
                   >
                     <BilledCell
                       account={account}
-                      channelMonitorBilling={channelMonitorBilling}
                       onOpenOfficial={onOpenOfficialUsage}
                     />
                   </AccountCardMetric>
@@ -14505,7 +13015,6 @@ function AccountMobileCard({
           authJsonExporting={authJsonExporting}
           onTest={onTest}
           onDetect={onDetect}
-          onChannelMonitor={onChannelMonitor}
           onRefresh={onRefresh}
           onGenerateAuthJson={onGenerateAuthJson}
           onToggleEnabled={onToggleEnabled}
@@ -14683,11 +13192,9 @@ function UsageBar({
 function UsageWindowStat({
   label,
   detail,
-  apiAccount = false,
 }: {
   label: string;
   detail?: AccountRow["usage_5h_detail"];
-  apiAccount?: boolean;
 }) {
   const { t } = useTranslation();
   if (!detail || !hasUsageWindowDetail(detail)) return null;
@@ -14711,30 +13218,14 @@ function UsageWindowStat({
         </span>
       </div>
       {(accountBilledText || userBilledText) && (
-        <div
-          className={cn(
-            "pl-[46px] text-[10px]",
-            apiAccount
-              ? "flex flex-col items-start gap-0.5 font-medium"
-              : "flex items-center gap-1.5 text-muted-foreground/80",
-          )}
-        >
+        <div className="flex items-center gap-1.5 pl-[46px] text-[10px] text-muted-foreground/80">
           {accountBilledText && (
-            <span
-              className={cn(
-                apiAccount &&
-                  "text-emerald-700 dark:text-emerald-400",
-              )}
-            >
+            <span>
               {t("accounts.accountBilledLabel")}: ${accountBilledText}
             </span>
           )}
           {userBilledText && (
-            <span
-              className={cn(
-                apiAccount && "text-sky-700 dark:text-sky-400",
-              )}
-            >
+            <span>
               {t("accounts.userBilledLabel")}: ${userBilledText}
             </span>
           )}
@@ -14930,10 +13421,7 @@ function UsageCell({
       disabled={refreshing}
       title={t("accounts.refreshUsage")}
       aria-label={t("accounts.refreshUsage")}
-      className={cn(
-        "account-usage-refresh shrink-0 rounded p-0.5 text-muted-foreground transition-colors hover:text-foreground disabled:opacity-50",
-        account.openai_responses_api && "mr-6",
-      )}
+      className="account-usage-refresh shrink-0 rounded p-0.5 text-muted-foreground transition-colors hover:text-foreground disabled:opacity-50"
     >
       <RefreshCw className={`size-3 ${refreshing ? "animate-spin" : ""}`} />
     </button>
@@ -14991,7 +13479,6 @@ function UsageCell({
             <UsageWindowStat
               label="5h"
               detail={account.usage_5h_detail}
-              apiAccount={account.openai_responses_api}
             />
           )}
           {sparkBar}
@@ -15027,7 +13514,6 @@ function UsageCell({
             <UsageWindowStat
               label={longWindowLabel}
               detail={account.usage_7d_detail}
-              apiAccount={account.openai_responses_api}
             />
           )}
         </div>
@@ -15051,7 +13537,6 @@ function UsageCell({
             <UsageWindowStat
               label={longWindowLabel}
               detail={account.usage_7d_detail}
-              apiAccount={account.openai_responses_api}
             />
           )}
         </div>
@@ -15072,144 +13557,15 @@ function UsageCell({
 // 再转下去只会让用户以为一直在加载。
 const OFFICIAL_PENDING_SPIN_TIMEOUT_MS = 100_000;
 
-function formatAPIAccountBalance(data: OpenAIResponsesBalanceResponse): string {
-  if (data.unlimited) return "∞";
-  const unit = data.unit.trim().toUpperCase();
-  if (unit === "USD" || unit === "$") return formatOfficialUSD(data.balance);
-  if (unit === "CNY" || unit === "RMB" || unit === "¥") {
-    return `¥${data.balance.toLocaleString(undefined, { maximumFractionDigits: 2 })}`;
-  }
-  const value = data.balance.toLocaleString(undefined, {
-    maximumFractionDigits: 4,
-  });
-  return unit && unit !== "QUOTA" ? `${value} ${data.unit}` : `${value} quota`;
-}
-
-function APIAccountBalanceBadge({ accountId }: { accountId: number }) {
-  const { t } = useTranslation();
-  const cached = apiBalanceCache.get(accountId);
-  const [state, setState] = useState<APIBalanceLoadState>(() =>
-    cached && cached.expiresAt > Date.now()
-      ? cached.state
-      : { loading: false },
-  );
-  const [visible, setVisible] = useState(false);
-  const badgeRef = useRef<HTMLButtonElement>(null);
-
-  const refresh = useCallback((force = false) => {
-    setState({ loading: true });
-    void loadAPIAccountBalance(accountId, force).then(setState);
-  }, [accountId]);
-
-  useEffect(() => {
-    const element = badgeRef.current;
-    if (!element || typeof IntersectionObserver === "undefined") {
-      setVisible(true);
-      return;
-    }
-    const observer = new IntersectionObserver(
-      (entries) => {
-        if (entries.some((entry) => entry.isIntersecting)) {
-          setVisible(true);
-          observer.disconnect();
-        }
-      },
-      { rootMargin: "120px" },
-    );
-    observer.observe(element);
-    return () => observer.disconnect();
-  }, []);
-
-  useEffect(() => {
-    if (!visible) return;
-    let active = true;
-    setState((current) => (current.data || current.error ? current : { loading: true }));
-    void loadAPIAccountBalance(accountId).then((next) => {
-      if (active) setState(next);
-    });
-    return () => {
-      active = false;
-    };
-  }, [accountId, visible]);
-
-  const title = state.data
-    ? t("accounts.apiBalanceTooltip", {
-        source: state.data.source,
-        time: formatRelativeTime(state.data.queried_at),
-      })
-    : state.error
-      ? t("accounts.apiBalanceFailed", { error: state.error })
-      : t("accounts.apiBalanceLoading");
-
-  return (
-    <button
-      type="button"
-      ref={badgeRef}
-      onClick={(event) => {
-        event.stopPropagation();
-        refresh(true);
-      }}
-      className={cn(
-        "inline-flex items-center gap-1 whitespace-nowrap rounded-md px-1.5 py-0.5 font-mono text-[11px] tabular-nums ring-1 ring-inset transition-colors",
-        state.error
-          ? "bg-red-500/10 text-red-700/70 ring-red-500/20 hover:bg-red-500/20 dark:text-red-400/70"
-          : "bg-emerald-500/10 text-emerald-700 ring-emerald-500/20 hover:bg-emerald-500/20 dark:text-emerald-400",
-      )}
-      title={title}
-    >
-      {state.loading ? (
-        <Loader2 className="size-3 shrink-0 animate-spin" aria-hidden />
-      ) : (
-        <Wallet className="size-3 shrink-0" aria-hidden />
-      )}
-      {t("accounts.apiBalanceLabel")}: {state.data ? formatAPIAccountBalance(state.data) : "—"}
-    </button>
-  );
-}
-
-function ChannelMonitorRateBadge({
-  billing,
-}: {
-  billing?: ChannelMonitorBillingSnapshot;
-}) {
-  const rate = resolveChannelMonitorRate(billing?.data, Date.now());
-  if (rate == null) return null;
-
-  const current = billing?.status === "ok";
-  const lastSuccess = billing?.success_at
-    ? formatRelativeTime(billing.success_at)
-    : "未知";
-  const title = current
-    ? `上游当前计费倍率，上次探测 ${lastSuccess}`
-    : `上游最近一次成功计费倍率，成功于 ${lastSuccess}\n当前倍率探测状态：${billing?.status ?? "unknown"}`;
-
-  return (
-    <span
-      className={cn(
-        "inline-flex items-center gap-1 whitespace-nowrap rounded-md px-1.5 py-0.5 font-mono text-[11px] tabular-nums ring-1 ring-inset",
-        current
-          ? "bg-sky-500/10 text-sky-700 ring-sky-500/20 dark:text-sky-300"
-          : "bg-amber-500/10 text-amber-700 ring-amber-500/20 dark:text-amber-300",
-      )}
-      title={title}
-    >
-      <Gauge className="size-3 shrink-0" aria-hidden />
-      倍率 ×{formatChannelMonitorMultiplier(rate)}
-    </span>
-  );
-}
-
 // 成本列并排两套账,颜色区分口径:
 // 上行(石板色)是网关自己的日志算出来的,只含经由本网关转发的请求;
 // 下行(琥珀色)是 OpenAI 官方结算数,还包含用户直接用官方客户端的消耗。
 // 两者不该相等,差额就是账号在网关之外的用量。
 function BilledCell({
   account,
-  channelMonitorBilling,
   onOpenOfficial,
 }: {
   account: AccountRow;
-  channelMonitorBilling?: ChannelMonitorBillingSnapshot;
   // 传了才把官方胶囊变成可点按钮（跳到用量弹窗的官方统计 tab）。
   onOpenOfficial?: (account: AccountRow) => void;
 }) {
@@ -15217,7 +13573,6 @@ function BilledCell({
   const official = officialUsdValue(account);
   const showOfficial =
     supportsOfficialUsage(account) && !isOfficialCostHiddenAccount(account);
-  const showAPIBalance = account.openai_responses_api === true;
   // synced 表示后端已成功同步过但上游没有数据(官方统计有滞后):
   // 这是确定的"暂无数据",不是"还在加载",不该转圈。
   // 导入未满一天、封禁/错误号也不转圈：官方结算要到次日才出数。
@@ -15244,7 +13599,7 @@ function BilledCell({
     (account.usage_percent_5h !== null && account.usage_percent_5h !== undefined) ||
     !!account.reset_5h_at;
   const visibleH5 = has5hWindow ? h5 : null;
-  if (visibleH5 === null && d7 === null && !showOfficial && !showAPIBalance && !channelMonitorBilling?.data) {
+  if (visibleH5 === null && d7 === null && !showOfficial) {
     return <span className="text-[12px] text-muted-foreground">-</span>;
   }
   const longLabel = formatLongUsageWindowLabel(account);
@@ -15261,8 +13616,6 @@ function BilledCell({
     : `${t("accounts.billedOfficialHint")}\n${t("accounts.billedOfficialOpen")}`;
   return (
     <div className="account-billed-cell flex flex-col items-start gap-1">
-      {showAPIBalance && <APIAccountBalanceBadge accountId={account.id} />}
-      {showAPIBalance && <ChannelMonitorRateBadge billing={channelMonitorBilling} />}
       {(visibleH5 !== null || d7 !== null) && (
         <span
           className="account-billed-gateway inline-flex items-center gap-1 whitespace-nowrap rounded-md bg-slate-500/10 px-1.5 py-0.5 font-mono text-[11px] tabular-nums text-slate-700 ring-1 ring-inset ring-slate-500/20 dark:text-slate-300"
