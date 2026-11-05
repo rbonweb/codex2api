@@ -482,7 +482,7 @@ func TestResponsesCompactContinuousRetryDeadlineReturnsLatestFailureAndReleasesS
 	secondAttempt := make(chan struct{}, 1)
 	upstreamCanceled := make(chan struct{}, 1)
 	releaseUpstream := make(chan struct{})
-	upstream := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+	upstream := codexRestoredMainRequestServer(t, http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		if attempts.Add(1) == 1 {
 			w.Header().Set("Content-Type", "application/json")
 			w.WriteHeader(http.StatusServiceUnavailable)

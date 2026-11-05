@@ -465,3 +465,35 @@ func TestScopedModelsHidePausedAccount_CodexUpstream(t *testing.T) {
 		t.Fatalf("resumed account model missing: %+v", models)
 	}
 }
+
+// codexRestoredMainRequestServer starts a fake Codex upstream whose handler sees only the main
+// POST .../responses (or .../responses/compact) request. Any other request that reaches the server (telemetry, usage or model
+// probes, a stray goroutine from an earlier test that shares the Resin endpoint) gets a 404 and is
+// recorded instead of being counted as an attempt, so "upstream calls" assertions count attempts only.
+// The recorded extras are logged when the test ends. The caller still owns Close (it is idempotent).
+func codexRestoredMainRequestServer(t *testing.T, main http.Handler) *httptest.Server {
+	t.Helper()
+	var mu sync.Mutex
+	var extras []string
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.Method == http.MethodPost && (strings.HasSuffix(r.URL.Path, "/responses") || strings.HasSuffix(r.URL.Path, "/responses/compact")) {
+			main.ServeHTTP(w, r)
+			return
+		}
+		mu.Lock()
+		extras = append(extras, r.Method+" "+r.URL.RequestURI())
+		mu.Unlock()
+		w.Header().Set("Content-Type", "application/json")
+		w.WriteHeader(http.StatusNotFound)
+		_, _ = w.Write([]byte(`{"error":{"code":"not_the_main_request"}}`))
+	}))
+	t.Cleanup(func() {
+		server.Close()
+		mu.Lock()
+		defer mu.Unlock()
+		if len(extras) > 0 {
+			t.Logf("fake upstream also received %d non-main request(s): %v", len(extras), extras)
+		}
+	})
+	return server
+}

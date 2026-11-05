@@ -402,7 +402,7 @@ func TestResponsesContinuousRetryCyclesSingleAccountAfter503(t *testing.T) {
 	})
 
 	var calls atomic.Int32
-	upstream := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+	upstream := codexRestoredMainRequestServer(t, http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
 		if calls.Add(1) == 1 {
 			w.Header().Set("Content-Type", "application/json")
 			w.WriteHeader(http.StatusServiceUnavailable)
@@ -463,7 +463,7 @@ func TestResponsesContinuousRetryCatchAllRotatesAndRepeatsPool(t *testing.T) {
 
 	var requestMu sync.Mutex
 	var authorizationHeaders []string
-	upstream := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+	upstream := codexRestoredMainRequestServer(t, http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		requestMu.Lock()
 		authorizationHeaders = append(authorizationHeaders, r.Header.Get("Authorization"))
 		attempt := len(authorizationHeaders)
@@ -560,7 +560,7 @@ func TestContinuousRetryCatchAllDoesNotReplaySuccessfulNonStreamingResponses(t *
 	for _, tc := range tests {
 		t.Run(tc.name, func(t *testing.T) {
 			var calls atomic.Int32
-			upstream := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+			upstream := codexRestoredMainRequestServer(t, http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 				calls.Add(1)
 				w.Header().Set("Content-Type", "text/event-stream")
 				for _, event := range []string{
@@ -613,7 +613,7 @@ func TestContinuousRetryNonStreamingErrorEventCannotBeOverriddenByCompleted(t *t
 	for _, tc := range tests {
 		t.Run(tc.name, func(t *testing.T) {
 			var calls atomic.Int32
-			upstream := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+			upstream := codexRestoredMainRequestServer(t, http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
 				attempt := calls.Add(1)
 				w.Header().Set("Content-Type", "text/event-stream")
 				if attempt == 1 {
@@ -673,7 +673,7 @@ func TestContinuousRetryCatchAllStopsAtCYBAndRetainsPolicyDecision(t *testing.T)
 	continuousRetryKeepaliveInterval = time.Hour
 
 	var calls atomic.Int32
-	upstream := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+	upstream := codexRestoredMainRequestServer(t, http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
 		attempt := calls.Add(1)
 		w.Header().Set("Content-Type", "text/event-stream")
 		if attempt == 1 {
@@ -717,7 +717,7 @@ func TestResponsesContinuousRetrySelectedDeterministicStatuses(t *testing.T) {
 	for _, statusCode := range []int{http.StatusForbidden, http.StatusNotFound, http.StatusNotImplemented} {
 		t.Run(http.StatusText(statusCode), func(t *testing.T) {
 			var calls atomic.Int32
-			upstream := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+			upstream := codexRestoredMainRequestServer(t, http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
 				if calls.Add(1) == 1 {
 					w.Header().Set("Content-Type", "application/json")
 					w.WriteHeader(statusCode)
@@ -793,7 +793,7 @@ func TestResponsesCompactContinuousRetryCyclesSingleAccountAfter503(t *testing.T
 	})
 
 	var calls atomic.Int32
-	upstream := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+	upstream := codexRestoredMainRequestServer(t, http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
 		if calls.Add(1) == 1 {
 			w.Header().Set("Content-Type", "application/json")
 			w.WriteHeader(http.StatusServiceUnavailable)
@@ -853,7 +853,7 @@ func TestResponsesCompactContinuousRetrySelectsResponseFailedEvent(t *testing.T)
 	})
 
 	var calls atomic.Int32
-	upstream := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+	upstream := codexRestoredMainRequestServer(t, http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		if !strings.HasSuffix(r.URL.Path, "/backend-api/codex/responses") {
 			t.Fatalf("upstream path = %q, want Resin path ending /backend-api/codex/responses", r.URL.Path)
 		}

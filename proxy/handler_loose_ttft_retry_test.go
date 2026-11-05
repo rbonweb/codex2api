@@ -38,7 +38,7 @@ func newRetryCodexStore(t *testing.T, upstreamURL string) *auth.Store {
 func newAttemptSequenceSSEServer(t *testing.T, attempts [][]string) (*httptest.Server, *atomic.Int32) {
 	t.Helper()
 	var calls atomic.Int32
-	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+	server := codexRestoredMainRequestServer(t, http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
 		attempt := int(calls.Add(1)) - 1
 		if attempt >= len(attempts) {
 			attempt = len(attempts) - 1
@@ -55,7 +55,7 @@ func newAttemptSequenceSSEServer(t *testing.T, attempts [][]string) (*httptest.S
 func newAttemptSequenceRawSSEServer(t *testing.T, attempts [][]string) (*httptest.Server, *atomic.Int32) {
 	t.Helper()
 	var calls atomic.Int32
-	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+	server := codexRestoredMainRequestServer(t, http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
 		attempt := int(calls.Add(1)) - 1
 		if attempt >= len(attempts) {
 			attempt = len(attempts) - 1
@@ -185,7 +185,7 @@ func TestCodexResponsesCatchAllRetriesHTTP200ErrorEventBeforeReply(t *testing.T)
 	ApplyRuntimeSettings(settings)
 
 	var calls atomic.Int32
-	upstream := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+	upstream := codexRestoredMainRequestServer(t, http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
 		w.Header().Set("Content-Type", "text/event-stream")
 		if calls.Add(1) == 1 {
 			_, _ = io.WriteString(w, "event: error\ndata: {\"error\":{\"code\":\"future_upstream_failure\",\"message\":\"temporary pseudo-success\"}}\n\n")
@@ -707,7 +707,7 @@ func TestResponsesHTTPReplayCachesOnlyAfterSuccessfulFilteredWrite(t *testing.T)
 	t.Cleanup(resetResponseCacheForTest)
 
 	var calls atomic.Int32
-	upstream := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+	upstream := codexRestoredMainRequestServer(t, http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
 		calls.Add(1)
 		w.Header().Set("Content-Type", "text/event-stream")
 		_, _ = io.WriteString(w, "data: {\"type\":\"response.output_text.delta\",\"delta\":\"blocked-http-success-output\"}\n\n")
