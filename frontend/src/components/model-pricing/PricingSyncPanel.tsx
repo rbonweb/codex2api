@@ -35,9 +35,6 @@ interface PricingSyncPanelProps {
     litellm: string
     modelsDev: string
     openAI: string
-    /** 已移除的来源，保留可选字段仅为兼容尚未迁移的调用方。 */
-    xAI?: string
-    claude?: string
   }
   config: OfficialPricingSyncConfig
   onConfigChange: (config: OfficialPricingSyncConfig) => void

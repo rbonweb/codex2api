@@ -12,38 +12,6 @@ import type {
   AgentIdentityBatchImportRequest,
   AgentIdentityBatchImportResponse,
   AgentIdentityImportItem,
-  AddOpenAIResponsesAccountRequest,
-  OpenAIResponsesBalanceResponse,
-  AddGrokAccountRequest,
-  UpdateGrokAccountRequest,
-  AddAntigravityAccountRequest,
-  AntigravityCreateResponse,
-  UpdateAntigravityAccountRequest,
-  AntigravityImportRequest,
-  AntigravityImportResponse,
-  AntigravityOAuthStartRequest,
-  AntigravityOAuthStartResponse,
-  AntigravityOAuthStatusResponse,
-  AntigravityOAuthCompleteRequest,
-  AntigravityOAuthCompleteResponse,
-  AntigravityAccountState,
-  AntigravityStateSyncResponse,
-  AntigravityCapabilityProbeResponse,
-  AntigravityQuotaClearResponse,
-  BatchUpdateGrokModelsRequest,
-  BatchUpdateGrokModelsResponse,
-  FetchGrokModelsResponse,
-  GrokDeviceStartRequest,
-  GrokDeviceStartResponse,
-  GrokDevicePollRequest,
-  GrokDevicePollResponse,
-  GrokSSOImportRequest,
-  GrokSSOImportResponse,
-  GrokBatchImportRequest,
-  GrokBatchImportResponse,
-  GrokAccountState,
-  GrokStateSyncResponse,
-  GrokCapabilityProbeResponse,
   AdminErrorResponse,
   APIKeysResponse,
   APIKeyTokenStat,
@@ -59,15 +27,10 @@ import type {
   AccountPageStatsResponse,
   AccountLiveStateResponse,
   ChartAggregation,
-  ChannelMonitorConfig,
-  ChannelMonitorBillingRatesResponse,
-  ChannelMonitorListResponse,
   CreateAccountResponse,
   CreateAPIKeyResponse,
   CreateAPIKeyRequest,
   CreatePromptFilterNewAPIBindingRequest,
-  FetchOpenAIResponsesModelsRequest,
-  FetchOpenAIResponsesModelsResponse,
   CreateImageJobPayload,
   HealthResponse,
   ImageAssetsResponse,
@@ -94,15 +57,6 @@ import type {
   ModelsResponse,
   OAuthExchangeResponse,
   OAuthURLResponse,
-  ClaudeAuthURLResponse,
-  ClaudeAuthKind,
-  ClaudeSessionKeyExchangeRequest,
-  ClaudeSetupTokenImportRequest,
-  ClaudeExchangeCodeRequest,
-  ClaudeImportTokenRequest,
-  ClaudeCredentialExportEntry,
-  ClaudeImportBundleResponse,
-  ClaudeAddAccountResponse,
   OpsErrorSummary,
   OpsOverviewResponse,
   PromptFilterLog,
@@ -136,11 +90,9 @@ import type {
   CodexUserAgentCatalog,
   CodexUserAgentPreview,
   UpdateAccountSchedulerRequest,
-  UpdateChannelMonitorConfigRequest,
   UpdateAPIKeyRequest,
   UpdatePromptFilterNewAPIBindingRequest,
   UpdateOAuthAccountRequest,
-  UpdateOpenAIResponsesAccountRequest,
   UsageLogsResponse,
   UsageLogsPagedResponse,
   UsageStats,
@@ -154,11 +106,6 @@ import type {
   CreateAccountGroupRequest,
   UpdateAccountGroupRequest,
   UpstreamChannel,
-  ClaudeGlobalConfig,
-  VisibleChannelsSettings,
-  ChannelTestSettings,
-  ChannelTestSettingsResponse,
-  AntigravitySettingsResponse,
 } from './types'
 
 const BASE = '/api/admin'
@@ -667,7 +614,7 @@ export const api = {
     if (params.order) searchParams.set('order', params.order)
     return request<AccountsPageResponse>(`/accounts?${searchParams.toString()}`, { signal })
   },
-  getAccountAnalysis: (channel: 'codex' | 'grok' | 'antigravity' | 'claude' = 'codex', signal?: AbortSignal) =>
+  getAccountAnalysis: (channel: 'codex' = 'codex', signal?: AbortSignal) =>
     request<AccountAnalysisResponse>(`/accounts/analysis?channel=${channel}`, { signal }),
   getAccountPageStats: (ids: number[], signal?: AbortSignal) => {
     const query = new URLSearchParams({ ids: ids.join(',') })
@@ -685,217 +632,10 @@ export const api = {
     request<ImportAgentIdentityResponse>('/accounts/codex/agent-identity', { method: 'POST', body: JSON.stringify(data) }),
   batchImportCodexAgentIdentity: (data: AgentIdentityBatchImportRequest) =>
     request<AgentIdentityBatchImportResponse>('/accounts/codex/agent-identity/import', { method: 'POST', body: JSON.stringify(data) }),
-  addOpenAIResponsesAccount: (data: AddOpenAIResponsesAccountRequest) =>
-    request<CreateAccountResponse>('/accounts/openai-responses', { method: 'POST', body: JSON.stringify(data) }),
-  fetchOpenAIResponsesModels: (data: FetchOpenAIResponsesModelsRequest) =>
-    request<FetchOpenAIResponsesModelsResponse>('/accounts/openai-responses/models', { method: 'POST', body: JSON.stringify(data) }),
-  updateOpenAIResponsesAccount: (id: number, data: UpdateOpenAIResponsesAccountRequest) =>
-    request<MessageResponse>(`/accounts/${id}/openai-responses`, { method: 'PATCH', body: JSON.stringify(data) }),
-  getOpenAIResponsesBalance: (id: number, signal?: AbortSignal, force = false) =>
-    request<OpenAIResponsesBalanceResponse>(
-      `/accounts/${id}/openai-responses/balance${force ? '?refresh=1' : ''}`,
-      { signal, timeoutMs: 25_000 },
-    ),
-  getChannelMonitorConfig: (id: number, signal?: AbortSignal) =>
-    request<ChannelMonitorConfig>(`/accounts/${id}/channel-monitor`, { signal }),
-  updateChannelMonitorConfig: (id: number, data: UpdateChannelMonitorConfigRequest) =>
-    request<ChannelMonitorConfig>(`/accounts/${id}/channel-monitor`, {
-      method: 'PUT',
-      body: JSON.stringify(data),
-    }),
-  getChannelMonitors: (signal?: AbortSignal) =>
-    request<ChannelMonitorListResponse>('/channel-monitors', { signal }),
-  getChannelMonitorBillingRates: (signal?: AbortSignal) =>
-    request<ChannelMonitorBillingRatesResponse>('/channel-monitors/billing-rates', { signal }),
-  probeChannelMonitor: (id: number) =>
-    request<MessageResponse>(`/channel-monitors/${id}/probe`, {
-      method: 'POST',
-      timeoutMs: 80_000,
-    }),
-  addGrokAccount: (data: AddGrokAccountRequest) =>
-    request<CreateAccountResponse>('/accounts/grok', { method: 'POST', body: JSON.stringify(data) }),
-  fetchGrokModels: (data: AddGrokAccountRequest) =>
-    request<FetchGrokModelsResponse>('/accounts/grok/models', { method: 'POST', body: JSON.stringify(data) }),
-  startGrokDeviceAuth: (data: GrokDeviceStartRequest = {}) =>
-    request<GrokDeviceStartResponse>('/accounts/grok/oauth/device/start', {
-      method: 'POST',
-      body: JSON.stringify(data),
-    }),
-  pollGrokDeviceAuth: (data: GrokDevicePollRequest) =>
-    request<GrokDevicePollResponse>('/accounts/grok/oauth/device/poll', {
-      method: 'POST',
-      body: JSON.stringify(data),
-    }),
-  importGrokSSO: (data: GrokSSOImportRequest) =>
-    request<GrokSSOImportResponse>('/accounts/grok/sso/import', {
-      method: 'POST',
-      body: JSON.stringify(data),
-    }),
-  batchImportGrokAccounts: (data: GrokBatchImportRequest) =>
-    request<GrokBatchImportResponse>('/accounts/grok/import', {
-      method: 'POST',
-      body: JSON.stringify(data),
-    }),
-  importGrokRefreshTokens: (data: GrokSSOImportRequest) =>
-    request<GrokSSOImportResponse>('/accounts/grok/refresh/import', {
-      method: 'POST',
-      body: JSON.stringify(data),
-    }),
-  updateGrokAccount: (id: number, data: UpdateGrokAccountRequest) =>
-    request<MessageResponse>(`/accounts/${id}/grok`, { method: 'PATCH', body: JSON.stringify(data) }),
-  fetchAntigravityModels: (data: AddAntigravityAccountRequest) =>
-    request<{ models: string[] }>('/accounts/antigravity/models', {
-      method: 'POST',
-      body: JSON.stringify(data),
-    }),
-  batchUpdateAntigravityModels: (data: { ids: number[]; models: string[] }) =>
-    request<{ success: number; failed: number; models: string[] }>('/accounts/antigravity/batch-models', {
-      method: 'POST',
-      body: JSON.stringify(data),
-    }),
-  addAntigravityAccount: (data: AddAntigravityAccountRequest) =>
-    request<AntigravityCreateResponse>('/accounts/antigravity', {
-      method: 'POST',
-      body: JSON.stringify(data),
-      timeoutMs: 120_000,
-    }),
-  importAntigravityAccounts: (data: AntigravityImportRequest) =>
-    request<AntigravityImportResponse>('/accounts/antigravity/import', {
-      method: 'POST',
-      body: JSON.stringify(data),
-      timeoutMs: 180_000,
-    }),
-  updateAntigravityAccount: (id: number, data: UpdateAntigravityAccountRequest) =>
-    request<MessageResponse>(`/accounts/${id}/antigravity`, {
-      method: 'PATCH',
-      body: JSON.stringify(data),
-      timeoutMs: 120_000,
-    }),
-  refreshAntigravityAccount: (id: number) =>
-    request<MessageResponse>(`/accounts/${id}/antigravity/refresh`, {
-      method: 'POST',
-      timeoutMs: 120_000,
-    }),
-  refreshAntigravityQuota: (id: number) =>
-    request<MessageResponse>(`/accounts/${id}/antigravity/quota`, {
-      method: 'POST',
-      timeoutMs: 120_000,
-    }),
-  getAntigravityAccountState: (id: number, signal?: AbortSignal) =>
-    request<AntigravityAccountState>(`/accounts/${id}/antigravity/state`, { signal }),
-  syncAntigravityAccountState: (id: number) =>
-    request<AntigravityStateSyncResponse>(`/accounts/${id}/antigravity/sync`, {
-      method: 'POST',
-      timeoutMs: 120_000,
-    }),
-  probeAntigravityAccountCapabilities: (id: number) =>
-    request<AntigravityCapabilityProbeResponse>(`/accounts/${id}/antigravity/capabilities/probe`, {
-      method: 'POST',
-      timeoutMs: 45_000,
-    }),
-  startAntigravityOAuth: (data: AntigravityOAuthStartRequest = {}) =>
-    request<AntigravityOAuthStartResponse>('/accounts/antigravity/oauth/start', {
-      method: 'POST',
-      body: JSON.stringify(data),
-      timeoutMs: 20_000,
-    }),
-  getAntigravityOAuthStatus: (sessionId: string, signal?: AbortSignal) =>
-    request<AntigravityOAuthStatusResponse>(
-      `/accounts/antigravity/oauth/status?session_id=${encodeURIComponent(sessionId)}`,
-      { signal, timeoutMs: 10_000 },
-    ),
-  completeAntigravityOAuth: (data: AntigravityOAuthCompleteRequest) =>
-    request<AntigravityOAuthCompleteResponse>('/accounts/antigravity/oauth/complete', {
-      method: 'POST',
-      body: JSON.stringify(data),
-      timeoutMs: 15_000,
-    }),
-  cancelAntigravityOAuth: (sessionId: string) =>
-    request<void>(`/accounts/antigravity/oauth/${encodeURIComponent(sessionId)}`, {
-      method: 'DELETE',
-    }),
-  // Claude Code OAuth：第一步取授权 URL（服务端暂存 state→verifier）。mode=setup_token
-  // 申请长效 Setup Token(仅推理 scope,1 年有效,无 RT)。
-  generateClaudeAuthURL: (mode: ClaudeAuthKind = 'oauth') =>
-    request<ClaudeAuthURLResponse>('/accounts/claude/oauth/auth-url', {
-      method: 'POST',
-      body: JSON.stringify({ mode }),
-      timeoutMs: 15_000,
-    }),
-  // claude.ai sessionKey(cookie)一键换号:服务端代跑 OAuth 三步。
-  exchangeClaudeSessionKey: (data: ClaudeSessionKeyExchangeRequest) =>
-    request<ClaudeAddAccountResponse>('/accounts/claude/oauth/exchange-session-key', {
-      method: 'POST',
-      body: JSON.stringify(data),
-      timeoutMs: 120_000,
-    }),
-  // 批量粘贴 sk-ant-oat01- Setup Token。
-  importClaudeSetupTokens: (data: ClaudeSetupTokenImportRequest) =>
-    request<ClaudeImportBundleResponse>('/accounts/claude/import-setup-tokens', {
-      method: 'POST',
-      body: JSON.stringify(data),
-      timeoutMs: 120_000,
-    }),
-  // 第二步：用 state+code 换取 token 并入库（可选从代理池分配代理）。
-  exchangeClaudeOAuthCode: (data: ClaudeExchangeCodeRequest) =>
-    request<ClaudeAddAccountResponse>('/accounts/claude/oauth/exchange-code', {
-      method: 'POST',
-      body: JSON.stringify(data),
-      timeoutMs: 90_000,
-    }),
-  // Claude 凭据导入：OAuth、Setup Token 或 Base URL + API Key。
-  importClaudeToken: (data: ClaudeImportTokenRequest) =>
-    request<ClaudeAddAccountResponse>('/accounts/claude/import', {
-      method: 'POST',
-      body: JSON.stringify(data),
-      timeoutMs: 60_000,
-    }),
-  /** Import a versioned Claude credential object or bundle. */
-  importClaudeCredentialBundle: (
-    data: ClaudeCredentialExportEntry | ClaudeCredentialExportEntry[] | { accounts: ClaudeCredentialExportEntry[] },
-  ) =>
-    request<ClaudeAddAccountResponse | ClaudeImportBundleResponse>('/accounts/claude/import', {
-      method: 'POST',
-      body: JSON.stringify(data),
-      timeoutMs: 120_000,
-    }),
-  /** Download one Claude JSON credential or a ZIP for multiple accounts. */
-  exportClaudeAccounts: (ids?: number[], filter: 'all' | 'healthy' = 'all', format: 'auto' | 'json' | 'zip' = 'auto') => {
-    const params = new URLSearchParams({ filter, format })
-    if (ids && ids.length > 0) params.set('ids', ids.join(','))
-    return requestNamedBlob(`/accounts/claude/export?${params.toString()}`)
-  },
-  refreshClaudeModels: (id: number) =>
-    request<{ message: string; models: string[]; count: number }>(`/accounts/${id}/claude/models`, {
-      method: 'POST',
-      timeoutMs: 30_000,
-    }),
-  refreshAllClaudeModels: () =>
-    request<{ message: string; refreshed: number; failed: number; model_count: number }>('/accounts/claude/models/refresh', {
-      method: 'POST',
-      timeoutMs: 60_000,
-    }),
   refreshAllModels: () =>
     request<RefreshAllModelsResponse>('/models/refresh-all', {
       method: 'POST',
       timeoutMs: 130_000,
-    }),
-  batchUpdateGrokModels: (data: BatchUpdateGrokModelsRequest) =>
-    request<BatchUpdateGrokModelsResponse>('/accounts/grok/batch-models', {
-      method: 'POST',
-      body: JSON.stringify(data),
-    }),
-  getGrokAccountState: (id: number, signal?: AbortSignal) =>
-    request<GrokAccountState>(`/accounts/${id}/grok/state`, { signal }),
-  syncGrokAccountState: (id: number) =>
-    request<GrokStateSyncResponse>(`/accounts/${id}/grok/sync`, {
-      method: 'POST',
-      timeoutMs: 120_000,
-    }),
-  probeGrokAccountCapabilities: (id: number) =>
-    request<GrokCapabilityProbeResponse>(`/accounts/${id}/grok/capabilities/probe`, {
-      method: 'POST',
-      timeoutMs: 180_000,
     }),
   deleteAccount: (id: number) =>
     request<MessageResponse>(`/accounts/${id}`, { method: 'DELETE' }),
@@ -931,10 +671,6 @@ export const api = {
       reset_5h_at?: string
       reset_7d_at?: string
       reset_spark_at?: string
-      claude_usage_probe_at?: string
-      claude_usage_probe_error?: string
-      claude_usage_windows?: import('./types').ClaudeUsageWindow[]
-      claude_usage_windows_probed?: boolean
     }>(`/accounts/${id}/usage/refresh`, { method: 'POST' }),
   // 订阅状态:GET 只读服务端已算好的状态对象;POST 立即向订阅提供方查一次(绕过后台节流,30s 内重复点会 429)。
   getAccountSubscription: (id: number, signal?: AbortSignal) =>
@@ -1056,38 +792,6 @@ export const api = {
       method: 'POST',
       body: JSON.stringify({ ids }),
     }),
-  getVisibleChannels: () => request<VisibleChannelsSettings>('/settings/visible-channels'),
-  updateVisibleChannels: (channels: readonly UpstreamChannel[]) =>
-    request<VisibleChannelsSettings>('/settings/visible-channels', {
-      method: 'PUT',
-      body: JSON.stringify({ channels }),
-    }),
-  getAntigravitySettings: () => request<AntigravitySettingsResponse>('/settings/antigravity'),
-  updateAntigravitySettings: (patch: {
-    model_redirects?: Record<string, string>
-    redirect_overrides_effort?: boolean
-    expose_thoughts?: boolean
-    quota_refresh_enabled?: boolean
-    quota_refresh_interval_minutes?: number
-    quota_gate_enabled?: boolean
-    expiry_priority_enabled?: boolean
-    expiry_priority_horizon_hours?: number
-  }) =>
-    request<AntigravitySettingsResponse>('/settings/antigravity', {
-      method: 'PUT',
-      body: JSON.stringify(patch),
-    }),
-  clearAntigravityQuota: (ids: number[]) =>
-    request<AntigravityQuotaClearResponse>('/accounts/antigravity/quota/clear', {
-      method: 'POST',
-      body: JSON.stringify({ account_ids: ids }),
-    }),
-  getChannelTestSettings: () => request<ChannelTestSettingsResponse>('/settings/channel-tests'),
-  updateChannelTestSettings: (patch: Partial<Record<'antigravity' | 'claude', Partial<ChannelTestSettings>>>) =>
-    request<ChannelTestSettingsResponse>('/settings/channel-tests', {
-      method: 'PUT',
-      body: JSON.stringify(patch),
-    }),
   getInviteGuideSettings: () => request<{ enabled: boolean }>('/settings/invite-guide'),
   updateInviteGuideSettings: (enabled: boolean) =>
     request<{ enabled: boolean }>('/settings/invite-guide', {
@@ -1193,7 +897,6 @@ export const api = {
     const search = buildOpsErrorSearchParams(params)
     return requestBlob(`/ops/errors/export?${search.toString()}`)
   },
-  // 区间统计卡片可携带与 /usage/logs 同一套维度筛选(账号/密钥/模型/端点/搜索等),
   // 后端会忽略状态类参数;累计字段始终全局。
   getUsageStats: (params: Partial<Omit<UsageLogQueryParams, 'start' | 'end'>> & {
     start?: string
@@ -1355,22 +1058,6 @@ export const api = {
     request<MessageResponse>('/usage/logs', { method: 'DELETE' }),
   getSetupHints: () => request<SetupHintsResponse>('/setup-hints'),
   getSettings: () => request<SystemSettings>('/settings'),
-  getClaudeConfig: () =>
-    request<ClaudeGlobalConfig>('/settings/claude-config'),
-  updateClaudeConfig: (data: ClaudeGlobalConfig) =>
-    request<{ message: string } & ClaudeGlobalConfig>('/settings/claude-config', {
-      method: 'PUT',
-      body: JSON.stringify(data),
-    }),
-  syncClaudeCLIVersion: () =>
-    request<{
-      fetched_version: string
-      effective_version: string
-      builtin_version: string
-      updated: boolean
-      accounts_refreshed: number
-      warning?: string
-    }>('/settings/claude-config/cli-version/sync', { method: 'POST' }),
   getObservedInstructions: () =>
     request<ObservedInstructionsResponse>('/settings/observed-instructions'),
   getCodexUserAgentCatalog: () =>
@@ -1597,8 +1284,6 @@ export const api = {
       models_dev_url: string
       litellm_url: string
 		official_openai_url: string
-		official_xai_url: string
-		official_claude_url: string
 		official_sync_config: OfficialPricingSyncConfig
     }>('/model-pricing'),
   updateModelPricing: (payload: { model: string; reset?: boolean; pricing?: ModelPricingOverride }) =>
@@ -1615,12 +1300,12 @@ export const api = {
   updateModelTraceBank: () =>
     request<ModelTraceBankUpdateResult>('/modeltrace/bank/update', { method: 'POST', timeoutMs: 120_000 }),
   resetModelTraceBank: () => request<ModelTraceBankStatus>('/modeltrace/bank', { method: 'DELETE' }),
-	updateOfficialPricingSyncConfig: (config: Pick<OfficialPricingSyncConfig, 'enabled' | 'interval_minutes' | 'include_openai' | 'include_grok' | 'include_claude'>) =>
+	updateOfficialPricingSyncConfig: (config: Pick<OfficialPricingSyncConfig, 'enabled' | 'interval_minutes' | 'include_openai'>) =>
 		request<OfficialPricingSyncConfig>('/model-pricing/official-sync/config', {
 			method: 'PUT',
 			body: JSON.stringify(config),
 		}),
-	syncOfficialModelPricing: (sources: { include_openai: boolean; include_grok: boolean; include_claude?: boolean }) =>
+	syncOfficialModelPricing: (sources: { include_openai: boolean }) =>
 		request<OfficialPricingSyncResult>('/model-pricing/official-sync', {
 			method: 'POST',
 			body: JSON.stringify(sources),
@@ -1639,14 +1324,6 @@ export const api = {
     request<{ message: string; cleaned: number }>('/accounts/clean-rate-limited', { method: 'POST' }),
   cleanError: () =>
     request<{ message: string; cleaned: number }>('/accounts/clean-error', { method: 'POST' }),
-  cleanGrokBanned: () =>
-    request<{ message: string; cleaned: number }>('/accounts/grok/clean-banned', { method: 'POST' }),
-  cleanGrokError: () =>
-    request<{ message: string; cleaned: number }>('/accounts/grok/clean-error', { method: 'POST' }),
-  cleanAntigravityBanned: () =>
-    request<{ message: string; cleaned: number }>('/accounts/antigravity/clean-banned', { method: 'POST' }),
-  cleanAntigravityError: () =>
-    request<{ message: string; cleaned: number }>('/accounts/antigravity/clean-error', { method: 'POST' }),
   /**
    * 导出账号凭据。includeProxy 打开后条目里会带上账号绑定的代理 URL，
    * 而代理 URL 常含明文用户名密码，因此默认关闭、由调用方显式开启。
@@ -1654,7 +1331,7 @@ export const api = {
   exportAccounts: (params: {
     filter: 'healthy' | 'all'
     ids?: number[]
-    channel?: 'codex' | 'grok'
+    channel?: 'codex'
     includeProxy?: boolean
   }) => {
     const sp = new URLSearchParams({ filter: params.filter })
@@ -1673,27 +1350,6 @@ export const api = {
   },
   downloadAccountAuthJSON: (id: number) =>
     requestBlob(`/accounts/${id}/auth-json`),
-  // Grok CLI(~/.grok/auth.json)格式;不带 refresh token 时不会与网关争用同一 RT 家族。
-  downloadGrokAuthJSON: (id: number, includeRefreshToken: boolean) =>
-    requestBlob(`/accounts/${id}/grok/auth-json?include_refresh_token=${includeRefreshToken}`),
-  /**
-   * 导出 Grok 账号凭据。ids 为空则导出全部 Grok 账号。
-   * 单个账号返回裸 JSON，多个账号返回 ZIP（内部每账号一个 <邮箱>.json）。
-   * 文件名由服务端在 Content-Disposition 里给出，前端不再自行拼接。
-   */
-  exportGrokAccounts: (ids?: number[], includeProxy?: boolean) => {
-    const sp = new URLSearchParams({ filter: 'all' })
-    if (ids && ids.length > 0) sp.set('ids', ids.join(','))
-    if (includeProxy) sp.set('include_proxy', '1')
-    return requestNamedBlob(`/accounts/grok/export?${sp.toString()}`)
-  },
-  /** Admin-only secret-bearing Antigravity credential download (JSON or ZIP). */
-  exportAntigravityAccounts: (ids?: number[]) => {
-    const sp = new URLSearchParams()
-    if (ids && ids.length > 0) sp.set('ids', ids.join(','))
-    const query = sp.toString()
-    return requestNamedBlob(`/accounts/antigravity/export${query ? `?${query}` : ''}`)
-  },
   migrateAccounts: (data: { url: string; admin_key: string }) =>
     request<{ message: string; total: number; imported: number; duplicate: number; failed: number }>(
       '/accounts/migrate', { method: 'POST', body: JSON.stringify(data) }),

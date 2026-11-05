@@ -127,9 +127,7 @@ export default function AccountUsageModal({ account, onClose, onCreditsReset, sh
 
   useEffect(() => { void load() }, [load])
 
-  const accountLabel = account.openai_responses_api
-    ? (account.name?.trim() || `#${account.id}`)
-    : (account.email || account.name || `#${account.id}`)
+  const accountLabel = account.email || account.name || `#${account.id}`
   const title = t('accounts.usageDetailTitle') + ' — ' + accountLabel
 
   const handleViewLogs = () => {
