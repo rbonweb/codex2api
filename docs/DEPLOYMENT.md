@@ -39,8 +39,8 @@ cd codex2api
 # Configure the environment
 cp .env.example .env
 # Edit the .env file and set the required parameters:
-#   PostgreSQL such as Neon: DATABASE_URL=postgresql://USER:PASSWORD@HOST/DBNAME?sslmode=require
-#   SQLite: DATABASE_DRIVER=sqlite and DATABASE_PATH=/data/codex2api.db
+#   PostgreSQL such as Neon: DATABASE_URL=postgresql://USER:PASSWORD@HOST/DBNAME?sslmode=require and CACHE_DRIVER=memory
+#   SQLite: DATABASE_DRIVER=sqlite, DATABASE_PATH=/data/codex2api.db and CACHE_DRIVER=memory
 
 # Start the service
 docker compose pull
@@ -91,6 +91,7 @@ cp .env.example .env
 # - PostgreSQL such as Neon: DATABASE_URL=postgresql://USER:PASSWORD@HOST/DBNAME?sslmode=require
 #   (use the direct host, not the pooled host with -pooler)
 # - SQLite instead: DATABASE_DRIVER=sqlite and DATABASE_PATH=/data/codex2api.db
+# - CACHE_DRIVER=memory (the gateway-only compose file has no Redis)
 
 # 3. Start the service
 docker compose pull
@@ -179,7 +180,7 @@ LOG_DISABLED=true
 ADMIN_SECRET=replace-with-a-strong-secret
 CODEX_ALLOW_ANONYMOUS=false
 GIN_MODE=release
-TZ=Asia/Shanghai
+TZ=UTC
 ```
 
 To keep data across redeploys, use an external PostgreSQL such as Neon instead: remove `DATABASE_DRIVER=sqlite` and `DATABASE_PATH`, and set `DATABASE_URL=postgresql://USER:PASSWORD@HOST/DBNAME?sslmode=require`. For Neon, use the direct host, not the pooled host with `-pooler`: the gateway uses session-level advisory locks, and `DATABASE_SCHEMA` also relies on setting `search_path` through startup parameters, and transaction-level connection pools support neither.
@@ -201,7 +202,7 @@ RENDER_DEPLOY_HOOK_URL=<Render Deploy Hook URL>
 
 After that, once the `Build Docker Image` workflow has pushed the image successfully, its last step calls the hook automatically so Render pulls the image tag the service is configured with (such as `latest`) and deploys it; `.github/workflows/render-deploy.yml` is for manual redeploys.
 
-You can also trigger the image build workflow manually; after the image is pushed successfully it moves on to the Render deploy workflow automatically:
+You can also trigger the image build workflow manually; after the image is pushed successfully its last step triggers the Render deploy hook automatically:
 
 ```bash
 gh workflow run docker-image.yml
@@ -315,7 +316,7 @@ REDIS_TLS=false
 REDIS_INSECURE_SKIP_VERIFY=false
 
 # Time zone
-TZ=Asia/Shanghai
+TZ=UTC
 ```
 
 Cloud Redis (such as Aiven or Upstash) usually requires TLS; you can use the `rediss://` connection string provided by the platform directly:
@@ -396,72 +397,16 @@ server {
 
 ### 4. Docker Compose production configuration
 
-```yaml
-version: '3.8'
+Use `docker-compose.full.yml` as the base for production. To listen on localhost only and expose the service through nginx, add a compose override file next to it, `docker-compose.override.yml`:
 
+```yaml
 services:
   codex2api:
-    image: ghcr.io/rbonweb/codex2api:latest
-    container_name: codex2api
-    restart: unless-stopped
-    env_file:
-      - .env
-    ports:
+    ports: !override
       - "127.0.0.1:8080:8080"  # listen on localhost only, expose through nginx
-    depends_on:
-      postgres:
-        condition: service_healthy
-      redis:
-        condition: service_healthy
-    networks:
-      - codex2api
-    logging:
-      driver: "json-file"
-      options:
-        max-size: "100m"
-        max-file: "3"
-
-  postgres:
-    image: postgres:15-alpine
-    container_name: codex2api-postgres
-    restart: unless-stopped
-    environment:
-      POSTGRES_USER: ${DATABASE_USER}
-      POSTGRES_PASSWORD: ${DATABASE_PASSWORD}
-      POSTGRES_DB: ${DATABASE_NAME}
-    volumes:
-      - pgdata:/var/lib/postgresql/data
-    networks:
-      - codex2api
-    healthcheck:
-      test: ["CMD-SHELL", "pg_isready -U ${DATABASE_USER} -d ${DATABASE_NAME}"]
-      interval: 5s
-      timeout: 5s
-      retries: 5
-
-  redis:
-    image: redis:7-alpine
-    container_name: codex2api-redis
-    restart: unless-stopped
-    command: redis-server --requirepass ${REDIS_PASSWORD}
-    volumes:
-      - redisdata:/data
-    networks:
-      - codex2api
-    healthcheck:
-      test: ["CMD", "redis-cli", "ping"]
-      interval: 5s
-      timeout: 5s
-      retries: 5
-
-volumes:
-  pgdata:
-  redisdata:
-
-networks:
-  codex2api:
-    driver: bridge
 ```
+
+Then run `docker compose -f docker-compose.full.yml -f docker-compose.override.yml up -d`.
 
 ---
 
@@ -565,12 +510,12 @@ docker compose -f docker-compose.full.yml start codex2api
 
 ### SQLite backup
 
-```bash
-# Back up
-sqlite3 /data/codex2api.db ".backup '/backup/codex2api_$(date +%Y%m%d_%H%M%S).db'"
+The SQLite database lives in the `codex2api_data` volume mounted at `/data`. Stop the service first for a consistent copy:
 
-# Or simply copy
-cp /data/codex2api.db /backup/codex2api_$(date +%Y%m%d_%H%M%S).db
+```bash
+docker compose stop
+docker run --rm -v codex2api_data:/data -v /backup:/backup alpine cp /data/codex2api.db /backup/codex2api_backup.db
+docker compose start
 ```
 
 ### SQLite restore
@@ -580,7 +525,7 @@ cp /data/codex2api.db /backup/codex2api_$(date +%Y%m%d_%H%M%S).db
 docker compose stop
 
 # Restore the data
-cp /backup/codex2api_xxx.db /data/codex2api.db
+docker run --rm -v codex2api_data:/data -v /backup:/backup alpine cp /backup/codex2api_xxx.db /data/codex2api.db
 
 # Start the service
 docker compose start

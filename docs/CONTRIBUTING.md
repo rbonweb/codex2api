@@ -10,6 +10,9 @@ Thank you for your interest in the Codex2API project! This guide explains how to
 - [Pull request process](#pull-request-process)
 - [Testing requirements](#testing-requirements)
 - [Documentation updates](#documentation-updates)
+- [Release process](#release-process)
+- [Getting help](#getting-help)
+- [Code of conduct](#code-of-conduct)
 
 ---
 
@@ -386,8 +389,8 @@ Use [Semantic Versioning](https://semver.org/):
 Releases are automatic: every push to `main` that changes more than `docs/` or Markdown runs `.github/workflows/fork-release.yml`, which tags the next patch version, publishes the public image `ghcr.io/rbonweb/codex2api` (tags `X.Y.Z`, `X.Y`, `vX.Y.Z`, `latest`) and creates a GitHub release with the binaries.
 
 1. Add the release notes to `CHANGELOG.md`
-2. Merge to `main`
-3. For a minor or major bump, add a higher `## vX.Y.Z` heading to `CHANGELOG.md` first: the next patch is counted from the higher of the newest tag and the newest changelog version
+2. For a minor or major bump, add a higher `## vX.Y.Z` heading to `CHANGELOG.md`: the next patch is counted from the higher of the newest tag and the newest changelog version
+3. Merge to `main`
 
 ---
 
