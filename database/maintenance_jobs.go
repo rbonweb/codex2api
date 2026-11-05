@@ -4,23 +4,9 @@ import (
 	"context"
 	"database/sql"
 	"errors"
-	"fmt"
 	"strings"
 	"time"
 )
-
-const MaintenanceJobGrokFreshness = "grok_freshness"
-const MaintenanceJobGrokCapability = "grok_capability"
-
-// Enqueue without resetting a failed or leased task's backoff.
-func (db *DB) EnqueueGrokCapabilityMaintenance(ctx context.Context, id int64, due time.Time) error {
-	_, err := db.conn.ExecContext(ctx, `INSERT INTO maintenance_jobs(entity_id,job_kind,due_at,updated_at)
-		VALUES($1,$2,$3,CURRENT_TIMESTAMP)
-		ON CONFLICT(entity_id,job_kind) DO UPDATE SET
-		due_at=CASE WHEN maintenance_jobs.attempts=0 AND maintenance_jobs.lease_owner='' AND maintenance_jobs.due_at>excluded.due_at
-		THEN excluded.due_at ELSE maintenance_jobs.due_at END`, id, MaintenanceJobGrokCapability, db.timeArg(due))
-	return err
-}
 
 type MaintenanceJob struct {
 	EntityID   int64
@@ -30,27 +16,6 @@ type MaintenanceJob struct {
 	LeaseUntil sql.NullTime
 	Attempts   int64
 	LastError  string
-}
-
-// SeedGrokMaintenanceJobs is a one-time startup reconciliation. Steady-state
-// scheduling uses the due_at index and account-change triggers, so the worker
-// never scans the full account pool every 30 seconds.
-func (db *DB) SeedGrokMaintenanceJobs(ctx context.Context, dueAt time.Time) error {
-	if dueAt.IsZero() {
-		dueAt = time.Now()
-	}
-	upstreamExpr := `LOWER(COALESCE(credentials->>'upstream_type',''))`
-	if db.isSQLite() {
-		upstreamExpr = `LOWER(COALESCE(json_extract(credentials,'$.upstream_type'),''))`
-	}
-	query := fmt.Sprintf(`
-		INSERT INTO maintenance_jobs(entity_id,job_kind,due_at,updated_at)
-		SELECT id,$1,$2,CURRENT_TIMESTAMP FROM accounts
-		WHERE status<>'deleted' AND COALESCE(error_message,'')<>'deleted'
-		  AND COALESCE(enabled,true) AND %s='grok'
-		ON CONFLICT(entity_id,job_kind) DO NOTHING`, upstreamExpr)
-	_, err := db.conn.ExecContext(ctx, query, MaintenanceJobGrokFreshness, db.timeArg(dueAt))
-	return err
 }
 
 func scanMaintenanceJob(scanner interface{ Scan(...interface{}) error }) (MaintenanceJob, error) {

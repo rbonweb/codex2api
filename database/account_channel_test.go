@@ -14,10 +14,8 @@ func TestAPIKeyLimitsResolveUpstreamChannel(t *testing.T) {
 	}{
 		{name: "auto empty", in: "", want: UpstreamChannelAuto},
 		{name: "codex", in: " CODEX ", want: UpstreamChannelCodex},
-		{name: "grok", in: "Grok", want: UpstreamChannelGrok},
-		{name: "antigravity", in: " Antigravity ", want: UpstreamChannelAntigravity},
-		{name: "claude", in: " Claude ", want: UpstreamChannelClaude},
 		{name: "unknown", in: "other", want: UpstreamChannelAuto},
+		{name: "removed provider values are treated as auto", in: "Grok", want: UpstreamChannelAuto},
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {

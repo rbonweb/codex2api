@@ -16,7 +16,7 @@ import (
 const credentialFamilyBackfillBatchSize = 500
 
 // ensureCredentialFamilyBackfill fills accounts.credential_family_id for rows that still have an empty family.
-// It replaces the family phase of the retired Grok historical backfill and is idempotent: a startup with nothing to fill issues one empty query.
+// It is idempotent: a startup with nothing to fill issues one empty query.
 func (db *DB) ensureCredentialFamilyBackfill(ctx context.Context) error {
 	for {
 		processed := 0
@@ -53,23 +53,11 @@ func credentialFamilyCandidate(credentials map[string]any) string {
 		}
 		return ""
 	}
-	isGrok := strings.EqualFold(get("upstream_type"), "grok")
 	authKind := "oauth"
 	if get("api_key") != "" {
 		authKind = "api_key"
 	}
-	issuer := strings.ToLower(strings.TrimRight(get("grok_oidc_issuer"), "/"))
-	if isGrok && issuer == "" && authKind == "oauth" {
-		issuer = "https://auth.x.ai"
-	}
 	origin := get("base_url")
-	if isGrok && origin == "" {
-		if authKind == "api_key" {
-			origin = "https://api.x.ai/v1"
-		} else {
-			origin = "https://cli-chat-proxy.grok.com/v1"
-		}
-	}
 	if parsed, err := url.Parse(origin); err == nil && parsed.Hostname() != "" {
 		host := strings.ToLower(parsed.Hostname())
 		if port := parsed.Port(); port != "" && port != "443" && port != "80" {
@@ -79,10 +67,10 @@ func credentialFamilyCandidate(credentials map[string]any) string {
 	} else {
 		origin = strings.ToLower(strings.TrimRight(origin, "/"))
 	}
-	principal := get("grok_principal_id", "account_id", "chatgpt_account_id", "user_id")
+	principal := get("account_id", "chatgpt_account_id", "user_id")
+	// The version tag and the empty issuer, client and principal-type fields are part of the stored family hash for existing accounts, so they stay byte-for-byte as they were.
 	identity := strings.Join([]string{
-		"grok-credential-family-v1", authKind, issuer, get("grok_client_id"),
-		strings.ToLower(get("grok_principal_type")), principal, origin,
+		"grok-credential-family-v1", authKind, "", "", "", principal, origin,
 	}, "\x00")
 	if principal == "" {
 		fallback := get("api_key", "refresh_token", "access_token")
@@ -91,45 +79,8 @@ func credentialFamilyCandidate(credentials map[string]any) string {
 		}
 		identity += "\x00fallback\x00" + fallback
 	}
-	if !isGrok && strings.TrimSpace(principal) == "" && get("api_key", "refresh_token", "access_token") == "" {
-		return ""
-	}
 	sum := sha256.Sum256([]byte(identity))
 	return hex.EncodeToString(sum[:])
-}
-
-func (db *DB) backfillCredentialFamilies(ctx context.Context) error {
-	rows, err := db.conn.QueryContext(ctx, `SELECT id, credentials FROM accounts WHERE COALESCE(credential_family_id, '') = ''`)
-	if err != nil {
-		return err
-	}
-	type pending struct {
-		id     int64
-		family string
-	}
-	var updates []pending
-	for rows.Next() {
-		var id int64
-		var raw any
-		if err := rows.Scan(&id, &raw); err != nil {
-			rows.Close()
-			return err
-		}
-		family := credentialFamilyCandidate(decodeCredentials(raw))
-		if family == "" {
-			family = "cf_" + strings.ReplaceAll(uuid.NewString(), "-", "")
-		}
-		updates = append(updates, pending{id: id, family: family})
-	}
-	if err := rows.Close(); err != nil {
-		return err
-	}
-	for _, update := range updates {
-		if _, err := db.conn.ExecContext(ctx, `UPDATE accounts SET credential_family_id = $1 WHERE id = $2 AND COALESCE(credential_family_id, '') = ''`, update.family, update.id); err != nil {
-			return err
-		}
-	}
-	return nil
 }
 
 func (db *DB) backfillCredentialFamiliesBatch(ctx context.Context, tx *sql.Tx, limit int) (int, error) {

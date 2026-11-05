@@ -22,7 +22,7 @@ func TestInternalResponseAttributionPreservesParentAuditIdentity(t *testing.T) {
 		Limits: database.APIKeyLimits{
 			AutoCompactOnOverflow: true,
 			ModelAllow:            []string{"gpt-5.4"},
-			UpstreamChannel:       database.UpstreamChannelGrok,
+			UpstreamChannel:       database.UpstreamChannelCodex,
 		},
 	}
 	parent.Set(contextAPIKeyID, row.ID)
@@ -66,8 +66,8 @@ func TestInternalResponseAttributionPreservesParentAuditIdentity(t *testing.T) {
 	if autoCompactOverflowEnabled(child) {
 		t.Fatal("attributed summary request must not recursively auto-compact")
 	}
-	if got := requestUpstreamChannel(child); got != database.UpstreamChannelGrok {
-		t.Fatalf("child upstream channel = %q, want grok", got)
+	if got := requestUpstreamChannel(child); got != database.UpstreamChannelCodex {
+		t.Fatalf("child upstream channel = %q, want codex", got)
 	}
 	if status, _ := (&Handler{}).enforceAPIKeyLimits(child, "gpt-other"); status != http.StatusForbidden {
 		t.Fatalf("child model restriction status = %d, want 403", status)
