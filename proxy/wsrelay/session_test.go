@@ -8,14 +8,14 @@ import (
 	"time"
 )
 
-// TestPendingRequestCloseIdempotent 测试 PendingRequest.Close 幂等性
+// TestPendingRequestCloseIdempotent tests idempotency of PendingRequest.Close
 func TestPendingRequestCloseIdempotent(t *testing.T) {
 	pr := NewPendingRequest("test-session")
 
-	// 第一次关闭应该成功
+	// The first close should succeed
 	pr.Close()
 
-	// 验证 closed 标志已设置
+	// Verify the closed flag is set
 	pr.closeMu.Lock()
 	closed := pr.closed
 	pr.closeMu.Unlock()
@@ -24,20 +24,20 @@ func TestPendingRequestCloseIdempotent(t *testing.T) {
 		t.Error("expected closed flag to be true after first Close()")
 	}
 
-	// 第二次关闭不应该 panic
+	// The second close must not panic
 	pr.Close()
 
-	// 第三次关闭也不应该 panic
+	// The third close must not panic either
 	pr.Close()
 }
 
-// TestPendingRequestConcurrentClose 测试并发 Close 安全性
+// TestPendingRequestConcurrentClose tests the safety of concurrent Close
 func TestPendingRequestConcurrentClose(t *testing.T) {
 	pr := NewPendingRequest("test-session")
 
 	done := make(chan bool, 10)
 
-	// 启动多个 goroutine 同时 Close
+	// Start several goroutines that Close at the same time
 	for i := 0; i < 10; i++ {
 		go func() {
 			pr.Close()
@@ -45,7 +45,7 @@ func TestPendingRequestConcurrentClose(t *testing.T) {
 		}()
 	}
 
-	// 等待所有 goroutine 完成
+	// Wait for all goroutines to finish
 	for i := 0; i < 10; i++ {
 		select {
 		case <-done:
@@ -54,7 +54,7 @@ func TestPendingRequestConcurrentClose(t *testing.T) {
 		}
 	}
 
-	// 验证最终状态是 closed
+	// Verify the final state is closed
 	pr.closeMu.Lock()
 	closed := pr.closed
 	pr.closeMu.Unlock()
@@ -64,17 +64,17 @@ func TestPendingRequestConcurrentClose(t *testing.T) {
 	}
 }
 
-// TestSessionAddAndRemovePendingRequest 测试会话的请求管理
+// TestSessionAddAndRemovePendingRequest tests request management on a session
 func TestSessionAddAndRemovePendingRequest(t *testing.T) {
 	session := NewSession(12345, nil)
 
-	// 添加请求
+	// Add the request
 	pr := session.AddPendingRequest("test-session")
 	if pr == nil {
 		t.Fatal("expected PendingRequest to be created")
 	}
 
-	// 获取请求
+	// Get the request
 	foundPr, ok := session.GetPendingRequest(pr.RequestID)
 	if !ok {
 		t.Fatal("expected to find PendingRequest")
@@ -83,53 +83,53 @@ func TestSessionAddAndRemovePendingRequest(t *testing.T) {
 		t.Errorf("expected RequestID %s, got %s", pr.RequestID, foundPr.RequestID)
 	}
 
-	// 移除请求
+	// Remove the request
 	session.RemovePendingRequest(pr.RequestID)
 
-	// 验证已移除
+	// Verify it was removed
 	_, ok = session.GetPendingRequest(pr.RequestID)
 	if ok {
 		t.Error("expected PendingRequest to be removed")
 	}
 }
 
-// TestSessionExpiration 测试会话过期判断
+// TestSessionExpiration tests session expiry checks
 func TestSessionExpiration(t *testing.T) {
 	session := NewSession(12345, nil)
 
-	// 新创建的会话不应该过期
+	// A newly created session must not be expired
 	if session.IsExpired() {
 		t.Error("newly created session should not be expired")
 	}
 
-	// 手动设置 LastActiveAt 为很久以前
+	// Manually set LastActiveAt to a long time ago
 	session.Touch()
 	session.mu.Lock()
 	session.LastActiveAt = time.Now().Add(-IdleTimeout - time.Minute)
 	session.mu.Unlock()
 
-	// 超过当前业务空闲窗口后应过期。
+	// Must expire once beyond the current business idle window.
 	if !session.IsExpired() {
 		t.Error("session should be expired after IdleTimeout of inactivity")
 	}
 }
 
-// TestSessionConnectedState 测试会话连接状态
+// TestSessionConnectedState tests session connection state
 func TestSessionConnectedState(t *testing.T) {
 	session := NewSession(12345, nil)
 
-	// 初始状态为未连接
+	// Initial state is not connected
 	if session.IsConnected() {
 		t.Error("newly created session should not be connected")
 	}
 
-	// 设置为已连接
+	// Set to connected
 	session.SetConnected(true)
 	if !session.IsConnected() {
 		t.Error("session should be connected after SetConnected(true)")
 	}
 
-	// 设置为未连接
+	// Set to not connected
 	session.SetConnected(false)
 	if session.IsConnected() {
 		t.Error("session should not be connected after SetConnected(false)")

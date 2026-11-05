@@ -11,9 +11,9 @@ import (
 	"github.com/gorilla/websocket"
 )
 
-// TestHeartbeatTickPingFailureKeepsPendingRequests 验证 issue #436 修复：
-// 心跳 Ping 写失败时，若会话仍有在途请求，不能 Close 会话（会把全部 pending
-// 同秒截断），只停止心跳链，交给读路径裁决。
+// TestHeartbeatTickPingFailureKeepsPendingRequests verifies the issue #436 fix:
+// when a heartbeat Ping write fails and the session still has in-flight requests, the session must not be Closed (that would cut off all pending
+// requests within the same second), so only the heartbeat chain is stopped and the read path decides.
 func TestHeartbeatTickPingFailureKeepsPendingRequests(t *testing.T) {
 	s := NewSession(1, nil)
 	s.SetConnected(true)
@@ -35,8 +35,8 @@ func TestHeartbeatTickPingFailureKeepsPendingRequests(t *testing.T) {
 	}
 }
 
-// TestHeartbeatTickPingFailureClosesIdleSession 验证空闲会话（无在途请求）的
-// 心跳失败仍走原有 Close 语义。
+// TestHeartbeatTickPingFailureClosesIdleSession verifies that for an idle session (no in-flight requests)
+// a heartbeat failure still follows the original Close semantics.
 func TestHeartbeatTickPingFailureClosesIdleSession(t *testing.T) {
 	s := NewSession(1, nil)
 	s.SetConnected(true)
@@ -48,9 +48,9 @@ func TestHeartbeatTickPingFailureClosesIdleSession(t *testing.T) {
 	}
 }
 
-// TestSendHeartbeatBusyConnectionNotClosed 验证 issue #436 修复：
-// SendHeartbeat 对带在途请求的连接 Ping 失败时，只把连接摘出池子（阻止新复用），
-// 不关闭底层 socket——写路径故障不代表读路径已死，在途流可能仍在正常下发。
+// TestSendHeartbeatBusyConnectionNotClosed verifies the issue #436 fix:
+// when a Ping fails on a connection with in-flight requests, SendHeartbeat only removes the connection from the pool (blocking new reuse),
+// and does not close the underlying socket: a write-path failure does not mean the read path is dead, and the in-flight stream may still be delivering normally.
 func TestSendHeartbeatBusyConnectionNotClosed(t *testing.T) {
 	upgrader := websocket.Upgrader{CheckOrigin: func(r *http.Request) bool { return true }}
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
@@ -68,7 +68,7 @@ func TestSendHeartbeatBusyConnectionNotClosed(t *testing.T) {
 	defer server.Close()
 
 	wsURL := "ws" + strings.TrimPrefix(server.URL, "http")
-	// 拨通后立即关闭底层连接：后续 WriteControl 必然失败，模拟写路径故障。
+	// Close the underlying connection right after dialing: later WriteControl calls will always fail, simulating a write-path failure.
 	conn, _, err := websocket.DefaultDialer.Dial(wsURL, nil)
 	if err != nil {
 		t.Fatalf("dial websocket: %v", err)
@@ -92,11 +92,11 @@ func TestSendHeartbeatBusyConnectionNotClosed(t *testing.T) {
 		t.Fatal("expected ping failure on closed connection")
 	}
 
-	// 连接应被摘出池子（阻止复用）
+	// The connection should be removed from the pool (blocking reuse)
 	if _, ok := manager.connections.Load(key); ok {
 		t.Fatal("busy connection with failed ping should be removed from pool")
 	}
-	// 但在途请求不能被杀
+	// but in-flight requests must not be killed
 	if session.PendingCount() != 1 {
 		t.Fatalf("pending count = %d, want 1 (busy connection ping failure must not kill in-flight requests)", session.PendingCount())
 	}
@@ -105,8 +105,8 @@ func TestSendHeartbeatBusyConnectionNotClosed(t *testing.T) {
 	}
 }
 
-// TestSendHeartbeatIdleConnectionDiscarded 验证空闲连接（无在途请求）Ping 失败
-// 仍走 DiscardConnection：关 socket + 摘池，语义与修复前一致。
+// TestSendHeartbeatIdleConnectionDiscarded verifies that a Ping failure on an idle connection (no in-flight requests)
+// still goes through DiscardConnection: close the socket and remove it from the pool, the same semantics as before the fix.
 func TestSendHeartbeatIdleConnectionDiscarded(t *testing.T) {
 	upgrader := websocket.Upgrader{CheckOrigin: func(r *http.Request) bool { return true }}
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
@@ -153,9 +153,9 @@ func TestSendHeartbeatIdleConnectionDiscarded(t *testing.T) {
 	}
 }
 
-// TestEvictExpiredSkipsConnectionsWithPendingRequests 验证 issue #436 修复：
-// evictExpired 对带在途请求的连接/会话一律跳过，即使 lastUsed/LastActiveAt
-// 已超过 IdleTimeout（长思考、pong 丢失都会造成活跃对象被误判为空闲）。
+// TestEvictExpiredSkipsConnectionsWithPendingRequests verifies the issue #436 fix:
+// evictExpired always skips connections and sessions with in-flight requests, even when lastUsed/LastActiveAt
+// is past IdleTimeout (long thinking and lost pongs would otherwise make active objects look idle).
 func TestEvictExpiredSkipsConnectionsWithPendingRequests(t *testing.T) {
 	manager := NewManager()
 	t.Cleanup(manager.Stop)
@@ -166,7 +166,7 @@ func TestEvictExpiredSkipsConnectionsWithPendingRequests(t *testing.T) {
 	wc.PoolKey = "key-busy"
 	wc.SetState(StateConnected)
 	wc.Touch()
-	// 伪造超龄空闲时间戳：lastUsed 早于 IdleTimeout，LastActiveAt 同步做旧
+	// Fake an over-age idle timestamp: lastUsed is earlier than IdleTimeout, and LastActiveAt is aged to match
 	wc.lastUsed.Store(time.Now().Add(-2 * IdleTimeout).UnixNano())
 	session.mu.Lock()
 	session.LastActiveAt = time.Now().Add(-2 * IdleTimeout)
@@ -188,7 +188,7 @@ func TestEvictExpiredSkipsConnectionsWithPendingRequests(t *testing.T) {
 		t.Fatal("evictExpired closed a connection with in-flight requests")
 	}
 
-	// 在途收尾后，同样的过期状态下一轮应被正常清理
+	// After the in-flight request finishes, the same expired state should be cleaned up normally in the next round
 	session.RemovePendingRequest(pr.RequestID)
 	manager.evictExpired()
 

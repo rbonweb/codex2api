@@ -72,7 +72,7 @@ func (p *NonRepeatingPRNG) Fill(buf []byte) {
 func (p *NonRepeatingPRNG) GenerateASCII(length int) []byte {
 	out := make([]byte, length)
 	for i := 0; i < length; i++ {
-		// 取高 32 位进行混淆采样，保证全范围良好分布，彻底消除低位短周期性
+		// Take the high 32 bits for obfuscated sampling, which keeps the whole range well distributed and fully removes short periodicity in the low bits
 		out[i] = byte(32 + ((p.NextUint64() >> 32) % 95))
 	}
 	return out
@@ -122,7 +122,7 @@ type TTFTAndCPUBenchmarkResult struct {
 }
 
 func ValidateTTFTAndCPUGates(res TTFTAndCPUBenchmarkResult) error {
-	// 拒绝所有 NaN 或 Inf 输入，防止因比较静默返回 false 而漏过门禁
+	// Reject all NaN or Inf input, so a silent false from a comparison cannot let a value slip past the gate
 	if math.IsNaN(res.BaselineP95TTFTMs) || math.IsInf(res.BaselineP95TTFTMs, 0) ||
 		math.IsNaN(res.GuardP95TTFTMs) || math.IsInf(res.GuardP95TTFTMs, 0) ||
 		math.IsNaN(res.TTFTDeltaMs) || math.IsInf(res.TTFTDeltaMs, 0) ||
@@ -135,8 +135,8 @@ func ValidateTTFTAndCPUGates(res TTFTAndCPUBenchmarkResult) error {
 	if res.BaselineCPUMs <= 0 {
 		return fmt.Errorf("invalid experiment: baseline CPU time must be > 0, got %.4f ms", res.BaselineCPUMs)
 	}
-	// guard 侧同样必须为正：guard=0 会让 CPUIncreaseRatio 算成 -1（-100%）
-	// 并因此静默通过增量门禁，属于无效测量而非性能改善。
+	// The guard side must also be positive: guard=0 makes CPUIncreaseRatio compute -1 (-100%)
+	// It would then silently pass the incremental gate. That is an invalid measurement, not a performance improvement.
 	if res.GuardCPUMs <= 0 {
 		return fmt.Errorf("invalid experiment: guard CPU time must be > 0, got %.4f ms", res.GuardCPUMs)
 	}

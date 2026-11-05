@@ -13,14 +13,14 @@ import (
 
 const handshakeErrorBodyLimit = 4 << 10 // 4 KiB
 
-// HandshakeHTTPError 是握手阶段收到上游 HTTP 错误响应时的结构化错误：
-// 除人类可读的错误文本外，保留原始状态码、响应头与规范化后的 JSON body，
-// 供上层把鉴权/限流失败还原成真实状态码处理，而不是笼统的 transport 错误。
+// HandshakeHTTPError is the structured error returned when an upstream HTTP error response is received during the handshake:
+// besides the human-readable error text, it keeps the original status code, response headers, and the normalized JSON body,
+// so upper layers can restore authentication or rate-limit failures to their real status codes, instead of a generic transport error.
 type HandshakeHTTPError struct {
 	StatusCode int
 	Header     http.Header
-	// Body 是上游错误 body 的规范化文本（JSON 紧凑化、非 JSON 空白折叠），
-	// 可直接用 gjson 解析 error.code / error.message。
+	// Body is the normalized text of the upstream error body (JSON compacted, non-JSON whitespace collapsed),
+	// so error.code / error.message can be parsed directly with gjson.
 	Body string
 	msg  string
 }
@@ -45,17 +45,17 @@ func (e *HandshakeHTTPError) UpstreamErrorBody() []byte {
 	return []byte(e.Body)
 }
 
-// handshakeAccountErrorHTTPResponse 把握手阶段需要独立分类的错误转换成携带真实
-// 状态码与上游原始错误体的 HTTP 响应，让调用方复用既有非 2xx 分支：usage log
-// 记真实状态码、applyCooldownForModel 的 unauthorized 冷却 / missing_scope 特判 /
-// deactivated_workspace 标错，以及 429 的独立限流重试预算。覆盖：
-//   - 401：token 失效/撤销；
-//   - 402：工作区被停用（deactivated_workspace）等账号计费维度拒绝——若停留在
-//     transport 错误层，被封 team 空间的账号会一直以"可用"留在池里被反复拨号。
-//   - 429：必须消费限流预算并保留 Retry-After；不能误耗普通传输预算。
+// handshakeAccountErrorHTTPResponse converts handshake-phase errors that need their own classification into an HTTP response carrying the real
+// status code and the upstream's original error body, so callers can reuse the existing non-2xx branches: the usage log
+// records the real status code, applyCooldownForModel's unauthorized cooldown / missing_scope special case /
+// deactivated_workspace marking, and the separate rate-limit retry budget for 429. Covers:
+//   - 401: token expired or revoked;
+//   - 402: rejected on account billing grounds, such as a deactivated workspace (deactivated_workspace); if it stayed
+//     at the transport error layer, accounts with a banned team space would stay in the pool as "available" and be dialed over and over.
+//   - 429: must consume the rate-limit budget and keep Retry-After; it must not wrongly spend the ordinary transport budget.
 //
-// 403 不转换：握手 403 可能来自 Cloudflare 拦截（出口 IP 维度），按账号错误分类
-// 会误伤；连同 5xx/503 一起保持 transport 错误语义。
+// 403 is not converted: a handshake 403 may come from a Cloudflare block (egress IP dimension), and classifying it as an account error
+// would cause false hits; it, together with 5xx/503, keeps the transport error semantics.
 func handshakeAccountErrorHTTPResponse(err error) (*http.Response, bool) {
 	var hs *HandshakeHTTPError
 	if !errors.As(err, &hs) {
@@ -78,9 +78,9 @@ func handshakeAccountErrorHTTPResponse(err error) (*http.Response, bool) {
 	}, true
 }
 
-// formatDialHandshakeError 把 Dial 失败包装成可诊断的错误。
-// gorilla/websocket 在 bad handshake 时仍返回 *http.Response，并已预读最多 1KB body；
-// 这里补充 HTTP 状态码、关键响应头与上游 body（JSON 原样附带，便于前端 pretty-print）。
+// formatDialHandshakeError wraps a Dial failure into a diagnosable error.
+// gorilla/websocket still returns *http.Response on a bad handshake, and has already pre-read up to 1KB of the body;
+// here we add the HTTP status code, key response headers, and the upstream body (JSON is attached as-is, so the frontend can pretty-print it).
 func formatDialHandshakeError(err error, resp *http.Response) error {
 	if err == nil {
 		return nil
@@ -110,7 +110,7 @@ func formatDialHandshakeError(err error, resp *http.Response) error {
 		b.WriteString(headers)
 	}
 	if body != "" {
-		// 前缀以冒号结尾，前端 formatTestErrorMessage 会把后续 JSON 拆出并 pretty-print。
+		// The prefix ends with a colon, so the frontend formatTestErrorMessage splits the following JSON out and pretty-prints it.
 		b.WriteString(":\n")
 		b.WriteString(body)
 	}
@@ -122,7 +122,7 @@ func formatDialHandshakeError(err error, resp *http.Response) error {
 	}
 }
 
-// formatFailedHandshakeHTTPBody 用于握手 HTTP 响应状态非 2xx/101 时构造 body 文本。
+// formatFailedHandshakeHTTPBody builds the body text when the handshake HTTP response status is not 2xx/101.
 func formatFailedHandshakeHTTPBody(statusCode int, resp *http.Response) string {
 	body := readHTTPErrorBody(resp)
 	headers := ""
@@ -167,8 +167,8 @@ func handshakeErrorHeaderSnippet(h http.Header) string {
 	return strings.Join(parts, ", ")
 }
 
-// readHTTPErrorBody 读取上游错误 body；JSON 则规范为紧凑合法 JSON（前端再 pretty-print），
-// 非 JSON 做空白折叠。会回填 resp.Body 供后续读取。
+// readHTTPErrorBody reads the upstream error body; JSON is normalized to compact valid JSON (the frontend pretty-prints it again),
+// and non-JSON is whitespace-collapsed. It refills resp.Body for later reads.
 func readHTTPErrorBody(resp *http.Response) string {
 	if resp == nil || resp.Body == nil {
 		return ""
@@ -182,7 +182,7 @@ func readHTTPErrorBody(resp *http.Response) string {
 		return ""
 	}
 
-	// 尽量保留上游 JSON 结构：解码再紧凑编码，去掉多余空白但不丢字段。
+	// Keep the upstream JSON structure as far as possible: decode and then compact-encode, removing extra whitespace without dropping fields.
 	if json.Valid([]byte(text)) {
 		var v any
 		if err := json.Unmarshal([]byte(text), &v); err == nil {
@@ -193,7 +193,7 @@ func readHTTPErrorBody(resp *http.Response) string {
 		return truncateRunes(text, 2000)
 	}
 
-	// 纯文本 / HTML 粗截断。
+	// Roughly truncate plain text / HTML.
 	text = strings.Join(strings.Fields(text), " ")
 	return truncateRunes(text, 500)
 }

@@ -6,13 +6,13 @@ import (
 	"time"
 )
 
-// overAge 把连接的创建时间拨回到超过 MaxConnLifetime 之前（测试辅助）。
+// overAge moves the connection's creation time back to before MaxConnLifetime (test helper).
 func overAge(wc *WsConnection) {
 	wc.createdAt = time.Now().Add(-MaxConnLifetime - time.Minute).UnixNano()
 }
 
-// TestIsOverAge 验证连接年龄判断：到龄返回 true；createdAt 为 0（字面量构造）
-// 视为未知年龄，不判到龄。
+// TestIsOverAge verifies the connection age check: it returns true when the age limit is reached; createdAt of 0 (a literal construction)
+// is treated as unknown age and does not count as reaching the limit.
 func TestIsOverAge(t *testing.T) {
 	wc := &WsConnection{}
 	if wc.IsOverAge() {
@@ -28,9 +28,9 @@ func TestIsOverAge(t *testing.T) {
 	}
 }
 
-// TestCanReuseConnectionRejectsOverAge 验证到龄连接即使空闲、已连接也不可复用：
-// 上游按连接建立时间计 60 分钟寿命，撞线后 response.create 一律失败但 Ping 探活
-// 仍成功，复用判断必须看年龄 (issue #346)。
+// TestCanReuseConnectionRejectsOverAge verifies that a connection past its age limit cannot be reused, even when it is idle and connected:
+// upstream counts a 60-minute lifetime from connection establishment; after the limit is hit, response.create always fails, but the Ping liveness probe still succeeds,
+// so the reuse check must look at the age (issue #346).
 func TestCanReuseConnectionRejectsOverAge(t *testing.T) {
 	m := NewManager()
 	t.Cleanup(m.Stop)
@@ -45,8 +45,8 @@ func TestCanReuseConnectionRejectsOverAge(t *testing.T) {
 	}
 }
 
-// TestEvictExpiredRotatesIdleOverAgeConnection 验证后台清理主动轮转到龄且空闲的
-// 连接；到龄但仍有在途请求的连接保留，等请求结束后再轮转，不掐断在途流。
+// TestEvictExpiredRotatesIdleOverAgeConnection verifies that background cleanup actively rotates idle connections that have reached the age limit
+// connections; a connection that has reached the limit but still has an in-flight request is kept and rotated after the request ends, without cutting off the in-flight stream.
 func TestEvictExpiredRotatesIdleOverAgeConnection(t *testing.T) {
 	m := NewManager()
 	t.Cleanup(m.Stop)
@@ -77,8 +77,8 @@ func TestEvictExpiredRotatesIdleOverAgeConnection(t *testing.T) {
 	}
 }
 
-// TestPingIdleConnectionsSkipsOverAgeConnection 验证到龄连接不再保活，
-// 由清理器轮转，避免撞上游 60 分钟寿命上限。
+// TestPingIdleConnectionsSkipsOverAgeConnection verifies that connections past the age limit are no longer kept alive,
+// and are rotated by the cleaner, avoiding hitting the upstream 60-minute lifetime limit.
 func TestPingIdleConnectionsSkipsOverAgeConnection(t *testing.T) {
 	m := NewManager()
 	t.Cleanup(m.Stop)
@@ -102,8 +102,8 @@ func TestPingIdleConnectionsSkipsOverAgeConnection(t *testing.T) {
 	}
 }
 
-// TestLookupResponseConnRejectsOverAgeConnection 验证续链亲和不会把请求定向回
-// 到龄连接（那上面必然收到 websocket_connection_limit_reached）。
+// TestLookupResponseConnRejectsOverAgeConnection verifies that continuation affinity does not route requests back
+// to a connection past its age limit (which would necessarily receive websocket_connection_limit_reached).
 func TestLookupResponseConnRejectsOverAgeConnection(t *testing.T) {
 	m := NewManager()
 	t.Cleanup(m.Stop)
@@ -120,8 +120,8 @@ func TestLookupResponseConnRejectsOverAgeConnection(t *testing.T) {
 	}
 }
 
-// TestConnLimitErrorFrameMarksConnBroken 验证上游 websocket_connection_limit_reached
-// 错误帧（连接级限制）标记坏连接；普通错误帧（请求级）不标记，连接仍可归还复用。
+// TestConnLimitErrorFrameMarksConnBroken verifies that an upstream websocket_connection_limit_reached
+// error frame (connection-level limit) marks the connection as broken; a normal error frame (request-level) does not mark it, and the connection can still be returned for reuse.
 func TestConnLimitErrorFrameMarksConnBroken(t *testing.T) {
 	limitFrame := []byte(`{"type":"error","error":{"code":"websocket_connection_limit_reached","type":"invalid_request_error","message":"Responses websocket connection limit reached (60 minutes). Create a new websocket connection to continue."}}`)
 	plainFrame := []byte(`{"type":"error","error":{"code":"rate_limit_exceeded","message":"slow down"}}`)
@@ -149,9 +149,9 @@ func TestConnLimitErrorFrameMarksConnBroken(t *testing.T) {
 	}
 }
 
-// TestConnLimitErrorDiscardsConnectionOnClose 端到端验证 issue #346 的止血链路：
-// 收到连接级限制错误帧后，Close() 把连接销毁并移出连接池，而不是归还复用
-// 继续毒害后续请求。
+// TestConnLimitErrorDiscardsConnectionOnClose verifies end to end the issue #346 containment path:
+// after a connection-level limit error frame is received, Close() destroys the connection and removes it from the pool, instead of returning it for reuse
+// and continuing to poison subsequent requests.
 func TestConnLimitErrorDiscardsConnectionOnClose(t *testing.T) {
 	m := NewManager()
 	t.Cleanup(m.Stop)

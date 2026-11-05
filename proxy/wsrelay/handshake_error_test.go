@@ -42,12 +42,12 @@ func TestFormatDialHandshakeErrorIncludesStatusAndJSONBody(t *testing.T) {
 			t.Fatalf("error %q missing %q", msg, want)
 		}
 	}
-	// 前缀与 JSON body 分行，方便前端 pretty-print。
+	// The prefix and the JSON body are on separate lines, so the frontend can pretty-print them.
 	if !strings.Contains(msg, ":\n{") {
 		t.Fatalf("expected newline before JSON body, got %q", msg)
 	}
 
-	// body 应可再次读取（回填 NopCloser）。
+	// The body should be readable again (refilled with NopCloser).
 	again, _ := io.ReadAll(resp.Body)
 	if string(again) != body {
 		t.Fatalf("body not restored: %q", again)
@@ -167,9 +167,9 @@ func TestHandshakeUnauthorizedHTTPResponse(t *testing.T) {
 			t.Fatalf("StatusCode = %d, want 401", resp.StatusCode)
 		}
 		got, _ := io.ReadAll(resp.Body)
-		// body 必须是可直接 gjson 解析的上游原始错误体（供 missing_scope 特判
-		// 与 usage log 错误消息提取），不能带 "websocket handshake failed" 前缀。
-		// readHTTPErrorBody 会重排 JSON 键序，故按字段断言而非整串比对。
+		// The body must be the raw upstream error body that gjson can parse directly (for the missing_scope special case
+		// and usage log error message extraction), and must not carry a "websocket handshake failed" prefix.
+		// readHTTPErrorBody reorders JSON keys, so assert by field rather than comparing the whole string.
 		if !json.Valid(got) {
 			t.Fatalf("body is not valid json: %q", got)
 		}
@@ -212,8 +212,8 @@ func TestHandshakeUnauthorizedHTTPResponse(t *testing.T) {
 		}
 	})
 
-	// 403 可能来自 Cloudflare 拦截（出口 IP 维度），按账号错误分类会误伤，保持
-	// transport 语义；503 同理。
+	// 403 may come from a Cloudflare block (egress IP dimension), and classifying it as an account error would cause false hits, so keep
+	// the transport semantics; 503 is the same.
 	t.Run("non-account handshake statuses keep transport error semantics", func(t *testing.T) {
 		for _, status := range []int{http.StatusForbidden, http.StatusServiceUnavailable} {
 			if _, ok := handshakeAccountErrorHTTPResponse(makeErr(status, `{"error":{"message":"x"}}`)); ok {

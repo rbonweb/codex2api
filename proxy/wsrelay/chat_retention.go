@@ -2,7 +2,7 @@ package wsrelay
 
 import "sort"
 
-// 调用方持有账号锁。推理、拨号及尚未承载聊天的连接不占空闲保留额度。
+// The caller holds the account lock. Reasoning, dialing, and connections that do not yet carry chat do not take up the idle retention quota.
 func (m *Manager) trimIdleChatConnections(input connectionCapacityRequest) {
 	input.kind = capacityChat
 	idle := m.idleCapacityConnections(input)
@@ -20,7 +20,7 @@ func (m *Manager) trimIdleChatConnections(input connectionCapacityRequest) {
 	}
 }
 
-// 即使存在续链绑定也可按 LRU 回收；账号锁阻止候选被新推理同时取走。
+// Even if a continuation binding exists, it can be reclaimed by LRU; the account lock prevents a candidate from being taken by new inference at the same time.
 func (m *Manager) discardIdleChatConnection(wc *WsConnection) bool {
 	m.respConnMu.Lock()
 	current, exists := m.connections.Load(wc.PoolKey)
@@ -52,7 +52,7 @@ func (m *Manager) retainReleasedConnection(wc *WsConnection) {
 	m.trimIdleChatConnections(input)
 }
 
-// 保存较小的设置后，即使没有新请求，后台巡检也会收缩空闲保留池。
+// After a smaller setting is saved, the background check shrinks the idle retention pool even without new requests.
 func (m *Manager) trimAllIdleChatConnections() {
 	accounts := make(map[int64]struct{})
 	m.connections.Range(func(_, value any) bool {

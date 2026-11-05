@@ -8,8 +8,8 @@ import (
 	"github.com/tidwall/gjson"
 )
 
-// TestBuildErrorEvent_UpstreamErrorBecomesFailedEvent 验证上游 error 帧被转成
-// 下游可识别的 response.failed SSE 事件，并保留原始错误内容。
+// TestBuildErrorEvent_UpstreamErrorBecomesFailedEvent verifies that an upstream error frame is converted
+// into a response.failed SSE event that downstream can recognize, and keeps the original error content.
 func TestBuildErrorEvent_UpstreamErrorBecomesFailedEvent(t *testing.T) {
 	r := &WsResponse{}
 	upstream := []byte(`{"type":"error","status":400,"error":{"type":"invalid_request_error","message":"Unsupported parameter: prompt_cache_retention"}}`)
@@ -24,7 +24,7 @@ func TestBuildErrorEvent_UpstreamErrorBecomesFailedEvent(t *testing.T) {
 	if createdAt := gjson.GetBytes(event, "response.created_at").Int(); createdAt <= 0 {
 		t.Fatalf("response.created_at = %d, want a positive Unix timestamp", createdAt)
 	}
-	// 原始错误内容应保留
+	// The original error content should be kept
 	if msg := gjson.GetBytes(event, "response.error.message").String(); msg != "Unsupported parameter: prompt_cache_retention" {
 		t.Fatalf("error message not preserved: %q", msg)
 	}
@@ -83,7 +83,7 @@ func TestBuildErrorEvent_UpstreamStatusCodeBecomesResponseStatusCode(t *testing.
 	}
 }
 
-// TestBuildErrorEvent_NonErrorPassthrough 验证非错误帧不被识别为错误。
+// TestBuildErrorEvent_NonErrorPassthrough verifies that non-error frames are not recognized as errors.
 func TestBuildErrorEvent_NonErrorPassthrough(t *testing.T) {
 	r := &WsResponse{}
 	for _, payload := range [][]byte{
@@ -98,9 +98,9 @@ func TestBuildErrorEvent_NonErrorPassthrough(t *testing.T) {
 	}
 }
 
-// TestBuildErrorEvent_PrettyPrintedErrorCompacted 验证上游 pretty-printed（带换行）
-// 错误对象被压缩为单行后嵌入事件。若不压缩，SSE data: 行编码在第一个换行处截断，
-// 下游只能看到 `..."error":{` 而丢失具体错误信息。
+// TestBuildErrorEvent_PrettyPrintedErrorCompacted verifies that an upstream pretty-printed (multi-line) error object
+// is compacted to a single line before being embedded in the event. Without compaction, the SSE data: line encoding is cut off at the first newline,
+// downstream only sees `..."error":{` and loses the specific error message.
 func TestBuildErrorEvent_PrettyPrintedErrorCompacted(t *testing.T) {
 	r := &WsResponse{}
 	upstream := []byte("{\"type\":\"error\",\"status\":400,\"error\":{\n  \"message\": \"Invalid type for 'input[61].arguments': expected an object, but got a string instead.\",\n  \"type\": \"invalid_request_error\",\n  \"param\": \"input[61].arguments\",\n  \"code\": \"invalid_type\"\n}}")
@@ -120,9 +120,9 @@ func TestBuildErrorEvent_PrettyPrintedErrorCompacted(t *testing.T) {
 	}
 }
 
-// TestHandleMessage_ErrorFrameWritesToCallbackAndEnds 验证 handleMessage 收到
-// 上游 error 帧时：把错误事件写给 callback（透传给下游），并返回 io.EOF 结束流，
-// 而不是返回普通 error 导致 pipe 静默关闭、下游空响应。
+// TestHandleMessage_ErrorFrameWritesToCallbackAndEnds verifies that when handleMessage receives
+// an upstream error frame, it writes the error event to the callback (passed through to downstream) and returns io.EOF to end the stream,
+// instead of returning a plain error that makes the pipe close silently and the downstream get an empty response.
 func TestHandleMessage_ErrorFrameWritesToCallbackAndEnds(t *testing.T) {
 	r := &WsResponse{}
 	upstream := []byte(`{"type":"error","status":400,"error":{"message":"boom"}}`)
@@ -147,17 +147,17 @@ func TestHandleMessage_ErrorFrameWritesToCallbackAndEnds(t *testing.T) {
 	}
 }
 
-// TestHandleMessage_NormalFrameUnaffected 验证正常帧仍正常透传。
+// TestHandleMessage_NormalFrameUnaffected verifies that normal frames still pass through unchanged.
 func TestHandleMessage_NormalFrameUnaffected(t *testing.T) {
 	r := &WsResponse{}
 	var captured [][]byte
 	cb := func(data []byte) bool { captured = append(captured, data); return true }
 
-	// 普通增量帧：透传，不终止
+	// Normal incremental frame: pass through, do not terminate
 	if err := r.handleMessage([]byte(`{"type":"response.output_text.delta","delta":"a"}`), cb); err != nil {
 		t.Fatalf("delta frame returned %v, want nil", err)
 	}
-	// 完成帧：透传 + io.EOF 终止
+	// Completion frame: pass through, then io.EOF terminates
 	if err := r.handleMessage([]byte(`{"type":"response.completed","response":{}}`), cb); err != io.EOF {
 		t.Fatalf("completed frame returned %v, want io.EOF", err)
 	}

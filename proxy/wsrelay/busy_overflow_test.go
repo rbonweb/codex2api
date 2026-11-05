@@ -13,7 +13,7 @@ import (
 	"github.com/gorilla/websocket"
 )
 
-// setBusyRuntimeSettings 临时修改 busy 策略相关运行时设置，测试结束自动还原。
+// setBusyRuntimeSettings temporarily changes the runtime settings related to the busy policy and restores them automatically when the test ends.
 func setBusyRuntimeSettings(t *testing.T, mutate func(*proxy.RuntimeSettings)) {
 	t.Helper()
 	prev := proxy.CurrentRuntimeSettings()
@@ -23,7 +23,7 @@ func setBusyRuntimeSettings(t *testing.T, mutate func(*proxy.RuntimeSettings)) {
 	t.Cleanup(func() { proxy.ApplyRuntimeSettings(prev) })
 }
 
-// newBusyTestConnection 构造一条"已连接且被在途请求占用"的 fake 连接并入池。
+// newBusyTestConnection builds a fake connection that is "connected and occupied by an in-flight request" and adds it to the pool.
 func newBusyTestConnection(t *testing.T, manager *Manager, account *auth.Account, wsURL, sessionKey string) (*WsConnection, *PendingRequest) {
 	t.Helper()
 	key := manager.poolKey(account.ID(), wsURL, sessionKey, "")
@@ -84,7 +84,7 @@ func TestBusyOverflowReusesIdleSiblingSlot(t *testing.T) {
 	busy, blocking := newBusyTestConnection(t, manager, account, wsURL, "session-1")
 	t.Cleanup(func() { busy.session.RemovePendingRequest(blocking.RequestID) })
 
-	// 预置一条空闲的 overflow 兄弟连接
+	// Preset one idle overflow sibling connection
 	siblingKey := manager.poolKey(account.ID(), wsURL, "session-1#ovf-1", "")
 	siblingSession := NewSession(account.ID(), manager)
 	siblingSession.SetConnected(true)
@@ -176,7 +176,7 @@ func TestBusyOverflowDisabledKeepsWaiting(t *testing.T) {
 	if err == nil {
 		t.Fatal("expected acquire to keep waiting (ctx timeout) when overflow is disabled")
 	}
-	// 未开启 overflow 时不应出现兄弟槽位连接
+	// Sibling slot connections must not appear when overflow is not enabled
 	overflowKey := manager.poolKey(account.ID(), wsURL, "session-1#ovf-1", "")
 	if _, ok := manager.connections.Load(overflowKey); ok {
 		t.Fatal("overflow sibling must not be created when disabled")

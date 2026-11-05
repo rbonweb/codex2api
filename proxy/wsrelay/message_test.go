@@ -4,7 +4,7 @@ import (
 	"testing"
 )
 
-// TestMessageCreation 测试消息创建
+// TestMessageCreation tests message creation.
 func TestMessageCreation(t *testing.T) {
 	requestID := "test-request-123"
 	sessionID := "test-session-456"
@@ -26,7 +26,7 @@ func TestMessageCreation(t *testing.T) {
 	}
 }
 
-// TestErrorMessage 测试错误消息创建
+// TestErrorMessage tests error message creation.
 func TestErrorMessage(t *testing.T) {
 	requestID := "test-request-123"
 	statusCode := 503

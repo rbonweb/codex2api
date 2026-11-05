@@ -88,7 +88,7 @@ func nativeRuntimeAt(ctx context.Context, appPath string) (nativeRuntime, error)
 	return installation, nil
 }
 
-// 子进程隔离原生框架异常；画像和 CBOR 封装均由 Go 统一处理。
+// A child process isolates native framework exceptions; the profile and CBOR wrapping are both handled by Go.
 const nativeScript = `
 (async () => {
   const addon = require(process.env.CODEX2API_DEVICECHECK_MODULE);

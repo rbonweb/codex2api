@@ -7,32 +7,32 @@ import (
 	"time"
 )
 
-// ==================== 上游 WS 空闲连接保活（prewarm 保活） ====================
+// ==================== Upstream WS idle connection keepalive (prewarm keepalive) ====================
 //
-// 设计原则（默认关闭，零额外账号消耗）：
-//   - 只对【已经存在】的空闲上游 WS 连接发送 Ping 控制帧保活；
-//   - 不主动建立新连接、不发送任何 response.create 业务帧，因此不消耗账号额度；
-//   - 目的：避免空闲连接被上游/中间网络断开，下次复用时省去 TLS+握手冷启动，
-//     更接近官方 Codex CLI 的“长连接 + 低首字延迟”体验。
-//   - 弱网模式会暂停本保活，让连接按较短空闲窗口主动轮换。
+// Design principles (off by default, zero extra account consumption):
+//   - Only sends Ping control frames to keep alive upstream WS connections that already exist and are idle;
+//   - Never opens new connections or sends any response.create business frames, so it consumes no account quota;
+//   - Purpose: avoid idle connections being dropped by the upstream or an intermediate network, and skip the TLS+handshake cold start on the next reuse,
+//     closer to the official Codex CLI experience of "long-lived connection + low time to first token".
+//   - Weak-network mode pauses this keepalive, so connections rotate actively on a shorter idle window.
 //
-// 当保活开关关闭时，KeepaliveTask 根本不会启动 goroutine，对现有系统零影响。
+// When the keepalive switch is off, KeepaliveTask does not start a goroutine at all, so the existing system is unaffected.
 
-// PingIdleConnections 对连接池中所有【已连接且空闲】的 WS 连接发送一次 Ping 保活。
-// 空闲 = 该连接的 session 当前没有 pending 请求（PendingCount() == 0），
-// 避免与正在进行的请求争用写锁或干扰其读写时序。
-// 返回 (pinged, failed)：成功 Ping 数 与 失败数（失败的空闲连接会被 SendHeartbeat
-// 关闭并移除；快照后恰好被请求取走的连接只摘池，不关 socket，见 issue #436）。
+// PingIdleConnections sends one keepalive ping to every connected and idle WS connection in the pool.
+// Idle means the connection's session currently has no pending request (PendingCount() == 0),
+// to avoid contending for the write lock with in-flight requests or disturbing their read/write timing.
+// Returns (pinged, failed): the successful ping count and the failure count (a failed idle connection is closed by SendHeartbeat
+// and removed; a connection that a request takes right after the snapshot is only dropped from the pool, its socket is not closed, see issue #436).
 func (m *Manager) PingIdleConnections() (pinged int, failed int) {
 	if m == nil || weakNetworkModeEnabled() {
 		return 0, 0
 	}
-	// 实际发送 Ping 的函数，可被测试替换（keepalivePingFunc 为 nil 时用默认 SendHeartbeat）。
+	// Function that actually sends the ping; tests can replace it (when keepalivePingFunc is nil, the default SendHeartbeat is used).
 	ping := m.keepalivePingFunc
 	if ping == nil {
 		ping = m.SendHeartbeat
 	}
-	// 先收集快照，避免在 Range 回调里直接做可能修改 map 的操作（SendHeartbeat 失败会 Delete）。
+	// Collect a snapshot first, to avoid modifying the map directly inside the Range callback (a failed SendHeartbeat calls Delete).
 	var idle []*WsConnection
 	m.connections.Range(func(_, value any) bool {
 		wc, ok := value.(*WsConnection)
@@ -42,11 +42,11 @@ func (m *Manager) PingIdleConnections() (pinged int, failed int) {
 		if !wc.IsConnected() {
 			return true
 		}
-		// 业务空闲过期或到龄的连接不再保活，交给 evictExpired 关闭并归还槽位。
+		// Connections past business idle expiry or max age are no longer kept alive; evictExpired closes them and returns their slots.
 		if wc.IsExpired() || wc.IsOverAge() {
 			return true
 		}
-		// 只保活空闲连接：有 pending 请求时跳过（该连接本就活跃，无需额外 Ping）。
+		// Only keep idle connections alive: skip a connection with a pending request (it is already active and needs no extra ping).
 		if wc.session != nil && wc.session.PendingCount() > 0 {
 			return true
 		}
@@ -64,11 +64,11 @@ func (m *Manager) PingIdleConnections() (pinged int, failed int) {
 	return pinged, failed
 }
 
-// KeepaliveTask 周期性对空闲上游 WS 连接发送 Ping 保活的常驻任务。
-// 仅在系统设置 codex_ws_keepalive_enabled 开启时由 main 启动。
+// KeepaliveTask is the long-running task that periodically pings idle upstream WS connections to keep them alive.
+// It is started by main only when the codex_ws_keepalive_enabled system setting is on.
 type KeepaliveTask struct {
 	manager     *Manager
-	intervalSec func() int // 动态读取间隔（秒），支持运行时热更新
+	intervalSec func() int // Reads the interval (seconds) dynamically; supports hot updates at runtime
 	enabled     func() bool
 
 	ctx    context.Context
@@ -76,10 +76,10 @@ type KeepaliveTask struct {
 	wg     sync.WaitGroup
 }
 
-// NewKeepaliveTask 创建保活任务。
-//   - manager: 目标连接池（通常为 GetManager()）
-//   - enabled: 返回当前是否启用保活（读 store 开关）
-//   - intervalSec: 返回当前 Ping 间隔秒数（读 store 配置）
+// NewKeepaliveTask creates a keepalive task.
+//   - manager: target connection pool (usually GetManager())
+//   - enabled: returns whether keepalive is currently enabled (reads the store switch)
+//   - intervalSec: returns the current ping interval in seconds (reads the store config)
 func NewKeepaliveTask(manager *Manager, enabled func() bool, intervalSec func() int) *KeepaliveTask {
 	ctx, cancel := context.WithCancel(context.Background())
 	return &KeepaliveTask{
@@ -91,21 +91,21 @@ func NewKeepaliveTask(manager *Manager, enabled func() bool, intervalSec func() 
 	}
 }
 
-// Start 启动常驻 goroutine。即使保活当前关闭也可安全启动：
-// goroutine 每个 tick 会检查 enabled()，关闭时仅空转、不发送任何帧。
+// Start starts the long-running goroutine. It is safe to start even when keepalive is currently off:
+// the goroutine checks enabled() on each tick; when it is off it just idles and sends no frames.
 func (t *KeepaliveTask) Start() {
 	if t == nil || t.manager == nil {
 		return
 	}
 	t.wg.Add(1)
 	go t.loop()
-	log.Printf("[WS-Keepalive] 保活常驻任务已启动（实际是否发送 Ping 取决于运行时开关）")
+	log.Printf("[WS-Keepalive] keepalive background task started (whether pings are actually sent depends on the runtime switch)")
 }
 
 func (t *KeepaliveTask) loop() {
 	defer t.wg.Done()
-	// tick 粒度固定为较小值，循环内根据配置的 intervalSec 决定是否真正执行，
-	// 这样间隔配置热更新无需重启 ticker。
+	// The tick granularity is fixed at a small value; the loop decides whether to actually run based on the configured intervalSec,
+	// so hot updates to the interval config need no ticker restart.
 	const tickGranularity = 5 * time.Second
 	ticker := time.NewTicker(tickGranularity)
 	defer ticker.Stop()
@@ -126,7 +126,7 @@ func (t *KeepaliveTask) loop() {
 			lastRun = now
 			pinged, failed := t.manager.PingIdleConnections()
 			if pinged > 0 || failed > 0 {
-				log.Printf("[WS-Keepalive] 保活完成: pinged=%d failed=%d", pinged, failed)
+				log.Printf("[WS-Keepalive] keepalive done: pinged=%d failed=%d", pinged, failed)
 			}
 		}
 	}
@@ -143,7 +143,7 @@ func (t *KeepaliveTask) intervalSecOrDefault() int {
 	return sec
 }
 
-// Stop 停止常驻任务并等待 goroutine 退出。
+// Stop stops the long-running task and waits for the goroutine to exit.
 func (t *KeepaliveTask) Stop() {
 	if t == nil {
 		return
