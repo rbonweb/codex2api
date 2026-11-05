@@ -107,9 +107,9 @@ func newAcceptanceBenchmarkUpstream(t *testing.T, chunks []string) *httptest.Ser
 	return server
 }
 
-// newAcceptanceBenchmarkStore 构造只包含本次用例账号的真实 auth.Store。
-// 账号使用 Codex OAuth 身份，并通过 Resin 配置把出站平台 URL 指向 httptest，
-// 从而走生产原生 Responses 流式管线（含 OutputGuard 接线）。
+// newAcceptanceBenchmarkStore builds a real auth.Store that contains only this test case's accounts.
+// Accounts use a Codex OAuth identity, and the Resin config points the outbound platform URL at httptest,
+// so requests go through the production native Responses streaming pipeline (including the OutputGuard wiring).
 func newAcceptanceBenchmarkStore(t *testing.T, upstreamURL string) *auth.Store {
 	t.Helper()
 	store := auth.NewStore(nil, nil, &database.SystemSettings{

@@ -519,8 +519,8 @@ func (h *Handler) nextRetryAccountForContinuation(ctx context.Context, affinityK
 	return h.nextRetryAccount(ctx, affinityKey, apiKeyID, exclusions, filter, true, auth.DispatchPolicyStandard)
 }
 
-// nextRetryAccountForContinuationWithSelection 是续链（preserveBinding=true）重试的
-// SelectionOptions 变体：续链虽然只认已绑定的账号，但选号实现仍需要 Policy。
+// nextRetryAccountForContinuationWithSelection is the retry for continuations (preserveBinding=true)
+// in the SelectionOptions variant: although a continuation only accepts the bound account, the selection implementation still needs the Policy.
 func (h *Handler) nextRetryAccountForContinuationWithSelection(ctx context.Context, affinityKey string, apiKeyID int64, exclusions *retryAccountExclusions, filter auth.AccountFilter, opts auth.SelectionOptions) (*auth.Account, string, error) {
 	account, proxyURL, _, err := h.nextRetryAccountWithGuard(ctx, affinityKey, apiKeyID, exclusions, filter, true, opts)
 	return account, proxyURL, err
@@ -572,7 +572,7 @@ func (h *Handler) nextRetryAccountWithGuard(ctx context.Context, affinityKey str
 		var stickyProxyURL string
 		var guard auth.SessionAffinityGuard
 		if preserveBinding {
-			// 续链同样带上 SelectionOptions，底层选号（含容量借用 / 首次绑定分支）不会丢掉 Policy。
+			// Continuations also carry SelectionOptions; the underlying selection (including the capacity borrowing / first-binding branch) does not drop the Policy.
 			account, stickyProxyURL = h.store.NextForContinuationWithDispatchForProvider(opts, affinityKey, apiKeyID, exclude, filter)
 		} else {
 			account, stickyProxyURL, guard = h.nextAccountForSessionWithDispatchGuard(affinityKey, apiKeyID, exclude, filter, opts)

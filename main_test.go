@@ -189,8 +189,8 @@ func TestLoggerMiddlewareUsesStreamingOutcomeOverride(t *testing.T) {
 	r := gin.New()
 	r.Use(loggerMiddleware())
 	r.POST("/v1/responses", func(c *gin.Context) {
-		// 模拟 SSE 已提交 200 后才发现下游断开；真实 HTTP 状态无法回写，
-		// 但访问日志必须记录最终内部结果 499。
+		// Simulates the downstream disconnecting only after SSE has already committed 200; the real HTTP status cannot be rewritten,
+		// but the access log must record the final internal result 499.
 		c.Status(http.StatusOK)
 		c.Set(proxy.AccessLogStatusContextKey, 499)
 	})

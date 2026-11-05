@@ -143,8 +143,8 @@ func TestCodexAlphaSearchHandler_PassesThroughUpstreamError(t *testing.T) {
 	}
 }
 
-// TestCodexAlphaSearchHandler_KeepsJSONResponseAliveWhileReadingBody 验证读取静默的
-// 非流式 JSON 响应体时会发送 HTTP 102，同时保留最终 JSON 响应。
+// TestCodexAlphaSearchHandler_KeepsJSONResponseAliveWhileReadingBody verifies that reading a silent
+// non-streaming JSON response body sends HTTP 102 and keeps the final JSON response.
 func TestCodexAlphaSearchHandler_KeepsJSONResponseAliveWhileReadingBody(t *testing.T) {
 	gin.SetMode(gin.TestMode)
 	previousInterval := continuousRetryKeepaliveInterval

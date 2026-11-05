@@ -13,7 +13,7 @@ import (
 // characters are replaced with `_`, over-long names are truncated and de-duplicated, and the response side restores the names using the same mapping, so the client still sees
 // the original names. Valid names are not added to the mapping, so regular requests have zero overhead.
 //
-// 只作用于 /v1/chat/completions 路由：原生 Responses 请求视为已按上游规范构造。
+// Applies only to the /v1/chat/completions route: native Responses requests are treated as already built to the upstream spec.
 const codexToolNameLimit = 64
 
 func isCodexToolNameRune(r rune) bool {
