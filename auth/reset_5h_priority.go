@@ -13,7 +13,7 @@ const SchedulerModeReset5hFirst = "reset_5h_first"
 func (a *Account) reset5hSchedulingDeadline(now time.Time) time.Time {
 	a.mu.RLock()
 	defer a.mu.RUnlock()
-	if a.isRelayStyleLocked() || a.creditSkipsUsageWindowLocked() ||
+	if a.creditSkipsUsageWindowLocked() ||
 		!a.UsagePercent5hValid || math.IsNaN(a.UsagePercent5h) || math.IsInf(a.UsagePercent5h, 0) ||
 		a.UsagePercent5h < 0 || a.UsagePercent5h >= 100 || !a.Reset5hAt.After(now) {
 		return time.Time{}

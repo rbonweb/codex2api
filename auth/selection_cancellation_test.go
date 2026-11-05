@@ -33,7 +33,7 @@ func TestModelCooldownFilterCancelsInFlightCacheRead(t *testing.T) {
 	store := &Store{tokenCache: tc}
 	ctx, cancel := context.WithCancel(context.Background())
 	defer cancel()
-	filter := store.WithModelCooldownFilterContext(ctx, "grok-4.6", nil)
+	filter := store.WithModelCooldownFilterContext(ctx, "gpt-5.4", nil)
 	done := make(chan bool, 1)
 	go func() { done <- filter(&Account{DBID: 1}) }()
 	select {
@@ -90,7 +90,7 @@ func TestModelCooldownFilterCancelsCacheCleanup(t *testing.T) {
 			ctx, cancel := context.WithCancel(context.Background())
 			defer cancel()
 			done := make(chan bool, 1)
-			go func() { done <- store.WithModelCooldownFilterContext(ctx, "grok-4.6", nil)(&Account{DBID: 1}) }()
+			go func() { done <- store.WithModelCooldownFilterContext(ctx, "gpt-5.4", nil)(&Account{DBID: 1}) }()
 			select {
 			case <-tc.entered:
 			case <-time.After(time.Second):
@@ -132,10 +132,10 @@ func TestModelCooldownContextPreservesRemoteGate(t *testing.T) {
 	store := &Store{tokenCache: tc}
 	account := &Account{DBID: 1}
 	store.setCachedModelCooldown(1, ModelCooldown{
-		Model: "grok-4.6", Reason: "rate_limited",
+		Model: "gpt-5.4", Reason: "rate_limited",
 		ResetAt: time.Now().Add(time.Minute), UpdatedAt: time.Now(),
 	})
-	if store.WithModelCooldownFilterContext(context.Background(), "grok-4.6", nil)(account) {
+	if store.WithModelCooldownFilterContext(context.Background(), "gpt-5.4", nil)(account) {
 		t.Fatal("remote model cooldown was bypassed")
 	}
 }

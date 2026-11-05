@@ -59,15 +59,11 @@ func IsValidCodexFingerprintMode(value string) bool {
 }
 
 // EffectiveCodexFingerprintMode 返回账号生效的收敛模式。
-// 中转型账号（OpenAI Responses / Grok）不走 Codex 官方出站路径，恒为 off。
 func (a *Account) EffectiveCodexFingerprintMode() string {
 	if a == nil {
 		return CodexFingerprintModeOff
 	}
 	a.mu.RLock()
 	defer a.mu.RUnlock()
-	if a.isRelayStyleLocked() {
-		return CodexFingerprintModeOff
-	}
 	return NormalizeCodexFingerprintMode(a.CodexFingerprintMode)
 }

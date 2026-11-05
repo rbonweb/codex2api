@@ -28,13 +28,7 @@ func TestMarkDeactivatedWorkspaceFansOutSameWorkspace(t *testing.T) {
 	alreadyError := newWorkspaceLinkedAccount(7, "team-A")
 	alreadyError.Status = StatusError
 	alreadyError.ErrorMsg = "old error"
-	grok := newWorkspaceLinkedAccount(8, "team-A")
-	grok.UpstreamType = UpstreamGrok
-	responses := newWorkspaceLinkedAccount(9, "team-A")
-	responses.UpstreamType = UpstreamOpenAIResponses
-	responses.BaseURL = "https://api.openai.com/v1"
-	responses.APIKey = "sk-test"
-	for _, acc := range []*Account{trigger, sameA, otherTeam, sameAAgain, alreadyError, grok, responses} {
+	for _, acc := range []*Account{trigger, sameA, otherTeam, sameAAgain, alreadyError} {
 		store.AddAccount(acc)
 	}
 
@@ -67,12 +61,6 @@ func TestMarkDeactivatedWorkspaceFansOutSameWorkspace(t *testing.T) {
 	}
 	if alreadyError.ErrorMsg != "old error" {
 		t.Fatalf("already-error sibling ErrorMsg = %q, want unchanged", alreadyError.ErrorMsg)
-	}
-	if grok.RuntimeStatus() == "error" {
-		t.Fatal("grok sibling must not be linked")
-	}
-	if responses.RuntimeStatus() == "error" {
-		t.Fatal("openai responses sibling must not be linked")
 	}
 }
 
@@ -208,40 +196,6 @@ func TestLinkedDeactivatedWorkspaceResultSkipsSameWorkspaceSeats(t *testing.T) {
 	}
 	if msg, ok := store.LinkedDeactivatedWorkspaceResult(plusRouted); ok {
 		t.Fatalf("header-only plus must not skip probe: %q", msg)
-	}
-}
-
-func TestMarkDeactivatedWorkspaceSkipsGrokAndResponsesTriggers(t *testing.T) {
-	store := NewStore(nil, nil, nil)
-	sibling := newWorkspaceLinkedAccount(2, "team-A")
-	store.AddAccount(sibling)
-
-	grok := newWorkspaceLinkedAccount(1, "team-A")
-	grok.UpstreamType = UpstreamGrok
-	store.AddAccount(grok)
-	store.MarkDeactivatedWorkspace(grok, "上游返回 402: deactivated_workspace")
-	if sibling.RuntimeStatus() == "error" {
-		t.Fatal("grok trigger must not fan out")
-	}
-
-	store.workspaceLinkedRecent = nil
-	responses := newWorkspaceLinkedAccount(3, "team-A")
-	responses.UpstreamType = UpstreamOpenAIResponses
-	responses.BaseURL = "https://api.openai.com/v1"
-	responses.APIKey = "sk-test"
-	store.AddAccount(responses)
-	store.MarkDeactivatedWorkspace(responses, "上游返回 402: deactivated_workspace")
-	if sibling.RuntimeStatus() == "error" {
-		t.Fatal("openai responses trigger must not fan out")
-	}
-
-	store.workspaceLinkedRecent = nil
-	claude := newWorkspaceLinkedAccount(4, "team-A")
-	claude.UpstreamType = UpstreamClaude
-	store.AddAccount(claude)
-	store.MarkDeactivatedWorkspace(claude, "upstream Claude workspace error")
-	if sibling.RuntimeStatus() == "error" {
-		t.Fatal("Claude trigger must not fan out into Codex workspace accounts")
 	}
 }
 
