@@ -1,68 +1,68 @@
-# 使用指南
+# Usage guide
 
-管理后台的 `/admin/docs` 提供客户端配置、搜索、参数说明和可复制示例。内容分为快速接入、开发指南、接口参考、故障排查、管理与进阶；章节 URL 可以直接收藏。页面的「复制为 Markdown」包含同一份指南和接口数据，密钥使用占位符；客户端配置区的复制按钮则使用当前选中的真实密钥。
+The admin panel's `/admin/docs` provides client configuration, search, parameter reference, and copyable examples. Content is grouped into quick start, development guide, API reference, troubleshooting, and administration and advanced topics; section URLs can be bookmarked directly. The page's "Copy as Markdown" includes the same guide and API data, with keys replaced by placeholders; the copy button in the client configuration area uses the currently selected real key.
 
-## 完成第一次接入
+## Complete your first integration
 
-1. 在账号管理中启用至少一个具有目标模型能力的账号。
-2. 在 API 密钥中创建客户端专用 Key，核对渠道、模型和分组范围。
-3. 在使用文档的快速接入中选择 Codex CLI、CC Switch 或 Cherry Studio，配置服务地址和模型。思考强度与服务档位位于高级选项。
-4. 按提示写入配置文件或导入客户端，再运行页面提供的 cURL。
-5. 在使用统计中核对请求状态、最终模型、耗时和 token。
+1. Enable at least one account that has the capabilities of the target model.
+2. Create a client-specific key under API keys, and check the channel, model, and group scope.
+3. In the quick start section of the docs, choose Codex CLI, CC Switch, or Cherry Studio, and set the service address and model. Reasoning effort and service tier are under Advanced options.
+4. Write the config file or import into the client as prompted, then run the cURL command the page provides.
+5. In usage statistics, check the request status, final model, duration, and token count.
 
-`GET /health` 成功只代表服务在线。`GET /v1/models` 可验证地址和认证；完整生成请求才验证模型、账号和上游链路。
+A successful `GET /health` only means the service is online. `GET /v1/models` verifies the address and authentication; only a complete generation request verifies the model, account, and upstream path.
 
-## 地址与密钥
+## Addresses and keys
 
-假设服务地址为 `https://gateway.example.com`：
+Assume the service address is `https://gateway.example.com`:
 
-| 用途 | 地址或凭据 |
+| Purpose | Address or credential |
 | --- | --- |
-| Codex CLI | 本网关兼容 `https://gateway.example.com` 下无 `/v1` 的 Responses 路径 |
-| OpenAI SDK | `base_url` / `baseURL` 为 `https://gateway.example.com/v1` |
-| 普通 API | `Authorization: Bearer YOUR_API_KEY` |
-| 管理 API | `X-Admin-Key: YOUR_ADMIN_SECRET`，不需要叠加下游 API Key |
-| 出站代理 | 账号 `proxy_url`，用于网关访问上游，与客户端 Base URL 分开配置 |
+| Codex CLI | This gateway is compatible with the Responses path without `/v1` under `https://gateway.example.com` |
+| OpenAI SDK | `base_url` / `baseURL` is `https://gateway.example.com/v1` |
+| Regular API | `Authorization: Bearer YOUR_API_KEY` |
+| Admin API | `X-Admin-Key: YOUR_ADMIN_SECRET`, no downstream API key is needed on top |
+| Outbound proxy | Account `proxy_url`, used by the gateway to reach upstream; configured separately from the client Base URL |
 
-公共 API 默认要求认证。普通公共接口仅在未配置任何 API Key 且显式启用 `CODEX_ALLOW_ANONYMOUS=true` 时允许匿名访问；异步图片任务始终要求后台创建的 API Key。
+The public API requires authentication by default. Regular public endpoints allow anonymous access only when no API key is configured and `CODEX_ALLOW_ANONYMOUS=true` is explicitly enabled; async image jobs always require an API key created in the admin panel.
 
-## 开发指南
+## Development guide
 
-- `/admin/docs#sdk-examples`：Python 与 Node.js SDK 的最小请求。SDK 密钥从服务端环境变量读取。
-- `/admin/docs#streaming`：`stream=false` 返回 JSON；`stream=true` 返回 SSE。cURL 使用 `-N`，客户端检查终止事件，不能将连接中断当成完成。
-- `/admin/docs#conversation-tools`：保存原始 input、全部 response.output 和工具结果；使用 `call_id` 配对工具调用与输出。
-- `/admin/docs#structured-output`：Responses 使用 `text.format`，Chat 使用 `response_format`；支持的约束取决于最终模型、渠道和传输方式。
-- `/admin/docs#protocols`：协议、模型映射、思考强度与服务档位说明。
+- `/admin/docs#sdk-examples`: minimal requests for the Python and Node.js SDKs. The SDK key is read from a server-side environment variable.
+- `/admin/docs#streaming`: `stream=false` returns JSON; `stream=true` returns SSE. cURL uses `-N`. The client checks for the terminal event and must not treat a dropped connection as complete.
+- `/admin/docs#conversation-tools`: keep the original input, all response.output items, and tool results; use `call_id` to pair tool calls with their outputs.
+- `/admin/docs#structured-output`: Responses uses `text.format`, Chat uses `response_format`; supported constraints depend on the final model, channel, and transport.
+- `/admin/docs#protocols`: protocols, model mapping, reasoning effort, and service tier.
 
-`previous_response_id` 依赖同一密钥范围内可恢复的上下文。缓存受容量、TTL 和写入策略限制；Memory 缓存配合 SQLite 文件主库时默认有磁盘持久层，关闭后重启会丢失。遇到 `409 previous_response_not_found` 时，重发完整必需历史并开始新链。详见 [Responses 上下文](API.md#responses-上下文不可用)。
+`previous_response_id` depends on context that can be recovered within the same key scope. The cache is limited by capacity, TTL, and write policy. When the Memory cache is paired with a SQLite file primary database, it has a disk persistence layer by default; without that layer, its contents are lost on restart after a shutdown. On `409 previous_response_not_found`, resend the full required history and start a new chain. See [Responses context](API.md#responses-context-unavailable) for details.
 
-SDK 示例的基础调用与流式事件按 [OpenAI SDK 文档](https://developers.openai.com/api/docs/libraries) 和 [流式响应文档](https://developers.openai.com/api/docs/guides/streaming-responses) 编写；模型名、路由及兼容性边界以本网关为准。
+The basic calls and streaming events in the SDK examples follow the [OpenAI SDK docs](https://developers.openai.com/api/docs/libraries) and the [streaming response docs](https://developers.openai.com/api/docs/guides/streaming-responses); model names, routes, and compatibility boundaries are defined by this gateway.
 
-## 图片与进阶接口
+## Image and advanced endpoints
 
-| 能力 | 入口 | 使用方式 |
+| Capability | Entry point | How to use |
 | --- | --- | --- |
-| 同步生图 / 编辑 | `/v1/images/generations`、`/v1/images/edits` | 返回图片；编辑支持 JSON 和 multipart，遮罩仅 gpt-image 系列支持 |
-| 异步生图 / 编辑 | `POST /v1/images/jobs`、`GET /v1/images/jobs/:id` | 返回 `202 {job: ...}`；同一 API Key 查询 `job.id`，成功后使用 `job.assets[].proxy_url` 下载图片 |
-| 本地 Token 估算 | `/v1/responses/input_tokens` | 不调用上游，用于兼容探测，不作为准确 tokenizer 或计费依据 |
-| 上下文压缩 | `POST /v1/responses/compact` | 提交完整历史，保留返回的压缩项和不透明字段 |
-| Responses WebSocket | `GET /v1/responses` | 通过认证头建立连接后发送 `response.create`；同 `stream_id` 保序、不同独立流并行（最多 16 个活动轮次、32 个命名流）；支持向当前 WebSocket 上游租约发送 `response.interrupt`；`response.append` 与 `response.steer` 返回 `unsupported_feature`，可用下一轮 `response.create` + `previous_response_id` |
+| Sync image generation / edit | `/v1/images/generations`, `/v1/images/edits` | Returns images; edit accepts JSON and multipart; masks are supported only by the gpt-image series |
+| Async image generation / edit | `POST /v1/images/jobs`, `GET /v1/images/jobs/:id` | Returns `202 {job: ...}`; query `job.id` with the same API key; after success, download the image from `job.assets[].proxy_url` |
+| Local token estimate | `/v1/responses/input_tokens` | Does not call upstream; used for compatibility probing, not as an accurate tokenizer or a billing basis |
+| Context compaction | `POST /v1/responses/compact` | Submit the full history; keep the returned compaction items and opaque fields |
+| Responses WebSocket | `GET /v1/responses` | After connecting with the auth header, send `response.create`; the same `stream_id` keeps order, and different independent streams run in parallel (up to 16 active turns and 32 named streams); `response.interrupt` can be sent to the current WebSocket upstream lease; `response.append` and `response.steer` return `unsupported_feature`, so use `response.create` with `previous_response_id` on the next turn instead |
 
-GPT Image 2.5 的 Flare / Sunburst 支持 `auto/low/medium/high/xhigh/max`；省略模型仍默认 `gpt-image-2`。`-2k/-4k` 是网关尺寸档位别名。直接通过 Responses 生图时，顶层 `model` 是文本驱动，`tools[].model` 是图片模型。完整参数见 [Images](API.md#3-images)。
+Flare and Sunburst in GPT Image 2.5 support `auto/low/medium/high/xhigh/max`; omitting the model still defaults to `gpt-image-2`. `-2k/-4k` are gateway size tier aliases. When generating images directly through Responses, the top-level `model` drives the text, and `tools[].model` is the image model. For full parameters, see [Images](API.md#3-images).
 
-## 错误与额度
+## Errors and quota
 
-| 现象 | 下一步 |
+| Symptom | Next step |
 | --- | --- |
-| 401 / 403 | 检查凭据、有效期、密钥渠道、模型和分组授权 |
-| 429 `rate_limit_reached` | 检查模型周预算的 `error.details` 与 `Retry-After` |
-| 503 `no_available_account` | 检查账号启用状态、冷却、并发及可用模型 |
-| 503 `account_pool_concurrency_saturated` | 账号在，但并发窗口已满；稍后重试或提高并发上限 |
-| 503 `account_pool_usage_limit_reached` | 账号池额度耗尽；根据 `Retry-After` 等待重置或补充账号 |
-| 409 `previous_response_not_found` | 重发完整上下文，开始新响应链 |
-| 503 `service_unavailable` | 检查共享上下文或预算存储，退避后重试 |
-| 404 | 核对是否重复拼接 `/v1`、服务器版本和完整路径；任务查询还要检查所属密钥及有效期 |
+| 401 / 403 | Check credentials, validity period, key channel, model, and group authorization |
+| 429 `rate_limit_reached` | Check `error.details` and `Retry-After` for the model's weekly budget |
+| 503 `no_available_account` | Check account enabled state, cooldown, concurrency, and available models |
+| 503 `account_pool_concurrency_saturated` | The account exists, but its concurrency window is full; retry later or raise the concurrency limit |
+| 503 `account_pool_usage_limit_reached` | The account pool's quota is used up; wait for the reset indicated by `Retry-After`, or add accounts |
+| 409 `previous_response_not_found` | Resend the full context and start a new response chain |
+| 503 `service_unavailable` | Check the shared context or budget store, back off, and retry |
+| 404 | Check for a duplicated `/v1`, the server version, and the full path; job queries must also check the owning key and its validity period |
 
-金额额度、模型周次数和上游账号额度是独立限制。周次数按最终模型匹配，可指定时区和重置时间。详见 [模型周预算](CONFIGURATION.md#api-key-模型周请求次数预算)。
+Monetary quota, the weekly model request count, and upstream account quota are independent limits. The weekly count matches the final model and can specify a time zone and reset time. See [model weekly budget](CONFIGURATION.md#api-key-model-weekly-request-budget) for details.
 
-查看更完整的 [API 参考](API.md)、[配置说明](CONFIGURATION.md)、[部署文档](DEPLOYMENT.md) 和 [故障排查](TROUBLESHOOTING.md)。
+For more, see the [API reference](API.md), [configuration](CONFIGURATION.md), [deployment docs](DEPLOYMENT.md), and [troubleshooting](TROUBLESHOOTING.md).

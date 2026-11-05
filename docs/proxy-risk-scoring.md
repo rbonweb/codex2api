@@ -1,10 +1,10 @@
-# 代理风险评分（仅供参考）
+# Proxy risk scoring (for reference only)
 
-Codex2API 内置 Scamalytics IP Fraud Risk API v3 评分适配器，可以把代理池中的出口 IP 直接提交到 Scamalytics 做批量观察。独立的 8788 包装服务不是运行依赖，评分结果用于运营筛选、审计和排查，不会自动禁用代理，也不会改变账号绑定、代理池路由或请求转发。
+Codex2API has a built-in scoring adapter for the Scamalytics IP Fraud Risk API v3. It can submit egress IPs from the proxy pool directly to Scamalytics for batch observation. The separate 8788 wrapper service is not a runtime dependency. Scoring results are used for operational screening, auditing, and troubleshooting; they do not automatically disable proxies and do not change account bindings, proxy pool routing, or request forwarding.
 
-## 支持的服务协议
+## Supported service protocol
 
-内置引擎使用以下官方 v3 请求：
+The built-in engine uses the following official v3 requests:
 
 ```text
 GET https://{SCAM_HOST}/v3/{SCAM_USER}/?key={SCAM_KEY}&ip={ipv4}
@@ -12,69 +12,69 @@ Header: Accept: application/json
 Header: User-Agent: Codex2API-Scamalytics/1.0
 ```
 
-服务返回的 `score`、`risk`、代理/VPN/TOR/数据中心/黑名单、ISP、国家/地区和 credits 字段会被解析为脱敏评分快照。未返回的字段保持“未知”，不会伪造为 0。
+The `score`, `risk`, proxy/VPN/TOR/datacenter/blocklist, ISP, country/region, and credits fields returned by the service are parsed into a redacted scoring snapshot. Fields that are not returned stay "unknown" and are never faked as 0.
 
-## 配置步骤
+## Setup steps
 
-1. 打开管理后台的“代理池”。
-2. 点击“配置风险评分”。
-3. 新建一个内置评分档案，填写 Scamalytics Host、User 和 API Key。
-4. 设置超时、并发、请求间隔、缓存和任务/每日次数上限。
-5. 确认“风险评分仅供参考”，再启用该档案。
-6. 点击“测试内置引擎”，成功后可评分当前页或全部代理。
+1. Open "Proxy pool" in the admin panel.
+2. Click "Configure risk scoring".
+3. Create a new built-in scoring profile, and fill in the Scamalytics Host, User, and API Key.
+4. Set the timeout, concurrency, request interval, cache, and task and daily count limits.
+5. Confirm "Risk scores are for reference only", then enable the profile.
+6. Click "Test built-in engine". After it succeeds, you can score the current page or all proxies.
 
-“测试内置引擎”会使用 `8.8.8.8` 发起一次真实 v3 查询，因此会消耗一次 Scamalytics 额度。
+"Test built-in engine" makes one real v3 query using `8.8.8.8`, so it consumes one unit of Scamalytics quota.
 
-Scamalytics User 和 API Key 只在 Codex2API 服务端保存，管理 API 只返回“已配置”和掩码。Codex2API 只提交代理 URL 解析出的 IP，不会把代理 URL 中的用户名、密码发送给 Scamalytics。
+The Scamalytics User and API Key are stored only on the Codex2API server; the admin API returns only "configured" and a masked value. Codex2API submits only the IP parsed from the proxy URL and never sends the username or password in the proxy URL to Scamalytics.
 
-## 额度与次数
+## Quota and counts
 
-- `每日最多检测数` 是 Codex2API 本地任务预算，`0` 表示不限制。
-- `剩余额度保护阈值` 用于 Scamalytics 返回 credits 时的停止保护。
-- `缓存有效期` 内重复评分默认直接使用快照，不消耗外部次数。
-- `强制刷新` 只有在档案明确允许时才可绕过缓存。
-- Scamalytics 返回的 credits 是服务端观测值；如果服务没有返回额度字段，页面显示“未知”。
+- `Max checks per day` is a local Codex2API task budget; `0` means unlimited.
+- `Credit reserve threshold` is used for stop protection when Scamalytics returns credits.
+- Within the `Cache TTL`, repeated scoring uses the snapshot by default and does not consume external requests.
+- `Allow force refresh` can bypass the cache only when the profile explicitly allows it.
+- Credits returned by Scamalytics are server-observed values; if the service returns no quota field, the page shows "unknown".
 
-## IP 与 DNS 安全
+## IP and DNS safety
 
-默认只评分代理 URL 中的字面 IPv4。域名代理必须显式开启“允许受限 DNS 解析”，并且解析结果必须是公网 IPv4。
+By default, only the literal IPv4 address in the proxy URL is scored. Domain proxies must explicitly enable "Allow restricted DNS resolution", and the resolved result must be a public IPv4 address.
 
-默认拒绝：
+Denied by default:
 
-- localhost、回环、私网和链路本地地址；
-- 多播、广播、保留测试网段和未指定地址；
-- 没有公网 IPv4 结果的域名。
+- localhost, loopback, private network, and link-local addresses;
+- multicast, broadcast, reserved test ranges, and unspecified addresses;
+- domains with no public IPv4 result.
 
-允许私网目标是高风险运维选项，只适合管理员明确控制的内部评分服务，开启后仍不会影响代理调度。
+Allowing private-network targets is a high-risk operational option, suitable only for internal scoring services that the admin explicitly controls. Even when enabled, it does not affect proxy scheduling.
 
-## 结果解释
+## Reading the results
 
-代理列表同时展示两套独立状态：
+The proxy list shows two independent statuses at once:
 
 ```text
-连通性：成功 · 182ms
-风险评分：72 · 高风险
-特征：VPN / 数据中心 / 黑名单
-ISP/归属：Example ISP · US
-建议：建议更换
+Connectivity: success · 182ms
+Risk score: 72 · High Risk
+Flags: VPN / Datacenter / Blacklist
+ISP / attribution: Example ISP · US
+Suggestion: Replace
 ```
 
-风险评分不是可用性探测，也不是自动封禁依据。请结合上游响应、连接延迟、账号绑定和实际业务请求进行人工判断。
+A risk score is not an availability probe, and it is not a basis for automatic bans. Make a manual judgment using upstream responses, connection latency, account bindings, and real business requests.
 
-## 官方资料与申请
+## Official references and sign-up
 
-默认档案只预置可确认的官方主页：
+The default profile presets only the official homepages that can be confirmed:
 
-- [Scamalytics 官方主页](https://www.scamalytics.com/)
-- [Scamalytics IP 风险查询](https://www.scamalytics.com/ip)
+- [Scamalytics official homepage](https://www.scamalytics.com/)
+- [Scamalytics IP risk lookup](https://www.scamalytics.com/ip)
 
-不同套餐的 API Host、User、Key、额度和授权范围可能不同。请以官方账号页面或服务商提供的 API 说明为准，并把实际申请入口填入评分档案的“官方文档 URL”和“申请/配置教程 URL”。
+API hosts, users, keys, quotas, and authorization scopes may differ between plans. Follow the official account page or the provider's API documentation, and enter the actual sign-up entry in the "Official docs URL" and "Sign-up / setup guide URL" fields of the scoring profile.
 
-## 故障处理
+## Troubleshooting
 
-- Scamalytics 超时、401、429 或 5xx：该代理标记为“评分错误”，代理仍保持原有启用状态。
-- DNS 解析失败：该代理标记为“无法评分”，不会删除或解绑。
-- 每日次数或额度保护触发：任务安全停止，已完成的结果保留。
-- 评分任务可以取消；取消不会回滚已经保存的评分快照。
+- Scamalytics timeout, 401, 429, or 5xx: the proxy is marked "Scoring error"; the proxy keeps its existing enabled state.
+- DNS resolution failure: the proxy is marked "Cannot score"; it is not deleted or unbound.
+- Daily count or quota protection triggered: the task stops safely, and completed results are kept.
+- A scoring task can be canceled; canceling does not roll back scoring snapshots that were already saved.
 
-评分任务使用后台队列和分页刷新，外部服务不可用时不会阻塞代理池页面。
+Scoring tasks use a background queue and paged refresh, so an unavailable external service does not block the proxy pool page.

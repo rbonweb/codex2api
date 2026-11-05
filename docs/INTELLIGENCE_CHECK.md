@@ -1,108 +1,79 @@
-# 降智检测
+# Intelligence check
 
-在 `/admin/intelligence-check` 管理固定账号的自动或手动检测。每次按题库顺序选取
-一道启用题目，将最终可见答案和耗时与管理员配置比较，保存结果及配置快照。
-支持 GPT/Codex 账号。
-检测结果表示当前题目和判定规则下的表现，不用于证明上游实际模型身份。
+Manage automatic or manual checks for fixed accounts at `/admin/intelligence-check`. Each run picks, in question-bank order, one enabled question, compares the final visible answer and the elapsed time with the administrator's configuration, and saves the result and a configuration snapshot. GPT/Codex accounts are supported. A check result describes performance under the current question and judging rules; it is not used to prove the upstream model's actual identity.
 
-## 目录
+## Contents
 
-- [启用和配置](#启用和配置)
-- [结果与历史](#结果与历史)
-- [自动处置](#自动处置)
-- [请求与代理](#请求与代理)
-- [存储和任务执行](#存储和任务执行)
-- [开发验证](#开发验证)
+- [Enable and configure](#enable-and-configure)
+- [Results and history](#results-and-history)
+- [Automatic actions](#automatic-actions)
+- [Requests and proxies](#requests-and-proxies)
+- [Storage and job execution](#storage-and-job-execution)
+- [Development verification](#development-verification)
 
-## 启用和配置
+## Enable and configure
 
-首次初始化时自动检测总开关关闭，已有账号不参与检测。保存配置和题库后，开启
-所需账号及总开关。新账号默认参与检测，但仍受总开关控制；此默认值可以修改。
-手动检测使用已保存配置，不要求开启自动检测。
+Automatic detection's master switch is off on first initialization, and existing accounts do not take part in detection. After saving the configuration and question bank, turn on the required accounts and the master switch. New accounts take part by default but still follow the master switch; this default can be changed. Manual checks use the saved configuration and do not require automatic detection to be turned on.
 
-| 字段 | 默认值 | 说明 |
+| Field | Default | Description |
 | --- | --- | --- |
-| `enabled` | `false` | 自动检测总开关 |
-| `gpt_model` | `gpt-6-astra` | 检测模型，发送前验证账号能力 |
-| `reasoning_effort` | `high` | GPT 推理强度 |
-| `judge_mode` | `answer` | `answer`、`latency` 或 `both` |
-| `interval_seconds` / `retry_seconds` | 300 / 60 | 正常检测间隔及异常后重试间隔，范围 1–86400 |
-| `timeout_seconds` | 180 | 请求超时，范围 1–3600 秒 |
-| `concurrency` | 4 | 手动和自动检测共享上限，范围 1–100 |
-| `retention` | 200 | 每账号终态历史保留数，范围 1–10000 |
-| `new_accounts_enabled` | `true` | 仅影响以后创建的账号 |
-| `action` | `none` | `none`、`pause` 或 `switch_group` |
-| `degrade_threshold` / `recover_threshold` | 2 / 1 | 连续未通过及恢复阈值，范围 1–1000 |
-| `target_group_id` | 0 | 切组时必须指定与账号渠道相容的有效分组 |
+| `enabled` | `false` | Master switch for automatic detection |
+| `gpt_model` | `gpt-6-astra` | Detection model; account capability is verified before sending |
+| `reasoning_effort` | `high` | GPT reasoning effort |
+| `judge_mode` | `answer` | `answer`, `latency` or `both` |
+| `interval_seconds` / `retry_seconds` | 300 / 60 | Normal detection interval and retry interval after an error, range 1–86400 |
+| `timeout_seconds` | 180 | Request timeout, range 1–3600 seconds |
+| `concurrency` | 4 | Limit shared by manual and automatic detection, range 1–100 |
+| `retention` | 200 | Number of terminal history entries kept per account, range 1–10000 |
+| `new_accounts_enabled` | `true` | Affects only accounts created later |
+| `action` | `none` | `none`, `pause` or `switch_group` |
+| `degrade_threshold` / `recover_threshold` | 2 / 1 | Consecutive failures and recovery thresholds, range 1–1000 |
+| `target_group_id` | 0 | When switching groups, must name a valid group compatible with the account's channel |
 
-每道题包含 `id`、`name`、`prompt`、`expected_answer`、`match_mode`、
-`max_duration_ms`、`enabled`；最多 100 题。开启自动检测或提交手动任务前必须
-有启用的题目。内置糖果配对样例使用预期答案 `21`，管理员可编辑或替换。
+Each question has `id`, `name`, `prompt`, `expected_answer`, `match_mode`, `max_duration_ms`, `enabled`; at most 100 questions. Before turning on automatic detection or submitting a manual job, there must be at least one enabled question. The built-in candy-pairing sample uses the expected answer `21`, and the administrator can edit or replace it.
 
-答案支持完整匹配 `exact`、包含匹配 `contains`、Go 正则匹配 `regex`。
-判定前执行 Unicode NFKC 标准化并去除首尾空白和包裹整个答案的单层代码围栏。
-耗时判定要求完整成功响应且耗时严格小于题目阈值；耗时不含本地排队时间。
-配置和题库一起保存；API 使用 `revision` 检查并发编辑，冲突返回 409。
+Answers support full match `exact`, contains match `contains`, and Go regex match `regex`. Before judging, Unicode NFKC normalization is applied, and leading and trailing whitespace and a single-level code fence wrapping the entire answer are removed. A latency judgment requires a complete successful response whose elapsed time is strictly less than the question's threshold; elapsed time does not include local queue time. Configuration and the question bank are saved together; the API uses `revision` to check concurrent edits, and conflicts return 409.
 
-## 结果与历史
+## Results and history
 
-| 状态 | 显示 | 含义 |
+| Status | Display | Meaning |
 | --- | --- | --- |
-| `queued` / `running` | 等待执行 / 检测中 | 尚无判定结果 |
-| `normal` | 绿色 `#22c55e` | 满足所选判定规则 |
-| `degraded` | 红色 `#ef4444` | 完整响应，但答案或耗时未通过 |
-| `error` | 深红色 `#991b1b` | 请求失败、超时、未收到成功终态等，不能判为答错 |
-| `interrupted` | 已中断 | 服务停止或执行租约失效等，不参与判定 |
+| `queued` / `running` | Waiting to run / Checking | No result yet |
+| `normal` | Green `#22c55e` | Meets the selected judging rule |
+| `degraded` | Red `#ef4444` | Complete response, but the answer or latency did not pass |
+| `error` | Dark red `#991b1b` | Request failed, timed out, or no successful terminal event was received; it cannot be judged as a wrong answer |
+| `interrupted` | Interrupted | Service stopped or the execution lease became invalid; not counted in judging |
 
-账号表格、卡片及详情直接共用业务健康条的 `AccountStatusBar` 组件，检测条每格
-对应一次检测，显示最近 20 次终态结果。通过率只计算正常 /（正常 + 未通过），
-没有可判分结果时显示 `--`。悬浮查看摘要，点击色块打开该次详情。
+The account table, cards and details directly share the `AccountStatusBar` component of the business health bar; each cell of the check bar represents one check and shows the latest 20 terminal results. The pass rate counts only normal / (normal + not passed), and shows `--` when there is no scorable result. Hover to see the summary; click a colored block to open that check's details.
 
-状态徽标后提供紧凑的检测和历史图标；等待及执行期间显示转圈。历史弹窗支持分页，
-保留题目、判定配置、最终输出、错误和处置记录，并可切换此账号自动检测。
-关闭账号自动检测后隐藏检测条，仍可查看历史或手动检测。
-当前页摘要批量轮询，页面隐藏时暂停；摘要查询不加载完整响应正文。
+After the status badge, compact check and history icons are shown; a spinner is shown while waiting and running. The history dialog supports paging, and keeps the question, judging configuration, final output, errors and action records, and can toggle automatic detection for this account. When automatic detection is turned off for an account, its check bar is hidden, but its history can still be viewed and manual checks can still be run. The current page's summaries are polled in batches, and polling pauses when the page is hidden; summary queries do not load full response bodies.
 
-## 自动处置
+## Automatic actions
 
-仅 `normal` 和 `degraded` 改变连续次数；请求错误及中断既不增加也不打断次数。
-达到阈值可暂停业务调度或切换分组，账号继续参与已启用的检测以观察恢复。
+Only `normal` and `degraded` change the consecutive count; request errors and interruptions neither increase nor break the count. When the threshold is reached, business scheduling can be paused or the account can be switched to another group; the account keeps taking part in enabled checks to observe recovery.
 
-- 暂停使用独立的检测暂停标记。恢复只解除本功能拥有的暂停，不会启用手动禁用
-  的账号或清除鉴权、额度等其他状态。关闭暂停策略后，已有暂停不自动解除。
-- 切组保存原完整分组集合，恢复时还原仍存在且渠道未改变的原分组。关闭切组
-  策略后，已有切组仍可按恢复阈值还原。
-- 手动修改账号调度开关取消旧动作归属并重置连续计数。手动修改分组取消旧分组
-  还原资格；包括写入相同值及批量操作。独立的检测暂停不因仅修改分组而解除。
-- 运行期间配置或人工状态改变，旧任务可保留历史，但不能用旧配置覆盖新状态。
+- Pausing uses a separate check-pause flag. Recovery only lifts the pause owned by this feature, and does not enable an account that was manually disabled or clear other states such as authorization or quota. After the pause policy is turned off, existing pauses are not lifted automatically.
+- Switching groups saves the original complete set of groups, and recovery restores the original groups that still exist and whose channel has not changed. Turning off the switch-group policy, existing group switches can still be restored by the recovery threshold.
+- Manually changing an account's scheduling switch cancels the ownership of the old action and resets the consecutive count. Manually changing its group cancels the old group restore eligibility; this includes writing the same value and batch operations. An independent check pause is not lifted merely by changing the group.
+- If the configuration or manual state changes while a job is running, the old job may keep its history, but it cannot overwrite the new state with the old configuration.
 
-## 请求与代理
+## Requests and proxies
 
-检测固定账号，复用现有 Codex/Responses 请求执行器和账号身份配置；
-不换号兜底、不注入质量测试的 HTML 指令、不将管理员浏览器身份转发给上游。
-成功判定要求协议成功终态，仅使用最终可见答案，不从思考内容或工具参数取答案。
+Checks run on fixed accounts, reusing the existing Codex/Responses request executor and the account identity configuration; there is no account-switch fallback, no quality-test HTML instructions are injected, and the administrator's browser identity is not forwarded upstream. A success judgment requires a successful protocol terminal event and uses only the final visible answer; it does not take the answer from reasoning content or tool arguments.
 
-检测仅使用账号绑定代理；未绑定时明确直连，绑定失败时记录错误且不回退直连。
-检测不继承分组代理、全局代理池、全局单代理、Resin 或环境代理。
-客户端身份、指纹和时区仍按原账号/全局配置解析。普通业务出站规则保持不变。
+Checks use only the account's bound proxy; when none is bound, a direct connection is explicitly used, and when binding fails the error is recorded and it does not fall back to a direct connection. Checks do not inherit the group proxy, the global proxy pool, the global single proxy, Resin or the environment proxy. Client identity, fingerprint and time zone are still resolved from the original account/global configuration. The ordinary business outbound rules stay unchanged.
 
-检测会产生上游用量，日志使用内部来源 `intelligence_check`，不归到用户 API Key。
-历史中的错误和输出经过既有凭据脱敏，执行租约令牌不返回管理 API。
+Checks produce upstream usage; logs use the internal source `intelligence_check` and are not attributed to a user API key. Errors and output in history go through the existing credential redaction, and the execution lease token is not returned by the admin API.
 
-## 存储和任务执行
+## Storage and job execution
 
-SQLite 和 PostgreSQL 初始化时新增 `intelligence_check_settings`、
-`intelligence_check_accounts`、`intelligence_check_runs` 三张表及相应索引、
-新账号初始化触发器。迁移可重复执行，已有账号默认关闭检测。
+On initialization, SQLite and PostgreSQL add `intelligence_check_settings`, `intelligence_check_accounts` and `intelligence_check_runs` tables with their indexes, and a trigger that initializes new accounts. The migration can be run repeatedly, and existing accounts have checks turned off by default.
 
-数据库事务约束共享检测并发及每账号最多一个活动任务，并使用租约和执行者令牌
-拒绝过期提交。过期运行标记中断；检测也遵守本实例账号硬并发上限，忙时重新排队。
-任务领取时刷新配置快照，结果和自动处置同事务提交；调度变化通过现有 outbox 同步。
-历史按账号清理，原质量测试的表和接口继续保留。
+Database transaction constraints share check concurrency and allow at most one active job per account, and use leases and executor tokens to reject stale submissions. Expired runs are marked interrupted; checks also respect this instance's hard per-account concurrency limit and are re-queued when busy. The configuration snapshot is refreshed when a job is claimed; results and automatic actions are committed in the same transaction; scheduling changes are synced through the existing outbox. History is cleaned up per account; the existing quality-test tables and endpoints are kept.
 
-API 列表和请求格式见 [API 文档](API.md#降智检测)。
+For the API list and request format, see [API docs](API.md#intelligence-check).
 
-## 开发验证
+## Development verification
 
 ```bash
 go test -race -count=1 ./internal/intelligencecheck ./database ./auth ./admin ./proxy ./proxy/wsrelay -run 'Intelligence|AccountBound|BoundEgress|UpstreamTrace'
@@ -112,6 +83,4 @@ npm --prefix frontend run test:intelligence
 npm --prefix frontend run build
 ```
 
-浏览器用例使用模拟接口，需要先安装 Playwright Chromium。
-PostgreSQL 行为集使用隔离 schema，设置 `CODEX2API_TEST_POSTGRES_DSN` 后运行
-`go test -race -count=1 ./database -run '^TestIntelligenceCheckPostgres$'`。
+Browser cases use simulated endpoints and require Playwright Chromium to be installed first. The PostgreSQL behavior set uses an isolated schema; after setting `CODEX2API_TEST_POSTGRES_DSN`, run `go test -race -count=1 ./database -run '^TestIntelligenceCheckPostgres$'`.

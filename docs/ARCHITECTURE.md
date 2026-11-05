@@ -1,92 +1,92 @@
-# Codex2API 架构设计文档
+# Codex2API Architecture Design Document
 
-本文档描述 Codex2API 的整体架构设计、核心组件及数据流。
+This document describes the overall architecture design, core components and data flow of Codex2API.
 
-## 目录
+## Table of Contents
 
-- [架构概览](#架构概览)
-- [核心组件](#核心组件)
-- [数据流](#数据流)
-- [调度系统](#调度系统)
-- [存储层](#存储层)
-- [安全设计](#安全设计)
+- [Architecture Overview](#architecture-overview)
+- [Core Components](#core-components)
+- [Data Flow](#data-flow)
+- [Scheduling System](#scheduling-system)
+- [Storage Layer](#storage-layer)
+- [Security Design](#security-design)
 
 ---
 
-## 架构概览
+## Architecture Overview
 
-### 整体架构图
+### Overall Architecture Diagram
 
 ```
 ┌─────────────────────────────────────────────────────────────────────────────┐
-│                              客户端 (Client)                                 │
-│  - Web 浏览器 (/admin)                                                       │
-│  - API 调用 (/v1/*)                                                         │
+│                              Client                                 │
+│  - Web browser (/admin)                                                       │
+│  - API calls (/v1/*)                                                         │
 └─────────────────────────────────────────────────────────────────────────────┘
                                        │
                                        ▼
 ┌─────────────────────────────────────────────────────────────────────────────┐
-│                              入口层 (Ingress)                                │
+│                              Ingress layer                                │
 │  ┌─────────────────────────────────────────────────────────────────────┐   │
-│  │  Nginx / 负载均衡器                                                  │   │
-│  │  - SSL 终止                                                        │   │
-│  │  - 静态资源缓存                                                    │   │
+│  │  Nginx / Load balancer                                                  │   │
+│  │  - SSL termination                                                        │   │
+│  │  - Static resource cache                                                    │   │
 │  └─────────────────────────────────────────────────────────────────────┘   │
 └─────────────────────────────────────────────────────────────────────────────┘
                                        │
                                        ▼
 ┌─────────────────────────────────────────────────────────────────────────────┐
-│                           Codex2API 服务 (Go + Gin)                          │
+│                           Codex2API service (Go + Gin)                          │
 │  ┌─────────────────────────────────────────────────────────────────────┐   │
-│  │  HTTP 路由层                                                        │   │
+│  │  HTTP routing layer                                                        │   │
 │  │  ├── /admin/*     → React SPA (go:embed)                          │   │
-│  │  ├── /api/admin/* → 管理 API (admin.Handler)                       │   │
-│  │  ├── /v1/*        → 公共 API (proxy.Handler)                       │   │
-│  │  └── /health      → 健康检查                                       │   │
+│  │  ├── /api/admin/* → Admin API (admin.Handler)                       │   │
+│  │  ├── /v1/*        → Public API (proxy.Handler)                       │   │
+│  │  └── /health      → Health check                                       │   │
 │  └─────────────────────────────────────────────────────────────────────┘   │
 │                                       │                                     │
 │  ┌────────────────────────────────────┼─────────────────────────────────┐  │
-│  │           中间件层 (Middleware)    │                                  │  │
+│  │           Middleware layer                                    │  │
 │  │  ┌────────────────┐  ┌───────────┐ │  ┌────────────────────────────┐ │  │
 │  │  │ Recovery       │  │ Logger    │ │  │ API Key Auth              │ │  │
-│  │  │ ( panic 恢复 )  │  │ (请求日志) │ │  │ (公共 API 鉴权)            │ │  │
+│  │  │ ( panic recovery )  │  │ (request log) │ │  │ (public API authentication)            │ │  │
 │  │  └────────────────┘  └───────────┘ │  └────────────────────────────┘ │  │
 │  │  ┌────────────────┐  ┌───────────┐ │  ┌────────────────────────────┐ │  │
-│  │  │ Admin Auth     │  │ RPM Limit │ │  │ CORS (开发环境)             │ │  │
-│  │  │ (管理 API 鉴权) │  │ (全局限流) │ │  │                           │ │  │
+│  │  │ Admin Auth     │  │ RPM Limit │ │  │ CORS (development environment)             │ │  │
+│  │  │ (admin API authentication) │  │ (global rate limit) │ │  │                           │ │  │
 │  │  └────────────────┘  └───────────┘ │  └────────────────────────────┘ │  │
 │  └────────────────────────────────────┼─────────────────────────────────┘  │
 │                                       │                                     │
 │  ┌────────────────────────────────────▼─────────────────────────────────┐  │
-│  │                         业务逻辑层                                    │  │
+│  │                         Business logic layer                                    │  │
 │  │  ┌──────────────────────┐  ┌──────────────────────────────────────┐ │  │
-│  │  │   管理后台逻辑        │  │         代理转发逻辑                  │ │  │
+│  │  │   Admin panel logic        │  │         Proxy forwarding logic                  │ │  │
 │  │  │   (admin.Handler)    │  │        (proxy.Handler)               │ │  │
-│  │  │  • 账号 CRUD         │  │                                     │ │  │
-│  │  │  • 用量统计          │  │  • 账号选择 (auth.Store)            │ │  │
-│  │  │  • 系统设置          │  │  • 请求翻译 (translator)            │ │  │
-│  │  │  • 代理池管理        │  │  • 上游请求 (executor)              │ │  │
-│  │  └──────────────────────┘  │  • 流式处理 (SSE)                   │ │  │
+│  │  │  • Account CRUD         │  │                                     │ │  │
+│  │  │  • Usage statistics          │  │  • Account selection (auth.Store)            │ │  │
+│  │  │  • System settings          │  │  • Request translation (translator)            │ │  │
+│  │  │  • Proxy pool management        │  │  • Upstream request (executor)              │ │  │
+│  │  └──────────────────────┘  │  • Streaming handling (SSE)                   │ │  │
 │  │                            └──────────────────────────────────────┘ │  │
 │  └──────────────────────────────────────────────────────────────────────┘  │
 │                                       │                                     │
 │  ┌────────────────────────────────────▼─────────────────────────────────┐  │
-│  │                          数据访问层                                   │  │
+│  │                          Data access layer                                   │  │
 │  │  ┌──────────────────┐  ┌──────────────┐  ┌──────────────────────┐   │  │
 │  │  │   Database       │  │    Cache     │  │      Token Store     │   │  │
-│  │  │  (PostgreSQL/    │  │ (Redis/      │  │  (内存账号池状态)      │   │  │
+│  │  │  (PostgreSQL/    │  │ (Redis/      │  │  (in-memory account pool state)      │   │  │
 │  │  │   SQLite)        │  │  Memory)     │  │                      │   │  │
-│  │  │                  │  │              │  │  • 调度评分           │   │  │
-│  │  │ • Accounts       │  │ • Session    │  │  • 并发计数           │   │  │
-│  │  │ • Usage Logs     │  │ • Rate Limit │  │  • 健康状态           │   │  │
-│  │  │ • Settings       │  │              │  │  • 冷却时间           │   │  │
+│  │  │                  │  │              │  │  • Scheduling score           │   │  │
+│  │  │ • Accounts       │  │ • Session    │  │  • Concurrency count           │   │  │
+│  │  │ • Usage Logs     │  │ • Rate Limit │  │  • Health status           │   │  │
+│  │  │ • Settings       │  │              │  │  • Cooldown time           │   │  │
 │  │  └──────────────────┘  └──────────────┘  └──────────────────────┘   │  │
 │  └──────────────────────────────────────────────────────────────────────┘  │
 └─────────────────────────────────────────────────────────────────────────────┘
                                        │
                                        ▼
 ┌─────────────────────────────────────────────────────────────────────────────┐
-│                           上游服务 (Codex/OpenAI)                            │
+│                           Upstream service (Codex/OpenAI)                            │
 │  - api.openai.com                                                          │
 │  - api.codex.openai.com                                                    │
 └─────────────────────────────────────────────────────────────────────────────┘
@@ -94,153 +94,153 @@
 
 ---
 
-## 核心组件
+## Core Components
 
-### 1. 路由处理器 (Handler)
+### 1. Routing handler (Handler)
 
-#### proxy.Handler - 公共 API 处理器
-
-```go
-type Handler struct {
-    store      *auth.Store          // 账号池
-    configKeys map[string]bool      // 静态 API Keys
-    db         *database.DB         // 数据库
-    dbKeys     map[string]bool      // 动态 API Keys 缓存
-    dbKeysUntil time.Time           // 缓存过期时间
-}
-```
-
-**职责:**
-- `/v1/chat/completions` - Chat Completions 接口
-- `/v1/responses` - Responses 接口
-- `/v1/models` - 模型列表
-- API Key 认证
-- 请求翻译 (OpenAI → Codex)
-- 响应翻译 (Codex → OpenAI)
-
-#### admin.Handler - 管理后台处理器
+#### proxy.Handler - public API handler
 
 ```go
 type Handler struct {
-    store          *auth.Store      // 账号池
-    cache          cache.TokenCache // 缓存
-    db             *database.DB     // 数据库
-    rateLimiter    *proxy.RateLimiter // 限流器
-    cpuSampler     *cpuSampler      // CPU 采样器
-    // ... 其他字段
+    store      *auth.Store          // account pool
+    configKeys map[string]bool      // static API keys
+    db         *database.DB         // database
+    dbKeys     map[string]bool      // dynamic API key cache
+    dbKeysUntil time.Time           // cache expiry time
 }
 ```
 
-**职责:**
-- 账号管理 (CRUD、导入导出)
-- 用量统计与日志
-- 系统设置管理
-- 代理池管理
-- 运维监控数据
+**Responsibilities:**
+- `/v1/chat/completions` - Chat Completions endpoint
+- `/v1/responses` - Responses endpoint
+- `/v1/models` - Model list
+- API key authentication
+- Request translation (OpenAI → Codex)
+- Response translation (Codex → OpenAI)
 
-### 2. 账号调度器 (auth.Store)
+#### admin.Handler - admin panel handler
+
+```go
+type Handler struct {
+    store          *auth.Store      // account pool
+    cache          cache.TokenCache // cache
+    db             *database.DB     // database
+    rateLimiter    *proxy.RateLimiter // rate limiter
+    cpuSampler     *cpuSampler      // CPU sampler
+    // ... other fields
+}
+```
+
+**Responsibilities:**
+- Account management (CRUD, import/export)
+- Usage statistics and logs
+- System settings management
+- Proxy pool management
+- Operations monitoring data
+
+### 2. Account scheduler (auth.Store)
 
 ```go
 type Store struct {
-    accounts          []*Account                    // 写侧账号列表
-    accountSnapshot   atomic.Pointer[accountListSnapshot] // 请求只读快照
-    fastScheduler     atomic.Pointer[FastScheduler] // 分优先级/健康层索引
+    accounts          []*Account                    // write-side account list
+    accountSnapshot   atomic.Pointer[accountListSnapshot] // read-only request snapshot
+    fastScheduler     atomic.Pointer[FastScheduler] // index by priority/health tier
     schedulerEngine   atomic.Value                  // legacy/shadow/indexed
     availability      atomic.Pointer[availabilityHub]
     maxConcurrency    int64
 }
 
 type Account struct {
-    DBID          int64             // 数据库 ID
-    RefreshToken  string            // 刷新令牌
-    AccessToken   string            // 访问令牌
-    Email         string            // 邮箱
-    PlanType      string            // 套餐类型
+    DBID          int64             // database ID
+    RefreshToken  string            // refresh token
+    AccessToken   string            // access token
+    Email         string            // email
+    PlanType      string            // plan type
 
-    // 运行时状态
-    activeReqs    int64             // 活跃请求数
-    totalReqs     int64             // 总请求数
-    healthTier    HealthTier        // 健康层级
-    schedulerScore float64          // 调度分数
+    // runtime state
+    activeReqs    int64             // active request count
+    totalReqs     int64             // total request count
+    healthTier    HealthTier        // health tier
+    schedulerScore float64          // scheduling score
 
-    // 同步机制
-    mu            sync.RWMutex      // 读写锁
+    // sync mechanism
+    mu            sync.RWMutex      // read-write lock
 }
 ```
 
-**调度流程:**
+**Scheduling flow:**
 
 ```
 ┌─────────────────────────────────────────────────────────────┐
-│                      账号选择流程                            │
+│                      Account selection flow                            │
 └─────────────────────────────────────────────────────────────┘
                             │
                             ▼
 ┌─────────────────────────────────────────────────────────────┐
-│  1. 过滤阶段                                                │
-│     • 排除 Status = error 的账号                            │
-│     • 排除 HealthTier = banned 的账号                       │
-│     • 排除处于冷却期的账号                                   │
-│     • 排除 AccessToken 为空的账号                           │
+│  1. Filter stage                                                │
+│     • Exclude accounts with Status = error                            │
+│     • Exclude accounts with HealthTier = banned                       │
+│     • Exclude accounts in cooldown                                   │
+│     • Exclude accounts with an empty AccessToken                           │
 └─────────────────────────────────────────────────────────────┘
                             │
                             ▼
 ┌─────────────────────────────────────────────────────────────┐
-│  2. 评分阶段                                                │
-│     • 计算健康层级 (healthy/warm/risky/banned)              │
-│     • 计算调度分数 (100 基线 + 各种惩罚/奖励)                │
-│     • 计算动态并发限制                                       │
+│  2. Scoring stage                                                │
+│     • Compute health tier (healthy/warm/risky/banned)              │
+│     • Compute scheduling score (100 baseline + penalties/rewards)                │
+│     • Compute dynamic concurrency limit                                       │
 └─────────────────────────────────────────────────────────────┘
                             │
                             ▼
 ┌─────────────────────────────────────────────────────────────┐
-│  3. 选择阶段                                                │
-│     • 排除已达并发上限的账号                                 │
-│     • 先按调度优先级排序                                     │
-│     • 同优先级按健康层级和调度分数排序                       │
-│     • Indexed 在最高优先级/健康层内使用游标或亲和哈希         │
+│  3. Selection stage                                                │
+│     • Exclude accounts that have reached the concurrency limit                                 │
+│     • Sort by scheduling priority first                                     │
+│     • Within the same priority, sort by health tier and scheduling score                       │
+│     • Indexed mode uses a cursor or affinity hash within the highest priority/health tier         │
 └─────────────────────────────────────────────────────────────┘
                             │
                             ▼
 ┌─────────────────────────────────────────────────────────────┐
-│  4. 使用阶段                                                │
-│     • 增加活跃请求计数                                       │
-│     • 执行上游请求                                           │
-│     • 减少活跃请求计数                                       │
-│     • 报告成功/失败                                          │
+│  4. Use stage                                                │
+│     • Increment the active request count                                       │
+│     • Execute the upstream request                                           │
+│     • Decrement the active request count                                       │
+│     • Report success/failure                                          │
 └─────────────────────────────────────────────────────────────┘
 ```
 
-**大号池执行模型：**
+**Large account pool execution model:**
 
-1. 账号集合在写侧变更后发布不可变指针快照；请求读快照不再复制 `[]*Account`。
-2. `indexed` 按调度优先级和健康层分桶，稳态通常只检查一个候选；稀疏 API Key/分组规则按需建立有界子池缓存，密集规则直接复用全局索引。
-3. 账号并发释放、冷却恢复、outbox 变更通过 generation channel 广播。等待账号的请求订阅事件并重试，不使用固定间隔轮询全池。
-4. 数据库触发器把会改变路由的账号、API Key、分组、代理和设置写入 `scheduler_outbox`。每个实例按水位批量合并并增量更新内存投影，选号 miss 不再触发请求级全库 reconcile。
+1. After a write-side change, the account set publishes an immutable pointer snapshot; request reads of the snapshot no longer copy `[]*Account`.
+2. `indexed` buckets by scheduling priority and health tier, and in steady state usually checks only one candidate; for sparse API key/group rules, it builds bounded sub-pool caches on demand, while dense rules reuse the global index directly.
+3. Account concurrency releases, cooldown recovery and outbox changes are broadcast over a generation channel. Requests waiting for an account subscribe to events and retry; they do not poll the whole pool at a fixed interval.
+4. Database triggers write accounts, API keys, groups, proxies and settings that change routing into `scheduler_outbox`. Each instance batch-merges by watermark and incrementally updates its in-memory projection; an account-selection miss no longer triggers a request-level full-database reconcile.
 
-`legacy` 保留旧扫描实现；`shadow` 由旧路径实际选号并对索引做 1/64 可用性抽样；`indexed` 才让索引结果成为权威。三个模式可在运行时切换，不改变 `/v1/*` 协议。
+`legacy` keeps the old scan implementation; `shadow` has the old path do the actual account selection and samples index availability at 1/64; only `indexed` makes the index result authoritative. The three modes can be switched at runtime without changing the `/v1/*` protocol.
 
-运维接口 `/api/admin/ops/overview` 的 `scheduler` 对象暴露选号耗时累计值、旧路径扫描账号数、等待/唤醒、路由子池缓存、shadow 差异，以及 outbox 水位、积压、延迟和错误数。
+The `scheduler` object of the operations endpoint `/api/admin/ops/overview` exposes cumulative account-selection time, the number of accounts scanned by the legacy path, waits/wake-ups, route sub-pool cache, shadow differences, and outbox watermark, backlog, lag and error count.
 
-### 3. 请求执行器 (proxy.Executor)
+### 3. Request executor (proxy.Executor)
 
 ```go
-// ExecuteRequest 执行上游请求
+// ExecuteRequest executes the upstream request
 func ExecuteRequest(ctx context.Context, account *auth.Account,
     body []byte, sessionID, proxyURL string) (*http.Response, error)
 ```
 
-**功能:**
-- TLS 指纹伪装
-- User-Agent 随机化
-- 代理支持（全局/账号/代理池）
-- 连接池复用
-- 受账号动态并发上限约束的持久 WebSocket 连接池
-- SSE 流读取
+**Features:**
+- TLS fingerprint impersonation
+- User-Agent randomization
+- Proxy support (global/account/proxy pool)
+- Connection pool reuse
+- Persistent WebSocket connection pool, bounded by the account's dynamic concurrency limit
+- SSE stream reading
 
-如果上游 WS 在首个下游内容前返回 close 1009，执行器保留当前账号租约和已解析代理，最多用 HTTP 降级一次。该路径不会重新进入账号调度；已经输出内容后不会降级。
+If the upstream WS returns close 1009 before the first downstream content, the executor keeps the current account lease and the resolved proxy, and degrades to HTTP at most once. This path does not re-enter account scheduling; once content has been output, there is no degradation.
 
-### 4. 协议翻译器 (proxy.Translator)
+### 4. Protocol translator (proxy.Translator)
 
 ```go
 // TranslateRequest OpenAI Chat → Codex Responses
@@ -250,17 +250,17 @@ func TranslateRequest(body []byte) ([]byte, error)
 func TranslateStreamChunk(data []byte, model, chunkID string) ([]byte, bool)
 ```
 
-**转换内容:**
+**Conversion details:**
 - `messages` → `input`
-- `max_tokens/temperature` → 删除（Codex 不支持）
+- `max_tokens/temperature` → removed (Codex does not support them)
 - `reasoning_effort` → `reasoning.effort`
-- SSE 事件类型转换
+- SSE event type conversion
 
 ---
 
-## 数据流
+## Data Flow
 
-### 请求处理流程
+### Request processing flow
 
 ```
 ┌─────────┐     ┌─────────────┐     ┌─────────────┐     ┌─────────────┐
@@ -282,11 +282,11 @@ func TranslateStreamChunk(data []byte, model, chunkID string) ([]byte, bool)
                                                     └──────────────┘
 ```
 
-### 账号池状态管理
+### Account pool state management
 
 ```
 ┌─────────────────────────────────────────────────────────────────────────┐
-│                          账号状态机                                      │
+│                          Account state machine                                      │
 │                                                                         │
 │    ┌──────────┐                                                        │
 │    │  Initial │                                                        │
@@ -296,103 +296,103 @@ func TranslateStreamChunk(data []byte, model, chunkID string) ([]byte, bool)
 │    ┌──────────┐     ┌──────────┐     ┌──────────┐                      │
 │    │  ready   │────▶│ cooldown │────▶│  ready   │                      │
 │    └────┬─────┘     └──────────┘     └──────────┘                      │
-│         │          (429/401 冷却)       (冷却结束)                       │
+│         │          (429/401 cooldown)       (cooldown ends)                       │
 │         │                                                               │
 │         │ Error                                                        │
 │         ▼                                                               │
 │    ┌──────────┐     ┌──────────┐                                       │
 │    │  error   │────▶│ deleted  │                                       │
 │    └──────────┘     └──────────┘                                       │
-│                    (软删除)                                              │
+│                    (soft delete)                                              │
 └─────────────────────────────────────────────────────────────────────────┘
 ```
 
-### 冷却机制
+### Cooldown mechanism
 
 ```go
-// 冷却类型与时长
+// Cooldown types and durations
 type CooldownRule struct {
-    RateLimited  time.Duration  // 429 限流: 从响应头解析或按套餐推断
-    Unauthorized time.Duration  // 401 未授权: 5分钟 ~ 24小时
-    Timeout      time.Duration  // 超时: 15分钟
-    ServerError  time.Duration  // 5xx 错误: 15分钟
+    RateLimited  time.Duration  // 429 rate limit: parsed from response headers or inferred from the plan type
+    Unauthorized time.Duration  // 401 unauthorized: 5 minutes ~ 24 hours
+    Timeout      time.Duration  // timeout: 15 minutes
+    ServerError  time.Duration  // 5xx error: 15 minutes
 }
 
-// 套餐类型冷却策略
+// Cooldown policy by plan type
 const (
-    FreeCooldown     = 7 * 24 * time.Hour  // Free 套餐 429: 7天
-    TeamCooldown5h   = 5 * time.Hour       // Team 5h 窗口用完: 5小时
-    TeamCooldown7d   = 7 * 24 * time.Hour  // Team 7d 窗口用完: 7天
+    FreeCooldown     = 7 * 24 * time.Hour  // Free plan 429: 7 days
+    TeamCooldown5h   = 5 * time.Hour       // Team 5h window used up: 5 hours
+    TeamCooldown7d   = 7 * 24 * time.Hour  // Team 7d window used up: 7 days
 )
 ```
 
 ---
 
-## 调度系统
+## Scheduling System
 
-### 健康层级 (Health Tier)
+### Health Tier
 
 ```go
 type HealthTier int
 
 const (
-    Healthy HealthTier = iota  // 健康
-    Warm                        // 温热（近期有小问题）
-    Risky                       // 风险（近期有大问题）
-    Banned                      // 封禁
+    Healthy HealthTier = iota  // healthy
+    Warm                        // warm (minor recent issues)
+    Risky                       // risky (major recent issues)
+    Banned                      // banned
 )
 ```
 
-**层级判定:**
+**Tier criteria:**
 
-| 层级 | 条件 | 动态并发 |
+| Tier | Condition | Dynamic concurrency |
 |------|------|----------|
-| Healthy | 无近期错误 | MaxConcurrency |
-| Warm | 有轻微错误 | MaxConcurrency / 2 |
-| Risky | 有严重错误 | 1 |
-| Banned | 401 未授权 | 0 |
+| Healthy | No recent errors | MaxConcurrency |
+| Warm | Minor errors | MaxConcurrency / 2 |
+| Risky | Severe errors | 1 |
+| Banned | 401 unauthorized | 0 |
 
-### 调度分计算
+### Scheduling score calculation
 
 ```go
 type SchedulerScore struct {
     BaseScore float64 = 100
 
-    // 惩罚项 (P)
-    UnauthorizedPenalty float64  // 401: -50, 24h 衰减
-    RateLimitPenalty    float64  // 429: -22, 1h 衰减
-    TimeoutPenalty      float64  // 超时: -18, 15min 衰减
-    ServerPenalty       float64  // 5xx: -12, 15min 衰减
-    FailurePenalty      float64  // 连续失败: -6/次, 最多 -24
-    UsagePenalty7d      float64  // 7d 用量: ≥70% -8, ≥100% -40
-    LatencyPenalty      float64  // 延迟: ≥5s -4, ≥20s -15
-    SuccessRatePenalty  float64  // 成功率: <75% -8, <50% -15
+    // penalty terms (P)
+    UnauthorizedPenalty float64  // 401: -50, 24h decay
+    RateLimitPenalty    float64  // 429: -22, 1h decay
+    TimeoutPenalty      float64  // timeout: -18, 15min decay
+    ServerPenalty       float64  // 5xx: -12, 15min decay
+    FailurePenalty      float64  // consecutive failures: -6 each, max -24
+    UsagePenalty7d      float64  // 7d usage: ≥70% -8, ≥100% -40
+    LatencyPenalty      float64  // latency: ≥5s -4, ≥20s -15
+    SuccessRatePenalty  float64  // success rate: <75% -8, <50% -15
 
-    // 奖励项 (B)
-    SuccessBonus        float64  // 连续成功: +2/次, 最多 +12
+    // reward terms (B)
+    SuccessBonus        float64  // consecutive successes: +2 each, max +12
 }
 
-// 最终分数 = BaseScore + ΣB - ΣP
+// Final score = BaseScore + ΣB - ΣP
 ```
 
-### 调度算法伪代码
+### Scheduling algorithm pseudocode
 
 ```
 function SelectAccount():
     candidates = []
 
     for account in accounts:
-        // 1. 基础过滤
+        // 1. Base filtering
         if account.Status == "error": continue
         if account.HealthTier == Banned: continue
         if account.IsInCooldown(): continue
         if account.AccessToken == "": continue
 
-        // 2. 计算动态限制
+        // 2. Compute dynamic limits
         concurrencyLimit = calculateDynamicLimit(account.HealthTier)
         if account.ActiveRequests >= concurrencyLimit: continue
 
-        // 3. 计算调度分
+        // 3. Compute scheduling score
         account.SchedulerScore = calculateScore(account)
 
         candidates.append(account)
@@ -400,13 +400,13 @@ function SelectAccount():
     if candidates is empty:
         return null
 
-    // 4. 排序
+    // 4. Sort
     sort candidates by:
         - HealthTier (Healthy > Warm > Risky)
         - SchedulerScore (desc)
         - ActiveRequests (asc)
 
-    // 5. 随机打散 (15% 概率)
+    // 5. Randomly shuffle (15% probability)
     if random() < 0.15 and len(candidates) > 1:
         return candidates[random(0, min(3, len(candidates)))]
 
@@ -415,12 +415,12 @@ function SelectAccount():
 
 ---
 
-## 存储层
+## Storage Layer
 
-### 数据库 Schema
+### Database schema
 
 ```sql
--- 账号表
+-- Accounts table
 CREATE TABLE accounts (
     id BIGSERIAL PRIMARY KEY,
     name VARCHAR(255) NOT NULL,
@@ -431,10 +431,10 @@ CREATE TABLE accounts (
     cooldown_reason VARCHAR(50),
     created_at TIMESTAMP DEFAULT NOW(),
     updated_at TIMESTAMP DEFAULT NOW(),
-    deleted_at TIMESTAMP                 -- 软删除
+    deleted_at TIMESTAMP                 -- soft delete
 );
 
--- 用量日志表
+-- Usage log table
 CREATE TABLE usage_logs (
     id BIGSERIAL PRIMARY KEY,
     account_id BIGINT REFERENCES accounts(id),
@@ -453,9 +453,9 @@ CREATE TABLE usage_logs (
     created_at TIMESTAMP DEFAULT NOW()
 );
 
--- 用量小时汇总：按 UTC 整点小时 + API Key/渠道/模型/端点/状态码/流式/内部请求聚合 usage_logs。
--- 写日志的事务里同步累加，清空日志时一并清空；升级前的历史在后台按 id 分块回填。
--- 用量页、自助用量页的长区间统计读整点小时的汇总，只有首尾零头扫明细。
+-- Hourly usage summary: aggregates usage_logs by UTC hour plus API key/channel/model/endpoint/status code/streaming/internal request.
+-- Updated synchronously in the same transaction that writes the log, and cleared together with the logs; history from before the upgrade is backfilled in the background in id-based chunks.
+-- Long-range statistics on the usage page and the self-service usage page read the hourly summary; only the partial hours at both ends scan the detail rows.
 CREATE TABLE usage_log_hourly (
     bucket TIMESTAMPTZ NOT NULL,
     api_key_id BIGINT, api_key_name TEXT, api_key_masked TEXT, channel TEXT,
@@ -466,7 +466,7 @@ CREATE TABLE usage_log_hourly (
                  effective_model, inbound_endpoint, endpoint, status_code, stream, internal)
 );
 
--- 系统设置表
+-- System settings table
 CREATE TABLE system_settings (
     id INTEGER PRIMARY KEY DEFAULT 1,
     max_concurrency INTEGER DEFAULT 2,
@@ -485,7 +485,7 @@ CREATE TABLE system_settings (
     admin_secret VARCHAR(255)
 );
 
--- API Keys 表
+-- API keys table
 CREATE TABLE api_keys (
     id BIGSERIAL PRIMARY KEY,
     name VARCHAR(255),
@@ -493,7 +493,7 @@ CREATE TABLE api_keys (
     created_at TIMESTAMP DEFAULT NOW()
 );
 
--- 代理池表
+-- Proxy pool table
 CREATE TABLE proxies (
     id BIGSERIAL PRIMARY KEY,
     url VARCHAR(500) NOT NULL,
@@ -504,7 +504,7 @@ CREATE TABLE proxies (
     latency_ms INTEGER
 );
 
--- 账号事件表（用于趋势分析）
+-- Account events table (for trend analysis)
 CREATE TABLE account_events (
     id BIGSERIAL PRIMARY KEY,
     account_id BIGINT REFERENCES accounts(id),
@@ -514,129 +514,129 @@ CREATE TABLE account_events (
 );
 ```
 
-### 缓存策略
+### Cache strategy
 
-| 数据 | 缓存策略 |
+| Data | Cache strategy |
 | --- | --- |
-| API Key 鉴权配置 | 默认 L1 15 秒 / Redis L2 5 分钟，按数据库作用域和事务修订号隔离；关闭两级缓存后使用旧 `api-key` 策略 |
-| API Key 请求数、费用、Token 窗口统计 | 数据库聚合后写入 `api-key-limits`，TTL 60 秒；多个窗口批量读取 |
-| Key × 账号的共享用量增量 | `api-key-scope-delta` 分钟桶，TTL 5 分钟；最近三个桶共用 5 秒本地读取快照 |
-| Access Token | 专用 Token 缓存；写入 TTL 根据凭证有效期确定 |
-| 会话亲和关系 | 本地绑定及共享缓存；受会话 TTL 和账号可用性控制 |
-| 账号、模型冷却 | 运行态缓存；TTL 与冷却结束时间对应 |
+| API key auth config | Default L1 15 seconds / Redis L2 5 minutes, isolated by database scope and transaction revision number; with the two-tier cache disabled, the legacy `api-key` strategy is used |
+| API key request count, cost, token window statistics | Aggregated from the database and written to `api-key-limits`, TTL 60 seconds; multiple windows are read in batch |
+| Shared usage delta for key × account | `api-key-scope-delta` minute buckets, TTL 5 minutes; the latest three buckets share a 5-second local read snapshot |
+| Access Token | Dedicated token cache; write TTL is determined by the credential's validity period |
+| Session affinity | Local binding and shared cache; controlled by session TTL and account availability |
+| Account and model cooldown | Runtime cache; TTL matches the cooldown end time |
 
-运行态 Redis key 使用命名空间和摘要构造，业务 key 不直接作为 Redis key 输出。API Key 的 RPM/RPD 当前读取用量聚合快照；严格模型周预算由数据库事务和请求幂等记录控制。
+Runtime Redis keys are built with a namespace and a digest; business keys are not output directly as Redis keys. The RPM/RPD of an API key currently reads the aggregated usage snapshot; the strict weekly model budget is controlled by database transactions and request idempotency records.
 
-API Key 运行态读取提供两个可选批量接口：`RuntimeBatchReader` 用于 JSON 窗口快照（Redis `MGET`），`RuntimeCounterBatchReader` 用于共享用量哈希（Redis Pipeline `HGETALL`）。每个 Redis 批次最多 128 个键；旧 `TokenCache` 适配器可以继续使用逐项读取。Memory 驱动在锁内复制快照，调用方不会拿到可修改底层缓存的引用。
+API key runtime reads offer two optional batch interfaces: `RuntimeBatchReader` for JSON window snapshots (Redis `MGET`), and `RuntimeCounterBatchReader` for shared usage hashes (Redis Pipeline `HGETALL`). Each Redis batch holds at most 128 keys; the legacy `TokenCache` adapter can keep reading item by item. The memory driver copies the snapshot under the lock, so callers never get a reference that could modify the underlying cache.
 
-鉴权配置读取先复核数据库修订号（每进程最多复用 250 毫秒），再依次查询 L1、Redis L2 和数据库。配置回源按 Key/本地代际合并；L1 结果给每个调用者复制可变字段。累计 `quota_used` 不进入快照，有累计额度的 Key 仍逐次查询数据库；模型周预算保留转发前的权威事务。
+Reading auth config first re-checks the database revision number (each process reuses it for at most 250 ms), then queries L1, Redis L2 and the database in turn. Config fetches from the origin are merged per key/local generation; L1 results copy the mutable fields for each caller. The cumulative `quota_used` does not enter the snapshot, and keys with a cumulative quota still query the database on every request; the weekly model budget keeps the authoritative transaction before forwarding.
 
-`api_key_auth_cache_state` 的全局修订号与 Key 配置变更在同一事务提交，使用行更新保证提交顺序；不以可能乱序提交的 outbox 自增 ID 最大值作为版本。用量更新不推进版本。Redis key 包含数据库作用域、修订号和 Key 摘要，旧请求延迟回填只能写入旧版本。本地代际在失效时同步推进，阻止在途查询重新放入 L1。管理操作同步失效并发送 Pub/Sub；定期复核持久修订号覆盖通知断连、丢失和旧版本写入。
+The global revision number in `api_key_auth_cache_state` is committed in the same transaction as key configuration changes; row updates guarantee the commit order, and the maximum auto-increment ID of the outbox, which may commit out of order, is not used as the version. Usage updates do not advance the version. The Redis key contains the database scope, revision number and key digest, so a late backfill from an old request can only write the old version. The local generation advances synchronously on invalidation, preventing in-flight queries from putting results back into L1. Admin operations invalidate synchronously and send Pub/Sub; periodic checks of the persisted revision number cover missed notifications, lost messages and stale-version writes.
 
-L1 受 4,096 条、16 MiB 逻辑 JSON 字节和单条 64 KiB 预算限制；大条目仍可从数据库服务当前请求，但不入缓存。Memory 模式不复制第二份 L2。配置回源与修订查询都可由服务关闭取消并等待退出；单个请求取消不会中断其他调用者共享的读取。鉴权 Redis 读写有 300 毫秒 socket/上下文预算，故障回源数据库；无法复核数据库修订号时返回 503。
+L1 is limited to 4,096 entries, a 16 MiB logical JSON byte budget, and a 64 KiB budget per entry; large entries can still serve the current request from the database, but are not cached. Memory mode does not copy a second L2. Config origin fetches and revision queries can both be cancelled and awaited on service shutdown; cancelling a single request does not interrupt reads shared by other callers. Auth Redis reads and writes have a 300 ms socket/context budget, and on failure fall back to the database; when the database revision number cannot be verified, return 503.
 
-分组/账号预算使用独立的回源合并，同一批读取不因首个调用者取消而中断其他请求；共享读取仍有两秒上限。后台共享增量写入限制为 16 个槽位，饱和时同步回退。
+Group/account budgets use separate origin merging: a batch of reads is not interrupted when the first caller cancels; shared reads still have a two-second cap. Background shared incremental writes are limited to 16 slots, and fall back to synchronous writes when saturated.
 
-#### Responses 上下文缓存
+#### Responses context cache
 
-`previous_response_id` 连续请求使用一层每进程独立的有界 L1。完成响应时先按完整 call/output 组保留尾部最多 200 个 raw item，再写入 L1；默认总量 64 MiB、单条准入 8 MiB、最多 2,000 条、绝对 TTL 45 分钟。LRU 同时受条数和逻辑字节预算约束，命中不会延长绝对 TTL。
+Consecutive `previous_response_id` requests use a single bounded L1 that is independent per process. When a response completes, the tail of up to 200 raw items is first kept by complete call/output groups, then written to L1; the default total is 64 MiB, per-entry admission is 8 MiB, up to 2,000 entries, absolute TTL 45 minutes. The LRU is bounded by both entry count and logical byte budget, and a hit does not extend the absolute TTL.
 
 ```text
-完成响应
+Completed response
    │
-   ├─ pair-safe 尾部裁剪（最多 200 items）
+   ├─ pair-safe tail trimming (up to 200 items)
    │
-   ├─ 本进程 L1（64 MiB total / 8 MiB entry / 2,000 entries / 45m）
+   ├─ In-process L1 (64 MiB total / 8 MiB entry / 2,000 entries / 45m)
    │
-   └─ Redis 共享 response context（仅 Redis 模式）
+   └─ Redis shared response context (Redis mode only)
 
-previous_response_id 连续请求
+Consecutive previous_response_id request
    │
-   ├─ L1 命中 ───────────────────────────────▶ 重建上下文
+   ├─ L1 hit ───────────────────────────────▶ rebuild context
    │
-   └─ L1 未命中
-       ├─ Redis 有界读取 → 规范化 → 重建上限校验
-       │    ├─ 符合 L1 准入 → 服务请求并提升到 L1
-       │    └─ 超 L1、未超重建上限 → 仅服务本次请求，不提升
-       └─ Memory 模式 → 无共享 response context 后备
+   └─ L1 miss
+       ├─ Bounded Redis read → normalize → rebuild limit check
+       │    ├─ Meets L1 admission → serve the request and promote it to L1
+       │    └─ Exceeds L1 but not the rebuild limit → serve this request only, no promotion
+       └─ Memory mode → no shared response context fallback
 ```
 
-三个数据库预算分别控制 L1 总量、L1 单条准入和共享后端重建上限。只有预算实际变化的事务提交才分配递增 generation，并立即应用到写入实例；同值或空更新不递增。其他实例每 5 秒读取一次，单次最多等待 3 秒，只应用更新的 generation。读取失败时保留最后一次有效配置，并记录同步错误供运维页展示。
+The three database budgets separately control the L1 total, L1 per-entry admission, and the shared backend rebuild limit. Only a committed transaction that actually changes a budget allocates an incremented generation, applied immediately to the writing instance; same-value or empty updates do not increment it. Other instances read every 5 seconds, wait at most 3 seconds per read, and apply only newer generations. On read failure, the last valid configuration is kept and the sync error is recorded for display on the operations page.
 
-Memory 缓存配合 SQLite 文件主库时默认以本地磁盘持久层（`cache/durable_response_context.go`）作为 L2：L1 淘汰、超过 L1 准入预算或进程重启后仍从磁盘恢复，原生 WebSocket 共享来源记录仍只在进程内。关闭持久层后只有 L1；已知超限/淘汰，或依赖的必需上下文缺失/过期时，Responses/Compact 连续请求可返回 HTTP `409 previous_response_not_found`。Redis 值损坏或超过重建上限时同样返回 409；共享后端传输故障且请求确实依赖该上下文时可返回 HTTP `503`。Redis 中未超过重建上限的上下文不会仅因超过 L1 准入预算而失败。
+When the memory cache is paired with a SQLite file main database, the local disk persistence layer (`cache/durable_response_context.go`) is the L2 by default: entries evicted from L1, exceeding the L1 admission budget, or still present after a process restart are recovered from disk, while native WebSocket shared-source records remain in-process only. With the persistence layer off, only L1 remains; when a known limit was exceeded or evicted, or a required context is missing or expired, consecutive Responses/Compact requests may return HTTP `409 previous_response_not_found`. A corrupted Redis value or one over the rebuild limit also returns 409; a shared backend transport failure, when the request really depends on that context, may return HTTP `503`. A context in Redis that is under the rebuild limit does not fail merely because it exceeds the L1 admission budget.
 
-客户端原生 Responses WebSocket 在健康连接上保留 `previous_response_id`，向上游发送当轮增量；原连接丢失后的恢复仍依赖完整的本地或共享快照，受上述预算、完整性和 409/503 错误语义约束。HTTP Responses/Compact 的原生 Codex 路径必须在当前归属内重建父引用。
+The client-native Responses WebSocket keeps `previous_response_id` on a healthy connection and sends only the current turn's delta upstream; recovery after the original connection is lost still depends on a complete local or shared snapshot, and is subject to the budgets, integrity and 409/503 error semantics above. The native Codex path for HTTP Responses/Compact must rebuild the parent reference within the current ownership.
 
-`GET /api/admin/ops/overview` 的 `response_cache` 从一个锁内快照返回 effective/applied generation、当前/上限/高水位/最大观测条目的逻辑字节，以及本地/远程命中与未命中、过期、条数/字节淘汰、超限旁路、Memory 超限拒绝和最终 409 计数。这里的字节是保留 JSON payload 长度之和，不包含 Go 对象、LRU、allocator 或容器开销，不是 RSS 硬上限。进程内存需要结合 Linux/Docker RSS、Go `HeapAlloc` / `HeapInuse` / `HeapReleased` 和 `NumGC` 判断。
+The `response_cache` field of `GET /api/admin/ops/overview` returns, from a single locked snapshot, the effective/applied generation, the logical bytes of current/limit/high-water/maximum observed entries, local/remote hits and misses, expirations, entry/byte evictions, over-limit bypasses, Memory over-limit rejections and the final 409 count. The bytes here are the sum of retained JSON payload lengths; they exclude Go objects, LRU, allocator or container overhead, and are not a hard RSS limit. Process memory needs to be judged together with Linux/Docker RSS, Go `HeapAlloc` / `HeapInuse` / `HeapReleased` and `NumGC`.
 
 ---
 
-## 安全设计
+## Security Design
 
-### 认证机制
+### Authentication mechanism
 
 ```
 ┌─────────────────────────────────────────────────────────────┐
-│                      认证层级                                │
+│                      Authentication levels                                │
 ├─────────────────────────────────────────────────────────────┤
-│  Level 1: 传输层                                             │
-│  • HTTPS/TLS 加密                                           │
-│  • HSTS 头部                                                │
+│  Level 1: Transport layer                                             │
+│  • HTTPS/TLS encryption                                           │
+│  • HSTS header                                                │
 ├─────────────────────────────────────────────────────────────┤
-│  Level 2: API 认证                                           │
+│  Level 2: API authentication                                           │
 │  • API Key Bearer Token                                     │
-│  • 5分钟缓存，减少 DB 查询                                   │
+│  • 5-minute cache, reducing DB queries                                   │
 ├─────────────────────────────────────────────────────────────┤
-│  Level 3: Admin 认证                                         │
-│  • X-Admin-Key 请求头                                       │
-│  • 支持环境变量或数据库配置                                  │
-│  • 所有管理操作审计日志                                      │
+│  Level 3: Admin authentication                                         │
+│  • X-Admin-Key request header                                       │
+│  • Supports environment variables or database configuration                                  │
+│  • Audit logs for all admin operations                                      │
 └─────────────────────────────────────────────────────────────┘
 ```
 
-### 敏感数据处理
+### Sensitive data handling
 
 ```go
-// Token 存储
+// Token storage
 func StoreToken(db *DB, accountID int64, token string) {
-    // 数据库只存储加密后的 token
+    // the database stores only the encrypted token
     encrypted := encrypt(token, encryptionKey)
     db.Exec("UPDATE accounts SET credentials = jsonb_set(credentials, '{access_token}', $1) WHERE id = $2",
         encrypted, accountID)
 
-    // 同时缓存到 Redis（加密存储）
+    // also cached in Redis (encrypted storage)
     redis.Set(ctx, fmt.Sprintf("token:%d", accountID), encrypted, 30*time.Minute)
 }
 
-// 日志脱敏
+// Log redaction
 func SanitizeLog(msg string) string {
-    // 隐藏 token 详情
+    // hide token details
     msg = regexp.MustCompile(`token=[^\s]+`).ReplaceAllString(msg, "token=***")
     msg = regexp.MustCompile(`Bearer [^\s]+`).ReplaceAllString(msg, "Bearer ***")
     return msg
 }
 ```
 
-### 限流与防护
+### Rate limiting and protection
 
-| 层级 | 机制 | 说明 |
+| Level | Mechanism | Description |
 |------|------|------|
-| 全局 | RPM 限流 | 基于令牌桶算法 |
-| API Key | RPM/RPD/费用/Token 窗口 | 数据库聚合 + 60 秒统计缓存；RPM/RPD 另有进程内准入计数 |
-| 下游 WS | 连接数 | 每 Key 64 条、全局 4096 条、匿名每 IP 16 条 |
-| 账号 | 并发限制 | 动态调整 |
-| IP | 连接限制 | 防止单 IP 过多连接 |
-| 应用 | 请求大小 | 限制请求体大小 |
+| Global | RPM rate limit | Based on the token bucket algorithm |
+| API Key | RPM/RPD/cost/Token window | Database aggregation + 60-second statistics cache; RPM/RPD additionally have in-process admission counters |
+| Downstream WS | Connections | 64 per key, 4096 globally, 16 per IP for anonymous clients |
+| Account | Concurrency limit | Dynamically adjusted |
+| IP | Connection limit | Prevents too many connections from a single IP |
+| Application | Request size | Limits the request body size |
 
 ---
 
-## 扩展性设计
+## Scalability Design
 
-### 水平扩展
+### Horizontal scaling
 
 ```
 ┌─────────────────────────────────────────────────────────────┐
-│                      负载均衡器                              │
+│                      Load balancer                              │
 │                   (Nginx / HAProxy)                         │
 └─────────────────────────────────────────────────────────────┘
           │              │              │
@@ -651,16 +651,16 @@ func SanitizeLog(msg string) string {
           └──────────────┼──────────────┘
                          ▼
               ┌─────────────────┐
-              │   共享 Redis    │
-              │  (Session/锁)   │
+              │   Shared Redis    │
+              │  (Session/lock)   │
               └─────────────────┘
 ```
 
-### 组件替换
+### Component replacement
 
-| 组件 | 当前实现 | 可替换为 |
+| Component | Current implementation | Can be replaced with |
 |------|----------|----------|
-| 数据库 | PostgreSQL | MySQL, TiDB |
-| 缓存 | Redis | Memcached, 本地缓存 |
+| Database | PostgreSQL | MySQL, TiDB |
+| Cache | Redis | Memcached, local cache |
 | HTTP | Gin | Echo, Fiber |
-| 前端 | React | Vue, Svelte |
+| Frontend | React | Vue, Svelte |

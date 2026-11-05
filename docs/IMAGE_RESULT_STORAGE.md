@@ -1,17 +1,17 @@
-# 图片结果存储策略
+# Image result storage policy
 
-`POST /v1/images/jobs` 支持以下可选参数。后台和门户的 jobs 接口也支持；同步 `/v1/images/generations`、`/v1/images/edits` 的协议不变。
+`POST /v1/images/jobs` supports the following optional parameters. The admin and portal jobs endpoints also support them; the protocol of the synchronous `/v1/images/generations` and `/v1/images/edits` is unchanged.
 
-| 参数 | 默认值 | 说明 |
+| Parameter | Default | Description |
 | --- | --- | --- |
-| `storage_mode` | `legacy` | `legacy`、`temporary`、`delete_after_read` |
-| `retention_seconds` | 临时模式缺省或 `0` 时为 `7200` | 保存成功后的保留秒数，非零值为 60–31536000；2 小时为 7200，3 天为 259200。legacy 模式不能指定非零值。 |
+| `storage_mode` | `legacy` | `legacy`, `temporary`, `delete_after_read` |
+| `retention_seconds` | In temporary mode, when omitted or `0`, `7200` | Retention in seconds after a successful save; a non-zero value must be 60–31536000. 2 hours is 7200, 3 days is 259200. Legacy mode cannot take a non-zero value. |
 
-## 三种模式
+## Three modes
 
-- **legacy / 不传参数**：沿用现有 Local/S3 存储和运营方的全局清理配置；没有全局保留期时，不主动删除历史结果。
-- **temporary**：按每张图片保存成功的时间计算过期时间，读取不提前删除。适合调用方需要下载重试或恢复未完成任务的场景。
-- **delete_after_read**：通过下述专门的 Base64 交付接口完整写出结果后清理；或者下载原图后调用确认接口清理。没有取回的结果仍按 `retention_seconds` 到期回收。
+- **legacy / no parameters**: keeps the existing Local/S3 storage and the operator's global cleanup settings; when there is no global retention period, historical results are not deleted proactively.
+- **temporary**: the expiry time is calculated from the moment each image is saved successfully; reads do not delete it early. Suitable when the caller needs to download, retry or recover an unfinished job.
+- **delete_after_read**: the result is cleaned up after it has been completely written out through the Base64 delivery endpoint described below, or after the original image is downloaded and the acknowledgement endpoint is called. Results that are never retrieved still expire and are reclaimed according to `retention_seconds`.
 
 ```json
 {
@@ -23,19 +23,19 @@
 }
 ```
 
-需要取回即清理时，将 `storage_mode` 改为 `delete_after_read`。需要保留 3 天时，将 `retention_seconds` 改为 `259200`。省略两个参数即可恢复旧行为。
+To delete on retrieval, change `storage_mode` to `delete_after_read`. To keep results for 3 days, change `retention_seconds` to `259200`. Omit both parameters to restore the old behavior.
 
-临时模式仍需要保存图片文件/对象，异步调用方才能稍后取回；它不会将图片 Base64 写入数据库。任务参数记录存储策略，图片记录增加 `expires_at`（Unix 秒）和 `delete_after_read`。图片的策略与元数据一起写入；历史行默认 `0/false`，不会改变旧图片的保留期。
+Temporary mode still needs image files/objects saved, so asynchronous callers can retrieve them later; it does not write image Base64 to the database. The job parameters record the storage policy, and the image records gain `expires_at` (Unix seconds) and `delete_after_read`. The policy of an image is written together with its metadata; historical rows default to `0/false` and do not change the retention period of old images.
 
-显式图片保留期优先于全局 `IMAGE_ASSET_RETENTION_DAYS`，不被全局清理提前删除。后台每分钟扫描到期图片，单次最多处理 1000 张；积压、存储错误或服务停机可能延后物理删除。到期后的原图、缩略图和内联缓存请求立即停止提供图片。删除失败保留已过期的元数据，下一次继续清理。
+An explicit image retention period takes precedence over the global `IMAGE_ASSET_RETENTION_DAYS`, and is not deleted early by the global cleanup. A background task scans for expired images every minute, handling at most 1000 per run; a backlog, storage errors or service downtime may delay physical deletion. After expiry, requests for the original, thumbnail and inline cached images stop being served immediately. If deletion fails, the expired metadata is kept and cleanup continues next time.
 
-## 查询、交付与确认
+## Query, delivery and acknowledgement
 
-1. 使用现有 `GET /v1/images/jobs/:id/result` 或批量查询轮询状态。新模式的 `assets[]` 增加可选的 `expires_at`、`delete_after_read` 字段；旧模式不增加这些字段。
-2. 任务完成后选择原有 `assets[].proxy_url` 下载，或 `GET /v1/images/jobs/:id/output` 读取 Base64。两个新增接口均要求创建任务时的同一 API Key；其他 Key 返回 404。
-3. 使用 URL 下载且选择 `delete_after_read` 的调用方，应在自己可靠保存图片后 `POST /v1/images/jobs/:id/ack`。成功返回 204，可重复确认。只删除该任务标记了 `delete_after_read` 的图片，不删除 legacy/temporary 图片或任务历史。
+1. Poll status with the existing `GET /v1/images/jobs/:id/result` or the batch query. In the new modes, `assets[]` adds the optional `expires_at` and `delete_after_read` fields; old modes do not add these fields.
+2. After the job completes, either download using the existing `assets[].proxy_url`, or read Base64 with `GET /v1/images/jobs/:id/output`. Both new endpoints require the same API key that created the job; other keys get 404.
+3. A caller that downloads by URL and selects `delete_after_read` should call `POST /v1/images/jobs/:id/ack` after it has reliably saved the image itself. Success returns 204, and repeated acknowledgements are allowed. Only images marked `delete_after_read` for that job are deleted; legacy/temporary images and job history are not deleted.
 
-`GET /v1/images/jobs/:id/output` 返回：
+`GET /v1/images/jobs/:id/output` returns:
 
 ```json
 {
@@ -44,14 +44,14 @@
 }
 ```
 
-该接口逐张流式编码，不在内存聚合多张 Base64。queued/running 返回 409；结果已过期、已清理或不存在可交付图片时返回 410。部分成功任务返回现存的输出；请结合状态查询中的 `warning` 判断是否生成了全部图片。失败/中断的写出不会主动清理剩余有效图片。
+This endpoint encodes images one by one as a stream and does not aggregate multiple Base64 values in memory. queued/running return 409; if the result has expired, has been cleaned up, or there is no deliverable image, it returns 410. A partially successful job returns the outputs that still exist; check the `warning` in the status query to tell whether all images were generated. A failed or interrupted write-out does not proactively clean up the remaining valid images.
 
-HTTP 完整写出不能证明客户端已经落盘：若必须保证调用方持久化成功后再清理，使用 **原图 URL 下载 + ack**。不要用可自动消费的 `/output` 做无条件自动重试。状态轮询、旧详情查询、原图 URL 和缩略图预览均不自动消费图片；自动删除仅发生在明确交付/确认时。过期或消费后不会重新生图或触发额外计费。
+A complete HTTP write-out does not prove that the client has persisted the data. If it is necessary to guarantee that cleanup happens only after the caller has saved successfully, use **original image URL download + ack**. Do not use the auto-consumable `/output` for unconditional automatic retries. Status polling, the old detail query, original image URLs and thumbnail previews never consume images automatically; automatic deletion happens only on an explicit delivery or acknowledgement. Expired or consumed images are not regenerated and do not trigger extra billing.
 
-## 批量任务与兼容性
+## Batch jobs and compatibility
 
-`POST /v1/images/jobs/results`（兼容别名 `/result`）接收 `{"ids":[1,2,3]}`，也兼容 `job_ids`。最多 500 个 ID、32 KiB 请求体，重复 ID 去重；未找到或不属于当前 Key 的 ID 在 `missing_ids` 返回，不能据此区分任务是否属于其他人。返回结果不包含输入图、提示词或 Base64。1000 个任务可以拆成两批查询。
+`POST /v1/images/jobs/results` (compatibility alias `/result`) accepts `{"ids":[1,2,3]}`, and also accepts `job_ids`. At most 500 IDs and 32 KiB of request body; duplicate IDs are de-duplicated. IDs that are not found or do not belong to the current key are returned in `missing_ids`, and this cannot be used to tell whether a job belongs to someone else. The response contains no input images, prompts or Base64. 1000 jobs can be split into two batch queries.
 
-1000 个任务应入队执行，不应在 2 GiB 服务器同时解码 1000 张图片。队列和内存阶段限制仍需显式配置，例如 `IMAGE_JOB_WORKERS=10`、`IMAGE_JOB_MEMORY_WORKERS=1`，并根据图片大小和上游配额测量峰值。API Key、账号和作用域并发限制继续生效；未启用队列时旧接口的接收行为不变。
+1000 jobs should be queued for execution, not decoded at the same time on a 2 GiB server. The queue and memory-stage limits still need to be set explicitly, for example `IMAGE_JOB_WORKERS=10` and `IMAGE_JOB_MEMORY_WORKERS=1`, and the peak should be measured against image size and upstream quota. API key, account and scope concurrency limits continue to apply; when the queue is not enabled, the intake behavior of the old endpoints is unchanged.
 
-数据库迁移只增加两列与过期索引，支持 SQLite/PostgreSQL。回退旧二进制可保留新列，但旧程序不会执行新的到期/消费策略，需先清理或另行安排清理这些图片。应用之外的备份、S3 版本历史和调用方自己的文件不由本功能删除。
+The database migration only adds two columns and an expiry index, and supports SQLite/PostgreSQL. Rolling back to the old binary can keep the new columns, but the old program will not execute the new expiry/consumption policy, so these images must be cleaned up first or the cleanup must be arranged separately. Backups outside the application, S3 version history and the caller's own files are not deleted by this feature.
