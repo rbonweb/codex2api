@@ -479,3 +479,53 @@ func TestAudioTranscriptionFeederHoldsBackAboveTheQueueCap(t *testing.T) {
 		}
 	})
 }
+
+func TestAudioTranscriptionJoinTranscriptTurns(t *testing.T) {
+	cases := []struct {
+		name  string
+		turns []string
+		want  string
+	}{
+		{"none", nil, ""},
+		{"one", []string{"hello"}, "hello"},
+		{"two sentences", []string{"The first sentence is about apples.", "The second sentence is about rivers"}, "The first sentence is about apples. The second sentence is about rivers"},
+		{"trims each turn", []string{"  first ", "\tsecond\n"}, "first second"},
+		{"period starts a turn", []string{"about apples", ". The second"}, "about apples. The second"},
+		{"comma and question mark", []string{"well", ", maybe", "? yes"}, "well, maybe? yes"},
+		{"closing quote and bracket", []string{"he said \"go", "\" and left (quickly", ") today"}, "he said \"go\" and left (quickly) today"},
+		{"blank turns are skipped", []string{"a", "   ", "", "b"}, "a b"},
+		{"leading punctuation on the first turn stays", []string{". odd", "next"}, ". odd next"},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			if got := joinTranscriptTurns(tc.turns); got != tc.want {
+				t.Fatalf("got %q, want %q", got, tc.want)
+			}
+		})
+	}
+}
+
+func TestAudioTranscriptionJSONAndTextShareTheJoinedTranscript(t *testing.T) {
+	var texts []string
+	for _, format := range []string{"json", "text"} {
+		env := newTranscriptionTestEnv(t)
+		env.call.send(userTurnDone("The first sentence is about apples"))
+		env.call.send(userTurnDone(". The second sentence is about rivers"))
+		rec := runTranscription(t, env, pcmFile(100), map[string]string{"response_format": format}, true)
+		if rec.Code != http.StatusOK {
+			t.Fatalf("%s: status=%d body=%s", format, rec.Code, rec.Body.String())
+		}
+		text := rec.Body.String()
+		if format == "json" {
+			var got map[string]string
+			if err := json.Unmarshal(rec.Body.Bytes(), &got); err != nil {
+				t.Fatal(err)
+			}
+			text = got["text"]
+		}
+		texts = append(texts, text)
+	}
+	if texts[0] != texts[1] || texts[0] != "The first sentence is about apples. The second sentence is about rivers" {
+		t.Fatalf("json=%q text=%q", texts[0], texts[1])
+	}
+}
