@@ -474,17 +474,18 @@ func New(driver string, dsn string, schema ...string) (*DB, error) {
 		if err := db.ensureQualityTestSchema(ctx); err != nil {
 			return nil, fmt.Errorf("初始化检测记录表失败: %w", err)
 		}
-		grokStateCtx, grokStateCancel := grokStateStartupContext(ctx)
-		grokStateErr := db.ensureGrokStateSchema(grokStateCtx)
-		grokStateCancel()
-		if grokStateErr != nil {
-			return nil, fmt.Errorf("初始化 Grok 状态表失败: %w", grokStateErr)
+		// Fill empty credential family ids (the family phase of the retired Grok backfill); Codex reads and token refresh rely on it.
+		familyCtx, familyCancel := context.WithTimeout(context.WithoutCancel(ctx), dataMigrationTimeout)
+		familyErr := db.ensureCredentialFamilyBackfill(familyCtx)
+		familyCancel()
+		if familyErr != nil {
+			return nil, fmt.Errorf("补全账号凭据家族 ID 失败: %w", familyErr)
 		}
-		// The detached Grok backfill may legitimately consume minutes. Do not reuse
-		// the original ten-second startup context for the remaining small schemas.
-		postGrokCtx, postGrokCancel := context.WithTimeout(context.Background(), 10*time.Second)
-		defer postGrokCancel()
-		ctx = postGrokCtx
+		// Data migrations may legitimately consume minutes. Do not reuse the original
+		// ten-second startup context for the remaining small schemas.
+		postMigrateCtx, postMigrateCancel := context.WithTimeout(context.Background(), 10*time.Second)
+		defer postMigrateCancel()
+		ctx = postMigrateCtx
 		if err := db.ensureCodexRefreshSchema(ctx); err != nil {
 			return nil, fmt.Errorf("初始化 Codex 刷新保护表失败: %w", err)
 		}
@@ -1175,6 +1176,7 @@ func (db *DB) migrate(ctx context.Context) error {
 	ALTER TABLE accounts ADD COLUMN IF NOT EXISTS skip_warm_tier BOOLEAN DEFAULT FALSE;
 	ALTER TABLE accounts ADD COLUMN IF NOT EXISTS note TEXT DEFAULT '';
 	ALTER TABLE accounts ADD COLUMN IF NOT EXISTS credential_generation BIGINT NOT NULL DEFAULT 1;
+	ALTER TABLE accounts ADD COLUMN IF NOT EXISTS credential_family_id TEXT NOT NULL DEFAULT '';
 
 	CREATE TABLE IF NOT EXISTS account_groups (
 		id                        SERIAL PRIMARY KEY,
@@ -8541,11 +8543,6 @@ func (db *DB) PurgeAccount(ctx context.Context, id int64) error {
 		return err
 	}
 	defer tx.Rollback()
-	// Grok observations intentionally do not rely on foreign-key cascades; keep
-	// purge behavior consistent across SQLite and PostgreSQL.
-	if err := db.deleteGrokAccountStateTx(ctx, tx, "= $1", id); err != nil {
-		return err
-	}
 	if _, err := tx.ExecContext(ctx, `DELETE FROM model_capability_snapshots WHERE account_id = $1`, id); err != nil {
 		return err
 	}
@@ -8576,9 +8573,6 @@ func (db *DB) PurgeDeletedAccounts(ctx context.Context) (int64, error) {
 	defer tx.Rollback()
 	deletedPredicate := `IN (SELECT id FROM accounts WHERE status = 'deleted' OR COALESCE(error_message, '') = 'deleted')`
 	if _, err := tx.ExecContext(ctx, `DELETE FROM model_capability_snapshots WHERE account_id `+deletedPredicate); err != nil {
-		return 0, err
-	}
-	if err := db.deleteGrokAccountStateTx(ctx, tx, deletedPredicate); err != nil {
 		return 0, err
 	}
 	if _, err := tx.ExecContext(ctx, `
