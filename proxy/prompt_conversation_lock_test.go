@@ -111,7 +111,7 @@ func TestExplicitUpstreamCYBLocksOnlyTheSignedConversation(t *testing.T) {
 	if retryAfter := repeat.Writer.Header().Get("Retry-After"); retryAfter == "" {
 		t.Fatalf("locked retry missing Retry-After header: %v", repeat.Writer.Header())
 	}
-	if message := gjson.GetBytes(repeatRecorder.Body.Bytes(), "error.message").String(); !strings.Contains(message, "Session Details") || !strings.Contains(message, promptConversationLockedReasonCode) {
+	if message := gjson.GetBytes(repeatRecorder.Body.Bytes(), "error.message").String(); !strings.Contains(message, "session details") || !strings.Contains(message, promptConversationLockedReasonCode) {
 		t.Fatalf("locked retry actionable message=%q", message)
 	}
 	lock, err = db.GetActivePromptConversationLock(t.Context(), lockIdentity.LockKey)
@@ -222,7 +222,7 @@ func TestUpstreamCYBCoolsVerifiedUserAcrossSessionChurn(t *testing.T) {
 	if got := gjson.GetBytes(churnedRecorder.Body.Bytes(), "error.details.retry_after_seconds").Int(); got <= 0 || got > int64(cooldownTTL/time.Second) {
 		t.Fatalf("user cooldown remaining=%d body=%s", got, churnedRecorder.Body.String())
 	}
-	if message := gjson.GetBytes(churnedRecorder.Body.Bytes(), "error.message").String(); !strings.Contains(message, "User Details") || !strings.Contains(message, promptUserCyberCooldownReasonCode) {
+	if message := gjson.GetBytes(churnedRecorder.Body.Bytes(), "error.message").String(); !strings.Contains(message, "user details") || !strings.Contains(message, promptUserCyberCooldownReasonCode) {
 		t.Fatalf("user cooldown actionable message=%q", message)
 	}
 }

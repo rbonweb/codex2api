@@ -532,9 +532,9 @@ func effectiveRequestModel(body []byte, fallback string) string {
 
 func noAvailableAccountMessage(model string) string {
 	if isProOnlyModel(model) {
-		return "no paid or unknown-plan accounts are available; gpt-5.3-codex-spark excludes accounts explicitly marked free/api"
+		return "no available paid or unknown-plan account; gpt-5.3-codex-spark excludes accounts explicitly marked free/api"
 	}
-	return "no accounts available, please retry later"
+	return "no available account, please retry later"
 }
 
 func noAvailableAccountError(model string) gin.H {

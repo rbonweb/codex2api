@@ -24,9 +24,9 @@ import (
 const (
 	promptConversationLockedReasonCode = "conversation_cyber_locked"
 	promptFingerprintReplayReasonCode  = "fingerprint_replay_cooldown"
-	promptConversationLockedMessage    = "The current conversation is locked because of upstream CYB. This lock block does not count penalties again; wait for it to expire automatically, or have an administrator unlock it manually in 'Prompt Check → Risk Profile → Session Details'. Triggering CYB again after the lock is lifted may get the account deactivated."
+	promptConversationLockedMessage    = "The current conversation is locked because of upstream CYB. This lock block does not count penalties again; wait for it to expire automatically, or have an administrator unlock it manually in 'Prompt Filter → Risk Profiles → session details'. Triggering CYB again after the lock is lifted may get the account deactivated."
 	promptUserCyberCooldownReasonCode  = "user_cyber_cooldown"
-	promptUserCyberCooldownMessage     = "This user is currently in a security cooldown period because of upstream CYB. New requests during the cooldown are not forwarded further and do not count penalties again; wait for it to expire automatically, or have an administrator lift the cooldown manually in 'Prompt Check → Risk Profile → User Details'."
+	promptUserCyberCooldownMessage     = "This user is currently in a security cooldown period because of upstream CYB. New requests during the cooldown are not forwarded further and do not count penalties again; wait for it to expire automatically, or have an administrator lift the cooldown manually in 'Prompt Filter → Risk Profiles → user details'."
 	promptConversationLockCacheTTL     = 30 * time.Second
 )
 
@@ -196,13 +196,13 @@ func promptCyberRestrictionDecision(item *database.PromptConversationLock, cfg p
 		auditText = fmt.Sprintf("audit ID: %s; ", result.AuditReference)
 	}
 	if result.Scope == database.PromptConversationRestrictionScopeUserCooldown {
-		result.Message = fmt.Sprintf("This user entered a security cooldown because of upstream CYB, about %s remaining; all new requests during the cooldown are not forwarded and do not count penalties again. %sAdministrators can lift the cooldown in 'Prompt Check → Risk Profile → User Details'. Error code: %s.", remainingText, auditText, result.ReasonCode)
+		result.Message = fmt.Sprintf("This user entered a security cooldown because of upstream CYB, about %s remaining; all new requests during the cooldown are not forwarded and do not count penalties again. %sAdministrators can lift the cooldown in 'Prompt Filter → Risk Profiles → user details'. Error code: %s.", remainingText, auditText, result.ReasonCode)
 	} else if result.Scope == database.PromptConversationRestrictionScopeFingerprintReplay {
-		result.Message = fmt.Sprintf("The same prompt fingerprint recently received upstream CYB, so the current request entered an exact replay cooldown, about %s remaining; the whole API key is not banned. %sAdministrators can unlock it manually in 'Prompt Check → Risk Profile → Session Details'. Error code: %s.", remainingText, auditText, result.ReasonCode)
+		result.Message = fmt.Sprintf("The same prompt fingerprint recently received upstream CYB, so the current request entered an exact replay cooldown, about %s remaining; the whole API key is not banned. %sAdministrators can unlock it manually in 'Prompt Filter → Risk Profiles → session details'. Error code: %s.", remainingText, auditText, result.ReasonCode)
 	} else if result.TriggerReasonCode != "" && result.TriggerReasonCode != newAPIUpstreamCyberPolicyReasonCode {
-		result.Message = fmt.Sprintf("The current conversation is locked by a local high-risk rule, about %s remaining; later requests are not forwarded and do not count penalties again. Trigger reason: %s; %sAdministrators can review and unlock it manually in 'Prompt Check → Risk Profile → Session Details'. Error code: %s.", remainingText, result.TriggerReasonCode, auditText, result.ReasonCode)
+		result.Message = fmt.Sprintf("The current conversation is locked by a local high-risk rule, about %s remaining; later requests are not forwarded and do not count penalties again. Trigger reason: %s; %sAdministrators can review and unlock it manually in 'Prompt Filter → Risk Profiles → session details'. Error code: %s.", remainingText, result.TriggerReasonCode, auditText, result.ReasonCode)
 	} else {
-		result.Message = fmt.Sprintf("The current conversation is locked because of upstream CYB, about %s remaining; later requests are not forwarded and do not count penalties again. %sAdministrators can unlock it manually in 'Prompt Check → Risk Profile → Session Details'. Error code: %s.", remainingText, auditText, result.ReasonCode)
+		result.Message = fmt.Sprintf("The current conversation is locked because of upstream CYB, about %s remaining; later requests are not forwarded and do not count penalties again. %sAdministrators can unlock it manually in 'Prompt Filter → Risk Profiles → session details'. Error code: %s.", remainingText, auditText, result.ReasonCode)
 	}
 	return result
 }
