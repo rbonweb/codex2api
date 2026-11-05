@@ -8,6 +8,7 @@
 - **GPT-Live API for voice agents at `/v1/live/sessions`.** A WebSocket route where the gateway owns the audio, a WebRTC route where the client owns it (`POST`, plus `GET .../attach` for a server-side sideband), 24 kHz and 16 kHz PCM, G.711 at 8 kHz, and 22 public voice names. Strict session fields return `unknown_parameter` for anything unknown. See the GPT-Live section of `docs/API.md`.
 - **Delegation for voice agents.** Live hands a caller's request to your code as `session.delegation.created`, and your code speaks the result with `session.commentary.append` while `session.thinking.append` and `session.instructions.append` add quiet context. `delegation.acknowledgement: "none"` turns off the spoken filler.
 - **Transcript events carry a `language` code.** A gateway-side detector (about 84 languages) adds it when the result is reliable. The gateway restricts no language.
+- **`POST /v1/audio/speech` for short text-to-speech, and `GET /v1/audio/voices`.** The speech endpoint takes the OpenAI request (`gpt-4o-mini-tts`, `tts-1`, `tts-1-hd`), reads statements word for word through a ChatGPT Live call and returns WAV or raw 24 kHz PCM; `speed` other than 1 and `mp3` return 400, input is capped at 1,000 characters, and a call that never speaks returns 504 `upstream_timeout`. Questions may be skipped by Live. The voices endpoint (also `/v1/live/voices`) lists every accepted voice name with the Live voice it maps to. The docs gain "Voices, limits and text-to-speech" with the call limits and billing notes.
 
 ### Changed
 
