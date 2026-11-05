@@ -2545,6 +2545,8 @@ func (h *Handler) RegisterRoutes(r *gin.Engine) {
 	v1.POST("/alpha/search", h.CodexAlphaSearchHandler)
 	v1.POST("/live", h.LiveCreate)
 	v1.GET("/live/:call_id", h.LiveSideband)
+	v1.POST("/realtime/calls", h.RealtimeCalls)
+	v1.POST("/audio/transcriptions", h.AudioTranscriptions)
 
 	// 无前缀路由（兼容 base_url 已包含 /v1 的客户端）
 	r.POST("/chat/completions", auth, h.ChatCompletions)
@@ -2559,6 +2561,8 @@ func (h *Handler) RegisterRoutes(r *gin.Engine) {
 	r.POST("/alpha/search", auth, h.CodexAlphaSearchHandler)
 	r.POST("/live", auth, h.LiveCreate)
 	r.GET("/live/:call_id", auth, h.LiveSideband)
+	r.POST("/realtime/calls", auth, h.RealtimeCalls)
+	r.POST("/audio/transcriptions", auth, h.AudioTranscriptions)
 
 	codexDirect := r.Group("/backend-api/codex")
 	codexDirect.Use(auth)

@@ -29,14 +29,23 @@ env:
   IMAGE_NAME: ${{ github.repository }}
 
 jobs:
-  docker:
-    runs-on: ubuntu-latest
+  build:
+    # Each platform builds natively on its own runner (no QEMU): the real-time audio bridge links libopus through cgo.
+    if: ${{ inputs.promote_digest == '' }}
+    runs-on: ${{ matrix.runner }}
+    strategy:
+      fail-fast: true
+      matrix:
+        include:
+          - platform: linux/amd64
+            runner: ubuntu-latest
+          - platform: linux/arm64
+            runner: ubuntu-24.04-arm
     steps:
       - name: Checkout
         uses: actions/checkout@v5
 
       - name: Validate build version
-        if: ${{ inputs.promote_digest == '' }}
         env:
           BUILD_VERSION: ${{ inputs.build_version || github.ref_name }}
         run: |
@@ -49,9 +58,11 @@ jobs:
             exit 1
           fi
 
-      - name: Set up QEMU
-        if: ${{ inputs.promote_digest == '' }}
-        uses: docker/setup-qemu-action@v3
+      - name: Compute platform slug
+        id: slug
+        env:
+          PLATFORM: ${{ matrix.platform }}
+        run: echo "slug=${PLATFORM//\//-}" >> "$GITHUB_OUTPUT"
 
       - name: Set up Docker Buildx
         uses: docker/setup-buildx-action@v3
@@ -64,7 +75,65 @@ jobs:
           password: ${{ secrets.GITHUB_TOKEN }}
 
       - name: Extract Docker metadata
-        if: ${{ inputs.promote_digest == '' }}
+        id: meta
+        uses: docker/metadata-action@v5
+        with:
+          images: ${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}
+
+      - name: Build and push by digest
+        id: build
+        uses: docker/build-push-action@v6
+        with:
+          context: .
+          file: ./Dockerfile
+          platforms: ${{ matrix.platform }}
+          labels: ${{ steps.meta.outputs.labels }}
+          outputs: type=image,name=${{ env.REGISTRY }}/${{ env.IMAGE_NAME }},push-by-digest=true,name-canonical=true,push=true
+          build-args: |
+            BUILD_VERSION=${{ inputs.build_version || github.ref_name }}
+          cache-from: type=gha,scope=docker-${{ steps.slug.outputs.slug }}
+          cache-to: type=gha,mode=max,scope=docker-${{ steps.slug.outputs.slug }}
+          provenance: false
+
+      - name: Export digest
+        env:
+          DIGEST: ${{ steps.build.outputs.digest }}
+        run: |
+          mkdir -p "${RUNNER_TEMP}/digests"
+          touch "${RUNNER_TEMP}/digests/${DIGEST#sha256:}"
+
+      - name: Upload digest
+        uses: actions/upload-artifact@v4
+        with:
+          name: digests-${{ steps.slug.outputs.slug }}
+          path: ${{ runner.temp }}/digests/*
+          if-no-files-found: error
+          retention-days: 1
+
+  merge:
+    # Joins the per-platform digests into one multi-arch manifest under exactly the tags the single-job build used to push.
+    if: ${{ inputs.promote_digest == '' }}
+    needs: build
+    runs-on: ubuntu-latest
+    steps:
+      - name: Download digests
+        uses: actions/download-artifact@v5
+        with:
+          path: ${{ runner.temp }}/digests
+          pattern: digests-*
+          merge-multiple: true
+
+      - name: Set up Docker Buildx
+        uses: docker/setup-buildx-action@v3
+
+      - name: Log in to GHCR
+        uses: docker/login-action@v3
+        with:
+          registry: ${{ env.REGISTRY }}
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Extract Docker metadata
         id: meta
         uses: docker/metadata-action@v5
         with:
@@ -76,24 +145,32 @@ jobs:
             type=raw,value=${{ inputs.build_version }},enable=${{ github.event_name == 'workflow_dispatch' && inputs.build_version != '' }}
             type=raw,value=latest,enable=${{ github.event_name != 'workflow_dispatch' || github.ref_name == github.event.repository.default_branch || startsWith(github.ref, 'refs/tags/v') }}
 
-      - name: Build and push Docker image
-        if: ${{ inputs.promote_digest == '' }}
-        uses: docker/build-push-action@v6
+      - name: Create manifest list and push
+        working-directory: ${{ runner.temp }}/digests
+        run: |
+          # shellcheck disable=SC2046
+          docker buildx imagetools create $(jq -cr '.tags | map("-t " + .) | join(" ")' <<< "$DOCKER_METADATA_OUTPUT_JSON") \
+            $(printf "${REGISTRY}/${IMAGE_NAME}@sha256:%s " *)
+
+      - name: Inspect image
+        run: |
+          docker buildx imagetools inspect "$(jq -r '.tags[0]' <<< "$DOCKER_METADATA_OUTPUT_JSON")"
+
+  promote:
+    if: ${{ inputs.promote_digest != '' }}
+    runs-on: ubuntu-latest
+    steps:
+      - name: Set up Docker Buildx
+        uses: docker/setup-buildx-action@v3
+
+      - name: Log in to GHCR
+        uses: docker/login-action@v3
         with:
-          context: .
-          file: ./Dockerfile
-          platforms: linux/amd64,linux/arm64
-          push: true
-          tags: ${{ steps.meta.outputs.tags }}
-          labels: ${{ steps.meta.outputs.labels }}
-          build-args: |
-            BUILD_VERSION=${{ inputs.build_version || github.ref_name }}
-          cache-from: type=gha
-          cache-to: type=gha,mode=max
-          provenance: false
+          registry: ${{ env.REGISTRY }}
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
 
       - name: Promote existing image to latest
-        if: ${{ inputs.promote_digest != '' }}
         env:
           SOURCE_DIGEST: ${{ inputs.promote_digest }}
         run: |
@@ -105,6 +182,11 @@ jobs:
             --tag "${REGISTRY}/${IMAGE_NAME}:latest" \
             "${REGISTRY}/${IMAGE_NAME}@${SOURCE_DIGEST}"
 
+  deploy:
+    needs: [merge, promote]
+    if: ${{ always() && (needs.merge.result == 'success' || needs.promote.result == 'success') }}
+    runs-on: ubuntu-latest
+    steps:
       # Deploy from here rather than through a workflow_run chain: a build dispatched by Fork release with GITHUB_TOKEN never triggers workflow_run, so Deploy Render would not start. Render re-pulls the image tag its service is set to (latest).
       - name: Trigger Render deploy
         env:
