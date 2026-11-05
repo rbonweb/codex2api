@@ -2,7 +2,6 @@ package auth
 
 import (
 	"context"
-	"database/sql"
 	"encoding/json"
 	"errors"
 	"fmt"
@@ -607,22 +606,6 @@ func (a *Account) isOpenAIResponsesAPILocked() bool {
 func (a *Account) hasDispatchCredentialLocked() bool {
 	if a == nil {
 		return false
-	}
-	if a.isOpenAIResponsesAPILocked() {
-		return true
-	}
-	if a.isAntigravityAPILocked() {
-		if a.AntigravityHardBlocked {
-			return false
-		}
-		if strings.TrimSpace(a.APIKey) != "" {
-			return true
-		}
-		return strings.TrimSpace(a.AccessToken) != "" && strings.TrimSpace(a.AntigravityProjectID) != ""
-	}
-	if a.isGrokAPILocked() {
-		// API Key 直接可调度；OAuth 需等 AT 刷出（RT-only 由后台/lazy 刷新补齐）
-		return strings.TrimSpace(a.APIKey) != "" || strings.TrimSpace(a.AccessToken) != ""
 	}
 	if a.isCodexAgentIdentityLocked() {
 		// Agent Identity 无 AT：私钥即凭据，可直接调度（task_id 于请求前惰性注册）。
@@ -1316,10 +1299,6 @@ func (a *Account) effectiveBaseConcurrencyLocked(storeBaseLimit int64) int64 {
 	if a.groupBaseConcurrency > 0 {
 		return a.groupBaseConcurrency
 	}
-	// Claude 账号:无账号级/分组覆盖时回退到全局「并发会话窗口数」默认。
-	if a.claudeSessionWindow > 0 {
-		return a.claudeSessionWindow
-	}
 	if storeBaseLimit <= 0 {
 		return 1
 	}
@@ -1455,12 +1434,6 @@ func (a *Account) recomputeSchedulerLocked(baseLimit int64) {
 	if a.premium5hRateLimitedLocked(now) && a.DynamicConcurrencyLimit > 1 {
 		a.DynamicConcurrencyLimit = 1
 	}
-	if a.isAntigravityAPILocked() && a.hasDispatchCredentialLocked() && a.DynamicConcurrencyLimit <= 0 {
-		a.DynamicConcurrencyLimit = concurrencyLimitForTier(baseConcurrencyEffective, HealthTierHealthy)
-		if a.DynamicConcurrencyLimit <= 0 {
-			a.DynamicConcurrencyLimit = 1
-		}
-	}
 }
 
 func (a *Account) schedulerSnapshot(baseLimit int64) (AccountHealthTier, float64, float64, int64) {
@@ -1520,23 +1493,8 @@ func antigravityAccountQuotaBlocked(acc *Account) bool {
 }
 
 func (a *Account) isAvailableLocked(now time.Time) bool {
-	// 配额硬门禁先于 Antigravity 的鉴权豁免分支求值：401 窄恢复（unauthorized
-	// cooldown）只豁免鉴权类围栏，绝不豁免配额事实（Spec §3.3 优先级）。
-	if a.antigravityQuotaBlockReasonLocked(now) != "" {
-		return false
-	}
 	if a.Status == StatusError {
 		return false
-	}
-	if a.isAntigravityAPILocked() {
-		now := time.Now()
-		if a.Status == StatusCooldown && now.Before(a.CooldownUtil) {
-			return a.antigravityUnauthorizedRecoveryLocked(now)
-		}
-		if a.healthTierLocked() == HealthTierBanned && !a.antigravityUnauthorizedRecoveryLocked(now) {
-			return false
-		}
-		return a.hasDispatchCredentialLocked()
 	}
 	if a.healthTierLocked() == HealthTierBanned {
 		return false
@@ -2267,18 +2225,6 @@ func (a *Account) ModelCatalogEligible() bool {
 	if a == nil || atomic.LoadInt32(&a.Disabled) != 0 {
 		return false
 	}
-	if a.IsAntigravityAPI() {
-		if atomic.LoadInt32(&a.DispatchPaused) != 0 || atomic.LoadInt32(&a.IntelligencePaused) != 0 {
-			return false
-		}
-		a.mu.RLock()
-		defer a.mu.RUnlock()
-		if a.Status == StatusError || a.AntigravityHardBlocked ||
-			(a.healthTierLocked() == HealthTierBanned && !a.antigravityUnauthorizedRecoveryLocked(time.Now())) {
-			return false
-		}
-		return a.hasDispatchCredentialLocked()
-	}
 	if atomic.LoadInt32(&a.DispatchPaused) != 0 || atomic.LoadInt32(&a.IntelligencePaused) != 0 {
 		return false
 	}
@@ -2287,10 +2233,8 @@ func (a *Account) ModelCatalogEligible() bool {
 	if a.Status == StatusError || a.healthTierLocked() == HealthTierBanned {
 		return false
 	}
-	// Legacy Codex Free windows are an account availability gate. Grok billing
-	// is represented separately by an explicit, fresh exhausted fact; a lone
-	// 100% percentage must not override PAYG/prepaid semantics.
-	if !a.isGrokAPILocked() && a.usageExhaustedLocked() {
+	// Legacy Codex Free windows are an account availability gate.
+	if a.usageExhaustedLocked() {
 		return false
 	}
 	return a.hasDispatchCredentialLocked()
@@ -2810,9 +2754,6 @@ func (a *Account) ShouldActivate5hWindow(now time.Time) bool {
 	a.mu.RLock()
 	defer a.mu.RUnlock()
 	if a.AccessToken == "" && !a.isCodexAgentIdentityLocked() {
-		return false
-	}
-	if a.isRelayStyleLocked() {
 		return false
 	}
 	if a.Status == StatusError {
@@ -3732,38 +3673,17 @@ func (a *Account) NeedsUsageProbe(maxAge time.Duration) bool {
 	defer a.mu.RUnlock()
 	now := time.Now()
 
-	if a.usageProbeInFlight || a.AccessToken == "" || a.Status == StatusError || a.isClaudeAPIKeyLocked() {
+	if a.usageProbeInFlight || a.AccessToken == "" || a.Status == StatusError {
 		return false
-	}
-	if a.isRelayStyleLocked() && !a.isClaudeOAuthLocked() {
-		return false // wham 探针是 ChatGPT 专属；中转/Grok 账号没有该端点
 	}
 	if a.Status == StatusCooldown && a.CooldownReason == "unauthorized" && (a.CooldownUtil.IsZero() || now.Before(a.CooldownUtil)) {
 		return false // token 失效，wham 也会 401，探针无意义
 	}
-	// Claude uses the native Messages endpoint rather than WHAM and may legally
-	// omit both unified quota windows. In that case the shared 7d validity bits
-	// remain false by design; use the provider observation timestamp to avoid
-	// sending a paid probe on every background sweep. A cooldown that has just
-	// expired is still worth one confirmation probe.
-	if a.isClaudeOAuthLocked() {
-		if a.Status == StatusCooldown && !a.CooldownUtil.IsZero() && !now.Before(a.CooldownUtil) {
-			return true
-		}
-		if a.UsagePercent5hValid && !a.Reset5hAt.IsZero() && !a.Reset5hAt.After(now) && a.UsageUpdatedAt5h.Before(a.Reset5hAt) {
-			return true
-		}
-		if a.UsagePercent7dValid && !a.Reset7dAt.IsZero() && !a.Reset7dAt.After(now) && a.UsageUpdatedAt.Before(a.Reset7dAt) {
-			return true
-		}
-		return a.usageObservedAt.IsZero() || now.Sub(a.usageObservedAt) > maxAge
-	}
-
 	// 「主动重置次数」只能由 wham 探针刷新（普通 /responses 流量不携带该字段），
 	// 因此用独立的 resetCreditsProbedAt 判断它是否过期。否则活跃账号的用量快照被
 	// 业务流量持续刷新，会让用量看起来一直"新鲜"，从而长期不触发 wham 探针、
 	// 重置次数迟迟探测不出来。
-	resetCreditsStale := !a.isClaudeOAuthLocked() && (a.resetCreditsProbedAt.IsZero() || now.Sub(a.resetCreditsProbedAt) > maxAge)
+	resetCreditsStale := a.resetCreditsProbedAt.IsZero() || now.Sub(a.resetCreditsProbedAt) > maxAge
 
 	if a.premium5hRateLimitedLocked(now) {
 		// premium 5h 限流期间仍允许 wham 刷新重置次数；是否补 Responses
@@ -3891,9 +3811,6 @@ func (a *Account) NeedsRecoveryProbe(minInterval time.Duration) bool {
 
 	if a.recoveryProbeInFlight || a.healthTierLocked() != HealthTierBanned {
 		return false
-	}
-	if a.isRelayStyleLocked() {
-		return false // 恢复探测走 ChatGPT 探针；中转/Grok 账号不适用
 	}
 	if a.RefreshToken == "" {
 		return false
@@ -4437,14 +4354,6 @@ func (s *Store) accountHasCachedCooldown(acc *Account) bool {
 		return false
 	}
 	s.applyCachedAccountCooldown(acc, record)
-	if acc.IsAntigravityAPI() {
-		acc.mu.RLock()
-		recoverable := acc.antigravityUnauthorizedRecoveryLocked(time.Now())
-		acc.mu.RUnlock()
-		// Only the narrow OAuth-401 recovery exception may bypass an account
-		// cooldown. Rate-limit, admin, and terminal cooldowns remain hard gates.
-		return !recoverable
-	}
 	return true
 }
 
@@ -4852,13 +4761,6 @@ func NewStore(db *database.DB, tc cache.TokenCache, settings *database.SystemSet
 	s.schedulerMode.Store(settings.SchedulerMode)
 	s.SetAffinityMode(settings.AffinityMode)
 	s.SetSessionAffinitySpread(settings.SessionAffinitySpread)
-	s.SetGrokAffinityMode(grokAffinityModeFromConfig(settings.GrokConfig))
-	applyClaudeConfigToStore(s, settings.ClaudeConfig)
-	s.SetGrokProbeConfig(grokProbeConfigFromConfig(settings.GrokConfig))
-	s.SetGrokMaxRateLimitRetries(grokMaxRateLimitRetriesFromConfig(settings.GrokConfig))
-	s.SetGrokFollowUpEffortConfig(GrokFollowUpEffortConfigFromJSON(settings.GrokConfig))
-	s.SetGrokQualityGuardConfig(GrokQualityGuardConfigFromJSON(settings.GrokConfig))
-	SetConfiguredGrokOAuthClientID(grokOAuthClientIDFromConfig(settings.GrokConfig))
 	if settings.ModelMapping != "" {
 		s.modelMapping.Store(settings.ModelMapping)
 	}
@@ -5510,7 +5412,7 @@ func (s *Store) resolveProxyForAccountSnapshot(acc *Account) (string, bool) {
 		accountID = acc.DBID
 		accountProxy = strings.TrimSpace(acc.ProxyURL)
 		groupIDs = cloneInt64Slice(acc.GroupIDs)
-		resinCarriesEgress = ResinEgressEnabled() && !acc.isRelayStyleLocked()
+		resinCarriesEgress = ResinEgressEnabled()
 		acc.mu.RUnlock()
 	}
 
@@ -6069,7 +5971,6 @@ func (s *Store) loadFromDB(ctx context.Context) error {
 		if account == nil {
 			continue
 		}
-		account.grokRuntimeSink = s
 		s.accounts = append(s.accounts, account)
 	}
 
@@ -6170,12 +6071,26 @@ func antigravityQuotaEpochFromRow(row *database.AccountRow) int64 {
 	return epoch
 }
 
+// isRemovedProviderUpstreamType reports whether upstream_type names a provider this gateway no longer serves.
+// An empty or unknown value is a Codex account and is never treated as removed.
+func isRemovedProviderUpstreamType(upstreamType string) bool {
+	switch strings.ToLower(strings.TrimSpace(upstreamType)) {
+	case "claude", "grok", "xai", "antigravity", "openai_responses":
+		return true
+	}
+	return false
+}
+
 // buildAccountFromRow 将数据库账号行转换为运行时账号；凭据缺失或不可用时返回 nil。
 func (s *Store) buildAccountFromRow(ctx context.Context, row *database.AccountRow, modelCooldowns map[int64][]*database.AccountModelCooldownRow) *Account {
 	rt := row.GetCredential("refresh_token")
 	st := row.GetCredential("session_token")
 	at := row.GetCredential("access_token")
 	upstreamType := row.GetCredential("upstream_type")
+	if isRemovedProviderUpstreamType(upstreamType) {
+		log.Printf("[账号 %d] 上游类型 %q 已不再支持（仅支持 ChatGPT/Codex 账号），跳过", row.ID, strings.ToLower(strings.TrimSpace(upstreamType)))
+		return nil
+	}
 	baseURL := row.GetCredential("base_url")
 	apiKey := row.GetCredential("api_key")
 	models := normalizeModelList(row.GetCredentialStringSlice("models"))
@@ -6183,141 +6098,39 @@ func (s *Store) buildAccountFromRow(ctx context.Context, row *database.AccountRo
 	codexClientMetadataMode := NormalizeCodexClientMetadataMode(row.GetCredential("codex_client_metadata_mode"))
 	codexPassthroughMode := NormalizeCodexPassthroughMode(row.GetCredential("codex_passthrough_mode"))
 	codexFingerprintMode := NormalizeCodexFingerprintMode(row.GetCredential(CodexFingerprintModeCredentialKey))
-	claudeFingerprintMode := NormalizeClaudeFingerprintMode(row.GetCredential(ClaudeFingerprintModeCredentialKey))
 	accountTimezone := NormalizeAccountTimezone(row.GetCredential(AccountTimezoneCredentialKey))
-	var claudeClientPlatformOverride, claudeVersionPolicyOverride, claudeClientVersionOverride, claudeAuthKind string
-	if strings.EqualFold(strings.TrimSpace(upstreamType), UpstreamClaude) {
-		claudeClientPlatformOverride = strings.ToLower(strings.TrimSpace(row.GetCredential(ClaudeClientPlatformCredentialKey)))
-		claudeVersionPolicyOverride = strings.ToLower(strings.TrimSpace(row.GetCredential(ClaudeVersionPolicyCredentialKey)))
-		claudeClientVersionOverride = strings.TrimSpace(row.GetCredential(ClaudeClientVersionCredentialKey))
-		claudeAuthKind = InferClaudeAuthKind(row.GetCredential(ClaudeAuthKindCredentialKey), at, rt)
-	}
-	isOpenAIResponsesAccount := strings.EqualFold(strings.TrimSpace(upstreamType), UpstreamOpenAIResponses) && strings.TrimSpace(baseURL) != "" && strings.TrimSpace(apiKey) != ""
-	responsesUpstreamTransport := ""
-	if isOpenAIResponsesAccount {
-		responsesUpstreamTransport = NormalizeOpenAIResponsesUpstreamTransport(row.GetCredential(OpenAIResponsesUpstreamTransportCredentialKey))
-	}
-	isGrokAccount := strings.EqualFold(strings.TrimSpace(upstreamType), UpstreamGrok) && (strings.TrimSpace(apiKey) != "" || rt != "" || at != "")
-	isAntigravityAccount := strings.EqualFold(strings.TrimSpace(upstreamType), UpstreamAntigravity) && (strings.TrimSpace(apiKey) != "" || rt != "" || at != "")
 	// Agent Identity：无 AT/RT，凭 agent_private_key 动态签名，不能被下面的空凭据 guard 拒绝。
 	isAgentIdentityAccount := strings.EqualFold(strings.TrimSpace(row.GetCredential("auth_mode")), CodexAuthModeAgentIdentity) &&
 		strings.TrimSpace(row.GetCredential("agent_runtime_id")) != "" &&
 		strings.TrimSpace(row.GetCredential("agent_private_key")) != ""
-	if rt == "" && st == "" && at == "" && !isOpenAIResponsesAccount && !isGrokAccount && !isAntigravityAccount && !isAgentIdentityAccount {
+	if rt == "" && st == "" && at == "" && !isAgentIdentityAccount {
 		log.Printf("[账号 %d] 缺少 refresh_token、session_token 和 access_token，跳过", row.ID)
 		return nil
 	}
 
 	account := &Account{
-		DBID:                         row.ID,
-		CredentialGeneration:         row.CredentialGeneration,
-		CredentialFamilyID:           row.CredentialFamilyID,
-		RefreshToken:                 rt,
-		SessionToken:                 st,
-		ProxyURL:                     strings.TrimSpace(row.ProxyURL),
-		CustomHeaders:                row.GetCredentialStringMap("custom_headers"),
-		UpstreamRequestIDHeader:      row.GetCredential(UpstreamRequestIDHeaderCredentialKey),
-		HealthTier:                   HealthTierWarm,
-		UpstreamType:                 upstreamType,
-		AntigravityProjectID:         strings.TrimSpace(row.GetCredential("project_id")),
-		BaseURL:                      strings.TrimRight(strings.TrimSpace(baseURL), "/"),
-		APIKey:                       strings.TrimSpace(apiKey),
-		Models:                       models,
-		ModelMapping:                 modelMapping,
-		CodexClientMetadataMode:      codexClientMetadataMode,
-		CodexPassthroughMode:         codexPassthroughMode,
-		ResponsesUpstreamTransport:   responsesUpstreamTransport,
-		CodexFingerprintMode:         codexFingerprintMode,
-		Timezone:                     accountTimezone,
-		ClaudeFingerprintMode:        claudeFingerprintMode,
-		ClaudeAuthKind:               claudeAuthKind,
-		ClaudeBaseURL:                row.GetCredential(ClaudeBaseURLCredentialKey),
-		ClaudeClientPlatformOverride: claudeClientPlatformOverride,
-		ClaudeVersionPolicyOverride:  claudeVersionPolicyOverride,
-		ClaudeClientVersionOverride:  claudeClientVersionOverride,
-		claudeSessionWindow:          claudeSessionWindowForRow(upstreamType, s.ClaudeSessionWindowLimit()),
+		DBID:                    row.ID,
+		CredentialGeneration:    row.CredentialGeneration,
+		CredentialFamilyID:      row.CredentialFamilyID,
+		RefreshToken:            rt,
+		SessionToken:            st,
+		ProxyURL:                strings.TrimSpace(row.ProxyURL),
+		CustomHeaders:           row.GetCredentialStringMap("custom_headers"),
+		UpstreamRequestIDHeader: row.GetCredential(UpstreamRequestIDHeaderCredentialKey),
+		HealthTier:              HealthTierWarm,
+		UpstreamType:            upstreamType,
+		BaseURL:                 strings.TrimRight(strings.TrimSpace(baseURL), "/"),
+		APIKey:                  strings.TrimSpace(apiKey),
+		Models:                  models,
+		ModelMapping:            modelMapping,
+		CodexClientMetadataMode: codexClientMetadataMode,
+		CodexPassthroughMode:    codexPassthroughMode,
+		CodexFingerprintMode:    codexFingerprintMode,
+		Timezone:                accountTimezone,
 	}
 	account.AddedAt.Store(row.CreatedAt.UnixNano())
-	if strings.EqualFold(strings.TrimSpace(upstreamType), UpstreamClaude) {
-		if observedRaw := strings.TrimSpace(row.GetCredential(ClaudeUsageProbeAtCredentialKey)); observedRaw != "" {
-			if observedAt, parseErr := time.Parse(time.RFC3339, observedRaw); parseErr == nil {
-				// This is only a freshness hint; quota validity remains false until
-				// an actual Anthropic response supplies a window header.
-				account.MarkClaudeUsageObservation(observedAt)
-			} else {
-				log.Printf("[账号 %d] 解析 claude_usage_probe_at 失败: %v", row.ID, parseErr)
-			}
-		}
-	}
 	if account.CredentialGeneration <= 0 {
 		account.CredentialGeneration = 1
-	}
-	if isOpenAIResponsesAccount {
-		account.HealthTier = HealthTierHealthy
-		if account.PlanType == "" {
-			account.PlanType = "api"
-		}
-	}
-	if isAntigravityAccount {
-		account.AccountID = row.GetCredential("account_id")
-		account.Email = row.GetCredential("email")
-		account.PlanType = row.GetCredential("plan_type")
-		account.AntigravityPlanKey = antigravityPlanKeyFromRow(row)
-		if strings.TrimSpace(apiKey) != "" {
-			account.HealthTier = HealthTierHealthy
-			account.PlanType = "api"
-		}
-	}
-	if isGrokAccount {
-		account.GrokClientID = row.GetCredential("grok_client_id")
-		account.GrokTokenEndpoint = row.GetCredential("grok_token_endpoint")
-		account.GrokOIDCIssuer = row.GetCredential("grok_oidc_issuer")
-		account.GrokPrincipalType = row.GetCredential("grok_principal_type")
-		account.GrokPrincipalID = row.GetCredential("grok_principal_id")
-		// API Key 凭据没有 AT，下方 at!="" 的恢复分支不会执行，这里补齐身份信息
-		account.AccountID = row.GetCredential("account_id")
-		account.Email = row.GetCredential("email")
-		if strings.TrimSpace(apiKey) != "" {
-			account.PlanType = "api"
-		} else {
-			account.PlanType = GrokPlanTypeFromAccessToken(at)
-			if account.PlanType == "" {
-				if storedPlan, ok := ResolveGrokPlan(row.GetCredential("plan_type")); ok {
-					account.PlanType = storedPlan.Key
-				}
-			}
-		}
-		if strings.TrimSpace(apiKey) != "" || at != "" {
-			account.HealthTier = HealthTierHealthy
-		}
-		// Control-plane facts and catalog entries are generation-fenced. Loading
-		// stale rows into memory would otherwise revive an old credential's plan,
-		// access gate, or protocol capability after rotation.
-		if state, stateErr := s.db.GetGrokAccountState(ctx, row.ID); stateErr == nil &&
-			state.CredentialGeneration == account.CredentialGeneration {
-			applyGrokPersistentState(account, state)
-		} else if stateErr != nil && !errors.Is(stateErr, sql.ErrNoRows) {
-			log.Printf("[账号 %d] 加载 Grok 富状态失败: %v", row.ID, stateErr)
-		}
-		// Legacy grok_weekly/monthly credentials remain readable by old versions,
-		// but are not projected into Codex-style 5h/7d scheduler windows. Grok
-		// billing describes its real current period; rolling 7d/30d statistics
-		// come from terminal gateway usage events.
-		// 免费额度耗尽快照（429 错误体解析的权威用量）重启后恢复
-		if raw := strings.TrimSpace(row.GetCredential("grok_free_quota")); raw != "" {
-			var snap GrokFreeQuotaSnapshot
-			if err := json.Unmarshal([]byte(raw), &snap); err == nil && snap.LimitTokens > 0 {
-				account.SetGrokFreeQuotaSnapshot(snap)
-			}
-		}
-		// 配额余量快照（x-ratelimit-* 头）重启后恢复,用量进度条不清零。
-		// markDirty=false:恢复值本来自库里,不需要再触发落库。
-		if raw := strings.TrimSpace(row.GetCredential("grok_rate_limit")); raw != "" {
-			var snap GrokRateLimitSnapshot
-			if err := json.Unmarshal([]byte(raw), &snap); err == nil && !snap.UpdatedAt.IsZero() {
-				account.setGrokRateLimitSnapshot(snap, false)
-			}
-		}
 	}
 	account.ScoreBiasOverride = reflectOptionalInt64Field(row, "ScoreBiasOverride")
 	account.BaseConcurrencyOverride = reflectOptionalInt64Field(row, "BaseConcurrencyOverride")
@@ -6355,21 +6168,6 @@ func (s *Store) buildAccountFromRow(ctx context.Context, row *database.AccountRo
 		account.ErrorMsg = row.ErrorMessage
 		account.HealthTier = HealthTierRisky
 	}
-	if isAntigravityAccount {
-		account.applyAntigravityQuotaSchedulingLocked(row.GetCredential("antigravity_quota"))
-		account.antigravityQuotaEpoch = antigravityQuotaEpochFromRow(row)
-		if reason, permanentRefresh := antigravityPersistedHardFence(row); reason != "" {
-			account.AntigravityHardBlocked = true
-			account.AntigravityHardBlockReason = reason
-			account.Status = StatusError
-			account.ErrorMsg = reason
-			account.HealthTier = HealthTierRisky
-			if permanentRefresh {
-				account.PermanentRefreshFailures = permanentRefreshFailureTerminalLimit
-			}
-		}
-	}
-
 	// Agent Identity：填充签名凭据与身份信息（无 AT/RT，健康档直接置为 healthy）
 	if isAgentIdentityAccount {
 		account.CodexAuthMode = CodexAuthModeAgentIdentity
@@ -6392,9 +6190,7 @@ func (s *Store) buildAccountFromRow(ctx context.Context, row *database.AccountRo
 		account.AccessToken = at
 		account.AccountID = row.GetCredential("account_id")
 		account.Email = row.GetCredential("email")
-		if !isGrokAccount {
-			account.PlanType = row.GetCredential("plan_type")
-		}
+		account.PlanType = row.GetCredential("plan_type")
 		if account.Status != StatusError {
 			account.HealthTier = HealthTierHealthy
 		}
@@ -6405,11 +6201,6 @@ func (s *Store) buildAccountFromRow(ctx context.Context, row *database.AccountRo
 				log.Printf("[账号 %d] 解析 expires_at 失败: %v", row.ID, err)
 			}
 		}
-	}
-	if account.isClaudeAPIKeyLocked() {
-		account.RefreshToken = ""
-		account.SessionToken = ""
-		account.ExpiresAt = time.Time{}
 	}
 	if subExp := row.GetCredential("subscription_expires_at"); subExp != "" {
 		if parsed, err := time.Parse(time.RFC3339, subExp); err == nil {
