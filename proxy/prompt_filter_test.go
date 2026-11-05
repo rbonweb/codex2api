@@ -23,7 +23,7 @@ func TestReviewPromptFilterVerdictCapturesModelAuditMetadata(t *testing.T) {
 			return
 		}
 		w.Header().Set("Content-Type", "application/json")
-		_, _ = w.Write([]byte(`{"model":"review-model","choices":[{"message":{"content":"{\"confidence\":0.86,\"reason\":\"attacking another system\"}"}}]}`))
+		_, _ = w.Write([]byte(`{"model":"review-model","choices":[{"message":{"content":"{\"confidence\":0.86,\"reason\":\"attacking a server\"}"}}]}`))
 	}))
 	defer reviewServer.Close()
 
@@ -51,7 +51,7 @@ func TestReviewPromptFilterVerdictCapturesModelAuditMetadata(t *testing.T) {
 	if got.ReviewConfidence == nil || *got.ReviewConfidence != 0.86 || got.ReviewThreshold == nil || *got.ReviewThreshold != 0.7 {
 		t.Fatalf("review confidence metadata = %+v", got)
 	}
-	if got.ReviewReason != "attacking another system" || got.ReviewRequestMode != promptfilter.ReviewRequestModeChatCompletions || got.ReviewEndpoint != reviewServer.URL+"/v1/chat/completions" {
+	if got.ReviewReason != "attacking a server" || got.ReviewRequestMode != promptfilter.ReviewRequestModeChatCompletions || got.ReviewEndpoint != reviewServer.URL+"/v1/chat/completions" {
 		t.Fatalf("review request/response metadata = %+v", got)
 	}
 	if got.ReviewLatencyMS == nil || *got.ReviewLatencyMS < 0 {

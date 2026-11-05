@@ -51,7 +51,7 @@ func RateLimitMiddleware(requests int, window time.Duration) gin.HandlerFunc {
 		if !limiter.Allow(ip) {
 			c.JSON(http.StatusTooManyRequests, gin.H{
 				"error": gin.H{
-					"message": "请求过于频繁，请稍后重试",
+					"message": "Too many requests, please try again later",
 					"type":    "rate_limit_error",
 					"code":    "too_many_requests",
 				},

@@ -20,7 +20,7 @@ func TestStreamPhaseDiagnosticsDistinguishesBackpressure(t *testing.T) {
 	diag.markUpstreamFrame()
 	diag.addWriteBlocked(time.Now().Add(-1200 * time.Millisecond))
 	summary := diag.summary()
-	for _, want := range []string{"upstream frame 2", "downstream write blocked 1", "since last upstream frame"} {
+	for _, want := range []string{"upstream frames 2", "downstream write blocked 1", "since the last upstream frame"} {
 		if !strings.Contains(summary, want) {
 			t.Fatalf("summary %q missing %q", summary, want)
 		}
@@ -50,7 +50,7 @@ func TestAnnotateStreamBreakDiagnosticsOnlyForBreaks(t *testing.T) {
 
 	broke := classifyStreamOutcome(nil, errors.New("stream error: stream ID 19; INTERNAL_ERROR; received from peer"), nil, false)
 	annotated := annotateStreamBreakDiagnostics(broke, diag)
-	if !strings.Contains(annotated.failureMessage, "upstream stream read failed") || !strings.Contains(annotated.failureMessage, "upstream frame 1") {
+	if !strings.Contains(annotated.failureMessage, "failed to read upstream stream") || !strings.Contains(annotated.failureMessage, "upstream frames 1") {
 		t.Fatalf("stream break message not annotated: %q", annotated.failureMessage)
 	}
 	if annotated.failureKind != "transport" || annotated.logStatusCode != logStatusUpstreamStreamBreak {

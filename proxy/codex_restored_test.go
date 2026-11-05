@@ -188,7 +188,7 @@ func TestResponsesHTTPFallbackRetryKeepsCorrelationThroughSecondAccount_CodexUps
 	}
 	completionLines := make([]string, 0, 2)
 	for _, line := range strings.Split(logs.String(), "\n") {
-		if strings.Contains(line, "HTTP 降级尝试结束") {
+		if strings.Contains(line, "HTTP degraded attempt ended") {
 			completionLines = append(completionLines, line)
 		}
 	}

@@ -160,7 +160,7 @@ func TestShouldFallbackWebsocketMessageTooBigToHTTP(t *testing.T) {
 	outcome := streamOutcome{
 		logStatusCode:  logStatusUpstreamStreamBreak,
 		failureKind:    upstreamErrorKindMessageTooBig,
-		failureMessage: "upstream stream read failed: websocket read error: websocket: close 1009 (message too big)",
+		failureMessage: "failed to read upstream stream: websocket read error: websocket: close 1009 (message too big)",
 		penalize:       false,
 	}
 

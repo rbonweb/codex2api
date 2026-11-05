@@ -2228,7 +2228,7 @@ func TestUsageLogAndClientErrorsOmitUnstructuredUpstreamBodies(t *testing.T) {
 
 func TestUsageLogFailureMessageKeepsGatewayDiagnostics(t *testing.T) {
 	// Stream-break diagnostics are plain text produced by the gateway itself; keep the original text instead of degrading to a bare status code (issue #524).
-	diag := "upstream stream read failed: stream error: stream ID 277; INTERNAL_ERROR; received from peer [upstream frames 147, downstream write blocked 0ms, 52484ms since the last upstream frame]"
+	diag := "failed to read upstream stream: stream error: stream ID 277; INTERNAL_ERROR; received from peer [upstream frames 147, downstream write blocked 0ms, 52484ms since the last upstream frame]"
 	got := usageLogFailureMessage(logStatusUpstreamStreamBreak, diag)
 	if !strings.Contains(got, "INTERNAL_ERROR") || !strings.Contains(got, "stream ID 277") {
 		t.Fatalf("usageLogFailureMessage() dropped diagnostics: %q", got)
