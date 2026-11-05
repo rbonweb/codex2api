@@ -472,7 +472,7 @@ func TestProbeProxySOCKSTargetUnreachableIsInconclusive(t *testing.T) {
 	if result.Success || result.Conclusive || !strings.Contains(strings.ToLower(result.Error), "host unreachable") {
 		t.Fatalf("probe result = %#v, want inconclusive SOCKS target failure", result)
 	}
-	if !strings.Contains(result.Error, "IPv4/IPv6 检测目标都不可达") {
+	if !strings.Contains(result.Error, "IPv4/IPv6 probe targets are all unreachable") {
 		t.Fatalf("probe result = %#v, want both-family fallback note", result)
 	}
 }
@@ -515,7 +515,7 @@ func TestProbeProxyFallsBackToIPv6Echo(t *testing.T) {
 		if ip != "2605:1234:5678::1" || lang != "zh-CN" {
 			t.Fatalf("geo lookup ip=%q lang=%q", ip, lang)
 		}
-		return "美国", "新泽西", "纽瓦克", "Example ISP"
+		return "United States", "New Jersey", "Newark", "Example ISP"
 	}
 	t.Cleanup(func() {
 		proxyProbeIPv6EchoURLsFn = oldEcho
@@ -543,7 +543,7 @@ func TestProbeProxyFallsBackToIPv6Echo(t *testing.T) {
 	if !result.Success || !result.Conclusive || result.IP != "2605:1234:5678::1" {
 		t.Fatalf("probe result = %#v, want IPv6 fallback success", result)
 	}
-	if result.Location != "美国·新泽西·纽瓦克" || result.ISP != "Example ISP" {
+	if result.Location != "United States·New Jersey·Newark" || result.ISP != "Example ISP" {
 		t.Fatalf("probe result = %#v, want gateway geo fields", result)
 	}
 }
@@ -563,7 +563,7 @@ func TestProbeProxyHTTPBadGatewayFallsBackToIPv6Echo(t *testing.T) {
 		if ip != "2605:1234:5678::1" || lang != "zh-CN" {
 			t.Fatalf("geo lookup ip=%q lang=%q", ip, lang)
 		}
-		return "美国", "加利福尼亚", "圣何塞", "Oracle Corporation"
+		return "United States", "California", "San Jose", "Oracle Corporation"
 	}
 	t.Cleanup(func() {
 		proxyProbeIPv6EchoURLsFn = oldEcho
@@ -630,7 +630,7 @@ func TestProbeProxyHTTPBadGatewayFallsBackToIPv6Echo(t *testing.T) {
 	if !result.Success || !result.Conclusive || result.IP != "2605:1234:5678::1" {
 		t.Fatalf("probe result = %#v, want IPv6 fallback success", result)
 	}
-	if result.Location != "美国·加利福尼亚·圣何塞" || result.ISP != "Oracle Corporation" {
+	if result.Location != "United States·California·San Jose" || result.ISP != "Oracle Corporation" {
 		t.Fatalf("probe result = %#v, want gateway geo fields", result)
 	}
 }
@@ -639,29 +639,29 @@ func TestShouldFallbackToIPv6Probe(t *testing.T) {
 	if shouldFallbackToIPv6Probe(proxyProbeResult{Success: true, Conclusive: true}) {
 		t.Fatal("successful probe must not fallback")
 	}
-	if shouldFallbackToIPv6Probe(proxyProbeResult{Conclusive: true, Error: "代理认证失败 (HTTP 407)"}) {
+	if shouldFallbackToIPv6Probe(proxyProbeResult{Conclusive: true, Error: "proxy authentication failed (HTTP 407)"}) {
 		t.Fatal("conclusive proxy failure must not fallback")
 	}
-	if shouldFallbackToIPv6Probe(proxyProbeResult{Error: "代理检测服务暂时不可用 (HTTP 429)"}) {
+	if shouldFallbackToIPv6Probe(proxyProbeResult{Error: "proxy probe service temporarily unavailable (HTTP 429)"}) {
 		t.Fatal("probe service failure must not fallback")
 	}
 	if !shouldFallbackToIPv6Probe(proxyProbeResult{
-		Error: "连接失败: socks connect tcp proxy->ip-api.com:80: unknown error host unreachable",
+		Error: "connection failed: socks connect tcp proxy->ip-api.com:80: unknown error host unreachable",
 	}) {
 		t.Fatal("SOCKS IPv4 target unreachable must fallback")
 	}
 	if !shouldFallbackToIPv6Probe(proxyProbeResult{
-		Error: "代理检测服务暂时不可用 (HTTP 502)",
+		Error: "proxy probe service temporarily unavailable (HTTP 502)",
 	}) {
 		t.Fatal("HTTP proxy 502 bad gateway must fallback")
 	}
 	if !shouldFallbackToIPv6Probe(proxyProbeResult{
-		Error: "代理检测服务暂时不可用 (HTTP 504)",
+		Error: "proxy probe service temporarily unavailable (HTTP 504)",
 	}) {
 		t.Fatal("HTTP proxy 504 gateway timeout must fallback")
 	}
 	if !shouldFallbackToIPv6Probe(proxyProbeResult{
-		Error: "连接失败: proxyconnect tcp: 502 Bad Gateway",
+		Error: "connection failed: proxyconnect tcp: 502 Bad Gateway",
 	}) {
 		t.Fatal("HTTP CONNECT 502 bad gateway must fallback")
 	}
@@ -688,8 +688,8 @@ func TestParseProxyProbeExitIP(t *testing.T) {
 }
 
 func TestParseProxyProbeGeoFields(t *testing.T) {
-	country, region, city, isp := parseIPAPIGeoFields(gjson.Parse(`{"country":"美国","regionName":"加州","city":"洛杉矶","isp":"Example"}`))
-	if country != "美国" || region != "加州" || city != "洛杉矶" || isp != "Example" {
+	country, region, city, isp := parseIPAPIGeoFields(gjson.Parse(`{"country":"United States","regionName":"California","city":"Los Angeles","isp":"Example"}`))
+	if country != "United States" || region != "California" || city != "Los Angeles" || isp != "Example" {
 		t.Fatalf("ip-api geo = %q %q %q %q", country, region, city, isp)
 	}
 	country, region, city, isp = parseIPWhoisGeoFields(gjson.Parse(`{"country":"United States","region":"New Jersey","city":"Newark","connection":{"isp":"Example ISP"}}`))
@@ -1085,7 +1085,7 @@ func TestTestAllProxiesFailsClosedBeforeReloadFailure(t *testing.T) {
 	if recorder.Code != http.StatusOK {
 		t.Fatalf("status = %d, want %d; body=%s", recorder.Code, http.StatusOK, recorder.Body.String())
 	}
-	if !strings.Contains(recorder.Body.String(), "代理池刷新失败") {
+	if !strings.Contains(recorder.Body.String(), "proxy pool refresh failed") {
 		t.Fatalf("SSE body = %q, want reload failure in complete event", recorder.Body.String())
 	}
 	if got := store.NextProxy(); got != "" {

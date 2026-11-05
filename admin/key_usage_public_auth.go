@@ -13,7 +13,7 @@ import (
 
 func (h *Handler) publicAPIKeyUsageRow(c *gin.Context, ctx context.Context) *database.APIKeyRow {
 	if h == nil || h.db == nil {
-		writeError(c, http.StatusServiceUnavailable, "服务未就绪")
+		writeError(c, http.StatusServiceUnavailable, "service not ready")
 		return nil
 	}
 	enabled, err := h.PublicAPIKeyUsagePageEnabled(ctx)
@@ -22,28 +22,28 @@ func (h *Handler) publicAPIKeyUsageRow(c *gin.Context, ctx context.Context) *dat
 		return nil
 	}
 	if !enabled {
-		writeError(c, http.StatusNotFound, "API Key 自助用量页未启用")
+		writeError(c, http.StatusNotFound, "API Key self-service usage page is not enabled")
 		return nil
 	}
 	key := extractPublicAPIKey(c)
 	if key == "" {
-		writeError(c, http.StatusUnauthorized, "缺少 Authorization Bearer API Key")
+		writeError(c, http.StatusUnauthorized, "missing Authorization Bearer API Key")
 		return nil
 	}
 	row, err := h.db.GetAPIKeyByValue(ctx, key)
 	if errors.Is(err, sql.ErrNoRows) {
 		security.SecurityAuditLog("KEY_USAGE_AUTH_FAILED", "ip="+security.SanitizeLog(c.ClientIP())+" key="+security.MaskAPIKey(key))
-		writeError(c, http.StatusUnauthorized, "API Key 无效或不存在")
+		writeError(c, http.StatusUnauthorized, "API Key is invalid or does not exist")
 		return nil
 	}
 	if err != nil {
 		writeInternalError(c, err)
 		return nil
 	}
-	// 过期或额度用尽仍可查询，管理员停用的凭据直接拒绝。
+	// Expired keys and keys with used-up quota can still be queried; credentials disabled by an admin are rejected outright.
 	if !row.Enabled {
 		security.SecurityAuditLog("KEY_USAGE_AUTH_FAILED_DISABLED_KEY", "ip="+security.SanitizeLog(c.ClientIP())+" key="+security.MaskAPIKey(key))
-		writeError(c, http.StatusUnauthorized, "API Key 已停用")
+		writeError(c, http.StatusUnauthorized, "API Key is disabled")
 		return nil
 	}
 	return row

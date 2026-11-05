@@ -63,7 +63,7 @@ func TestShouldMarkUsageProbeAccountError(t *testing.T) {
 	}
 }
 
-// TestDeletedAgentRuntimeCooldownPersistsFor24Hours 验证用量探针会持久化 24 小时封禁冷却。
+// TestDeletedAgentRuntimeCooldownPersistsFor24Hours verifies that the usage probe persists a 24-hour ban cooldown.
 func TestDeletedAgentRuntimeCooldownPersistsFor24Hours(t *testing.T) {
 	db := newTestAdminDB(t)
 	accountID := insertTestAccount(t, db)
@@ -80,7 +80,7 @@ func TestDeletedAgentRuntimeCooldownPersistsFor24Hours(t *testing.T) {
 		account,
 		24*time.Hour,
 		"unauthorized",
-		"用量探针上游返回 403: Agent runtime has been deleted.",
+		"usage probe upstream returned 403: Agent runtime has been deleted.",
 	)
 
 	_, cooldownUntil := account.GetCooldownSnapshot()
@@ -100,8 +100,8 @@ func TestDeletedAgentRuntimeCooldownPersistsFor24Hours(t *testing.T) {
 	}
 }
 
-// issue #328：codex_at 账号可能 wham 恒 401 但真实流量可用。
-// wham 单方面 401 不得把账号打入 unauthorized 冷却（误封后手动重置也会被再次封禁）。
+// issue #328: a codex_at account may get a constant wham 401 while real traffic works.
+// A wham 401 on its own must not put the account into the unauthorized cooldown (after a false ban, a manual reset would be banned again).
 func TestProbeUsageSnapshotWhamUnauthorizedDoesNotBanWhenFallbackUnavailable(t *testing.T) {
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
 		http.Error(w, `{"detail":"Unauthorized"}`, http.StatusUnauthorized)
@@ -111,7 +111,7 @@ func TestProbeUsageSnapshotWhamUnauthorizedDoesNotBanWhenFallbackUnavailable(t *
 	defer restore()
 
 	store := auth.NewStore(nil, nil, nil)
-	// 关闭回退 → whamOnly：缺少 /responses 佐证时不允许封号
+	// Fallback disabled → whamOnly: without /responses corroboration, banning is not allowed
 	store.SetUsageProbeResponsesFallbackEnabled(false)
 	account := &auth.Account{DBID: 1, AccessToken: "at-only-token", Status: auth.StatusReady}
 	store.AddAccount(account)
@@ -162,7 +162,7 @@ func TestProbeUsageSnapshotRevokedTokenBansWithoutResponsesFallback(t *testing.T
 	}
 }
 
-// wham 429 的既有行为不受影响：只上报失败，不封号、不归类为 unauthorized。
+// The existing behavior for wham 429 is unchanged: it only reports a failure, and does not ban or classify the account as unauthorized.
 func TestProbeUsageSnapshotWhamRateLimitedKeepsAccountUsable(t *testing.T) {
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
 		http.Error(w, `{"detail":"rate limited"}`, http.StatusTooManyRequests)
@@ -371,9 +371,9 @@ func TestProbeUsageSnapshotResponses429PreservesIgnoredUsageCooldown(t *testing.
 	}
 }
 
-// team 空间被封时 wham 返回 402 {"detail":{"code":"deactivated_workspace"}}。
-// 即使处于 wham-only 模式(无 /responses 佐证)也必须标错隔离——这是上游对
-// 工作区状态的明确裁决,不存在 401 那种鉴权口径误报;否则账号永远"可用"。
+// When a team workspace is banned, wham returns 402 {"detail":{"code":"deactivated_workspace"}}.
+// Even in wham-only mode (no /responses corroboration) it must be marked as an error and isolated: this is the upstream's
+// explicit verdict on the workspace state, with none of the authentication-rule false positives of a 401; otherwise the account stays "available" forever.
 func TestProbeUsageSnapshotWhamDeactivatedWorkspaceMarksError(t *testing.T) {
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
 		http.Error(w, `{"detail":{"code":"deactivated_workspace"}}`, http.StatusPaymentRequired)
@@ -404,7 +404,7 @@ func TestProbeUsageSnapshotWhamDeactivatedWorkspaceMarksError(t *testing.T) {
 	}
 }
 
-// 裸 402(无 deactivated_workspace 证据)不定罪,保持通用失败路径。
+// A bare 402 (no deactivated_workspace evidence) is not convicted and keeps the generic failure path.
 func TestProbeUsageSnapshotWhamBarePaymentRequiredDoesNotBan(t *testing.T) {
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
 		http.Error(w, `{"detail":"Payment Required"}`, http.StatusPaymentRequired)

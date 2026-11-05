@@ -36,7 +36,7 @@ func TestConnectionTestUsageFromCodexProjectsDiagnostics(t *testing.T) {
 	if in.InputTokens != 30 || in.OutputTokens != 12 || in.CachedTokens != 8 || in.ReasoningTokens != 5 {
 		t.Fatalf("usage projection = %+v", in)
 	}
-	// 没有首内容时间时退回首帧时间(WebSocket 传输)。
+	// Fall back to the first-frame time when there is no first-content time (WebSocket transport).
 	d.FirstContentMS = nil
 	d.FirstFrameMS = int64Ptr(120)
 	if in := connectionTestUsageFromCodex(d, "gpt-5.5"); in.FirstTokenMs != 120 {

@@ -174,7 +174,7 @@ func TestAutoBalanceProxiesAssignsOnlyOAuthAccounts(t *testing.T) {
 	assertProxyURL(atOnlyID, manualProxy)
 }
 
-// 未绑定账号按最少负载均匀摊开,并列时取 URL 字典序保证确定性。
+// Unbound accounts are spread evenly by lowest load; ties go to the URL in lexicographic order to keep the result deterministic.
 func TestComputeProxyAssignmentsSpreadsEvenly(t *testing.T) {
 	targets := []balanceAccount{{id: 1}, {id: 2}, {id: 3}, {id: 4}, {id: 5}, {id: 6}}
 	candidates := []string{"http://p1", "http://p2", "http://p3"}
@@ -189,13 +189,13 @@ func TestComputeProxyAssignmentsSpreadsEvenly(t *testing.T) {
 			t.Fatalf("load[%s] = %d, want 2 (result: %+v)", url, result.load[url], result.load)
 		}
 	}
-	// 确定性:ID 升序 × URL 字典序 → 1→p1 2→p2 3→p3 4→p1 ...
+	// Determinism: ID ascending × URL lexicographic → 1→p1 2→p2 3→p3 4→p1 ...
 	if result.assignments[1] != "http://p1" || result.assignments[2] != "http://p2" || result.assignments[4] != "http://p1" {
 		t.Fatalf("assignment order not deterministic: %+v", result.assignments)
 	}
 }
 
-// 基线负载(其它渠道的既有绑定)计入,新账号先填空闲代理。
+// The baseline load (existing bindings from other channels) is counted, so new accounts first fill the idle proxies.
 func TestComputeProxyAssignmentsRespectsBaseline(t *testing.T) {
 	targets := []balanceAccount{{id: 10}, {id: 11}}
 	candidates := []string{"http://busy", "http://idle"}
@@ -211,12 +211,12 @@ func TestComputeProxyAssignmentsRespectsBaseline(t *testing.T) {
 	}
 }
 
-// all 模式:仍在候选池且未超上限的现有绑定保持不动(减少换 IP),失效绑定被重排。
+// all mode: existing bindings that are still in the candidate pool and not over the limit stay put (to reduce IP changes); invalid bindings are reassigned.
 func TestComputeProxyAssignmentsKeepsValidBindings(t *testing.T) {
 	targets := []balanceAccount{
-		{id: 1, current: "http://p1"},   // 有效绑定 → 保持
-		{id: 2, current: "http://dead"}, // 绑定不在候选池 → 重排
-		{id: 3},                         // 未绑定 → 分配
+		{id: 1, current: "http://p1"},   // valid binding → stays
+		{id: 2, current: "http://dead"}, // binding not in the candidate pool → reassigned
+		{id: 3},                         // unbound → assigned
 	}
 	candidates := []string{"http://p1", "http://p2"}
 
@@ -231,7 +231,7 @@ func TestComputeProxyAssignmentsKeepsValidBindings(t *testing.T) {
 	if result.assignments[2] != "http://p2" {
 		t.Fatalf("account 2 should move to least-loaded p2, got %q", result.assignments[2])
 	}
-	// 账号 3 分配时 p1/p2 均为 1,并列取字典序 → p1。
+	// Account 3 is assigned when p1 and p2 both have 1; ties go to the lexicographic order → p1.
 	if result.assignments[3] != "http://p1" {
 		t.Fatalf("account 3 tie-break should pick p1, got %q", result.assignments[3])
 	}
@@ -240,7 +240,7 @@ func TestComputeProxyAssignmentsKeepsValidBindings(t *testing.T) {
 	}
 }
 
-// 每代理上限:超出容量的账号计入 skipped,不强塞。
+// Per-proxy limit: accounts over capacity are counted as skipped and are not forced in.
 func TestComputeProxyAssignmentsHonorsCap(t *testing.T) {
 	targets := []balanceAccount{{id: 1}, {id: 2}, {id: 3}, {id: 4}, {id: 5}}
 	candidates := []string{"http://p1", "http://p2"}
@@ -255,7 +255,7 @@ func TestComputeProxyAssignmentsHonorsCap(t *testing.T) {
 	}
 }
 
-// 上限也约束"保持现有绑定":已超上限的代理上的存量绑定会被挪走。
+// The limit also constrains "keep existing binding": existing bindings on a proxy already over the limit are moved away.
 func TestComputeProxyAssignmentsCapEvictsOverloadedKeep(t *testing.T) {
 	targets := []balanceAccount{
 		{id: 1, current: "http://p1"},

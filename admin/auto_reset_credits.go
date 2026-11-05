@@ -36,8 +36,8 @@ type autoResetCreditsConfig struct {
 	BeforeExpiryMin     int
 }
 
-// StartAutoResetCredits 启动主动重置次数的后台临期/窗口用尽扫描。两项默认关闭；开启或修改
-// 提前时间时，UpdateSettings 会唤醒本循环立即扫描，之后每 5 分钟扫描一次。
+// StartAutoResetCredits starts the background scan for proactive reset credits that are about to expire or whose window is exhausted. Both are off by default; enabling or changing
+// the lead time makes UpdateSettings wake this loop to scan immediately, and it scans every 5 minutes after that.
 func (h *Handler) StartAutoResetCredits(ctx context.Context) {
 	if h == nil || h.store == nil {
 		return
@@ -71,8 +71,8 @@ func (h *Handler) StartAutoResetCredits(ctx context.Context) {
 					case <-ticker.C:
 					}
 				}
-				// 合并扫描期间积累的设置唤醒和周期 tick，避免同一时刻连续
-				// 扫描两次、对同一账号紧接着消耗两张券。
+				// Coalesce the settings wake-ups and periodic ticks that pile up during a scan, so that the same moment does not
+				// scan twice in a row and consume two vouchers for the same account back to back.
 			drainSignals:
 				for {
 					select {
@@ -86,10 +86,10 @@ func (h *Handler) StartAutoResetCredits(ctx context.Context) {
 					return
 				}
 
-				// 零值表示生产时钟；测试可传固定时间保证候选判断可重复。
+				// The zero value means the production clock; tests can pass a fixed time so candidate checks are repeatable.
 				stats := h.runAutoResetCreditsScan(ctx, time.Time{})
 				if stats.Enabled {
-					log.Printf("[auto-reset-credits] 扫描完成: scanned=%d queried=%d candidates=%d consumed=%d failed=%d",
+					log.Printf("[auto-reset-credits] scan finished: scanned=%d queried=%d candidates=%d consumed=%d failed=%d",
 						stats.Scanned, stats.Queried, stats.Candidates, stats.Consumed, stats.Failed)
 				}
 			}
@@ -97,7 +97,7 @@ func (h *Handler) StartAutoResetCredits(ctx context.Context) {
 	})
 }
 
-// WaitAutoResetCredits 等待后台扫描退出；调用前应先取消传给 Start 的 context。
+// WaitAutoResetCredits waits for the background scan to exit; cancel the context passed to Start before calling it.
 func (h *Handler) WaitAutoResetCredits() {
 	if h != nil {
 		h.resetCreditPostMu.Lock()
@@ -126,7 +126,7 @@ func (h *Handler) runAutoResetCreditsScan(ctx context.Context, now time.Time) au
 	stats := autoResetCreditsScanStats{Enabled: settings.Enabled || settings.OnExhaustionEnabled}
 	if settingsErr != nil {
 		stats.Failed = 1
-		log.Printf("[auto-reset-credits] 读取系统设置失败，已跳过本轮扫描: %v", settingsErr)
+		log.Printf("[auto-reset-credits] failed to read system settings, skipped this scan round: %v", settingsErr)
 		return stats
 	}
 	if !stats.Enabled || h == nil || h.store == nil {
@@ -177,7 +177,7 @@ func (h *Handler) runAutoResetCreditsScan(ctx context.Context, now time.Time) au
 			}
 			statsMu.Unlock()
 			if err != nil {
-				log.Printf("[auto-reset-credits] 账号 %d 处理失败: %v", account.DBID, err)
+				log.Printf("[auto-reset-credits] account %d failed to process: %v", account.DBID, err)
 			}
 		}(account)
 	}
@@ -258,7 +258,7 @@ func (h *Handler) autoResetCreditsForAccount(ctx context.Context, account *auth.
 	if outcome.InProgress {
 		return true, true, false, nil
 	}
-	log.Printf("[auto-reset-credits] 账号 %d 额度已自动消耗: reason=%s expires_at=%s windows_reset=%d remaining=%d",
+	log.Printf("[auto-reset-credits] account %d quota was consumed automatically: reason=%s expires_at=%s windows_reset=%d remaining=%d",
 		account.DBID, reason, expiresAt.UTC().Format(time.RFC3339), outcome.WindowsReset, outcome.Remaining)
 	return true, true, true, nil
 }

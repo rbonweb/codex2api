@@ -11,9 +11,9 @@ import (
 	"github.com/codex2api/cache"
 )
 
-// TestRefreshAccountByIDTriggersUsageProbe 验证 issue #300：手动刷新账号后，
-// 会顺带触发一次用量探针（wham），从服务端权威数据同步订阅到期时间，
-// 而不是仅依赖可能滞后的 token JWT。
+// TestRefreshAccountByIDTriggersUsageProbe verifies issue #300: after manually refreshing an account,
+// a usage probe (wham) is also triggered, syncing the subscription expiry from the server's authoritative data,
+// instead of relying only on the token JWT, which can lag behind.
 func TestRefreshAccountByIDTriggersUsageProbe(t *testing.T) {
 	db := newTestAdminDB(t)
 	store := auth.NewStore(db, cache.NewMemory(1), nil)
@@ -59,7 +59,7 @@ func TestRefreshAccountByIDTriggersUsageProbe(t *testing.T) {
 	}
 }
 
-// TestRefreshAccountByIDSkipsProbeOnRefreshFailure 验证刷新失败时不再触发探针。
+// TestRefreshAccountByIDSkipsProbeOnRefreshFailure verifies that the probe is no longer triggered when the refresh fails.
 func TestRefreshAccountByIDSkipsProbeOnRefreshFailure(t *testing.T) {
 	db := newTestAdminDB(t)
 	store := auth.NewStore(db, cache.NewMemory(1), nil)
@@ -107,7 +107,7 @@ func TestRefreshImportedAccountMarksUnauthorizedOnInvalidatedRT(t *testing.T) {
 		db:    db,
 		store: store,
 		refreshAccount: func(context.Context, int64) error {
-			return fmt.Errorf(`刷新失败（重试 3 次）: 刷新失败 (status 401): {"error":{"message":"Your session has ended. Please log in again.","code":"refresh_token_invalidated"}}`)
+			return fmt.Errorf(`refresh failed (3 retries): refresh failed (status 401): {"error":{"message":"Your session has ended. Please log in again.","code":"refresh_token_invalidated"}}`)
 		},
 		probeUsage: func(context.Context, *auth.Account) error {
 			probed = true
@@ -152,7 +152,7 @@ func TestRefreshImportedAccountRetriesTransientFailureBeforeError(t *testing.T) 
 		store: store,
 		refreshAccount: func(context.Context, int64) error {
 			attempts.Add(1)
-			return fmt.Errorf("刷新失败（重试 3 次）: context deadline exceeded")
+			return fmt.Errorf("refresh failed (3 retries): context deadline exceeded")
 		},
 	}
 
@@ -161,7 +161,7 @@ func TestRefreshImportedAccountRetriesTransientFailureBeforeError(t *testing.T) 
 	if acc == nil {
 		t.Fatal("imported account disappeared after refresh failure")
 	}
-	// 瞬时失败不再一次标死:第一次失败后应保持「刷新中」等待延迟重试。
+	// A transient failure must not mark the account dead at once: after the first failure it should stay "refreshing" and wait for a delayed retry.
 	if got := acc.RuntimeStatus(); got != "refreshing" {
 		t.Fatalf("RuntimeStatus() after first transient failure = %q, want refreshing", got)
 	}
@@ -195,12 +195,12 @@ func TestRefreshImportedAccountSkipsRemarkWhenStoreAlreadyMarked(t *testing.T) {
 	handler := &Handler{
 		db:    db,
 		store: store,
-		// 模拟 store 刷新路径:内部已对不可重试错误标了未授权冷却,
-		// 错误再冒回导入收尾。此时不能重复标记,更不能降级成 error。
+		// Simulate the store refresh path: internally it has already set an unauthorized cooldown on the non-retryable error,
+		// and the error bubbles back up to the import wrap-up. It must not be marked again here, let alone downgraded to error.
 		refreshAccount: func(_ context.Context, accountID int64) error {
 			acc := store.FindByID(accountID)
 			store.MarkCooldownWithError(acc, 24*time.Hour, "unauthorized", "invalid_grant")
-			return fmt.Errorf("刷新失败（重试 3 次）: 刷新失败 (status 400): invalid_grant")
+			return fmt.Errorf("refresh failed (3 retries): refresh failed (status 400): invalid_grant")
 		},
 	}
 

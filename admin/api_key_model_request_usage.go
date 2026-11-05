@@ -24,7 +24,7 @@ func normalizeAdminAPIKeyModelRequestLimits(in, existing []database.APIKeyModelR
 	for _, rule := range in {
 		if id := strings.TrimSpace(rule.ID); id != "" {
 			if _, ok := byID[id]; !ok {
-				return nil, fmt.Errorf("limits.model_request_limits: 未知规则 ID %q；新增规则请省略 id，由服务端生成", id)
+				return nil, fmt.Errorf("limits.model_request_limits: unknown rule ID %q; to add a new rule, omit the id and the server generates it", id)
 			}
 		}
 	}
@@ -38,7 +38,7 @@ func normalizeAdminAPIKeyModelRequestLimits(in, existing []database.APIKeyModelR
 			continue
 		}
 		if rule.Model != old.Model || rule.Window != old.Window || rule.Timezone != old.Timezone || rule.ResetWeekday != old.ResetWeekday || rule.ResetTime != old.ResetTime {
-			return nil, fmt.Errorf("limits.model_request_limits: 规则 %q 的模型与重置时间不可直接修改；请删除旧规则并新增规则。修改次数上限时请保留原 id", rule.ID)
+			return nil, fmt.Errorf("limits.model_request_limits: the model and reset time of rule %q cannot be changed directly; delete the old rule and add a new one. To change the count cap, keep the original id", rule.ID)
 		}
 	}
 	return clean, nil
@@ -49,11 +49,11 @@ func normalizeAdminAPIKeyModelRequestLimits(in, existing []database.APIKeyModelR
 func (h *Handler) GetAPIKeyModelRequestUsage(c *gin.Context) {
 	id, err := strconv.ParseInt(c.Param("id"), 10, 64)
 	if err != nil || id <= 0 {
-		writeError(c, http.StatusBadRequest, "无效的 API Key ID")
+		writeError(c, http.StatusBadRequest, "Invalid API Key ID")
 		return
 	}
 	if h == nil || h.db == nil {
-		writeError(c, http.StatusServiceUnavailable, "服务未就绪")
+		writeError(c, http.StatusServiceUnavailable, "Service not ready")
 		return
 	}
 	ctx, cancel := context.WithTimeout(c.Request.Context(), 8*time.Second)

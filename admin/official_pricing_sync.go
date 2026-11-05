@@ -89,15 +89,15 @@ func (h *Handler) runOfficialPricingSyncWithWarnings(ctx context.Context, option
 	if result != nil {
 		result.Warnings = append(result.Warnings, warnings...)
 		if len(result.Missing) > 0 {
-			result.Notices = append(result.Notices, "已使用内置默认定价（自定义定价优先）: "+strings.Join(result.Missing, ", "))
+			result.Notices = append(result.Notices, "Using built-in default pricing (custom pricing takes priority): "+strings.Join(result.Missing, ", "))
 		}
 		warnings = result.Warnings
 	}
 	if recordErr := h.db.RecordOfficialPricingSyncResult(recordCtx, attemptedAt, syncErr, warnings); recordErr != nil {
 		if syncErr != nil {
-			return result, fmt.Errorf("%v；记录同步状态失败: %w", syncErr, recordErr)
+			return result, fmt.Errorf("%v; failed to record sync status: %w", syncErr, recordErr)
 		}
-		return result, fmt.Errorf("官方价格已同步，但记录状态失败: %w", recordErr)
+		return result, fmt.Errorf("official prices synced, but failed to record status: %w", recordErr)
 	}
 	return result, syncErr
 }
@@ -115,7 +115,7 @@ func (h *Handler) UpdateOfficialPricingSyncConfig(c *gin.Context) {
 		return
 	}
 	if req.IntervalMinutes < database.MinOfficialPricingSyncIntervalMinutes || req.IntervalMinutes > database.MaxOfficialPricingSyncIntervalMinutes {
-		writeError(c, http.StatusBadRequest, fmt.Sprintf("轮询间隔必须在 %d 到 %d 分钟之间", database.MinOfficialPricingSyncIntervalMinutes, database.MaxOfficialPricingSyncIntervalMinutes))
+		writeError(c, http.StatusBadRequest, fmt.Sprintf("Poll interval must be between %d and %d minutes", database.MinOfficialPricingSyncIntervalMinutes, database.MaxOfficialPricingSyncIntervalMinutes))
 		return
 	}
 	ctx, cancel := context.WithTimeout(c.Request.Context(), 5*time.Second)
@@ -149,7 +149,7 @@ func (h *Handler) SyncOfficialPricingNow(c *gin.Context) {
 		includeOpenAI = *req.IncludeOpenAI
 	}
 	if !includeOpenAI {
-		writeError(c, http.StatusBadRequest, "至少选择一个官方价格来源")
+		writeError(c, http.StatusBadRequest, "Select at least one official pricing source")
 		return
 	}
 	ctx, cancel := context.WithTimeout(c.Request.Context(), officialPricingSyncTimeout)
@@ -174,7 +174,7 @@ func (h *Handler) StartOfficialPricingSync(ctx context.Context) {
 			cfg, err := h.db.GetOfficialPricingSyncConfig(readCtx)
 			cancel()
 			if err != nil {
-				log.Printf("读取官方价格轮询设置失败: %v", err)
+				log.Printf("failed to read official pricing poll settings: %v", err)
 				return
 			}
 			if cfg == nil || !cfg.Enabled || !cfg.IncludeOpenAI {
@@ -192,18 +192,18 @@ func (h *Handler) StartOfficialPricingSync(ctx context.Context) {
 			result, syncErr := h.runAutomaticModelPricingSync(syncCtx, cfg)
 			syncCancel()
 			if syncErr != nil {
-				log.Printf("官方模型价格自动同步失败: %v", syncErr)
+				log.Printf("official model price auto-sync failed: %v", syncErr)
 				return
 			}
 			if result == nil {
-				log.Printf("官方模型价格自动同步返回空结果")
+				log.Printf("official model price auto-sync returned an empty result")
 				return
 			}
 			warning := ""
 			if result != nil && len(result.Warnings) > 0 {
-				warning = "，警告: " + strings.Join(result.Warnings, "; ")
+				warning = ", warning: " + strings.Join(result.Warnings, "; ")
 			}
-			log.Printf("官方模型价格自动同步完成: fetched=%d applied=%d skipped=%d%s", result.Fetched, result.Applied, result.Skipped, warning)
+			log.Printf("official model price auto-sync completed: fetched=%d applied=%d skipped=%d%s", result.Fetched, result.Applied, result.Skipped, warning)
 		}
 
 		check()

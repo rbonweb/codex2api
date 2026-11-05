@@ -131,10 +131,10 @@ func parsePublicAPIKeyUsageLogPagination(pageRaw, pageSizeRaw string) (int, int,
 	if pageRaw != "" {
 		parsed, err := strconv.Atoi(pageRaw)
 		if err != nil || parsed < 1 {
-			return 0, 0, errors.New("page 参数无效，需要正整数")
+			return 0, 0, errors.New("page is invalid, must be a positive integer")
 		}
 		if parsed > maxAdminPage {
-			return 0, 0, errors.New("page 参数过大")
+			return 0, 0, errors.New("page is too large")
 		}
 		page = parsed
 	}
@@ -144,10 +144,10 @@ func parsePublicAPIKeyUsageLogPagination(pageRaw, pageSizeRaw string) (int, int,
 	if pageSizeRaw != "" {
 		parsed, err := strconv.Atoi(pageSizeRaw)
 		if err != nil || parsed < 1 {
-			return 0, 0, errors.New("page_size 参数无效，需要正整数")
+			return 0, 0, errors.New("page_size is invalid, must be a positive integer")
 		}
 		if parsed > publicAPIKeyUsageMaxLogPageSize {
-			return 0, 0, errors.New("page_size 最大支持 100")
+			return 0, 0, errors.New("page_size supports at most 100")
 		}
 		pageSize = parsed
 	}
@@ -166,22 +166,22 @@ func parsePublicAPIKeyUsageLogFilter(model, endpoint, status, stream, channel st
 		Channel:  strings.ToLower(strings.TrimSpace(channel)),
 	}
 	if len(filter.Model) > publicAPIKeyUsageMaxFilterLen || len(filter.Endpoint) > publicAPIKeyUsageMaxFilterLen {
-		return database.APIKeySelfLogFilter{}, errors.New("model / endpoint 参数过长")
+		return database.APIKeySelfLogFilter{}, errors.New("model / endpoint is too long")
 	}
 	switch filter.Status {
 	case "", "success", "error", "4xx", "5xx", "429":
 	default:
-		return database.APIKeySelfLogFilter{}, errors.New("status 参数仅支持 success、error、4xx、5xx、429")
+		return database.APIKeySelfLogFilter{}, errors.New("status only supports success, error, 4xx, 5xx, 429")
 	}
 	switch filter.Stream {
 	case "", "stream", "sync":
 	default:
-		return database.APIKeySelfLogFilter{}, errors.New("stream 参数仅支持 stream、sync")
+		return database.APIKeySelfLogFilter{}, errors.New("stream only supports stream, sync")
 	}
 	switch filter.Channel {
 	case "", "codex":
 	default:
-		return database.APIKeySelfLogFilter{}, errors.New("channel 参数仅支持 codex")
+		return database.APIKeySelfLogFilter{}, errors.New("channel only supports codex")
 	}
 	return filter, nil
 }
@@ -203,7 +203,7 @@ func parsePublicAPIKeyUsageRange(raw string) (string, time.Time, time.Time, erro
 	case "all":
 		return rangeName, time.Time{}, now, nil
 	default:
-		return "", time.Time{}, time.Time{}, errors.New("range 参数仅支持 today、7d、30d、all")
+		return "", time.Time{}, time.Time{}, errors.New("range only supports today, 7d, 30d, all")
 	}
 }
 

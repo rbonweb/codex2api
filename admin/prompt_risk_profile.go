@@ -12,7 +12,7 @@ import (
 	"github.com/gin-gonic/gin"
 )
 
-const promptRiskHistoryGuardrail = "画像只统计本地 warn/block 与上游 CY；影子审计和普通命中不再抬高风险。画像不会单独封禁当前请求，只控制可自动失效的模型复核豁免；达到阈值或再次出现 CY 时立即恢复同步审核。"
+const promptRiskHistoryGuardrail = "The profile counts only local warn/block and upstream CY events; shadow audits and ordinary hits no longer raise risk. The profile alone never blocks the current request; it only controls the model-review exemption that can be revoked automatically. When the threshold is reached or CY appears again, synchronous review resumes immediately."
 
 const promptRiskProfileListTimeout = 20 * time.Second
 
@@ -71,11 +71,11 @@ func (h *Handler) ListPromptRiskProfiles(c *gin.Context) {
 	}
 	activityState := strings.ToLower(strings.TrimSpace(c.Query("activity_state")))
 	if activityState != "" && activityState != "all" && activityState != "active" && activityState != "identity_only" {
-		writeError(c, http.StatusBadRequest, "activity_state 必须为 all、active 或 identity_only")
+		writeError(c, http.StatusBadRequest, "activity_state must be all, active, or identity_only")
 		return
 	}
-	// 生产画像列表需要聚合近 30 天事件。高流量实例可能包含数十万条记录，
-	// 5 秒会在 SQLite 正常计算完成前主动取消，表现为稳定的 500。
+	// The production profile list needs to aggregate events from the last 30 days. High-traffic instances may hold hundreds of thousands of records,
+	// and a 5-second limit would cancel the query before SQLite finishes computing it normally, which shows up as a steady 500.
 	ctx, cancel := context.WithTimeout(c.Request.Context(), promptRiskProfileListTimeout)
 	defer cancel()
 	lockTTL, userCooldownTTL := h.promptConversationRestrictionTTLs()
@@ -105,7 +105,7 @@ func (h *Handler) GetPromptRiskProfile(c *gin.Context) {
 	subjectType := strings.TrimSpace(c.Param("subject_type"))
 	subjectKey := strings.TrimSpace(c.Param("subject_key"))
 	if !validPromptRiskSubjectType(subjectType) || subjectKey == "" {
-		writeError(c, http.StatusBadRequest, "风险画像标识无效")
+		writeError(c, http.StatusBadRequest, "Invalid risk profile ID")
 		return
 	}
 	eventPage := positiveQueryInt(c, "event_page", 1)
@@ -124,7 +124,7 @@ func (h *Handler) GetPromptRiskProfile(c *gin.Context) {
 		return
 	}
 	if len(profiles) == 0 {
-		writeError(c, http.StatusNotFound, "风险画像不存在")
+		writeError(c, http.StatusNotFound, "Risk profile not found")
 		return
 	}
 	profile := profiles[0]

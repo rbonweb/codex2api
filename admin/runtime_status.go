@@ -20,7 +20,7 @@ const (
 	runtimeStatusError    = "error"
 )
 
-// GetRuntimeStatus 返回机器可读的运行时依赖状态。
+// GetRuntimeStatus returns the machine-readable runtime dependency status.
 func (h *Handler) GetRuntimeStatus(c *gin.Context) {
 	ctx, cancel := context.WithTimeout(c.Request.Context(), 3*time.Second)
 	defer cancel()
@@ -40,50 +40,50 @@ func (h *Handler) buildRuntimeStatus(ctx context.Context, r *http.Request) runti
 	}
 
 	service := h.runtimeServiceStatus(r)
-	addCheck("service", runtimeStatusOK, "service_running", "服务进程正在运行")
+	addCheck("service", runtimeStatusOK, "service_running", "Service process is running")
 
 	dbStatus := h.runtimeDatabaseStatus(ctx)
-	addCheck("database", dbStatus.Status, statusCode(dbStatus.Status, "database"), statusMessage(dbStatus.Status, "数据库连接正常", dbStatus.Error))
+	addCheck("database", dbStatus.Status, statusCode(dbStatus.Status, "database"), statusMessage(dbStatus.Status, "Database connection is healthy", dbStatus.Error))
 
 	cacheStatus := h.runtimeCacheStatus(ctx)
-	addCheck("cache", cacheStatus.Status, statusCode(cacheStatus.Status, "cache"), statusMessage(cacheStatus.Status, "缓存连接正常", cacheStatus.Error))
+	addCheck("cache", cacheStatus.Status, statusCode(cacheStatus.Status, "cache"), statusMessage(cacheStatus.Status, "Cache connection is healthy", cacheStatus.Error))
 
 	usageLog := h.runtimeUsageLogStatus()
 	if usageLog.Status != runtimeStatusOK {
-		addCheck("usage_log", usageLog.Status, statusCode(usageLog.Status, "usage_log"), statusMessage(usageLog.Status, "请求日志写入状态正常", "请求日志写入器不可用"))
+		addCheck("usage_log", usageLog.Status, statusCode(usageLog.Status, "usage_log"), statusMessage(usageLog.Status, "Request log writing status is healthy", "Request log writer is unavailable"))
 	} else if usageLog.Enabled {
-		addCheck("usage_log", runtimeStatusOK, "usage_log_enabled", "请求日志写入已开启")
+		addCheck("usage_log", runtimeStatusOK, "usage_log_enabled", "Request log writing is enabled")
 	} else {
-		addCheck("usage_log", runtimeStatusOK, "usage_log_disabled", "请求日志写入已按配置关闭")
+		addCheck("usage_log", runtimeStatusOK, "usage_log_disabled", "Request log writing is turned off by configuration")
 	}
 
 	probes := h.runtimeProbesStatus()
 	if probes.Status != runtimeStatusOK {
-		addCheck("probes", probes.Status, statusCode(probes.Status, "probes"), statusMessage(probes.Status, "后台刷新和探针配置正常", "探针运行态不可用"))
+		addCheck("probes", probes.Status, statusCode(probes.Status, "probes"), statusMessage(probes.Status, "Background refresh and probe configuration is healthy", "Probe runtime state is unavailable"))
 	} else if probes.LazyMode {
-		addCheck("probes", runtimeStatusOK, "lazy_mode_enabled", "惰性模式已开启，仅保留 wham 用量探针")
+		addCheck("probes", runtimeStatusOK, "lazy_mode_enabled", "Lazy mode is enabled; only the wham usage probe is kept")
 	} else {
-		addCheck("probes", runtimeStatusOK, "probes_enabled", "后台刷新和探针配置正常")
+		addCheck("probes", runtimeStatusOK, "probes_enabled", "Background refresh and probe configuration is healthy")
 	}
 
 	accounts := h.runtimeAccountsStatus()
 	switch accounts.Status {
 	case runtimeStatusDegraded:
-		addCheck("accounts", runtimeStatusDegraded, "account_pool_degraded", "账号池当前没有可调度账号")
+		addCheck("accounts", runtimeStatusDegraded, "account_pool_degraded", "The account pool currently has no schedulable accounts")
 	case runtimeStatusError:
-		addCheck("accounts", runtimeStatusError, "account_store_unavailable", "账号池运行态不可用")
+		addCheck("accounts", runtimeStatusError, "account_store_unavailable", "The account pool runtime state is unavailable")
 	default:
-		addCheck("accounts", runtimeStatusOK, "account_pool_ready", "账号池存在可调度账号")
+		addCheck("accounts", runtimeStatusOK, "account_pool_ready", "The account pool has schedulable accounts")
 	}
 
 	imageStorage := h.runtimeImageStorageStatus()
-	addCheck("image_storage", imageStorage.Status, statusCode(imageStorage.Status, "image_storage"), statusMessage(imageStorage.Status, "图片存储配置正常", imageStorage.Error))
+	addCheck("image_storage", imageStorage.Status, statusCode(imageStorage.Status, "image_storage"), statusMessage(imageStorage.Status, "Image storage configuration is healthy", imageStorage.Error))
 
 	adminAuth := h.runtimeAdminAuthStatus(ctx)
 	if adminAuth.Configured {
-		addCheck("admin_auth", runtimeStatusOK, "admin_auth_configured", "管理鉴权已配置")
+		addCheck("admin_auth", runtimeStatusOK, "admin_auth_configured", "Admin authentication is configured")
 	} else {
-		addCheck("admin_auth", runtimeStatusError, "admin_auth_disabled", "管理密钥未配置")
+		addCheck("admin_auth", runtimeStatusError, "admin_auth_disabled", "Admin key is not configured")
 	}
 
 	return runtimeStatusResponse{
@@ -393,7 +393,7 @@ func statusMessage(status, okMessage, errMessage string) string {
 		return errMessage
 	}
 	if status == runtimeStatusDegraded {
-		return "当前组件处于降级状态"
+		return "The current component is in a degraded state"
 	}
-	return "当前组件异常"
+	return "The current component is in an error state"
 }

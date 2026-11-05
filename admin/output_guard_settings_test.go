@@ -45,8 +45,8 @@ func newTestAdminHandlerFixtureWithPath(t *testing.T) (*Handler, *database.DB, s
 	return handler, db, dbPath
 }
 
-// execAdminOutputGuardTestSQLite 在测试库上执行一条原始 SQL，用于模拟防护列
-// 读取/写入失败（例如 schema 缺失），而不影响 system_settings 的其他列。
+// execAdminOutputGuardTestSQLite runs one raw SQL statement on the test database, to simulate protection column
+// read/write failures (for example a missing schema) without affecting the other system_settings columns.
 func execAdminOutputGuardTestSQLite(t *testing.T, dbPath, statement string) {
 	t.Helper()
 	raw, err := sql.Open("sqlite", dbPath)
@@ -73,8 +73,8 @@ func queryAdminOutputGuardTestSQLiteBool(t *testing.T, dbPath, query string) boo
 	return value != 0
 }
 
-// lockedLogBuffer 是并发安全的日志捕获器：handler 和后台 goroutine 都可能写
-// 标准 logger，测试断言读取时必须加锁。
+// lockedLogBuffer is a concurrency-safe log capture: the handler and background goroutines may both write
+// to the standard logger, so test assertions must take the lock when reading.
 type lockedLogBuffer struct {
 	mu  sync.Mutex
 	buf strings.Builder
@@ -152,21 +152,21 @@ func TestAdminOutputGuardSettings_PutValidationAndReadonlyRejection(t *testing.T
 	gin.SetMode(gin.TestMode)
 	handler, db := newTestAdminHandlerFixture(t)
 
-	// 1. 提交只读 generation 必须报错 400
+	// 1. Submitting a read-only generation must return 400
 	{
 		w := invokeAdminSettingsEndpoint(t, handler, http.MethodPut, map[string]any{"output_guard_config_generation": 999})
-		if w.Code != http.StatusBadRequest || !strings.Contains(w.Body.String(), "只读") {
+		if w.Code != http.StatusBadRequest || !strings.Contains(w.Body.String(), "read-only") {
 			t.Fatalf("expected 400 with readonly rejection, got code=%d body=%s", w.Code, w.Body.String())
 		}
 	}
-	// 2. 超出单个字段合法范围必须报错 400
+	// 2. A value outside the valid range of a single field must return 400
 	{
 		w := invokeAdminSettingsEndpoint(t, handler, http.MethodPut, map[string]any{"output_guard_max_tool_argument_bytes": 1024})
 		if w.Code != http.StatusBadRequest {
 			t.Fatalf("expected 400 on out of range tool bytes, got %d", w.Code)
 		}
 	}
-	// 3. 违反 tool <= channel <= request 层级校验必须报错 400 且不改写 DB
+	// 3. Violating the tool <= channel <= request level validation must return 400 and must not rewrite the DB
 	{
 		w := invokeAdminSettingsEndpoint(t, handler, http.MethodPut, map[string]any{
 			"output_guard_max_tool_argument_bytes": 3145728,
@@ -180,7 +180,7 @@ func TestAdminOutputGuardSettings_PutValidationAndReadonlyRejection(t *testing.T
 			t.Fatalf("database should not be updated on illegal hierarchy validation, err=%v", err)
 		}
 	}
-	// 4. 显式 true 准确持久化与热应用
+	// 4. An explicit true is persisted accurately and hot-applied
 	{
 		w := invokeAdminSettingsEndpoint(t, handler, http.MethodPut, map[string]any{"output_guard_enabled": true})
 		if w.Code != http.StatusOK {
@@ -196,7 +196,7 @@ func TestAdminOutputGuardSettings_PutValidationAndReadonlyRejection(t *testing.T
 			t.Fatalf("database must store explicit true")
 		}
 	}
-	// 5. 局部字段更新隔离：仅更新 deltas 不改变其他字段，并立即热应用
+	// 5. Partial field update isolation: updating only deltas leaves other fields unchanged, and they are hot-applied immediately
 	{
 		w := invokeAdminSettingsEndpoint(t, handler, http.MethodPut, map[string]any{"output_guard_max_tool_argument_deltas": 8192})
 		if w.Code != http.StatusOK {
@@ -213,9 +213,9 @@ func TestAdminOutputGuardSettings_PutValidationAndReadonlyRejection(t *testing.T
 	}
 }
 
-// TestAdminOutputGuardSettings_NotPersistedOrAppliedWhenLaterValidationFails 覆盖
-// “防护配置先于后续校验落库并热应用”的部分提交回归：同一请求里后续字段校验
-// 失败时，防护配置必须既未写库，也未热应用。
+// TestAdminOutputGuardSettings_NotPersistedOrAppliedWhenLaterValidationFails covers
+// the partial-commit regression where protection settings are persisted and hot-applied before later validation: when a later field validation in the same request
+// fails, the protection settings must be neither written to the DB nor hot-applied.
 func TestAdminOutputGuardSettings_NotPersistedOrAppliedWhenLaterValidationFails(t *testing.T) {
 	gin.SetMode(gin.TestMode)
 	handler, db := newTestAdminHandlerFixture(t)
@@ -227,8 +227,8 @@ func TestAdminOutputGuardSettings_NotPersistedOrAppliedWhenLaterValidationFails(
 	}
 	beforeRuntime := proxy.CurrentOutputGuardConfig()
 
-	// models_list_read_max_bytes 的校验发生在防护设置之后；它失败时整个保存
-	// 请求返回 400，防护设置不应留下任何已提交或已生效的痕迹。
+	// The validation of models_list_read_max_bytes happens after the protection settings; when it fails, the whole save
+	// request returns 400, and the protection settings must not leave any trace of being committed or applied.
 	w := invokeAdminSettingsEndpoint(t, handler, http.MethodPut, map[string]any{
 		"output_guard_enabled":       true,
 		"models_list_read_max_bytes": 1,
@@ -258,9 +258,9 @@ func TestAdminOutputGuardSettings_NotPersistedOrAppliedWhenLaterValidationFails(
 	}
 }
 
-// TestAdminOutputGuardSettings_GetSurfacesReadFailure 覆盖 F1：防护设置读取失败
-// 时不得用 DefaultOutputGuardSettings 静默兜底（那会让 UI 显示 enabled=false，
-// 而代理可能仍在用已启用的旧配置），必须返回明确错误并记录日志。
+// TestAdminOutputGuardSettings_GetSurfacesReadFailure covers F1: a failure to read protection settings
+// must not silently fall back to DefaultOutputGuardSettings (that would make the UI show enabled=false,
+// while the proxy may still be using the enabled old config); it must return an explicit error and log it.
 func TestAdminOutputGuardSettings_GetSurfacesReadFailure(t *testing.T) {
 	gin.SetMode(gin.TestMode)
 	handler, _, dbPath := newTestAdminHandlerFixtureWithPath(t)
@@ -277,20 +277,20 @@ func TestAdminOutputGuardSettings_GetSurfacesReadFailure(t *testing.T) {
 		t.Fatalf("expected HTTP 500 when guard settings read fails, got %d, body: %s", w.Code, w.Body.String())
 	}
 	body := w.Body.String()
-	if !strings.Contains(body, "读取防护设置失败") {
+	if !strings.Contains(body, "Failed to read guard settings") {
 		t.Fatalf("expected explicit guard read failure in response, got: %s", body)
 	}
 	if strings.Contains(body, "output_guard_enabled") {
 		t.Fatalf("must not silently return default guard settings on read failure, got: %s", body)
 	}
-	if logText := logs.String(); !strings.Contains(logText, "读取输出防护设置失败") {
+	if logText := logs.String(); !strings.Contains(logText, "failed to read output guard settings") {
 		t.Fatalf("expected guard read failure to be logged, got logs: %s", logText)
 	}
 }
 
-// TestAdminOutputGuardSettings_UpdateDBErrorMapsTo500 覆盖 F2：防护设置落库失败
-// （非校验错误）必须映射 500。这里删除一个防护列，使事务内“读取-合并-校验”
-// 的读取步骤失败；同时验证整个事务回滚、enabled 未被写入。
+// TestAdminOutputGuardSettings_UpdateDBErrorMapsTo500 covers F2: a failure to persist protection settings
+// (not a validation error) must map to 500. Here one protection column is dropped, so the read-merge-validate step inside the transaction
+// fails at its read step; it also verifies that the whole transaction rolls back and enabled is not written.
 func TestAdminOutputGuardSettings_UpdateDBErrorMapsTo500(t *testing.T) {
 	gin.SetMode(gin.TestMode)
 	handler, _, dbPath := newTestAdminHandlerFixtureWithPath(t)
@@ -301,7 +301,7 @@ func TestAdminOutputGuardSettings_UpdateDBErrorMapsTo500(t *testing.T) {
 	if w.Code != http.StatusInternalServerError {
 		t.Fatalf("expected HTTP 500 on database error during guard update, got %d, body: %s", w.Code, w.Body.String())
 	}
-	if !strings.Contains(w.Body.String(), "保存防护设置失败") {
+	if !strings.Contains(w.Body.String(), "Failed to save guard settings") {
 		t.Fatalf("expected guard persistence failure in response, got: %s", w.Body.String())
 	}
 	if queryAdminOutputGuardTestSQLiteBool(t, dbPath, "SELECT output_guard_enabled FROM system_settings WHERE id = 1") {
@@ -309,15 +309,15 @@ func TestAdminOutputGuardSettings_UpdateDBErrorMapsTo500(t *testing.T) {
 	}
 }
 
-// TestAdminOutputGuardSettings_MaxConcurrencyNotChangedWhenGuardSaveFails 覆盖 review 意见：
-// 当 UpdateSettings 携带 max_concurrency / max_retries / max_rate_limit_retries / global_rpm 且 guard 保存失败（如非法参数返回 400 或 DB 失败返回 500）时，
-// 运行时配置必须保持旧值，不能被污染；数据库亦保持旧值；成功路径下正常热应用并持久化。
+// TestAdminOutputGuardSettings_MaxConcurrencyNotChangedWhenGuardSaveFails covers review feedback:
+// when UpdateSettings carries max_concurrency / max_retries / max_rate_limit_retries / global_rpm and the guard save fails (an invalid parameter returns 400, or a DB failure returns 500),
+// the runtime config must keep its old values and must not be polluted; the database also keeps its old values; on the success path the values are hot-applied and persisted as usual.
 func TestAdminOutputGuardSettings_MaxConcurrencyNotChangedWhenGuardSaveFails(t *testing.T) {
 	gin.SetMode(gin.TestMode)
 	handler, db := newTestAdminHandlerFixture(t)
 	ctx := context.Background()
 
-	// 准备初始状态：max_concurrency 初始设为 5，max_retries 初始设为 3，max_rate_limit_retries 设为 1，global_rpm 设为 100
+	// Prepare the initial state: max_concurrency starts at 5, max_retries at 3, max_rate_limit_retries at 1, global_rpm at 100
 	initMaxConcurrency := 5
 	initMaxRetries := 3
 	initMaxRateLimitRetries := 1
@@ -344,14 +344,14 @@ func TestAdminOutputGuardSettings_MaxConcurrencyNotChangedWhenGuardSaveFails(t *
 		t.Fatalf("expected rate limiter rpm=%d, got %d", initGlobalRPM, got)
 	}
 
-	// 1. PUT max_concurrency: 99, max_retries: 7, max_rate_limit_retries: 8, global_rpm: 999 + 非法 output_guard_max_channel_bytes
-	// 期望返回 400，运行时保持旧值，数据库中亦保持旧值
+	// 1. PUT max_concurrency: 99, max_retries: 7, max_rate_limit_retries: 8, global_rpm: 999 + an invalid output_guard_max_channel_bytes
+	// Expect 400; the runtime keeps its old values, and so does the database
 	wErr := invokeAdminSettingsEndpoint(t, handler, http.MethodPut, map[string]any{
 		"max_concurrency":                99,
 		"max_retries":                    7,
 		"max_rate_limit_retries":         8,
 		"global_rpm":                     999,
-		"output_guard_max_channel_bytes": 10, // 低于 MinOutputGuardMaxChannelBytes (128KiB)
+		"output_guard_max_channel_bytes": 10, // below MinOutputGuardMaxChannelBytes (128KiB)
 	})
 	if wErr.Code != http.StatusBadRequest {
 		t.Fatalf("expected HTTP 400 on invalid guard settings, got %d, body: %s", wErr.Code, wErr.Body.String())
@@ -385,8 +385,8 @@ func TestAdminOutputGuardSettings_MaxConcurrencyNotChangedWhenGuardSaveFails(t *
 		t.Fatalf("persisted global_rpm must remain %d, got %d", initGlobalRPM, persisted.GlobalRPM)
 	}
 
-	// 2. 成功路径：PUT max_concurrency: 12, max_retries: 6, max_rate_limit_retries: 4, global_rpm: 250 + 合法 output_guard_max_channel_bytes
-	// 期望返回 200，运行时立即更新，数据库持久化更新
+	// 2. Success path: PUT max_concurrency: 12, max_retries: 6, max_rate_limit_retries: 4, global_rpm: 250 + a valid output_guard_max_channel_bytes
+	// Expect 200; the runtime updates immediately, and the database update is persisted
 	targetChannelBytes := database.MinOutputGuardMaxChannelBytes * 2
 	wSuccess := invokeAdminSettingsEndpoint(t, handler, http.MethodPut, map[string]any{
 		"max_concurrency":                12,
@@ -426,7 +426,7 @@ func TestAdminOutputGuardSettings_MaxConcurrencyNotChangedWhenGuardSaveFails(t *
 	if persistedSuccess.GlobalRPM != 250 {
 		t.Fatalf("persisted global_rpm must be 250 on success, got %d", persistedSuccess.GlobalRPM)
 	}
-	// 3. 500 场景：当数据库出错导致 guard 保存失败返回 500 时，运行时与 DB 同样保持旧值
+	// 3. 500 case: when a database error makes the guard save return 500, the runtime and the DB likewise keep their old values
 	{
 		handler500, db500, dbPath := newTestAdminHandlerFixtureWithPath(t)
 		wInit500 := invokeAdminSettingsEndpoint(t, handler500, http.MethodPut, map[string]any{
@@ -438,7 +438,7 @@ func TestAdminOutputGuardSettings_MaxConcurrencyNotChangedWhenGuardSaveFails(t *
 		if wInit500.Code != http.StatusOK {
 			t.Fatalf("init settings for 500 test failed: %d", wInit500.Code)
 		}
-		// 破坏 output_guard_max_channel_bytes 列，使事务执行 guard 更新时报 DB 错误
+		// Break the output_guard_max_channel_bytes column so that the guard update in the transaction reports a DB error
 		execAdminOutputGuardTestSQLite(t, dbPath,
 			"ALTER TABLE system_settings DROP COLUMN output_guard_max_channel_bytes")
 
@@ -483,16 +483,16 @@ func TestAdminOutputGuardSettings_MaxConcurrencyNotChangedWhenGuardSaveFails(t *
 	}
 }
 
-// TestAdminOutputGuardSettings_MaxConcurrencyNotChangedWhenModelsListWriteFails 覆盖 review 意见：
-// 当 settings 事务已成功提交，但后续 models-list-read-max-bytes 独立写入失败（返回 500）时，
-// 事务内提交的 max_concurrency / max_retries 等系统设置在事务成功即已热应用生效，
-// 运行时与数据库保持一致，不应保持旧值。
+// TestAdminOutputGuardSettings_MaxConcurrencyNotChangedWhenModelsListWriteFails covers review feedback:
+// when the settings transaction has committed successfully, but the later independent write of models-list-read-max-bytes fails (returns 500),
+// the system settings committed in the transaction, such as max_concurrency / max_retries, are already hot-applied once the transaction succeeds,
+// so the runtime and the database stay consistent and must not keep the old values.
 func TestAdminOutputGuardSettings_MaxConcurrencyNotChangedWhenModelsListWriteFails(t *testing.T) {
 	gin.SetMode(gin.TestMode)
 	handler, db, dbPath := newTestAdminHandlerFixtureWithPath(t)
 	ctx := context.Background()
 
-	// 初始状态：max_concurrency 设为 5，max_retries 设为 2
+	// Initial state: max_concurrency is 5, max_retries is 2
 	wInit := invokeAdminSettingsEndpoint(t, handler, http.MethodPut, map[string]any{
 		"max_concurrency": 5,
 		"max_retries":     2,
@@ -501,7 +501,7 @@ func TestAdminOutputGuardSettings_MaxConcurrencyNotChangedWhenModelsListWriteFai
 		t.Fatalf("init settings failed: %d", wInit.Code)
 	}
 
-	// 在 SQLite 上安装触发器：禁止修改 models_list_read_max_bytes，模拟 UpdateModelsListReadMaxBytes 抛错返回 500
+	// Install a trigger on SQLite that forbids modifying models_list_read_max_bytes, simulating UpdateModelsListReadMaxBytes throwing an error and returning 500
 	execAdminOutputGuardTestSQLite(t, dbPath, `
 		CREATE TRIGGER fail_models_list_update BEFORE UPDATE OF models_list_read_max_bytes ON system_settings
 		BEGIN
@@ -509,7 +509,7 @@ func TestAdminOutputGuardSettings_MaxConcurrencyNotChangedWhenModelsListWriteFai
 		END;
 	`)
 
-	// PUT 更新 max_concurrency: 15, max_retries: 4, models_list_read_max_bytes: 16MiB (合法值但被触发器拒绝)
+	// PUT updates max_concurrency: 15, max_retries: 4, models_list_read_max_bytes: 16MiB (a valid value, but rejected by the trigger)
 	wFail := invokeAdminSettingsEndpoint(t, handler, http.MethodPut, map[string]any{
 		"max_concurrency":            15,
 		"max_retries":                4,
@@ -519,7 +519,7 @@ func TestAdminOutputGuardSettings_MaxConcurrencyNotChangedWhenModelsListWriteFai
 		t.Fatalf("expected HTTP 500 when models_list write fails, got %d, body: %s", wFail.Code, wFail.Body.String())
 	}
 
-	// 事务提交成功即热应用：此时 max_concurrency 必须热应用为 15，max_retries 热应用为 4，与 DB 一致
+	// Once the transaction commits successfully, it is hot-applied: max_concurrency must be hot-applied as 15 and max_retries as 4, matching the DB
 	if got := handler.store.GetMaxConcurrency(); got != 15 {
 		t.Fatalf("store max_concurrency should be applied on settings transaction success, expected 15, got %d", got)
 	}
@@ -539,16 +539,16 @@ func TestAdminOutputGuardSettings_MaxConcurrencyNotChangedWhenModelsListWriteFai
 	}
 }
 
-// TestAdminSettings_RuntimeLimitsAppliedWhenContinuousRetryFails 覆盖 T1 review 意见：
-// 运行时 retry 上限热应用早于 UpdateContinuousRetryPolicy：若该写失败返回 500，
-// DB 已提交新 max_rate_limit_retries / max_retries / max_concurrency / global_rpm，
-// 本实例内存必须已在 settings 事务提交成功后立即更新生效。
+// TestAdminSettings_RuntimeLimitsAppliedWhenContinuousRetryFails covers T1 review feedback:
+// the runtime retry limits are hot-applied before UpdateContinuousRetryPolicy: if that write fails and returns 500,
+// the DB has already committed the new max_rate_limit_retries / max_retries / max_concurrency / global_rpm,
+// so this instance's memory must already have been updated and applied right after the settings transaction committed successfully.
 func TestAdminSettings_RuntimeLimitsAppliedWhenContinuousRetryFails(t *testing.T) {
 	gin.SetMode(gin.TestMode)
 	handler, db, dbPath := newTestAdminHandlerFixtureWithPath(t)
 	ctx := context.Background()
 
-	// 初始状态：max_concurrency: 3, max_retries: 2, max_rate_limit_retries: 1, global_rpm: 60
+	// Initial state: max_concurrency: 3, max_retries: 2, max_rate_limit_retries: 1, global_rpm: 60
 	wInit := invokeAdminSettingsEndpoint(t, handler, http.MethodPut, map[string]any{
 		"max_concurrency":        3,
 		"max_retries":            2,
@@ -559,7 +559,7 @@ func TestAdminSettings_RuntimeLimitsAppliedWhenContinuousRetryFails(t *testing.T
 		t.Fatalf("init settings failed: %d, body: %s", wInit.Code, wInit.Body.String())
 	}
 
-	// 在 SQLite 上安装触发器：禁止修改 continuous_retry_policy，模拟 UpdateContinuousRetryPolicy 抛错返回 500
+	// Install a trigger on SQLite that forbids modifying continuous_retry_policy, simulating UpdateContinuousRetryPolicy throwing an error and returning 500
 	execAdminOutputGuardTestSQLite(t, dbPath, `
 		CREATE TRIGGER fail_continuous_retry_update BEFORE UPDATE OF continuous_retry_policy ON system_settings
 		BEGIN
@@ -567,7 +567,7 @@ func TestAdminSettings_RuntimeLimitsAppliedWhenContinuousRetryFails(t *testing.T
 		END;
 	`)
 
-	// PUT 更新 max_concurrency: 18, max_retries: 6, max_rate_limit_retries: 5, global_rpm: 300, continuous_retry_enabled: true
+	// PUT updates max_concurrency: 18, max_retries: 6, max_rate_limit_retries: 5, global_rpm: 300, continuous_retry_enabled: true
 	wFail := invokeAdminSettingsEndpoint(t, handler, http.MethodPut, map[string]any{
 		"max_concurrency":          18,
 		"max_retries":              6,
@@ -578,11 +578,11 @@ func TestAdminSettings_RuntimeLimitsAppliedWhenContinuousRetryFails(t *testing.T
 	if wFail.Code != http.StatusInternalServerError {
 		t.Fatalf("expected HTTP 500 when continuous_retry write fails, got %d, body: %s", wFail.Code, wFail.Body.String())
 	}
-	if !strings.Contains(wFail.Body.String(), "保存持续重试策略失败") {
-		t.Fatalf("expected error message to contain '保存持续重试策略失败', got: %s", wFail.Body.String())
+	if !strings.Contains(wFail.Body.String(), "Failed to save continuous retry policy") {
+		t.Fatalf("expected error message to contain 'Failed to save continuous retry policy', got: %s", wFail.Body.String())
 	}
 
-	// settings 事务已成功提交：运行时配置必须已被热应用，与 DB 一致
+	// The settings transaction committed successfully: the runtime config must already be hot-applied, matching the DB
 	if got := handler.store.GetMaxConcurrency(); got != 18 {
 		t.Fatalf("store max_concurrency must be applied on settings transaction success, expected 18, got %d", got)
 	}
@@ -614,15 +614,15 @@ func TestAdminSettings_RuntimeLimitsAppliedWhenContinuousRetryFails(t *testing.T
 	}
 }
 
-// TestAdminSettings_UpdateSystemSettingsDBErrorReturns500 覆盖 review 意见：
-// 当仅修改 max_concurrency / max_retries / max_rate_limit_retries / global_rpm 且 UpdateSystemSettings 失败时，
-// 必须返回 500 且运行时和数据库均不应用变更（不能落到成功路径返回 200）。
+// TestAdminSettings_UpdateSystemSettingsDBErrorReturns500 covers review feedback:
+// when only max_concurrency / max_retries / max_rate_limit_retries / global_rpm are changed and UpdateSystemSettings fails,
+// it must return 500, and neither the runtime nor the database may apply the change (it must not fall through to the success path returning 200).
 func TestAdminSettings_UpdateSystemSettingsDBErrorReturns500(t *testing.T) {
 	gin.SetMode(gin.TestMode)
 	handler, db, dbPath := newTestAdminHandlerFixtureWithPath(t)
 	ctx := context.Background()
 
-	// 初始状态：max_concurrency 设为 3，max_retries 设为 2，max_rate_limit_retries 设为 1，global_rpm 设为 50
+	// Initial state: max_concurrency 3, max_retries 2, max_rate_limit_retries 1, global_rpm 50
 	wInit := invokeAdminSettingsEndpoint(t, handler, http.MethodPut, map[string]any{
 		"max_concurrency":        3,
 		"max_retries":            2,
@@ -633,7 +633,7 @@ func TestAdminSettings_UpdateSystemSettingsDBErrorReturns500(t *testing.T) {
 		t.Fatalf("init settings failed: %d, body: %s", wInit.Code, wInit.Body.String())
 	}
 
-	// 在 SQLite 上安装触发器：禁止修改 max_concurrency，模拟 UpdateSystemSettings 抛错返回 500
+	// Install a trigger on SQLite that forbids modifying max_concurrency, simulating UpdateSystemSettings throwing an error and returning 500
 	execAdminOutputGuardTestSQLite(t, dbPath, `
 		CREATE TRIGGER fail_system_settings_update BEFORE UPDATE OF max_concurrency ON system_settings
 		BEGIN
@@ -641,7 +641,7 @@ func TestAdminSettings_UpdateSystemSettingsDBErrorReturns500(t *testing.T) {
 		END;
 	`)
 
-	// 仅修改 max_concurrency, max_retries, max_rate_limit_retries, global_rpm
+	// Change only max_concurrency, max_retries, max_rate_limit_retries, global_rpm
 	wFail := invokeAdminSettingsEndpoint(t, handler, http.MethodPut, map[string]any{
 		"max_concurrency":        9,
 		"max_retries":            5,
@@ -651,11 +651,11 @@ func TestAdminSettings_UpdateSystemSettingsDBErrorReturns500(t *testing.T) {
 	if wFail.Code != http.StatusInternalServerError {
 		t.Fatalf("expected HTTP 500 when UpdateSystemSettings fails, got %d, body: %s", wFail.Code, wFail.Body.String())
 	}
-	if !strings.Contains(wFail.Body.String(), "保存系统设置失败") {
-		t.Fatalf("expected error message to contain '保存系统设置失败', got: %s", wFail.Body.String())
+	if !strings.Contains(wFail.Body.String(), "Failed to save system settings") {
+		t.Fatalf("expected error message to contain 'Failed to save system settings', got: %s", wFail.Body.String())
 	}
 
-	// 断言运行时配置保持旧值，未被热应用
+	// Assert the runtime config keeps its old values and is not hot-applied
 	if got := handler.store.GetMaxConcurrency(); got != 3 {
 		t.Fatalf("store max_concurrency must remain 3 after DB failure, got %d", got)
 	}
@@ -669,7 +669,7 @@ func TestAdminSettings_UpdateSystemSettingsDBErrorReturns500(t *testing.T) {
 		t.Fatalf("rate limiter rpm must remain 50 after DB failure, got %d", got)
 	}
 
-	// 断言数据库保持旧值
+	// Assert the database keeps its old values
 	persisted, err := db.GetSystemSettings(ctx)
 	if err != nil || persisted == nil {
 		t.Fatalf("get persisted settings: %v", err)

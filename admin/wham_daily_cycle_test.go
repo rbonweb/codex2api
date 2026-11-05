@@ -18,7 +18,7 @@ func approx(got, want float64) bool {
 	return math.Abs(got-want) < 1e-6
 }
 
-// 估算 = 已用成本 ÷ 已用百分比，区间按整数百分比 ±0.5 推算；不足 10% 标不可靠。
+// Estimate = used cost ÷ used percentage; the range is derived from the integer percentage ±0.5; below 10% it is marked unreliable.
 func TestProjectWhamDailyCycleEstimate(t *testing.T) {
 	now := time.Date(2026, 9, 6, 3, 0, 0, 0, time.UTC)
 	reset := now.Add(36 * time.Hour)
@@ -93,8 +93,8 @@ func TestProjectWhamDailyCycleReasons(t *testing.T) {
 	}
 }
 
-// 接口按账号内存里的窗口快照给出本周期成本：只累加周期起始日（UTC 整天）之后带 counts
-// 数据的行，周期之前的天不算，拆分先建的零 counts 行也不算。
+// The endpoint gives this cycle's cost from the account's in-memory window snapshot: it only adds up rows with counts
+// data after the cycle start day (whole UTC day); days before the cycle are not counted, and zero-counts rows created first by the breakdown are not counted either.
 func TestGetAccountWhamDailyUsageIncludesCycle(t *testing.T) {
 	gin.SetMode(gin.TestMode)
 	handler, account := newWhamDailyTestHandler(t)
@@ -119,7 +119,7 @@ func TestGetAccountWhamDailyUsageIncludesCycle(t *testing.T) {
 			t.Fatalf("upsert %s: %v", row.Day, err)
 		}
 	}
-	// 周期内一条只有拆分、没有 counts 的行，不能进已用成本。
+	// A row inside the cycle that has only a breakdown and no counts must not enter the used cost.
 	if err := handler.db.UpsertAccountDailyBreakdown(ctx, database.AccountDailyBreakdownInput{
 		AccountID: account.DBID, Day: reset.Add(-2 * 24 * time.Hour).UTC().Format("2006-01-02"), Percent: 1,
 		Models: []database.AccountDailyBreakdownModel{{Model: "gpt-5.6-sol", Speed: "standard", Percent: 1}},

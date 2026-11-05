@@ -35,7 +35,7 @@ const (
 	promptIntelligenceAIAnalysisWorkers   = 3
 )
 
-var errPromptIntelligenceRequiresChatModel = errors.New("CY 归因需要支持 Chat Completions 的分析模型")
+var errPromptIntelligenceRequiresChatModel = errors.New("CY attribution requires an analysis model that supports Chat Completions")
 
 type promptIntelligenceAIAnalysisRequest struct {
 	Provider           string `json:"provider"`
@@ -118,8 +118,8 @@ type promptIdentityUpdateResult struct {
 }
 
 const (
-	// promptIntelligenceEvidenceBasisPrompt 表示归因基于至少一条完整用户 Prompt；
-	// promptIntelligenceEvidenceBasisContextOnly 表示只有会话 / 工具上下文证据。
+	// promptIntelligenceEvidenceBasisPrompt means the attribution is based on at least one complete user prompt;
+	// promptIntelligenceEvidenceBasisContextOnly means there is only session / tool context evidence.
 	promptIntelligenceEvidenceBasisPrompt      = "prompt"
 	promptIntelligenceEvidenceBasisContextOnly = "context_only"
 )
@@ -249,7 +249,7 @@ func (h *Handler) GetPromptIntelligenceAIProviders(c *gin.Context) {
 func (h *Handler) AnalyzePromptIntelligenceCandidate(c *gin.Context) {
 	candidateID, err := parsePositiveInt64Param(c, "id")
 	if err != nil {
-		writeError(c, http.StatusBadRequest, "候选证据 ID 无效")
+		writeError(c, http.StatusBadRequest, "Invalid candidate evidence ID")
 		return
 	}
 	if err := h.db.ReconcilePromptRuleCandidateIdentityStatuses(c.Request.Context()); err != nil {
@@ -259,19 +259,19 @@ func (h *Handler) AnalyzePromptIntelligenceCandidate(c *gin.Context) {
 	candidate, err := h.db.GetPromptRuleCandidate(c.Request.Context(), candidateID)
 	if err != nil {
 		if errors.Is(err, sql.ErrNoRows) {
-			writeError(c, http.StatusNotFound, "候选证据不存在")
+			writeError(c, http.StatusNotFound, "Candidate evidence not found")
 			return
 		}
 		writeInternalError(c, err)
 		return
 	}
 	if candidate.Kind != database.PromptRuleCandidateKindEvidence || candidate.Status != database.PromptRuleCandidateStatusPending {
-		writeError(c, http.StatusConflict, "只有待审核的上游风险证据可以进行 AI 归因")
+		writeError(c, http.StatusConflict, "Only pending upstream risk evidence can be attributed by AI")
 		return
 	}
 	var request promptIntelligenceAIAnalysisRequest
 	if err := c.ShouldBindJSON(&request); err != nil {
-		writeError(c, http.StatusBadRequest, "AI 分析参数无效")
+		writeError(c, http.StatusBadRequest, "Invalid AI analysis parameters")
 		return
 	}
 	request.Provider = strings.ToLower(strings.TrimSpace(request.Provider))
@@ -279,7 +279,7 @@ func (h *Handler) AnalyzePromptIntelligenceCandidate(c *gin.Context) {
 		request.Provider = promptIntelligenceAIProviderReview
 	}
 	if request.Provider != promptIntelligenceAIProviderReview && request.Provider != promptIntelligenceAIProviderPool {
-		writeError(c, http.StatusBadRequest, "不支持的 AI 提供方")
+		writeError(c, http.StatusBadRequest, "Unsupported AI provider")
 		return
 	}
 	request.IdentityUpdateMode = strings.ToLower(strings.TrimSpace(request.IdentityUpdateMode))
@@ -287,7 +287,7 @@ func (h *Handler) AnalyzePromptIntelligenceCandidate(c *gin.Context) {
 		request.IdentityUpdateMode = promptIdentityUpdateModeSuggest
 	}
 	if request.IdentityUpdateMode != promptIdentityUpdateModeSuggest && request.IdentityUpdateMode != promptIdentityUpdateModeGuardedAuto {
-		writeError(c, http.StatusBadRequest, "身份提示词更新模式无效")
+		writeError(c, http.StatusBadRequest, "Invalid identity prompt update mode")
 		return
 	}
 
@@ -303,17 +303,17 @@ func (h *Handler) AnalyzePromptIntelligenceCandidate(c *gin.Context) {
 		}
 	}
 	if len(upstreamEvidence) == 0 {
-		writeError(c, http.StatusConflict, "该候选没有可供分析的上游 CY 证据")
+		writeError(c, http.StatusConflict, "This candidate has no upstream CY evidence to analyze")
 		return
 	}
 	learnableEvidence := selectPromptIntelligenceLearnableEvidence(upstreamEvidence, 20)
 	if len(learnableEvidence) == 0 {
-		writeError(c, http.StatusConflict, "该候选只有证据不足的 CY 记录，尚未提取到可学习的 Prompt 或关联上下文；已停止调用外部模型")
+		writeError(c, http.StatusConflict, "This candidate only has CY records with insufficient evidence, and no learnable prompt or linked context has been extracted yet; the external model was not called")
 		return
 	}
-	// 没有完整用户 Prompt 的 CY（Codex 工具回合：当前用户消息为空，命中来自
-	// history / tool_output 层）同样允许归因：证据包里保存了 session_context /
-	// tool_arguments / tool_output 段，按 evidence_basis=context_only 标注后送模型。
+	// CY without a complete user prompt (Codex tool turn: the current user message is empty and the hit comes from the
+	// history / tool_output layers) can also be attributed: the evidence bundle keeps the session_context /
+	// tool_arguments / tool_output sections, labels them with evidence_basis=context_only, and then sends them to the model.
 	evidenceBasis := promptIntelligenceEvidenceBasisPrompt
 	if !promptIntelligenceHasDirectEvidence(learnableEvidence) {
 		evidenceBasis = promptIntelligenceEvidenceBasisContextOnly
@@ -393,12 +393,12 @@ func (h *Handler) AnalyzePromptIntelligenceCandidate(c *gin.Context) {
 		if metadata.IdentityValidationError != "" {
 			response.IdentityUpdate.BlockReason = metadata.IdentityValidationError
 		} else if request.IdentityUpdateMode == promptIdentityUpdateModeGuardedAuto {
-			// 受控自动应用的证据门槛按独立证据计数：完整 Prompt 与 context_only 上下文证据
-			// 都算（管理员已选择允许上下文证据触发自动模式）。
+			// The evidence threshold for controlled auto-apply counts independent evidence: complete prompts and context_only context evidence
+			// both count (the admin has chosen to let context evidence trigger auto mode).
 			directEvidenceCount := countPromptIntelligenceAutoEligibleEvidence(upstreamEvidence)
 			response.IdentityUpdate.Eligible = decision.Confidence >= promptIdentityAutoMinConfidence && directEvidenceCount >= promptIdentityAutoMinUpstreamEvidence
 			if !response.IdentityUpdate.Eligible {
-				response.IdentityUpdate.BlockReason = fmt.Sprintf("受控自动应用要求置信度至少 %.2f 且同类独立证据（完整 Prompt 或上下文）至少 %d 条", promptIdentityAutoMinConfidence, promptIdentityAutoMinUpstreamEvidence)
+				response.IdentityUpdate.BlockReason = fmt.Sprintf("Controlled auto-apply requires confidence of at least %.2f and at least %d independent evidence items of the same kind (complete prompt or context)", promptIdentityAutoMinConfidence, promptIdentityAutoMinUpstreamEvidence)
 			} else {
 				applied, applyErr := h.applyPromptIntelligenceIdentityPatch(c.Request.Context(), candidateID, analysisEvidence.ID, "guarded_auto")
 				if applyErr != nil {
@@ -416,18 +416,18 @@ func (h *Handler) AnalyzePromptIntelligenceCandidate(c *gin.Context) {
 func (h *Handler) ApplyPromptIntelligenceIdentityUpdate(c *gin.Context) {
 	candidateID, err := parsePositiveInt64Param(c, "id")
 	if err != nil {
-		writeError(c, http.StatusBadRequest, "候选证据 ID 无效")
+		writeError(c, http.StatusBadRequest, "Invalid candidate evidence ID")
 		return
 	}
 	evidenceID, err := parsePositiveInt64Param(c, "evidence_id")
 	if err != nil {
-		writeError(c, http.StatusBadRequest, "AI 分析证据 ID 无效")
+		writeError(c, http.StatusBadRequest, "Invalid AI analysis evidence ID")
 		return
 	}
 	result, err := h.applyPromptIntelligenceIdentityPatch(c.Request.Context(), candidateID, evidenceID, "manual")
 	if err != nil {
 		if errors.Is(err, sql.ErrNoRows) {
-			writeError(c, http.StatusNotFound, "AI 分析证据不存在")
+			writeError(c, http.StatusNotFound, "AI analysis evidence not found")
 		} else {
 			writeError(c, http.StatusConflict, err.Error())
 		}
@@ -439,18 +439,18 @@ func (h *Handler) ApplyPromptIntelligenceIdentityUpdate(c *gin.Context) {
 func (h *Handler) RollbackPromptIntelligenceIdentityUpdate(c *gin.Context) {
 	candidateID, err := parsePositiveInt64Param(c, "id")
 	if err != nil {
-		writeError(c, http.StatusBadRequest, "候选证据 ID 无效")
+		writeError(c, http.StatusBadRequest, "Invalid candidate evidence ID")
 		return
 	}
 	revisionID, err := parsePositiveInt64Param(c, "evidence_id")
 	if err != nil {
-		writeError(c, http.StatusBadRequest, "身份版本 ID 无效")
+		writeError(c, http.StatusBadRequest, "Invalid identity version ID")
 		return
 	}
 	result, err := h.rollbackPromptIntelligenceIdentityPatch(c.Request.Context(), candidateID, revisionID)
 	if err != nil {
 		if errors.Is(err, sql.ErrNoRows) {
-			writeError(c, http.StatusNotFound, "身份版本不存在")
+			writeError(c, http.StatusNotFound, "Identity version not found")
 		} else {
 			writeError(c, http.StatusConflict, err.Error())
 		}
@@ -558,8 +558,8 @@ func buildPromptIntelligenceAIEvidenceInput(candidate *database.PromptRuleCandid
 	payload := map[string]any{
 		"candidate_id": candidate.ID, "fingerprint": candidate.Fingerprint,
 		"evidence_count": candidate.EvidenceCount, "learnable_evidence_count": len(evidence),
-		// context_only：没有当前用户 Prompt，命中来自 related_context（session_context /
-		// tool_arguments / tool_output 段）；模型需据此归因并明确说明依据是上下文。
+		// context_only: there is no current user prompt; the hit comes from related_context (session_context /
+		// tool_arguments / tool_output sections); the model must attribute on that basis and state clearly that the basis is context.
 		"evidence_basis":   evidenceBasis,
 		"sample_preview":   promptfilter.RedactedPreview(candidate.SamplePreview, 2000),
 		"coverage_summary": summarizePromptIntelligenceCoverage(evidence),
@@ -581,10 +581,10 @@ func promptIntelligenceLearningEvidenceFromMetadata(raw, fallbackPreview string)
 		if result.Quality == "" {
 			result.Quality = metadata.EvidenceQuality
 		}
-		// 采集侧已对这条证据给出质量裁决(包括 insufficient 隔离与
-		// context_only 的出处标注),预览回退仅适用于裁决产生之前的存量行:
-		// 把 insufficient 行升格为可学习、或把 context_only 的预览冒充直接
-		// Prompt,都会绕过采集侧的隔离语义。
+		// The collection side has already issued a quality verdict for this evidence (including insufficient quarantine and
+		// context_only provenance labeling); the preview fallback only applies to existing rows that predate the verdict:
+		// promoting an insufficient row to learnable, or passing a context_only preview off as a
+		// direct Prompt, would bypass the collection side's quarantine semantics.
 		hasQualityVerdict = result.Quality != "" || metadata.Learning.Version > 0
 	}
 	if !hasQualityVerdict && strings.TrimSpace(result.PromptText) == "" && strings.TrimSpace(fallbackPreview) != "" {
@@ -635,8 +635,8 @@ func selectPromptIntelligenceLearnableEvidence(evidence []*database.PromptRuleCa
 }
 
 func countPromptIntelligenceDirectEvidence(evidence []*database.PromptRuleCandidateEvidence) int {
-	// 受控自动应用的证据门槛按去重后的独立 Prompt 计数:同一条攻击文本被
-	// 重放多次只算一条,否则重复注入即可凑满门槛。
+	// The evidence threshold for controlled auto-apply counts deduplicated independent Prompts: the same attack text
+	// replayed several times counts as one, otherwise repeated injection alone would reach the threshold.
 	seen := make(map[string]struct{}, len(evidence))
 	for _, row := range evidence {
 		learning := promptIntelligenceLearningEvidenceFromMetadata(row.MetadataJSON, row.SamplePreview)
@@ -730,7 +730,7 @@ func summarizePromptIntelligenceCoverage(evidence []*database.PromptRuleCandidat
 
 func validatePromptIntelligenceAICoverageDecision(decision promptIntelligenceAIDecision, coverage promptIntelligenceCoverageSummary) error {
 	if decision.Decision == "no_change" && coverage.EffectiveCoverage == "uncovered" {
-		return errors.New("AI 将本地仍放行的上游 CY 证据误判为已覆盖，已拒绝保存 no_change；请生成可执行的规则或身份边界建议")
+		return errors.New("AI judged upstream CY evidence that is still allowed locally as already covered; the no_change save was rejected, so generate an actionable rule or identity-boundary suggestion")
 	}
 	return nil
 }
@@ -742,10 +742,10 @@ func (h *Handler) callPromptIntelligenceAI(ctx context.Context, request promptIn
 			model = reviewCfg.Model
 		}
 		if strings.EqualFold(strings.TrimSpace(reviewCfg.Adapter.RequestMode), promptfilter.ReviewRequestModeModerations) {
-			return "", promptIntelligenceAICallAttribution{}, fmt.Errorf("%w：当前 Review 适配器配置为 Moderations 模式，请改回 Chat Completions", errPromptIntelligenceRequiresChatModel)
+			return "", promptIntelligenceAICallAttribution{}, fmt.Errorf("%w: the current Review adapter is configured for Moderations mode, switch it back to Chat Completions", errPromptIntelligenceRequiresChatModel)
 		}
 		if promptIntelligenceModerationOnlyModel(model) {
-			return "", promptIntelligenceAICallAttribution{}, fmt.Errorf("%w：当前模型 %q 仅支持 Moderations，请切换到 DeepSeek 或其他 Chat 模型", errPromptIntelligenceRequiresChatModel, model)
+			return "", promptIntelligenceAICallAttribution{}, fmt.Errorf("%w: the current model %q only supports Moderations, switch to DeepSeek or another Chat model", errPromptIntelligenceRequiresChatModel, model)
 		}
 		output, err := callPromptIntelligenceReviewProvider(ctx, reviewCfg, model, systemPrompt, input)
 		return output, promptIntelligenceAICallAttribution{Provider: promptIntelligenceAIProviderReview, Model: model}, err
@@ -755,10 +755,10 @@ func (h *Handler) callPromptIntelligenceAI(ctx context.Context, request promptIn
 		model = strings.TrimSpace(h.store.GetPromptFilterConfig().Advanced.Intelligence.Model)
 	}
 	if model == "" {
-		return "", promptIntelligenceAICallAttribution{}, errors.New("号池分析模型不能为空")
+		return "", promptIntelligenceAICallAttribution{}, errors.New("the account pool analysis model must not be empty")
 	}
 	if promptIntelligenceModerationOnlyModel(model) {
-		return "", promptIntelligenceAICallAttribution{}, fmt.Errorf("%w：当前模型 %q 仅支持 Moderations，请切换到可生成 JSON 的 Chat 模型", errPromptIntelligenceRequiresChatModel, model)
+		return "", promptIntelligenceAICallAttribution{}, fmt.Errorf("%w: the current model %q only supports Moderations, switch to a Chat model that can generate JSON", errPromptIntelligenceRequiresChatModel, model)
 	}
 	var row *database.APIKeyRow
 	var err error
@@ -766,12 +766,12 @@ func (h *Handler) callPromptIntelligenceAI(ctx context.Context, request promptIn
 		row, err = h.db.GetAPIKeyByID(ctx, request.APIKeyID)
 		if err != nil {
 			if errors.Is(err, sql.ErrNoRows) {
-				return "", promptIntelligenceAICallAttribution{}, errors.New("选择的网关 API Key 不存在")
+				return "", promptIntelligenceAICallAttribution{}, errors.New("the selected gateway API Key does not exist")
 			}
 			return "", promptIntelligenceAICallAttribution{}, err
 		}
 		if row.IsExpired(time.Now()) || row.IsQuotaExhausted() {
-			return "", promptIntelligenceAICallAttribution{}, errors.New("选择的网关 API Key 当前不可用")
+			return "", promptIntelligenceAICallAttribution{}, errors.New("the selected gateway API Key is currently unavailable")
 		}
 	}
 	body, _ := json.Marshal(map[string]any{"model": model, "instructions": systemPrompt, "input": input, "stream": false})
@@ -779,11 +779,11 @@ func (h *Handler) callPromptIntelligenceAI(ctx context.Context, request promptIn
 	defer cancel()
 	status, response := h.imageProxy.ExecuteInternalResponseForAPIKey(poolCtx, body, row, "prompt_intelligence_cy_analysis")
 	if status < 200 || status >= 300 {
-		return "", promptIntelligenceAICallAttribution{}, fmt.Errorf("号池模型分析失败: HTTP %d", status)
+		return "", promptIntelligenceAICallAttribution{}, fmt.Errorf("account pool model analysis failed: HTTP %d", status)
 	}
 	output := strings.TrimSpace(extractResponseOutputText(response))
 	if output == "" {
-		return "", promptIntelligenceAICallAttribution{}, errors.New("号池模型没有返回分析结果")
+		return "", promptIntelligenceAICallAttribution{}, errors.New("the account pool model returned no analysis result")
 	}
 	attribution := promptIntelligenceAICallAttribution{Provider: promptIntelligenceAIProviderPool, Model: model}
 	if row != nil {
@@ -801,9 +801,9 @@ func promptIntelligenceHasDirectEvidence(evidence []*database.PromptRuleCandidat
 	return countPromptIntelligenceDirectEvidence(evidence) > 0
 }
 
-// countPromptIntelligenceAutoEligibleEvidence 是受控自动应用的证据计数：与
-// countPromptIntelligenceDirectEvidence 一样按去重后的独立证据计数，但 context_only
-// 证据也计入（以其上下文文本指纹去重）；只有 insufficient 被排除。
+// countPromptIntelligenceAutoEligibleEvidence is the evidence count for controlled auto-apply: the same as
+// countPromptIntelligenceDirectEvidence, it counts deduplicated independent evidence, but context_only
+// evidence also counts (deduplicated by its context-text fingerprint); only insufficient is excluded.
 func countPromptIntelligenceAutoEligibleEvidence(evidence []*database.PromptRuleCandidateEvidence) int {
 	seen := make(map[string]struct{}, len(evidence))
 	for _, row := range evidence {
@@ -860,7 +860,7 @@ func callPromptIntelligenceReviewProviderWithPolicy(
 	cfg = promptfilter.NormalizeReviewConfig(cfg)
 	keys := cfg.APIKeyList()
 	if len(keys) == 0 {
-		return "", errors.New("DS / 审核模型尚未配置 API Key")
+		return "", errors.New("the DS / review model has no API Key configured yet")
 	}
 	endpoint, err := promptIntelligenceChatEndpoint(cfg.BaseURL)
 	if err != nil {
@@ -920,7 +920,7 @@ func callPromptIntelligenceReviewProviderWithPolicy(
 			if ctx.Err() != nil {
 				return "", ctx.Err()
 			}
-			return "", fmt.Errorf("CY 学习模型分析超过 %s", timeout)
+			return "", fmt.Errorf("CY learning model analysis exceeded %s", timeout)
 		case result := <-results:
 			if result.err == nil {
 				cancel()
@@ -930,9 +930,9 @@ func callPromptIntelligenceReviewProviderWithPolicy(
 		}
 	}
 	if lastErr == nil {
-		lastErr = errors.New("未知错误")
+		lastErr = errors.New("unknown error")
 	}
-	return "", fmt.Errorf("DS / 审核模型所有 Key 均失败: %w", lastErr)
+	return "", fmt.Errorf("all keys for the DS / review model failed: %w", lastErr)
 }
 
 func callPromptIntelligenceReviewKey(ctx context.Context, client *http.Client, endpoint, key string, payload []byte) (string, error) {
@@ -956,7 +956,7 @@ func callPromptIntelligenceReviewKey(ctx context.Context, client *http.Client, e
 	}
 	output := strings.TrimSpace(extractChatCompletionContent(data))
 	if output == "" {
-		return "", errors.New("审核模型没有返回分析结果")
+		return "", errors.New("the review model returned no analysis result")
 	}
 	return output, nil
 }
@@ -965,7 +965,7 @@ func promptIntelligenceChatEndpoint(baseURL string) (string, error) {
 	baseURL = strings.TrimRight(strings.TrimSpace(baseURL), "/")
 	parsed, err := url.Parse(baseURL)
 	if err != nil || (parsed.Scheme != "http" && parsed.Scheme != "https") || parsed.User != nil {
-		return "", errors.New("审核模型 Base URL 无效")
+		return "", errors.New("the review model Base URL is invalid")
 	}
 	path := strings.TrimRight(parsed.Path, "/")
 	lower := strings.ToLower(path)
@@ -973,7 +973,7 @@ func promptIntelligenceChatEndpoint(baseURL string) (string, error) {
 		return parsed.String(), nil
 	}
 	if strings.HasSuffix(lower, "/moderations") {
-		return "", errors.New("审核模型 Base URL 指向 moderations，无法用于 CY 学习分析")
+		return "", errors.New("the review model Base URL points to moderations and cannot be used for CY learning analysis")
 	}
 	if strings.HasSuffix(lower, "/v1") {
 		parsed.Path = path + "/chat/completions"
@@ -1005,36 +1005,36 @@ func extractChatCompletionContent(data []byte) string {
 func parsePromptIntelligenceAIDecision(raw string) (promptIntelligenceAIDecision, error) {
 	start, end := strings.Index(raw, "{"), strings.LastIndex(raw, "}")
 	if start < 0 || end < start {
-		return promptIntelligenceAIDecision{}, errors.New("AI 未返回有效 JSON 决策")
+		return promptIntelligenceAIDecision{}, errors.New("AI did not return a valid JSON decision")
 	}
 	var decision promptIntelligenceAIDecision
 	if err := json.Unmarshal([]byte(raw[start:end+1]), &decision); err != nil {
-		return decision, fmt.Errorf("AI 决策 JSON 无效: %w", err)
+		return decision, fmt.Errorf("invalid AI decision JSON: %w", err)
 	}
 	decision.Decision = strings.ToLower(strings.TrimSpace(decision.Decision))
 	switch decision.Decision {
 	case "no_change", "rule", "identity", "both":
 	default:
-		return decision, errors.New("AI 决策类型无效")
+		return decision, errors.New("invalid AI decision type")
 	}
 	if decision.Confidence < 0 || decision.Confidence > 1 {
-		return decision, errors.New("AI 决策置信度必须在 0 到 1 之间")
+		return decision, errors.New("AI decision confidence must be between 0 and 1")
 	}
 	decision.Reason = promptfilter.RedactedPreview(strings.TrimSpace(decision.Reason), 500)
 	if (decision.Decision == "rule" || decision.Decision == "both") && decision.Rule == nil {
-		return decision, errors.New("AI 决策缺少规则建议")
+		return decision, errors.New("AI decision is missing the rule suggestion")
 	}
 	if (decision.Decision == "identity" || decision.Decision == "both") && decision.IdentityPatch == nil {
-		return decision, errors.New("AI 决策缺少身份条款建议")
+		return decision, errors.New("AI decision is missing the identity clause suggestion")
 	}
 	if decision.Decision == "no_change" && (decision.Rule != nil || decision.IdentityPatch != nil) {
-		return decision, errors.New("AI 的 no_change 决策不得携带修改建议")
+		return decision, errors.New("an AI no_change decision must not carry a change suggestion")
 	}
 	if decision.Decision == "rule" && decision.IdentityPatch != nil {
-		return decision, errors.New("AI 的 rule 决策不得携带身份补丁")
+		return decision, errors.New("an AI rule decision must not carry an identity patch")
 	}
 	if decision.Decision == "identity" && decision.Rule != nil {
-		return decision, errors.New("AI 的 identity 决策不得携带规则建议")
+		return decision, errors.New("an AI identity decision must not carry a rule suggestion")
 	}
 	return decision, nil
 }
@@ -1048,7 +1048,7 @@ func validatePromptIntelligenceAIRule(rule promptIntelligenceAIRule) string {
 		return err.Error()
 	}
 	if !intelligencePatternHasRiskSignal(candidate.Pattern) {
-		return "AI 建议的正则没有覆盖完整高风险行为，已拒绝自动形成候选"
+		return "the regex suggested by the AI does not cover the full high-risk behavior, so the candidate was rejected automatically"
 	}
 	return ""
 }
@@ -1080,43 +1080,43 @@ func (h *Handler) stagePromptIntelligenceAIRule(ctx context.Context, parent *dat
 
 var (
 	promptIdentityForbiddenClause = regexp.MustCompile(`(?i)(sk-[a-z0-9]|authorization\s*:|bearer\s+|cookie\s*:|api[ _-]?key|private[ _-]?key|system\s+prompt|ignore\s+(all\s+)?(previous|prior|system)|override\s+(the\s+)?(instructions|policy)|change\s+(the\s+)?(json|output)|tool\s*call|https?://|<\/?user_input>|\[/?learned safety guidance|系統提示詞|系统提示词|忽略.{0,12}指令|更改.{0,12}輸出|更改.{0,12}输出|api.?密[鑰钥]|訪問令牌|访问令牌|工具調用|工具调用)`) //nolint:lll
-	// 安全领域词：条款必须落在内容安全分类范围内（漏洞 / 攻击 / 滥用 / 凭据 / 恶意软件 …），
-	// 否则就是通用行为指令。中英文都覆盖常见写法。
+	// Security-domain terms: a clause must fall within the content-safety categories (vulnerabilities / attacks / abuse / credentials / malware ...),
+	// otherwise it is a generic behavior instruction. Common phrasings in both Chinese and English are covered.
 	promptIdentityDomainSignal = regexp.MustCompile(`(?i)(rce|exploit|malware|credential|unauthori[sz]ed|account abuse|phishing|ransomware|reverse shell|deepfake|doxx|credible threat|cyber|own system|authorized|defensive|abuse|injection|privilege|backdoor|intrusion|pentest|vulnerab|security|漏洞|攻擊|攻击|惡意軟體|恶意软件|憑據|凭据|未授權|未授权|批量帳號|批量账号|釣魚|钓鱼|勒索|反彈.?shell|反弹.?shell|深度偽造|深度伪造|人肉|暴力威脅|暴力威胁|自有系統|自有系统|防禦|防御|濫用|滥用|入侵|滲透|渗透|木馬|木马|病毒|提權|提权|注入|越權|越权|掃描|扫描|後門|后门|安全)`) //nolint:lll
-	// 判定词：条款必须给出明确的分类结论（视为 / 不视为 / 属于正常 / 不按 … 处理 / 误报 …），
-	// 而不是泛泛的行为要求。中文表达多样，这里按"结论动词 + 否定形式"两类覆盖。
+	// Decision terms: a clause must give an explicit classification conclusion (treat as / do not treat as / counts as normal / do not handle as ... / false positive ...),
+	// rather than a general behavior requirement. Chinese phrasing varies, so it is covered by two groups: "conclusion verb + negated form".
 	promptIdentityDecisionSignal = regexp.MustCompile(`(?i)(harmful|high.?risk|block|flag|classif|consider|treat|benign|safe|allow|legitimate|false.?positive|escalat|constitute|\bis\s+not\b|\bare\s+not\b|\bnot\s+(an?\s+)?(attack|abuse|exploit|malware|threat|violation|misuse)|does\s+not\s+(count|qualify|indicate|amount)|counts?\s+as|qualif(y|ies)\s+as|amounts?\s+to|no\s+weight|carry\s+no\s+weight|shall\s+not|must\s+not|should\s+not|normal\s+development|actual\s+(attack|abuse)|concrete\s+(attack|abuse)|unless.{0,80}(intent|attack|abuse)|without.{0,80}(intent|attack|abuse)|違規|违规|高風險|高风险|攔截|拦截|標記|标记|判定|視為|视为|視作|视作|合規|合规|放行|誤報|误报|不構成|不构成|不算|不是|不屬於|不属于|算作|當作|当作|歸為|归为|認定|认定|計入|计入|升級為|升级为|上升為|上升为|屬於.{0,12}(正常|合法|合規|合规|違規|违规|高風險|高风险|攻擊|攻击|濫用|滥用)|正常(開發|开发|文件|檔案|運維|运维|操作|使用|處理|处理|開發行為|开发行为)|不按.{0,20}(處理|处理)|不(應|应|應當|应当|得|能|要|可)(上升|升級|升级|視為|视为|視作|视作|判定|算作|當作|当作|歸為|归为|認定|认定|計入|计入|攔截|拦截|標記|标记|按.{0,12}處理|按.{0,12}处理)|不(予|做|作)(攔截|拦截|標記|标记|處理|处理)|(需|應|应|應當|应当|必須|必须)(攔截|拦截|標記|标记|阻斷|阻断|拒絕|拒绝)|不計.{0,8}(權重|权重)|除非.{0,30}(攻擊|攻击|濫用|滥用|意圖|意图)|沒有.{0,30}(攻擊|攻击|濫用|滥用|意圖|意图))`) //nolint:lll
 )
 
 func validatePromptIdentityClauses(clauses []string) string {
 	if len(clauses) == 0 {
-		return "身份补丁至少需要一条安全指导条款"
+		return "the identity patch needs at least one security guidance clause"
 	}
 	if len(clauses) > 8 {
-		return "身份补丁最多允许 8 条安全指导条款"
+		return "the identity patch allows at most 8 security guidance clauses"
 	}
 	total := 0
 	seen := map[string]bool{}
 	for _, clause := range clauses {
 		clause = strings.TrimSpace(clause)
 		if clause == "" || len([]rune(clause)) > 300 || strings.ContainsAny(clause, "\r\n") {
-			return "每条身份指导必须为不超过 300 字的单行文本"
+			return "each identity guidance item must be a single line of text of at most 300 characters"
 		}
 		if promptIdentityForbiddenClause.MatchString(clause) {
-			return "身份指导包含受保护的身份、凭据、输出或工具控制内容"
+			return "identity guidance contains protected identity, credential, output, or tool control content"
 		}
 		if !promptIdentityDomainSignal.MatchString(clause) || !promptIdentityDecisionSignal.MatchString(clause) {
-			return "身份指导必须是与安全领域相关的明确分类边界，不能写入通用行为指令"
+			return "identity guidance must be an explicit classification boundary related to the security domain and cannot be a general behavior instruction"
 		}
 		key := strings.ToLower(clause)
 		if seen[key] {
-			return "身份补丁包含重复条款"
+			return "the identity patch contains duplicate clauses"
 		}
 		seen[key] = true
 		total += len([]rune(clause))
 	}
 	if total > 1600 {
-		return "身份补丁总长度超过 1600 字"
+		return "the total length of the identity patch exceeds 1600 characters"
 	}
 	return ""
 }
@@ -1128,12 +1128,12 @@ func splitPromptIdentityManagedSection(systemPrompt string) (string, []string, e
 		return strings.TrimSpace(systemPrompt), nil, nil
 	}
 	if startCount != 1 || endCount != 1 {
-		return "", nil, errors.New("当前身份提示词的受管区块标记不完整")
+		return "", nil, errors.New("the managed block markers of the current identity prompt are incomplete")
 	}
 	start := strings.Index(systemPrompt, promptIdentityManagedStart)
 	end := strings.Index(systemPrompt, promptIdentityManagedEnd)
 	if end < start {
-		return "", nil, errors.New("当前身份提示词的受管区块顺序无效")
+		return "", nil, errors.New("the managed block order of the current identity prompt is invalid")
 	}
 	bodyStart := start + len(promptIdentityManagedStart)
 	body := strings.TrimSpace(systemPrompt[bodyStart:end])
@@ -1142,7 +1142,7 @@ func splitPromptIdentityManagedSection(systemPrompt string) (string, []string, e
 		for _, line := range strings.Split(body, "\n") {
 			line = strings.TrimSpace(line)
 			if !strings.HasPrefix(line, "- ") {
-				return "", nil, errors.New("当前身份提示词的受管区块格式无效")
+				return "", nil, errors.New("the managed block format of the current identity prompt is invalid")
 			}
 			clauses = append(clauses, strings.TrimSpace(strings.TrimPrefix(line, "- ")))
 		}
@@ -1158,7 +1158,7 @@ func buildPromptIdentityManagedSection(base string, clauses []string) (string, e
 	lowerBase := strings.ToLower(base)
 	for _, required := range []string{"<user_input>", "json", "confidence"} {
 		if !strings.Contains(lowerBase, required) {
-			return "", fmt.Errorf("当前 DS 身份提示词缺少不可变契约 %q，拒绝自动修改", required)
+			return "", fmt.Errorf("the current DS identity prompt is missing the immutable contract %q, refusing to modify it automatically", required)
 		}
 	}
 	lines := make([]string, 0, len(clauses))
@@ -1177,18 +1177,18 @@ func (h *Handler) applyPromptIntelligenceIdentityPatch(ctx context.Context, cand
 		return promptIdentityUpdateResult{}, err
 	}
 	if candidate.Kind != database.PromptRuleCandidateKindEvidence || candidate.Status != database.PromptRuleCandidateStatusPending {
-		return promptIdentityUpdateResult{}, errors.New("只有待审核的上游风险证据可以应用身份补丁")
+		return promptIdentityUpdateResult{}, errors.New("only pending upstream risk evidence can have an identity patch applied")
 	}
 	analysis, err := h.db.GetPromptRuleCandidateEvidence(ctx, analysisEvidenceID)
 	if err != nil {
 		return promptIdentityUpdateResult{}, err
 	}
 	if analysis.CandidateID != candidateID || analysis.SourceKind != database.PromptRuleCandidateSourceAIAnalysis {
-		return promptIdentityUpdateResult{}, errors.New("所选记录不是该候选的 AI 分析证据")
+		return promptIdentityUpdateResult{}, errors.New("the selected record is not an AI analysis evidence item for this candidate")
 	}
 	var metadata promptIntelligenceAIAnalysisMetadata
 	if json.Unmarshal([]byte(analysis.MetadataJSON), &metadata) != nil || metadata.Result.IdentityPatch == nil {
-		return promptIdentityUpdateResult{}, errors.New("AI 分析记录不包含可应用的身份补丁")
+		return promptIdentityUpdateResult{}, errors.New("the AI analysis record does not contain an identity patch that can be applied")
 	}
 	clauses := metadata.Result.IdentityPatch.Clauses
 	if validation := validatePromptIdentityClauses(clauses); validation != "" {
@@ -1202,7 +1202,7 @@ func (h *Handler) applyPromptIntelligenceIdentityPatch(ctx context.Context, cand
 		return promptIdentityUpdateResult{}, err
 	}
 	if settings == nil {
-		return promptIdentityUpdateResult{}, errors.New("系统设置尚未初始化")
+		return promptIdentityUpdateResult{}, errors.New("system settings are not initialized yet")
 	}
 	expectedRaw := strings.TrimSpace(settings.PromptFilterAdvancedConfig)
 	if expectedRaw == "" {
@@ -1239,7 +1239,7 @@ func (h *Handler) applyPromptIntelligenceIdentityPatch(ctx context.Context, cand
 	swapped, revisionEvidence, err := h.db.CompareAndSwapPromptFilterAdvancedConfigWithEvidence(ctx, candidateID, expectedRaw, replacementRaw, database.PromptRuleCandidateStatusPublished, database.PromptRuleCandidateEvidenceInput{
 		SourceKind: database.PromptRuleCandidateSourceAIIdentityUpdate,
 		SourceRef:  fmt.Sprintf("analysis:%d", analysisEvidenceID), SourceRefHash: revisionHash,
-		SamplePreview: promptfilter.RedactedPreview(strings.Join(clauses, "；"), 1000), MetadataJSON: string(revisionJSON),
+		SamplePreview: promptfilter.RedactedPreview(strings.Join(clauses, "; "), 1000), MetadataJSON: string(revisionJSON),
 		Provider: metadata.Provider, Model: metadata.Model, APIKeyID: metadata.APIKeyID, APIKeyName: metadata.APIKeyName,
 		ObservedAt: time.Now().UTC(),
 	})
@@ -1247,13 +1247,13 @@ func (h *Handler) applyPromptIntelligenceIdentityPatch(ctx context.Context, cand
 		return promptIdentityUpdateResult{}, err
 	}
 	if !swapped {
-		return promptIdentityUpdateResult{}, errors.New("Prompt 高级配置已被其他管理员修改，请重新分析后再应用")
+		return promptIdentityUpdateResult{}, errors.New("the Prompt advanced settings were modified by another admin; re-analyze before applying")
 	}
 	runtimeCfg := h.store.GetPromptFilterConfig()
 	runtimeCfg.Advanced = document.Effective
 	runtimeCfg.Review.Adapter = document.Effective.ReviewAdapter
 	if err := h.store.SetPromptFilterConfigWithAdvancedRaw(runtimeCfg, replacementRaw); err != nil {
-		return promptIdentityUpdateResult{}, fmt.Errorf("身份提示词已持久化，但运行时发布失败: %w", err)
+		return promptIdentityUpdateResult{}, fmt.Errorf("the identity prompt was persisted, but runtime publishing failed: %w", err)
 	}
 	result := promptIdentityUpdateResult{
 		Mode: mode, Suggested: true, Eligible: true, Applied: true, AnalysisEvidenceID: analysisEvidenceID,
@@ -1272,11 +1272,11 @@ func (h *Handler) rollbackPromptIntelligenceIdentityPatch(ctx context.Context, c
 		return promptIdentityUpdateResult{}, err
 	}
 	if revisionEvidence.CandidateID != candidateID || revisionEvidence.SourceKind != database.PromptRuleCandidateSourceAIIdentityUpdate {
-		return promptIdentityUpdateResult{}, errors.New("所选记录不是该候选的身份更新版本")
+		return promptIdentityUpdateResult{}, errors.New("the selected record is not an identity update version for this candidate")
 	}
 	var revision promptIdentityRevisionMetadata
 	if json.Unmarshal([]byte(revisionEvidence.MetadataJSON), &revision) != nil {
-		return promptIdentityUpdateResult{}, errors.New("身份更新版本记录无效")
+		return promptIdentityUpdateResult{}, errors.New("the identity update version record is invalid")
 	}
 
 	h.settingsUpdateMu.Lock()
@@ -1286,7 +1286,7 @@ func (h *Handler) rollbackPromptIntelligenceIdentityPatch(ctx context.Context, c
 		return promptIdentityUpdateResult{}, err
 	}
 	if settings == nil {
-		return promptIdentityUpdateResult{}, errors.New("系统设置尚未初始化")
+		return promptIdentityUpdateResult{}, errors.New("system settings are not initialized yet")
 	}
 	expectedRaw := strings.TrimSpace(settings.PromptFilterAdvancedConfig)
 	if expectedRaw == "" {
@@ -1298,14 +1298,14 @@ func (h *Handler) rollbackPromptIntelligenceIdentityPatch(ctx context.Context, c
 	}
 	currentPrompt := promptfilter.NormalizeReviewAdapterConfig(document.Effective.ReviewAdapter).SystemPrompt
 	if promptfilter.StableEvidenceFingerprint("identity-prompt", currentPrompt) != revision.AppliedPromptHash {
-		return promptIdentityUpdateResult{}, errors.New("当前身份提示词已在该版本之后发生变化，拒绝覆盖式回滚")
+		return promptIdentityUpdateResult{}, errors.New("the current identity prompt changed after this version, so the overwriting rollback was refused")
 	}
 	base, _, err := splitPromptIdentityManagedSection(currentPrompt)
 	if err != nil {
 		return promptIdentityUpdateResult{}, err
 	}
 	if promptfilter.StableEvidenceFingerprint("identity-base", base) != revision.BasePromptHash {
-		return promptIdentityUpdateResult{}, errors.New("当前 DS 基础身份契约已变化，拒绝回滚")
+		return promptIdentityUpdateResult{}, errors.New("the current DS base identity contract has changed, rollback refused")
 	}
 	previousPrompt := base
 	if len(revision.PreviousManagedClauses) > 0 {
@@ -1333,20 +1333,20 @@ func (h *Handler) rollbackPromptIntelligenceIdentityPatch(ctx context.Context, c
 	swapped, _, err := h.db.CompareAndSwapPromptFilterAdvancedConfigWithEvidence(ctx, candidateID, expectedRaw, replacementRaw, database.PromptRuleCandidateStatusPending, database.PromptRuleCandidateEvidenceInput{
 		SourceKind: database.PromptRuleCandidateSourceAIIdentityRollback,
 		SourceRef:  fmt.Sprintf("revision:%d", revisionEvidenceID), SourceRefHash: rollbackHash,
-		SamplePreview: "回滚 AI 身份指导版本", MetadataJSON: string(rollbackJSON), Provider: revision.Provider,
+		SamplePreview: "Roll back AI identity guidance version", MetadataJSON: string(rollbackJSON), Provider: revision.Provider,
 		Model: revision.Model, ObservedAt: time.Now().UTC(),
 	})
 	if err != nil {
 		return promptIdentityUpdateResult{}, err
 	}
 	if !swapped {
-		return promptIdentityUpdateResult{}, errors.New("Prompt 高级配置已被其他管理员修改，请刷新后重试")
+		return promptIdentityUpdateResult{}, errors.New("the Prompt advanced settings were modified by another admin; refresh and try again")
 	}
 	runtimeCfg := h.store.GetPromptFilterConfig()
 	runtimeCfg.Advanced = document.Effective
 	runtimeCfg.Review.Adapter = document.Effective.ReviewAdapter
 	if err := h.store.SetPromptFilterConfigWithAdvancedRaw(runtimeCfg, replacementRaw); err != nil {
-		return promptIdentityUpdateResult{}, fmt.Errorf("身份提示词已回滚，但运行时发布失败: %w", err)
+		return promptIdentityUpdateResult{}, fmt.Errorf("the identity prompt was rolled back, but runtime publishing failed: %w", err)
 	}
 	result := promptIdentityUpdateResult{
 		Mode: "rollback", Suggested: true, Eligible: true, Applied: false, RolledBack: true,

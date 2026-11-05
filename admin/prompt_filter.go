@@ -43,8 +43,8 @@ type promptPolicyIncidentDetailResponse struct {
 	Matches   json.RawMessage                       `json:"matches"`
 	Candidate *database.PromptRuleCandidate         `json:"candidate,omitempty"`
 	Evidence  *database.PromptRuleCandidateEvidence `json:"evidence,omitempty"`
-	// RiskSubjects 是该 CY 关联的画像主体（人员 / 会话 / Key / IP / 上游账号），
-	// 让归因时能直接看到并跳到对应的人员画像。
+	// RiskSubjects are the profile subjects linked to this CY (person / conversation / key / IP / upstream account),
+	// so attribution can show them directly and jump to the matching person profile.
 	RiskSubjects []database.PromptRiskIncidentSubject `json:"risk_subjects"`
 }
 
@@ -178,7 +178,7 @@ func promptReviewProfileAdapterJSON(raw string, fallback promptfilter.ReviewAdap
 	adapter := fallback
 	if strings.TrimSpace(raw) != "" {
 		if err := json.Unmarshal([]byte(raw), &adapter); err != nil {
-			return "", adapter, errors.New("adapter_json 无效")
+			return "", adapter, errors.New("invalid adapter_json")
 		}
 	}
 	adapter = promptfilter.NormalizeReviewAdapterConfig(adapter)
@@ -191,7 +191,7 @@ func promptReviewProfileAdapterJSON(raw string, fallback promptfilter.ReviewAdap
 
 func (h *Handler) ListPromptReviewProfiles(c *gin.Context) {
 	if h == nil || h.db == nil {
-		writeError(c, http.StatusServiceUnavailable, "Prompt 审核配置不可用")
+		writeError(c, http.StatusServiceUnavailable, "Prompt review configuration unavailable")
 		return
 	}
 	profiles, err := h.db.ListPromptReviewProfiles(c.Request.Context())
@@ -208,17 +208,17 @@ func (h *Handler) ListPromptReviewProfiles(c *gin.Context) {
 
 func (h *Handler) SavePromptReviewProfile(c *gin.Context) {
 	if h == nil || h.db == nil || h.store == nil {
-		writeError(c, http.StatusServiceUnavailable, "Prompt 审核配置不可用")
+		writeError(c, http.StatusServiceUnavailable, "Prompt review configuration unavailable")
 		return
 	}
 	var req promptReviewProfileRequest
 	if err := c.ShouldBindJSON(&req); err != nil {
-		writeError(c, http.StatusBadRequest, "请求体无效")
+		writeError(c, http.StatusBadRequest, "Invalid request body")
 		return
 	}
 	req.Name = strings.TrimSpace(req.Name)
 	if req.Name == "" || len([]rune(req.Name)) > 120 {
-		writeError(c, http.StatusBadRequest, "档案名称不能为空且不能超过 120 个字符")
+		writeError(c, http.StatusBadRequest, "Profile name must not be empty and must not exceed 120 characters")
 		return
 	}
 	current := h.store.GetPromptFilterConfig().Review
@@ -240,8 +240,8 @@ func (h *Handler) SavePromptReviewProfile(c *gin.Context) {
 		if existing != nil {
 			apiKeys = existing.APIKeys
 		} else {
-			// 留空表示保存当前已生效的 Key，避免用户为了保存新档案而
-			// 必须再次粘贴现有 DeepSeek Key。
+			// Leaving it empty keeps the currently active key, so users do not have to
+			// paste the existing DeepSeek key again just to save a new profile.
 			apiKeys = current.APIKey
 		}
 	}
@@ -280,7 +280,7 @@ func (h *Handler) SavePromptReviewProfile(c *gin.Context) {
 	reviewCfg.TimeoutSeconds, reviewCfg.Adapter = req.TimeoutSecond, adapter
 	reviewCfg = promptfilter.NormalizeReviewConfig(reviewCfg)
 	if err := promptfilter.ValidateReviewConfig(reviewCfg); err != nil {
-		writeError(c, http.StatusBadRequest, "Prompt 审核配置无效: "+err.Error())
+		writeError(c, http.StatusBadRequest, "Invalid Prompt review configuration: "+err.Error())
 		return
 	}
 	profile := database.PromptReviewProfile{ID: profileID, Name: req.Name, BaseURL: reviewCfg.BaseURL, Model: reviewCfg.Model,
@@ -295,7 +295,7 @@ func (h *Handler) SavePromptReviewProfile(c *gin.Context) {
 
 func (h *Handler) ActivatePromptReviewProfile(c *gin.Context) {
 	if h == nil || h.db == nil || h.store == nil {
-		writeError(c, http.StatusServiceUnavailable, "Prompt 审核配置不可用")
+		writeError(c, http.StatusServiceUnavailable, "Prompt review configuration unavailable")
 		return
 	}
 	profile, err := h.db.GetPromptReviewProfile(c.Request.Context(), strings.TrimSpace(c.Param("profile_id")))
@@ -304,12 +304,12 @@ func (h *Handler) ActivatePromptReviewProfile(c *gin.Context) {
 		return
 	}
 	if profile == nil {
-		writeError(c, http.StatusNotFound, "审核配置档案不存在")
+		writeError(c, http.StatusNotFound, "Review configuration profile not found")
 		return
 	}
 	var adapter promptfilter.ReviewAdapterConfig
 	if err := json.Unmarshal([]byte(profile.AdapterJSON), &adapter); err != nil {
-		writeError(c, http.StatusConflict, "审核配置档案中的适配器配置无效")
+		writeError(c, http.StatusConflict, "Adapter configuration in the review configuration profile is invalid")
 		return
 	}
 	adapter = promptfilter.NormalizeReviewAdapterConfig(adapter)
@@ -321,13 +321,13 @@ func (h *Handler) ActivatePromptReviewProfile(c *gin.Context) {
 		return
 	}
 	if settings == nil {
-		writeError(c, http.StatusNotFound, "系统设置不存在")
+		writeError(c, http.StatusNotFound, "System settings not found")
 		return
 	}
 	patchRaw, _ := json.Marshal(map[string]any{"review_adapter": adapter})
 	document, err := promptfilter.MergeAdvancedConfigDocument(settings.PromptFilterAdvancedConfig, string(patchRaw))
 	if err != nil {
-		writeError(c, http.StatusConflict, "审核配置档案无法应用: "+err.Error())
+		writeError(c, http.StatusConflict, "Review configuration profile cannot be applied: "+err.Error())
 		return
 	}
 	settings.PromptFilterReviewAPIKey = profile.APIKeys
@@ -357,7 +357,7 @@ func (h *Handler) ActivatePromptReviewProfile(c *gin.Context) {
 
 func (h *Handler) DeletePromptReviewProfile(c *gin.Context) {
 	if h == nil || h.db == nil {
-		writeError(c, http.StatusServiceUnavailable, "Prompt 审核配置不可用")
+		writeError(c, http.StatusServiceUnavailable, "Prompt review configuration unavailable")
 		return
 	}
 	if err := h.db.DeletePromptReviewProfile(c.Request.Context(), strings.TrimSpace(c.Param("profile_id"))); err != nil {
@@ -372,8 +372,8 @@ func promptReviewAPIKeyID(key string) string {
 	return hex.EncodeToString(sum[:])
 }
 
-// maskPromptReviewAPIKey 按 rune 切片(字节切会截断多字节字符),且只在
-// 前后缀不可能重叠、多数字符仍被遮蔽时(≥12 字符)才展示明文片段。
+// maskPromptReviewAPIKey slices by rune (byte slicing would cut multi-byte characters), and only shows a plaintext fragment
+// when the prefix and suffix cannot overlap and most characters are still masked (≥12 characters).
 func maskPromptReviewAPIKey(key string) string {
 	runes := []rune(strings.TrimSpace(key))
 	if len(runes) < 12 {
@@ -484,7 +484,7 @@ func (h *Handler) inspectImagePromptFilter(c *gin.Context, text string, model st
 	if writeBlock != nil {
 		writeBlock(c)
 	} else {
-		writeError(c, http.StatusBadRequest, "Prompt 被检查规则拦截")
+		writeError(c, http.StatusBadRequest, "Blocked by Prompt inspection rule")
 	}
 	return true
 }
@@ -535,31 +535,31 @@ func (h *Handler) ListPromptFilterLogs(c *gin.Context) {
 }
 
 func (h *Handler) ClearPromptFilterLogs(c *gin.Context) {
-	// 手动清空改为后台分批删除：几十万行日志在一条 DELETE + 10s 请求超时下清不完，
-	// 现在立即返回并在后台以 5000 行/批清理；与 CY 关联的日志一律跳过。
+	// Manual clearing now deletes in background batches: hundreds of thousands of log rows cannot be cleared within one DELETE and a 10s request timeout,
+	// so it now returns immediately and cleans up in the background at 5000 rows per batch; logs linked to a CY are always skipped.
 	filter := database.PromptLogPurgeFilter{}
-	message := "Prompt 检查日志已开始后台清理；CY 关联日志、风险画像和上游 CY 事件已保留"
+	message := "Prompt inspection log cleanup has started in the background; CY-linked logs, risk profiles and upstream CY events are kept"
 	source := strings.ToLower(strings.TrimSpace(c.Query("source")))
 	if source != "" {
 		if source != "local_filter" {
-			writeError(c, http.StatusBadRequest, "source 仅支持 local_filter")
+			writeError(c, http.StatusBadRequest, "source only supports local_filter")
 			return
 		}
 		filter.Source = source
-		message = "本地过滤与异步审计日志已开始后台清理；CY 关联日志和风险画像已保留"
+		message = "Local filter and async audit log cleanup has started in the background; CY-linked logs and risk profiles are kept"
 	} else {
 		switch strings.ToLower(strings.TrimSpace(c.Query("reviewed"))) {
 		case "":
 		case "true", "reviewed":
 			reviewed := true
 			filter.Reviewed = &reviewed
-			message = "外部模型复核历史已开始后台清理；CY 关联日志和风险画像已保留"
+			message = "External model review history cleanup has started in the background; CY-linked logs and risk profiles are kept"
 		case "false", "not_reviewed":
 			reviewed := false
 			filter.Reviewed = &reviewed
-			message = "本地过滤与异步审计日志已开始后台清理；CY 关联日志和风险画像已保留"
+			message = "Local filter and async audit log cleanup has started in the background; CY-linked logs and risk profiles are kept"
 		default:
-			writeError(c, http.StatusBadRequest, "reviewed 必须为 true 或 false")
+			writeError(c, http.StatusBadRequest, "reviewed must be true or false")
 			return
 		}
 	}
@@ -568,12 +568,12 @@ func (h *Handler) ClearPromptFilterLogs(c *gin.Context) {
 		started := time.Now()
 		result, err := h.db.PurgePromptFilterLogs(ctx, cutoff, filter, promptLogPurgeBatchSize, promptLogPurgeBatchPause)
 		if err != nil {
-			log.Printf("[prompt-retention] 手动清空日志失败: %v（已删 %d 行）", err, result.Logs)
+			log.Printf("[prompt-retention] manual log clear failed: %v (deleted %d rows)", err, result.Logs)
 			return
 		}
-		log.Printf("[prompt-retention] 手动清空日志完成: 删除 %d 行, batches=%d, %s", result.Logs, result.Batches, time.Since(started).Round(time.Millisecond))
+		log.Printf("[prompt-retention] manual log clear completed: deleted %d rows, batches=%d, %s", result.Logs, result.Batches, time.Since(started).Round(time.Millisecond))
 	}) {
-		writeError(c, http.StatusConflict, "已有清理任务在运行，请稍后再试")
+		writeError(c, http.StatusConflict, "A cleanup task is already running; try again later")
 		return
 	}
 	writeMessage(c, http.StatusOK, message)
@@ -586,30 +586,30 @@ func (h *Handler) ClearPromptPolicyIncidents(c *gin.Context) {
 		writeInternalError(c, err)
 		return
 	}
-	writeMessage(c, http.StatusOK, "上游 CY 事件已清空；风险画像已保留")
+	writeMessage(c, http.StatusOK, "Upstream CY events cleared; risk profiles are kept")
 }
 
 func (h *Handler) DeletePromptPolicyIncident(c *gin.Context) {
 	incidentID := strings.TrimSpace(c.Param("incident_id"))
 	if incidentID == "" {
-		writeError(c, http.StatusBadRequest, "incident_id 不能为空")
+		writeError(c, http.StatusBadRequest, "incident_id must not be empty")
 		return
 	}
 	ctx, cancel := context.WithTimeout(c.Request.Context(), 10*time.Second)
 	defer cancel()
 	if err := h.db.DeletePromptPolicyIncident(ctx, incidentID); errors.Is(err, sql.ErrNoRows) {
-		writeError(c, http.StatusNotFound, "CY 事件不存在或已删除")
+		writeError(c, http.StatusNotFound, "CY event not found or already deleted")
 		return
 	} else if err != nil {
 		writeInternalError(c, err)
 		return
 	}
-	writeMessage(c, http.StatusOK, "CY 事件已删除；风险画像和学习证据已保留")
+	writeMessage(c, http.StatusOK, "CY event deleted; risk profiles and learning evidence are kept")
 }
 
 func (h *Handler) GetPromptPolicyAuditHealth(c *gin.Context) {
 	if h == nil || h.db == nil {
-		writeError(c, http.StatusServiceUnavailable, "CY 审计存储不可用")
+		writeError(c, http.StatusServiceUnavailable, "CY audit storage unavailable")
 		return
 	}
 	ctx, cancel := context.WithTimeout(c.Request.Context(), 5*time.Second)
@@ -636,8 +636,8 @@ func (h *Handler) GetPromptPolicyAuditHealth(c *gin.Context) {
 			PendingLow: stats.PendingLow, RetainedBytes: stats.RetainedBytes,
 		},
 	}
-	// 主动关闭的功能不算故障（面板上已有独立的开关状态展示）；只有真实异常才降级：
-	// 审计队列丢高优/写入失败，或审查已启用但 key 池空配置/全冷却。
+	// A feature that was switched off on purpose is not a fault (the panel already shows its own switch state); only real errors degrade it:
+	// the audit queue drops high-priority items or fails writes, or review is enabled but the key pool is empty or fully cooling down.
 	reviewPoolFault := response.ReviewEnabled && (response.ReviewPool.Configured == 0 || response.ReviewPool.Available == 0)
 	if reviewPoolFault || stats.DroppedHigh > 0 || stats.Failed > 0 {
 		response.OK = false
@@ -698,14 +698,14 @@ func (h *Handler) ListPromptPolicyIncidents(c *gin.Context) {
 func (h *Handler) GetPromptPolicyIncident(c *gin.Context) {
 	incidentID := strings.TrimSpace(c.Param("incident_id"))
 	if incidentID == "" {
-		writeError(c, http.StatusBadRequest, "缺少 incident_id")
+		writeError(c, http.StatusBadRequest, "Missing incident_id")
 		return
 	}
 	ctx, cancel := context.WithTimeout(c.Request.Context(), 5*time.Second)
 	defer cancel()
 	incident, err := h.db.GetPromptPolicyIncident(ctx, incidentID)
 	if errors.Is(err, sql.ErrNoRows) {
-		writeError(c, http.StatusNotFound, "CY 事件不存在")
+		writeError(c, http.StatusNotFound, "CY event not found")
 		return
 	}
 	if err != nil {
@@ -780,18 +780,18 @@ func (h *Handler) enrichPromptPolicyIncidentRouting(incident *database.PromptPol
 	incident.RoutingSnapshotState = "unavailable"
 }
 
-// MatchPromptFilterLog 按时间/端点/APIKey 找到与某次请求最接近的一条提示词过滤日志，
-// 用于「使用统计」里点击 cyber_policy 报错时查看触发的完整请求内容。
+// MatchPromptFilterLog finds the prompt filter log entry closest to a request by time / endpoint / APIKey,
+// used to view the full request that triggered a cyber_policy error when clicking it in "usage statistics".
 // GET /api/prompt-filter/logs/match?at=<RFC3339>&endpoint=&api_key_id=&source=
 func (h *Handler) MatchPromptFilterLog(c *gin.Context) {
 	atRaw := strings.TrimSpace(c.Query("at"))
 	if atRaw == "" {
-		writeError(c, http.StatusBadRequest, "缺少 at 参数")
+		writeError(c, http.StatusBadRequest, "Missing at parameter")
 		return
 	}
 	at, err := time.Parse(time.RFC3339, atRaw)
 	if err != nil {
-		writeError(c, http.StatusBadRequest, "at 参数格式无效（需 RFC3339）")
+		writeError(c, http.StatusBadRequest, "Invalid at parameter format (RFC3339 required)")
 		return
 	}
 	source := strings.TrimSpace(c.Query("source"))
@@ -819,16 +819,16 @@ func (h *Handler) MatchPromptFilterLog(c *gin.Context) {
 func (h *Handler) TestPromptFilter(c *gin.Context) {
 	var req promptFilterTestRequest
 	if err := c.ShouldBindJSON(&req); err != nil {
-		writeError(c, http.StatusBadRequest, "请求体无效")
+		writeError(c, http.StatusBadRequest, "Invalid request body")
 		return
 	}
 	req.Text = strings.TrimSpace(req.Text)
 	if req.Text == "" {
-		writeError(c, http.StatusBadRequest, "text 不能为空")
+		writeError(c, http.StatusBadRequest, "text must not be empty")
 		return
 	}
 	if len([]rune(req.Text)) > 20000 {
-		writeError(c, http.StatusBadRequest, "text 不能超过 20000 个字符")
+		writeError(c, http.StatusBadRequest, "text must not exceed 20000 characters")
 		return
 	}
 	cfg := h.store.GetPromptFilterConfig()
@@ -853,16 +853,16 @@ type promptReviewModelsRequest struct {
 	TimeoutSeconds int    `json:"timeout_seconds"`
 }
 
-// ListPromptReviewModels 从审查供应商拉取 OpenAI 兼容的模型列表,供前端选择审查模型。
-// base_url/api_key 允许携带表单草稿值覆盖已存配置,便于保存前先拉列表。
+// ListPromptReviewModels fetches the OpenAI-compatible model list from the review provider, for the frontend to pick a review model.
+// base_url/api_key may carry draft form values that override the saved config, so the list can be fetched before saving.
 func (h *Handler) ListPromptReviewModels(c *gin.Context) {
 	if h == nil || h.store == nil {
-		writeError(c, http.StatusServiceUnavailable, "Prompt 审核配置不可用")
+		writeError(c, http.StatusServiceUnavailable, "Prompt review configuration unavailable")
 		return
 	}
 	var req promptReviewModelsRequest
 	if err := c.ShouldBindJSON(&req); err != nil && !errors.Is(err, io.EOF) {
-		writeError(c, http.StatusBadRequest, "请求体无效")
+		writeError(c, http.StatusBadRequest, "Invalid request body")
 		return
 	}
 	reviewCfg := h.store.GetPromptFilterConfig().Review
@@ -876,12 +876,12 @@ func (h *Handler) ListPromptReviewModels(c *gin.Context) {
 		reviewCfg.TimeoutSeconds = req.TimeoutSeconds
 	}
 	if len(promptfilter.NormalizeReviewConfig(reviewCfg).APIKeyList()) == 0 {
-		writeError(c, http.StatusBadRequest, "请先配置审查 API Key")
+		writeError(c, http.StatusBadRequest, "Configure the review API key first")
 		return
 	}
 	models, endpoint, err := promptfilter.DefaultReviewClient.ListReviewModels(c.Request.Context(), reviewCfg)
 	if err != nil {
-		writeError(c, http.StatusBadGateway, "拉取模型列表失败: "+err.Error())
+		writeError(c, http.StatusBadGateway, "Failed to fetch model list: "+err.Error())
 		return
 	}
 	c.JSON(http.StatusOK, gin.H{"endpoint": endpoint, "models": models})
@@ -890,20 +890,20 @@ func (h *Handler) ListPromptReviewModels(c *gin.Context) {
 func (h *Handler) TestPromptReviewConnection(c *gin.Context) {
 	var req promptReviewTestRequest
 	if err := c.ShouldBindJSON(&req); err != nil {
-		writeError(c, http.StatusBadRequest, "请求体无效")
+		writeError(c, http.StatusBadRequest, "Invalid request body")
 		return
 	}
 	req.Text = strings.TrimSpace(req.Text)
 	if req.Text == "" {
-		writeError(c, http.StatusBadRequest, "text 不能为空")
+		writeError(c, http.StatusBadRequest, "text must not be empty")
 		return
 	}
 	if len([]rune(req.Text)) > 20000 {
-		writeError(c, http.StatusBadRequest, "text 不能超过 20000 个字符")
+		writeError(c, http.StatusBadRequest, "text must not exceed 20000 characters")
 		return
 	}
 	if h == nil || h.store == nil {
-		writeError(c, http.StatusServiceUnavailable, "Prompt 审核配置不可用")
+		writeError(c, http.StatusServiceUnavailable, "Prompt review configuration unavailable")
 		return
 	}
 	reviewCfg := h.store.GetPromptFilterConfig().Review
@@ -932,7 +932,7 @@ func (h *Handler) TestPromptReviewConnection(c *gin.Context) {
 	}
 	reviewCfg = promptfilter.NormalizeReviewConfig(reviewCfg)
 	if err := promptfilter.ValidateReviewConfig(reviewCfg); err != nil {
-		writeError(c, http.StatusBadRequest, "Prompt 审核配置无效: "+err.Error())
+		writeError(c, http.StatusBadRequest, "Invalid Prompt review configuration: "+err.Error())
 		return
 	}
 	keys := reviewCfg.APIKeyList()
@@ -1000,7 +1000,7 @@ func (h *Handler) TestPromptReviewConnection(c *gin.Context) {
 	started := time.Now()
 	outcome, err := promptfilter.DefaultReviewClient.ReviewTextDetailed(c.Request.Context(), req.Text, reviewCfg)
 	if err != nil {
-		writeError(c, http.StatusBadGateway, "Prompt 审核连接测试失败: "+err.Error())
+		writeError(c, http.StatusBadGateway, "Prompt review connection test failed: "+err.Error())
 		return
 	}
 	c.JSON(http.StatusOK, promptReviewTestResponse{
@@ -1024,7 +1024,7 @@ func (h *Handler) TestPromptReviewConnection(c *gin.Context) {
 
 func (h *Handler) ListPromptReviewAPIKeys(c *gin.Context) {
 	if h == nil || h.store == nil {
-		writeError(c, http.StatusServiceUnavailable, "Prompt 审核配置不可用")
+		writeError(c, http.StatusServiceUnavailable, "Prompt review configuration unavailable")
 		return
 	}
 	items := promptReviewAPIKeyDescriptors(h.store.GetPromptFilterConfig().Review.APIKeyList())
@@ -1033,16 +1033,16 @@ func (h *Handler) ListPromptReviewAPIKeys(c *gin.Context) {
 
 func (h *Handler) DeletePromptReviewAPIKey(c *gin.Context) {
 	if h == nil || h.store == nil || h.db == nil {
-		writeError(c, http.StatusServiceUnavailable, "Prompt 审核配置不可用")
+		writeError(c, http.StatusServiceUnavailable, "Prompt review configuration unavailable")
 		return
 	}
 	keyID := strings.ToLower(strings.TrimSpace(c.Param("key_id")))
 	if len(keyID) != sha256.Size*2 {
-		writeError(c, http.StatusBadRequest, "审查 Key 标识无效")
+		writeError(c, http.StatusBadRequest, "Invalid review key ID")
 		return
 	}
 	if _, err := hex.DecodeString(keyID); err != nil {
-		writeError(c, http.StatusBadRequest, "审查 Key 标识无效")
+		writeError(c, http.StatusBadRequest, "Invalid review key ID")
 		return
 	}
 
@@ -1054,11 +1054,11 @@ func (h *Handler) DeletePromptReviewAPIKey(c *gin.Context) {
 		return
 	}
 	if settings == nil {
-		writeError(c, http.StatusNotFound, "审查 Key 不存在")
+		writeError(c, http.StatusNotFound, "Review key not found")
 		return
 	}
-	// storedRaw 保持数据库原值不做 trim:CAS 按原值精确比较,存量值若带
-	// 换行/制表符,trim 后将永远匹配不上而恒 409。
+	// storedRaw keeps the raw database value without trimming: the CAS compares the raw value exactly, so if an existing value carries
+	// a newline or tab, trimming would never match and it would always return 409.
 	storedRaw := settings.PromptFilterReviewAPIKey
 	keys := (promptfilter.ReviewConfig{APIKey: storedRaw}).APIKeyList()
 	remaining := make([]string, 0, len(keys))
@@ -1073,11 +1073,11 @@ func (h *Handler) DeletePromptReviewAPIKey(c *gin.Context) {
 		remaining = append(remaining, key)
 	}
 	if !found {
-		writeError(c, http.StatusNotFound, "审查 Key 不存在或已被删除")
+		writeError(c, http.StatusNotFound, "Review key not found or already deleted")
 		return
 	}
 	if settings.PromptFilterReviewEnabled && len(remaining) == 0 {
-		writeError(c, http.StatusConflict, "模型复核启用时不能删除最后一个审查 Key，请先关闭模型复核或添加替代 Key")
+		writeError(c, http.StatusConflict, "The last review key cannot be deleted while model review is enabled; turn off model review or add a replacement key first")
 		return
 	}
 	replacement := strings.Join(remaining, "\n")
@@ -1085,7 +1085,7 @@ func (h *Handler) DeletePromptReviewAPIKey(c *gin.Context) {
 	runtimeCfg.Review.APIKey = replacement
 	runtimeCfg = promptfilter.NormalizeConfig(runtimeCfg)
 	if err := promptfilter.ValidateReviewConfig(runtimeCfg.Review); err != nil {
-		writeError(c, http.StatusConflict, "删除后审查配置无效: "+err.Error())
+		writeError(c, http.StatusConflict, "Review configuration is invalid after deletion: "+err.Error())
 		return
 	}
 	swapped, err := h.db.CompareAndSwapPromptFilterReviewAPIKeys(c.Request.Context(), storedRaw, replacement)
@@ -1094,14 +1094,14 @@ func (h *Handler) DeletePromptReviewAPIKey(c *gin.Context) {
 		return
 	}
 	if !swapped {
-		writeError(c, http.StatusConflict, "审查 Key 列表已被其他操作修改，请刷新后重试")
+		writeError(c, http.StatusConflict, "The review key list was changed by another operation; refresh and try again")
 		return
 	}
 	if err := h.store.SetPromptFilterConfigWithAdvancedRaw(runtimeCfg, h.store.GetPromptFilterAdvancedConfig()); err != nil {
-		writeError(c, http.StatusInternalServerError, "审查 Key 已保存，但运行时配置更新失败")
+		writeError(c, http.StatusInternalServerError, "Review key saved, but the runtime config update failed")
 		return
 	}
-	log.Printf("审查 Key 已删除: %s (来自 %s)，剩余 %d 个", deletedMasked, c.ClientIP(), len(remaining))
+	log.Printf("review key deleted: %s (from %s), %d remaining", deletedMasked, c.ClientIP(), len(remaining))
 	items := promptReviewAPIKeyDescriptors(remaining)
 	c.JSON(http.StatusOK, promptReviewAPIKeysResponse{Items: items, Count: len(items)})
 }
@@ -1109,24 +1109,24 @@ func (h *Handler) DeletePromptReviewAPIKey(c *gin.Context) {
 func (h *Handler) TestPromptFilterRulePattern(c *gin.Context) {
 	var req promptFilterRulePatternTestRequest
 	if err := c.ShouldBindJSON(&req); err != nil {
-		writeError(c, http.StatusBadRequest, "请求体无效")
+		writeError(c, http.StatusBadRequest, "Invalid request body")
 		return
 	}
 	trimmedPattern := strings.TrimSpace(req.Pattern)
 	if trimmedPattern == "" {
-		writeError(c, http.StatusBadRequest, "pattern 不能为空")
+		writeError(c, http.StatusBadRequest, "pattern must not be empty")
 		return
 	}
 	if req.Text == "" {
-		writeError(c, http.StatusBadRequest, "text 不能为空")
+		writeError(c, http.StatusBadRequest, "text must not be empty")
 		return
 	}
 	if len([]rune(req.Pattern)) > 5000 {
-		writeError(c, http.StatusBadRequest, "pattern 不能超过 5000 个字符")
+		writeError(c, http.StatusBadRequest, "pattern must not exceed 5000 characters")
 		return
 	}
 	if len([]rune(req.Text)) > 20000 {
-		writeError(c, http.StatusBadRequest, "text 不能超过 20000 个字符")
+		writeError(c, http.StatusBadRequest, "text must not exceed 20000 characters")
 		return
 	}
 	re, err := regexp.Compile(req.Pattern)

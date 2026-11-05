@@ -12,8 +12,8 @@ import (
 	"github.com/gin-gonic/gin"
 )
 
-// apiKeyScopeUsageItem 是某个 API Key 在一条 scope 限额上的当前用量（issue #439）。
-// 只返回该条 scope 真正配了上限的窗口，前端据此渲染进度条。
+// apiKeyScopeUsageItem is the current usage of an API Key against one scope limit (issue #439).
+// It only returns the windows where this scope actually has a limit configured; the frontend uses this to render progress bars.
 type apiKeyScopeUsageItem struct {
 	ScopeType   string                       `json:"scope_type"`
 	ScopeID     int64                        `json:"scope_id"`
@@ -21,10 +21,10 @@ type apiKeyScopeUsageItem struct {
 	ScopeExists bool                         `json:"scope_exists"`
 	OnExhausted string                       `json:"on_exhausted"`
 	Windows     []apiKeyScopeUsageWindowItem `json:"windows"`
-	// Cumulative 是累计额度（不随时间回落，需手动重置）的当前状态。
+	// Cumulative is the current state of the cumulative quota (it does not decay over time and must be reset manually).
 	Cumulative *apiKeyScopeCumulativeItem `json:"cumulative,omitempty"`
-	// Skips 是这条预算被判定耗尽的运行态统计(进程内，重启清零)。预算耗尽后请求会静默
-	// 落到其它账号，这个计数是唯一能直观回答「这条预算真的在生效吗」的信号。
+	// Skips is the runtime count of times this budget was judged exhausted (in-process, reset on restart). After the budget is exhausted, requests silently
+	// land on other accounts; this count is the only direct signal for answering "is this budget really taking effect?"
 	Skips *apiKeyScopeSkipItem `json:"skips,omitempty"`
 }
 
@@ -58,15 +58,15 @@ type apiKeyScopeUsageWindowItem struct {
 	Exhausted    bool    `json:"exhausted"`
 }
 
-// GetAPIKeyScopeUsage 返回某 API Key 各条分组/账号维度限额的当前用量。
+// GetAPIKeyScopeUsage returns the current usage of an API Key against each group/account-dimension limit.
 // GET /api/admin/keys/:id/scope-usage
 //
-// 口径与网关判定完全一致（同一套按账号拆分的窗口聚合 + 当前分组成员关系折算），
-// 唯一差别是这里不叠加网关进程内的增量事件，因此可能比实际用量少最多一个批量落库周期。
+// The basis matches the gateway's decision exactly (the same per-account window aggregation, plus conversion using the current group membership),
+// The only difference is that the gateway's in-process incremental events are not added here, so it may lag actual usage by at most one batch write cycle.
 func (h *Handler) GetAPIKeyScopeUsage(c *gin.Context) {
 	id, err := strconv.ParseInt(c.Param("id"), 10, 64)
 	if err != nil {
-		writeError(c, http.StatusBadRequest, "无效的 API Key ID")
+		writeError(c, http.StatusBadRequest, "Invalid API Key ID")
 		return
 	}
 
@@ -117,7 +117,7 @@ func (h *Handler) GetAPIKeyScopeUsage(c *gin.Context) {
 			Windows:     make([]apiKeyScopeUsageWindowItem, 0, len(database.APIKeyScopeWindows)),
 		}
 		if item.ScopeType == database.APIKeyScopeTypeAccount {
-			// 账号展示名由前端用自己的账号列表解析，这里只判断账号是否还在池中。
+			// The frontend resolves account display names from its own account list; here we only check whether the account is still in the pool.
 			item.ScopeExists = h.store != nil && h.store.FindByID(scope.ScopeID) != nil
 		} else if name, ok := groupNames[scope.ScopeID]; ok {
 			item.ScopeName = name
@@ -190,24 +190,24 @@ type resetAPIKeyScopeQuotaReq struct {
 	ScopeID   int64  `json:"scope_id"`
 }
 
-// ResetAPIKeyScopeQuota 把某条 scope 的累计额度清零并记一次重置。
+// ResetAPIKeyScopeQuota zeroes the cumulative quota of one scope and records one reset.
 // POST /api/admin/keys/:id/scope-quota/reset
 //
-// 累计额度不随时间回落（这正是它与滑动窗口的区别），所以必须有这个显式入口，
-// 否则用完就永久卡死。语义对齐 Key 级额度的 reset_quota。
+// The cumulative quota does not decay over time (this is what distinguishes it from a sliding window), so it needs this explicit entry point,
+// otherwise it would be stuck permanently once used up. Semantics match the key-level quota's reset_quota.
 func (h *Handler) ResetAPIKeyScopeQuota(c *gin.Context) {
 	id, err := strconv.ParseInt(c.Param("id"), 10, 64)
 	if err != nil {
-		writeError(c, http.StatusBadRequest, "无效的 API Key ID")
+		writeError(c, http.StatusBadRequest, "Invalid API Key ID")
 		return
 	}
 	var req resetAPIKeyScopeQuotaReq
 	if err := c.ShouldBindJSON(&req); err != nil {
-		writeError(c, http.StatusBadRequest, "请求格式错误")
+		writeError(c, http.StatusBadRequest, "Invalid request format")
 		return
 	}
 	if req.ScopeID <= 0 {
-		writeError(c, http.StatusBadRequest, "scope_id 必须为正整数")
+		writeError(c, http.StatusBadRequest, "scope_id must be a positive integer")
 		return
 	}
 
@@ -227,13 +227,13 @@ func (h *Handler) ResetAPIKeyScopeQuota(c *gin.Context) {
 		writeError(c, http.StatusBadRequest, err.Error())
 		return
 	}
-	// 重置后立刻重新观察命中统计，否则历史计数会让人误以为预算还在被拦。
+	// Re-observe the hit stats right after the reset; otherwise historical counts would make it look like the budget is still being blocked.
 	proxy.ResetAPIKeyScopeSkipStats(id)
-	writeMessage(c, http.StatusOK, "累计额度已重置")
+	writeMessage(c, http.StatusOK, "Cumulative quota has been reset")
 }
 
-// apiKeyScopeSummaryItem 是列表页用的 scope 预算概览:只给"最紧的那个窗口"的占比,
-// 详情留给编辑抽屉。
+// apiKeyScopeSummaryItem is the scope budget overview for the list page: it only gives the share of "the tightest window",
+// details are left to the edit drawer.
 type apiKeyScopeSummaryItem struct {
 	ScopeType    string  `json:"scope_type"`
 	ScopeID      int64   `json:"scope_id"`
@@ -246,10 +246,10 @@ type apiKeyScopeSummaryItem struct {
 	SkipRequests int64   `json:"skip_requests,omitempty"`
 }
 
-// GetAPIKeysScopeSummary 一次返回全部（配了 scope 预算的）Key 的预算概览。
+// GetAPIKeysScopeSummary returns the budget overview of all keys that have scope budgets configured, in one call.
 // GET /api/admin/keys-scope-summary
 //
-// 每个窗口只做一次跨 Key 的聚合查询，避免列表页按 Key 逐个查导致 N×窗口 的放大。
+// Each window runs only one cross-key aggregate query, to avoid the N×window amplification that per-key lookups on the list page would cause.
 func (h *Handler) GetAPIKeysScopeSummary(c *gin.Context) {
 	ctx, cancel := context.WithTimeout(c.Request.Context(), 15*time.Second)
 	defer cancel()
@@ -276,7 +276,7 @@ func (h *Handler) GetAPIKeysScopeSummary(c *gin.Context) {
 		return
 	}
 
-	// 只查真的被用到的窗口。
+	// Only query the windows that are actually used.
 	usageByWindow := make(map[string]map[int64]map[int64]database.APIKeyWindowUsage)
 	for _, window := range database.APIKeyScopeWindows {
 		needed := false
@@ -330,8 +330,8 @@ func (h *Handler) GetAPIKeysScopeSummary(c *gin.Context) {
 			if stat, ok := skips[fmt.Sprintf("%s:%d", item.ScopeType, item.ScopeID)]; ok {
 				item.SkipRequests = stat.Requests
 			}
-			// 概览只保留「用得最满」的那个窗口。占比 >= 1 与 CheckWindow 的耗尽判定等价
-			// （两者都是 used >= limit），所以不必再单独跑一遍判定。
+			// The overview only keeps the "most used" window. A share >= 1 is equivalent to CheckWindow's exhaustion check
+			// (both are used >= limit), so the check does not need to run again separately.
 			for _, window := range database.APIKeyScopeWindows {
 				if !scope.NeedsWindow(window.Label) {
 					continue
@@ -350,8 +350,8 @@ func (h *Handler) GetAPIKeysScopeSummary(c *gin.Context) {
 				item.Metric = metric
 				item.Exhausted = ratio >= 1
 			}
-			// 累计额度也要参与「最紧」的比较，否则只配累计额度的 Key 在列表里
-			// 会显示成 0%。
+			// The cumulative quota must also take part in the "tightest" comparison, otherwise a key that only has a cumulative quota would show
+			// 0% in the list.
 			if scope.HasCumulativeQuota() {
 				counter := countersByKey[keyID][database.APIKeyScopeCounterKey{
 					ScopeType: item.ScopeType,
@@ -373,7 +373,7 @@ func (h *Handler) GetAPIKeysScopeSummary(c *gin.Context) {
 	c.JSON(http.StatusOK, gin.H{"summary": summary})
 }
 
-// scopeCumulativeRatio 返回累计额度里"用得最满"的口径占比与口径名。
+// scopeCumulativeRatio returns the share of the "most used" basis within the cumulative quota, and the basis name.
 func scopeCumulativeRatio(scope database.APIKeyScopeLimit, counter database.APIKeyScopeCounter) (float64, string) {
 	best := 0.0
 	metric := ""
@@ -396,7 +396,7 @@ func scopeCumulativeRatio(scope database.APIKeyScopeLimit, counter database.APIK
 	return best, metric
 }
 
-// scopeWindowRatio 返回某窗口内"用得最满"的口径占比（0~1+）与该口径名。
+// scopeWindowRatio returns the share (0 to 1+) of the "most used" basis within a window, and the basis name.
 func scopeWindowRatio(scope database.APIKeyScopeLimit, label string, usage database.APIKeyWindowUsage) (float64, string) {
 	var costLimit float64
 	var tokenLimit, requestLimit int64
@@ -431,7 +431,7 @@ func scopeWindowRatio(scope database.APIKeyScopeLimit, label string, usage datab
 	return best, metric
 }
 
-// aggregateScopeUsage 把按账号拆分的用量折算到一条 scope 上。
+// aggregateScopeUsage converts usage split by account into one scope.
 func aggregateScopeUsage(
 	scope database.APIKeyScopeLimit,
 	perAccount map[int64]database.APIKeyWindowUsage,
@@ -459,8 +459,8 @@ func aggregateScopeUsage(
 	return usage
 }
 
-// collectAccountGroups 把聚合结果里出现的账号当前所属分组累积到 out。已从账号池
-// 移除的账号解析不到分组，其历史用量在分组维度上被忽略。
+// collectAccountGroups adds the current groups of the accounts appearing in the aggregate result to out. Accounts that were removed from the account pool
+// cannot be resolved to a group, so their historical usage is ignored at the group level.
 func (h *Handler) collectAccountGroups(perAccount map[int64]database.APIKeyWindowUsage, out map[int64][]int64) {
 	if h == nil || h.store == nil || out == nil {
 		return
@@ -478,7 +478,7 @@ func (h *Handler) collectAccountGroups(perAccount map[int64]database.APIKeyWindo
 	}
 }
 
-// accountGroupNameIndex 返回分组 ID → 名称。查询失败时返回空表（前端退回显示 ID）。
+// accountGroupNameIndex returns a group ID → name map. On query failure it returns an empty map (the frontend falls back to showing the ID).
 func (h *Handler) accountGroupNameIndex(ctx context.Context) map[int64]string {
 	groups, err := h.db.ListAccountGroups(ctx)
 	if err != nil {

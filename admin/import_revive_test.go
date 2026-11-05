@@ -16,9 +16,9 @@ import (
 	"github.com/gin-gonic/gin"
 )
 
-// issue #618：重授权后 RT 变化，裸 RT 导入在刷新后按身份合并进旧账号，但旧账号
-// 之前的 401 unauthorized / error 态没有一起清掉——用户看到新账号消失、旧账号
-// 继续挂"未授权"。合并时必须把旧账号的错误态清掉（库 + 跨实例冷却缓存）。
+// issue #618: after re-authorisation the RT changes; a bare RT import is merged into the old account by identity after the refresh, but the old account
+// kept its earlier 401 unauthorized / error state. The user saw the new account vanish while the old account
+// stayed flagged "unauthorized". Merging must clear the old account's error state (in the DB and in the cross-instance cooldown cache).
 func TestMergeRefreshedDuplicateClearsStaleUnauthorizedState(t *testing.T) {
 	gin.SetMode(gin.TestMode)
 
@@ -61,7 +61,7 @@ func TestMergeRefreshedDuplicateClearsStaleUnauthorizedState(t *testing.T) {
 		t.Fatalf("precondition: db cooldown_reason = %q, want unauthorized", preRow.CooldownReason)
 	}
 
-	// 重授权后的新 RT 导入，刷新完成后身份与旧账号相同
+	// A new RT imported after re-authorisation; after the refresh its identity matches the old account
 	newID, err := db.InsertAccountWithCredentials(ctx, "reauth", map[string]interface{}{
 		"refresh_token": "rt-fresh",
 		"access_token":  "at-fresh",
@@ -108,7 +108,7 @@ func TestMergeRefreshedDuplicateClearsStaleUnauthorizedState(t *testing.T) {
 	}
 }
 
-// 限速冷却不是"过时的错误态"，合并时不能被顺手清掉。
+// A rate-limit cooldown is not a "stale error state", so merging must not clear it along the way.
 func TestMergeRefreshedDuplicateKeepsRateLimitCooldown(t *testing.T) {
 	gin.SetMode(gin.TestMode)
 
@@ -198,8 +198,8 @@ func waitForAccountStatusCleared(t *testing.T, db *database.DB, id int64) *datab
 	}
 }
 
-// issue #618：凭证一字不差的重复导入，若旧账号正挂在 error 态，不该只计一次
-// duplicate 就完事——用户就是要把它捞回来。裸 RT 文件导入路径。
+// issue #618: a duplicate import with byte-identical credentials, where the old account is sitting in the error state, should not only count once
+// as a duplicate and stop there: the user wants it brought back. This is the bare RT file import path.
 func TestImportAccountsCommonRevivesErroredDuplicate(t *testing.T) {
 	gin.SetMode(gin.TestMode)
 
@@ -252,7 +252,7 @@ func TestImportAccountsCommonRevivesErroredDuplicate(t *testing.T) {
 	}
 }
 
-// 同一身份、同一凭证的 JSON 导入：旧账号处于 401 冷却时同样复活并计入更新。
+// A JSON import with the same identity and the same credentials: when the old account is in 401 cooldown it is also revived and counted as an update.
 func TestImportAccountsCommonRevivesUnauthorizedOAuthIdentityDuplicate(t *testing.T) {
 	gin.SetMode(gin.TestMode)
 
@@ -306,7 +306,7 @@ func TestImportAccountsCommonRevivesUnauthorizedOAuthIdentityDuplicate(t *testin
 	}
 }
 
-// 手工批量添加同一 RT：旧账号处于 error 态时复活并计入 updated，正常态仍是 duplicate。
+// Manually adding the same RT in bulk: when the old account is in the error state it is revived and counted as updated; in the normal state it is still a duplicate.
 func TestAddAccountRevivesErroredDuplicate(t *testing.T) {
 	gin.SetMode(gin.TestMode)
 
@@ -339,7 +339,7 @@ func TestAddAccountRevivesErroredDuplicate(t *testing.T) {
 		return resp
 	}
 
-	// 正常态：仍按重复跳过，不产生副作用
+	// Normal state: still skipped as a duplicate, with no side effects
 	resp := doAdd(`{"refresh_token":"rt-existing"}`)
 	if resp["duplicate"] != float64(1) || resp["updated"] != float64(0) {
 		t.Fatalf("healthy duplicate resp = %v, want duplicate=1 updated=0", resp)

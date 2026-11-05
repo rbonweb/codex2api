@@ -11,8 +11,8 @@ import (
 	"github.com/gin-gonic/gin"
 )
 
-// Prompt 审核日志保留：定时按天数分批清理过期日志（跳过 CY 关联行），
-// 手动「清空日志」也走同一条分批通道，不再受请求超时限制。
+// Prompt review log retention: on a schedule, expired logs are purged in batches by day count (skipping CY-linked rows),
+// and the manual "clear logs" action goes through the same batch path, so it is no longer limited by the request timeout.
 
 const (
 	promptLogRetentionCheckInterval = time.Hour
@@ -21,7 +21,7 @@ const (
 	promptLogPurgeBatchPause        = 200 * time.Millisecond
 )
 
-// promptLogPurgeRunning 保证定时清理与手动清理不会同时跑（两者都是长时间分批删除）。
+// promptLogPurgeRunning ensures the scheduled purge and the manual purge never run at the same time (both are long-running batched deletes).
 var promptLogPurgeRunning int32
 
 type promptLogRetentionResponse struct {
@@ -53,7 +53,7 @@ func promptLogRetentionResponseFrom(cfg *database.PromptLogRetentionConfig) prom
 	return resp
 }
 
-// GetPromptLogRetention 返回保留天数与上次清理统计（GET /api/admin/prompt-filter/retention）。
+// GetPromptLogRetention returns the retention days and the last purge statistics (GET /api/admin/prompt-filter/retention).
 func (h *Handler) GetPromptLogRetention(c *gin.Context) {
 	ctx, cancel := context.WithTimeout(c.Request.Context(), 5*time.Second)
 	defer cancel()
@@ -69,7 +69,7 @@ type updatePromptLogRetentionRequest struct {
 	RetentionDays int `json:"retention_days"`
 }
 
-// UpdatePromptLogRetention 设置保留天数（0 = 关闭自动清理，最大 365）。
+// UpdatePromptLogRetention sets the retention days (0 = automatic purge off, maximum 365).
 func (h *Handler) UpdatePromptLogRetention(c *gin.Context) {
 	var req updatePromptLogRetentionRequest
 	if err := c.ShouldBindJSON(&req); err != nil {
@@ -77,7 +77,7 @@ func (h *Handler) UpdatePromptLogRetention(c *gin.Context) {
 		return
 	}
 	if req.RetentionDays < 0 || req.RetentionDays > database.MaxPromptLogRetentionDays {
-		writeError(c, http.StatusBadRequest, "保留天数必须在 0 到 365 之间（0 表示关闭自动清理）")
+		writeError(c, http.StatusBadRequest, "Retention days must be between 0 and 365 (0 means automatic purge is off)")
 		return
 	}
 	ctx, cancel := context.WithTimeout(c.Request.Context(), 5*time.Second)
@@ -90,7 +90,7 @@ func (h *Handler) UpdatePromptLogRetention(c *gin.Context) {
 	c.JSON(http.StatusOK, promptLogRetentionResponseFrom(cfg))
 }
 
-// RunPromptLogRetentionNow 立即在后台按当前保留天数清理一次；已有清理在跑时返回 409。
+// RunPromptLogRetentionNow runs one purge in the background right away, using the current retention days; if a purge is already running it returns 409.
 func (h *Handler) RunPromptLogRetentionNow(c *gin.Context) {
 	ctx, cancel := context.WithTimeout(c.Request.Context(), 5*time.Second)
 	cfg, err := h.db.GetPromptLogRetentionConfig(ctx)
@@ -100,19 +100,19 @@ func (h *Handler) RunPromptLogRetentionNow(c *gin.Context) {
 		return
 	}
 	if cfg.RetentionDays <= 0 {
-		writeError(c, http.StatusBadRequest, "保留天数为 0（已关闭自动清理），请先设置保留天数")
+		writeError(c, http.StatusBadRequest, "Retention days is 0 (automatic purge is off); set the retention days first")
 		return
 	}
 	if !h.startPromptLogPurge(func(ctx context.Context) {
 		h.runPromptLogRetention(ctx, cfg.RetentionDays)
 	}) {
-		writeError(c, http.StatusConflict, "已有清理任务在运行")
+		writeError(c, http.StatusConflict, "A purge task is already running")
 		return
 	}
 	c.JSON(http.StatusOK, gin.H{"started": true, "retention_days": cfg.RetentionDays})
 }
 
-// startPromptLogPurge 在后台启动一次分批清理；占用中返回 false。
+// startPromptLogPurge starts one batched purge in the background; returns false if it is already occupied.
 func (h *Handler) startPromptLogPurge(run func(ctx context.Context)) bool {
 	if !atomic.CompareAndSwapInt32(&promptLogPurgeRunning, 0, 1) {
 		return false
@@ -126,7 +126,7 @@ func (h *Handler) startPromptLogPurge(run func(ctx context.Context)) bool {
 	return true
 }
 
-// runPromptLogRetention 执行一次保留清理并记录结果。
+// runPromptLogRetention runs one retention purge and records the result.
 func (h *Handler) runPromptLogRetention(ctx context.Context, days int) {
 	started := time.Now()
 	cutoff := started.Add(-time.Duration(days) * 24 * time.Hour)
@@ -135,19 +135,19 @@ func (h *Handler) runPromptLogRetention(ctx context.Context, days int) {
 	recordCtx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
 	defer cancel()
 	if recordErr := h.db.RecordPromptLogRetentionRun(recordCtx, started, result, duration, err); recordErr != nil {
-		log.Printf("[prompt-retention] 记录清理结果失败: %v", recordErr)
+		log.Printf("[prompt-retention] failed to record purge result: %v", recordErr)
 	}
 	if err != nil {
-		log.Printf("[prompt-retention] 清理失败（保留 %d 天）: %v；已删 logs=%d events=%d sources=%d", days, err, result.Logs, result.Events, result.Sources)
+		log.Printf("[prompt-retention] purge failed (retention %d days): %v; deleted logs=%d events=%d sources=%d", days, err, result.Logs, result.Events, result.Sources)
 		return
 	}
 	if result.Logs+result.Events+result.Sources > 0 || result.Interrupted {
-		log.Printf("[prompt-retention] 清理完成（保留 %d 天，%s）: logs=%d events=%d sources=%d batches=%d interrupted=%v",
+		log.Printf("[prompt-retention] purge completed (retention %d days, %s): logs=%d events=%d sources=%d batches=%d interrupted=%v",
 			days, duration.Round(time.Millisecond), result.Logs, result.Events, result.Sources, result.Batches, result.Interrupted)
 	}
 }
 
-// StartPromptLogRetention 启动每小时一次的保留清理；保留天数为 0 时不做任何事。
+// StartPromptLogRetention starts the retention purge once per hour; when the retention days is 0 it does nothing.
 func (h *Handler) StartPromptLogRetention(ctx context.Context) {
 	if h == nil || h.db == nil {
 		return
@@ -160,7 +160,7 @@ func (h *Handler) StartPromptLogRetention(ctx context.Context) {
 			cfg, err := h.db.GetPromptLogRetentionConfig(readCtx)
 			cancel()
 			if err != nil {
-				log.Printf("[prompt-retention] 读取保留设置失败: %v", err)
+				log.Printf("[prompt-retention] failed to read retention settings: %v", err)
 				return
 			}
 			if cfg == nil || cfg.RetentionDays <= 0 {
@@ -183,7 +183,7 @@ func (h *Handler) StartPromptLogRetention(ctx context.Context) {
 				h.runPromptLogRetention(merged, days)
 			})
 		}
-		// 启动后稍等再跑第一轮，避免与其他启动任务抢写锁。
+		// Wait briefly after startup before the first round, to avoid racing other startup tasks for the write lock.
 		select {
 		case <-ctx.Done():
 			return

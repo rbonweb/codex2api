@@ -122,7 +122,7 @@ func TestHydrateSeedWithWhoAmI(t *testing.T) {
 	}
 }
 
-// 批量导入内：网络层失败熔断本批剩余 token，端点 4xx 只影响那一枚。
+// Within a batch import: a network-layer failure trips the circuit breaker for the rest of this batch's tokens, while an endpoint 4xx only affects that one token.
 func TestPATWhoAmIHydratorBreaker(t *testing.T) {
 	var calls int32
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
@@ -145,7 +145,7 @@ func TestPATWhoAmIHydratorBreaker(t *testing.T) {
 		t.Fatalf("whoami calls = %d, want 2 (one per token)", got)
 	}
 
-	// 把端点指向一个已关闭的服务器模拟网络不通。
+	// Point the endpoint at a closed server to simulate a network failure.
 	dead := httptest.NewServer(http.NotFoundHandler())
 	deadURL := dead.URL
 	dead.Close()

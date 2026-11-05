@@ -6,8 +6,8 @@ import (
 	"github.com/codex2api/internal/imageupscale"
 )
 
-// 超分实现已下沉到 internal/imageupscale,与公共 Images API 共享同一套
-// 目标尺寸解析与本地/外部后端选择;这里保留包内旧名委托,避免大范围改动。
+// The upscale implementation has moved down to internal/imageupscale, sharing one set of
+// target-size parsing and local/external backend selection with the public Images API; the old in-package names are kept here as delegates to avoid a wide change.
 
 func upscaleImageBytes(ctx context.Context, imageBytes []byte, scale, requestedSize string) ([]byte, string, string, error) {
 	return imageupscale.Bytes(ctx, imageBytes, scale, requestedSize)

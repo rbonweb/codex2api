@@ -513,7 +513,7 @@ func TestLegacyAutomaticIntelligenceMigrationContinuesAfterCandidateOnlyInterrup
 	proposal := promptIntelligenceCandidate{
 		Name: automatic.Name, Pattern: automatic.Pattern, Weight: automatic.Weight,
 		Category: automatic.Category, Strict: false, ChangeType: "new",
-		Rationale: "从历史自动规则迁移至待审核候选",
+		Rationale: "migrated from a historical automatic rule to a candidate pending review",
 	}
 	staged, err := handler.stagePromptIntelligenceCandidates(context.Background(), []promptIntelligenceCandidate{proposal}, database.PromptRuleCandidateSourceLegacyMigration, false)
 	if err != nil || len(staged) != 1 {

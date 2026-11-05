@@ -39,10 +39,10 @@ type intelligenceExecution struct {
 // and model against user payload rules; identity/fingerprint/timezone still apply.
 func (h *Handler) executeIntelligenceCheck(ctx context.Context, account *auth.Account, model, effort, prompt string) (result intelligenceExecution) {
 	if account == nil {
-		return intelligenceExecution{Interrupted: true, Error: "配置错误：该账号渠道不支持降智检测"}
+		return intelligenceExecution{Interrupted: true, Error: "configuration error: this account's channel does not support the intelligence check"}
 	}
 	if err := h.validateQualityTestForAccount(ctx, account, qualityTestRequest{Model: model, ReasoningEffort: effort}); err != nil {
-		return intelligenceExecution{Interrupted: true, Error: "配置错误：" + err.Error()}
+		return intelligenceExecution{Interrupted: true, Error: "configuration error: " + err.Error()}
 	}
 	payload := map[string]any{"model": model, "stream": true}
 	payload["store"] = false
@@ -97,7 +97,7 @@ func (h *Handler) executeIntelligenceCheck(ctx context.Context, account *auth.Ac
 	statusCode = resp.StatusCode
 	if resp.StatusCode != http.StatusOK {
 		raw, _ := io.ReadAll(io.LimitReader(resp.Body, 64*1024))
-		result.Error = fmt.Sprintf("上游返回 %d: %s", resp.StatusCode, truncate(string(raw), 4096))
+		result.Error = fmt.Sprintf("upstream returned %d: %s", resp.StatusCode, truncate(string(raw), 4096))
 		result.CredentialRejected = intelligenceCredentialRejected(raw)
 		h.applyIntelligenceUpstreamFailure(account, resp, model, raw)
 		return
@@ -163,7 +163,7 @@ func readIntelligenceStream(body io.Reader) (result intelligenceExecution) {
 		}
 		textBytes += len(text) - len(m.parts[part])
 		if textBytes > intelligenceOutputLimit {
-			result.Error = "最终答案超过 256 KiB 上限"
+			result.Error = "final answer exceeds the 256 KiB limit"
 			return false
 		}
 		m.parts[part] = text
@@ -185,7 +185,7 @@ func readIntelligenceStream(body io.Reader) (result intelligenceExecution) {
 	}
 	appendText := func(text string) bool {
 		if output.Len()+len(text) > intelligenceOutputLimit {
-			result.Error = "最终答案超过 256 KiB 上限"
+			result.Error = "final answer exceeds the 256 KiB limit"
 			return false
 		}
 		output.WriteString(text)
@@ -203,7 +203,7 @@ func readIntelligenceStream(body io.Reader) (result intelligenceExecution) {
 	}
 	err := proxy.ReadSSEStreamWithEvent(io.LimitReader(body, 16*1024*1024), func(event string, data []byte) bool {
 		if !gjson.ValidBytes(data) {
-			result.Error = "上游返回无效事件"
+			result.Error = "upstream returned an invalid event"
 			return false
 		}
 		root := gjson.ParseBytes(data)
@@ -225,7 +225,7 @@ func readIntelligenceStream(body io.Reader) (result intelligenceExecution) {
 		case "response.completed":
 			status := root.Get("response.status").String()
 			if status != "" && status != "completed" {
-				result.Error = formatUpstreamTestError(data, "上游未完整完成: "+status)
+				result.Error = formatUpstreamTestError(data, "upstream did not finish completely: "+status)
 				return false
 			}
 			// The terminal response is authoritative if it contains output. Never grade
@@ -243,7 +243,7 @@ func readIntelligenceStream(body io.Reader) (result intelligenceExecution) {
 			return false
 		case "response.failed", "response.incomplete", "error":
 			result.terminalPayload = append([]byte(nil), data...)
-			result.Error = formatUpstreamTestError(data, "上游未完整完成答案")
+			result.Error = formatUpstreamTestError(data, "upstream did not finish the answer completely")
 			return false
 		}
 		return true
@@ -273,10 +273,10 @@ func readIntelligenceStream(body io.Reader) (result intelligenceExecution) {
 	}
 	result.Output = output.String()
 	if err != nil && !result.Complete && result.Error == "" {
-		result.Error = "读取上游响应失败: " + err.Error()
+		result.Error = "failed to read the upstream response: " + err.Error()
 	}
 	if !result.Complete && result.Error == "" {
-		result.Error = "上游流已中断，未收到成功终态"
+		result.Error = "upstream stream was interrupted; no successful terminal state was received"
 	}
 	return
 }

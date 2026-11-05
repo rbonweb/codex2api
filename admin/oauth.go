@@ -27,7 +27,7 @@ import (
 	"github.com/gin-gonic/gin"
 )
 
-// ==================== OAuth 常量 ====================
+// ==================== OAuth constants ====================
 
 const (
 	oauthAuthorizeURL       = "https://auth.openai.com/oauth/authorize"
@@ -38,7 +38,7 @@ const (
 	oauthSessionTTL         = 30 * time.Minute
 )
 
-// ==================== 内存 Session 存储 ====================
+// ==================== In-memory session store ====================
 
 type oauthSession struct {
 	mu sync.Mutex // protects callback progress; authorization fields are immutable
@@ -47,14 +47,14 @@ type oauthSession struct {
 	CodeVerifier string
 	RedirectURI  string
 	ProxyURL     string
-	ContactEmail string // 自助门户提交者的联系邮箱（仅自助流程写入，作为备注标识）
-	SelfService  bool   // 是否来自公开自助门户（决定待审核入池路径）
+	ContactEmail string // contact email of the self-service portal submitter (written only by the self-service flow, as a note marker)
+	SelfService  bool   // whether it came from the public self-service portal (decides the pending-review pool path)
 	CreatedAt    time.Time
 
-	// 回调自动捕获字段
-	CallbackCode   string    // 回调收到的 authorization code
-	CallbackState  string    // 回调收到的 state
-	CallbackAt     time.Time // 回调时间
+	// Fields for automatically capturing the callback
+	CallbackCode   string    // authorization code received by the callback
+	CallbackState  string    // state received by the callback
+	CallbackAt     time.Time // callback time
 	ExchangeResult *oauthExchangeResult
 }
 
@@ -86,7 +86,7 @@ func (s *oauthSession) callbackSnapshot() (*oauthExchangeResult, bool) {
 	return nil, !s.CallbackAt.IsZero()
 }
 
-// oauthExchangeResult 自动回调完成后的兑换结果
+// oauthExchangeResult is the exchange result after the automatic callback completes
 type oauthExchangeResult struct {
 	Success  bool   `json:"success"`
 	Message  string `json:"message"`
@@ -129,8 +129,8 @@ func (s *oauthSessionStore) delete(id string) {
 	s.mu.Unlock()
 }
 
-// findByState 通过 state 查找 session（回调端点使用，返回 sessionID + session）。
-// 遍历全部条目并使用常量时间比较，避免按匹配位置提前返回。
+// findByState looks up a session by state (used by the callback endpoint; returns sessionID + session).
+// It walks all entries and uses a constant-time comparison, so it does not return early based on match position.
 func (s *oauthSessionStore) findByState(state string) (string, *oauthSession, bool) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
@@ -165,7 +165,7 @@ func (s *oauthSessionStore) cleanupLoop() {
 	}
 }
 
-// ==================== PKCE 工具函数 ====================
+// ==================== PKCE helper functions ====================
 
 func oauthRandomHex(n int) (string, error) {
 	b := make([]byte, n)
@@ -182,7 +182,7 @@ func oauthCodeChallenge(verifier string) string {
 
 // ==================== Handlers ====================
 
-// GenerateOAuthURL 生成 Codex CLI PKCE OAuth 授权 URL
+// GenerateOAuthURL generates a Codex CLI PKCE OAuth authorization URL
 // POST /api/admin/oauth/generate-auth-url
 func (h *Handler) GenerateOAuthURL(c *gin.Context) {
 	var req struct {
@@ -193,30 +193,30 @@ func (h *Handler) GenerateOAuthURL(c *gin.Context) {
 
 	redirectURI := strings.TrimSpace(req.RedirectURI)
 	if redirectURI == "" {
-		// OpenAI OAuth 仅注册了 localhost:1455 回调，始终使用固定默认值
-		// 避免因请求 Host 端口不同（如 localhost:3000）导致回调校验失败（#80）
+		// OpenAI OAuth only registers the localhost:1455 callback, so the fixed default is always used
+		// so a different port in the request Host (e.g. localhost:3000) does not make the callback check fail (#80)
 		redirectURI = oauthDefaultRedirectURI
 	}
 
 	state, err := oauthRandomHex(32)
 	if err != nil {
-		writeError(c, http.StatusInternalServerError, "生成 state 失败")
+		writeError(c, http.StatusInternalServerError, "Failed to generate state")
 		return
 	}
 	codeVerifier, err := oauthRandomHex(64)
 	if err != nil {
-		writeError(c, http.StatusInternalServerError, "生成 code_verifier 失败")
+		writeError(c, http.StatusInternalServerError, "Failed to generate code_verifier")
 		return
 	}
 	sessionID, err := oauthRandomHex(16)
 	if err != nil {
-		writeError(c, http.StatusInternalServerError, "生成 session_id 失败")
+		writeError(c, http.StatusInternalServerError, "Failed to generate session_id")
 		return
 	}
 
 	authURL, err := buildOAuthAuthorizeURL(redirectURI, state, codeVerifier)
 	if err != nil {
-		writeError(c, http.StatusBadRequest, "客户端身份配置无效: "+err.Error())
+		writeError(c, http.StatusBadRequest, "Invalid client identity configuration: "+err.Error())
 		return
 	}
 	globalOAuthStore.set(sessionID, &oauthSession{
@@ -233,7 +233,7 @@ func (h *Handler) GenerateOAuthURL(c *gin.Context) {
 	})
 }
 
-// buildOAuthAuthorizeURL 组装 Codex CLI PKCE 授权链接（admin 与公开自助门户共用）。
+// buildOAuthAuthorizeURL assembles the Codex CLI PKCE authorization link (shared by the admin and the public self-service portal).
 func buildOAuthAuthorizeURL(redirectURI, state, codeVerifier string) (string, error) {
 	headers, err := proxy.CodexOAuthIdentityHeaders(nil)
 	if err != nil {
@@ -253,7 +253,7 @@ func buildOAuthAuthorizeURL(redirectURI, state, codeVerifier string) (string, er
 	return oauthAuthorizeURL + "?" + params.Encode(), nil
 }
 
-// ExchangeOAuthCode 用授权码兑换 token，并写入新账号
+// ExchangeOAuthCode exchanges the authorization code for a token and writes a new account
 // POST /api/admin/oauth/exchange-code
 func (h *Handler) ExchangeOAuthCode(c *gin.Context) {
 	var req struct {
@@ -264,28 +264,28 @@ func (h *Handler) ExchangeOAuthCode(c *gin.Context) {
 		ProxyURL  string `json:"proxy_url"`
 	}
 	if err := c.ShouldBindJSON(&req); err != nil {
-		writeError(c, http.StatusBadRequest, "请求格式错误")
+		writeError(c, http.StatusBadRequest, "Invalid request format")
 		return
 	}
 	if req.SessionID == "" || req.Code == "" || req.State == "" {
-		writeError(c, http.StatusBadRequest, "session_id、code 和 state 均为必填")
+		writeError(c, http.StatusBadRequest, "session_id, code and state are all required")
 		return
 	}
 
 	sess, ok := globalOAuthStore.get(req.SessionID)
 	if !ok {
-		writeError(c, http.StatusBadRequest, "OAuth 会话不存在或已过期（有效期 30 分钟）")
+		writeError(c, http.StatusBadRequest, "OAuth session does not exist or has expired (valid for 30 minutes)")
 		return
 	}
 	if req.State != sess.State {
-		writeError(c, http.StatusBadRequest, "state 不匹配，请重新发起授权")
+		writeError(c, http.StatusBadRequest, "state does not match; start authorization again")
 		return
 	}
 	if !sess.claimExchange(req.Code, req.State) {
-		writeError(c, http.StatusBadRequest, "该授权会话已处理或正在处理，请重新发起授权")
+		writeError(c, http.StatusBadRequest, "This authorization session has already been processed or is being processed; start authorization again")
 		return
 	}
-	defer sess.completeExchange(&oauthExchangeResult{Error: "请重新发起授权"})
+	defer sess.completeExchange(&oauthExchangeResult{Error: "Start authorization again"})
 
 	proxyURL := sess.ProxyURL
 	if trimmed := strings.TrimSpace(req.ProxyURL); trimmed != "" {
@@ -295,17 +295,17 @@ func (h *Handler) ExchangeOAuthCode(c *gin.Context) {
 		proxyURL = h.store.GetProxyURL()
 	}
 
-	// Resin 临时身份用于 OAuth 兑换（新账号尚无 DBID）
+	// Temporary Resin identity for the OAuth exchange (the new account has no DBID yet)
 	resinTempID := "oauth-" + req.SessionID
 	tokenResp, accountInfo, err := doOAuthCodeExchange(c.Request.Context(), req.Code, sess.CodeVerifier, sess.RedirectURI, proxyURL, resinTempID)
 	if err != nil {
-		writeError(c, http.StatusBadGateway, "授权码兑换失败: "+err.Error())
+		writeError(c, http.StatusBadGateway, "Authorization code exchange failed: "+err.Error())
 		return
 	}
 	globalOAuthStore.delete(req.SessionID)
 
 	if tokenResp.RefreshToken == "" {
-		writeError(c, http.StatusBadGateway, "授权服务器未返回 refresh_token，请确认已开启 offline_access scope")
+		writeError(c, http.StatusBadGateway, "The authorization server did not return a refresh_token; confirm the offline_access scope is enabled")
 		return
 	}
 	seed := normalizeTokenCredentialSeed(tokenCredentialSeed{
@@ -328,7 +328,7 @@ func (h *Handler) ExchangeOAuthCode(c *gin.Context) {
 
 	id, updated, err := h.upsertOAuthIdentityAccount(ctx, name, proxyURL, seed, "oauth")
 	if err != nil {
-		writeError(c, http.StatusInternalServerError, "账号写入数据库失败: "+err.Error())
+		writeError(c, http.StatusInternalServerError, "Failed to write account to the database: "+err.Error())
 		return
 	}
 	if proxy.IsResinEnabled() && !updated {
@@ -348,9 +348,9 @@ func (h *Handler) ExchangeOAuthCode(c *gin.Context) {
 		planType = seed.planType
 	}
 
-	message := fmt.Sprintf("OAuth 账号 %s 添加成功", name)
+	message := fmt.Sprintf("OAuth account %s added successfully", name)
 	if updated {
-		message = fmt.Sprintf("OAuth 账号已存在，已更新账号 %d", id)
+		message = fmt.Sprintf("OAuth account already exists; updated account %d", id)
 	}
 	c.JSON(http.StatusOK, gin.H{
 		"message":   message,
@@ -365,7 +365,7 @@ var errDuplicateOAuthIdentity = errors.New("duplicate oauth identity")
 var errDuplicateCredentialWorkspaceRoute = errors.New("duplicate credential workspace route")
 
 func oauthIdentityDuplicateMessage(id int64) string {
-	return fmt.Sprintf("OAuth 账号已存在 (id=%d)，请更新已有账号", id)
+	return fmt.Sprintf("OAuth account already exists (id=%d); update the existing account", id)
 }
 
 func (h *Handler) findOAuthIdentityDuplicate(ctx context.Context, seed tokenCredentialSeed, excludeID int64) (int64, error) {
@@ -424,9 +424,9 @@ func (h *Handler) upsertOAuthIdentityAccountWithRuntime(ctx context.Context, nam
 		if err != nil {
 			return 0, false, nil, err
 		}
-		// 空值一律保留原绑定。preserveAccountProxy 再进一步：已经绑了代理的账号
-		// 不被覆盖——导入文件带来的代理是被动数据，而目标端可能已经做过精细的
-		// 代理分配（自动均衡等），静默冲掉属于数据损坏。
+		// Empty values always keep the existing binding. preserveAccountProxy goes further: an account already bound to a proxy
+		// is not overwritten: the proxy in the import file is passive data, while the target may already have done fine-grained
+		// proxy assignment (automatic balancing, etc.); silently overwriting it would be data corruption.
 		effectiveProxyURL := strings.TrimSpace(proxyURL)
 		existingProxyURL := strings.TrimSpace(row.ProxyURL)
 		if effectiveProxyURL == "" || (proxyPolicy == preserveAccountProxy && existingProxyURL != "") {
@@ -435,10 +435,10 @@ func (h *Handler) upsertOAuthIdentityAccountWithRuntime(ctx context.Context, nam
 		if err := h.db.UpdateOAuthAccountCredentials(ctx, duplicateID, tokenCredentialMap(seed), effectiveProxyURL); err != nil {
 			return 0, false, nil, err
 		}
-		// 重新导入有效凭证时，若该账号此前处于错误/封禁（401）态，清除错误状态，
-		// 让重新加载后的运行时账号脱离 banned，并交由后续 probe 重新判定。
-		// 仅针对 error / unauthorized，避免误清合法的限速冷却（rate_limited）。
-		h.clearReimportedAccountErrorState(ctx, row, "重新导入")
+		// When valid credentials are re-imported and the account was previously in an error or banned (401) state, the error state is cleared,
+		// so the reloaded runtime account is no longer banned and is re-evaluated by a later probe.
+		// Only for error / unauthorized, so a legitimate rate limit cooldown (rate_limited) is not cleared by mistake.
+		h.clearReimportedAccountErrorState(ctx, row, "re-import")
 		if err := h.reloadTokenAccount(ctx, duplicateID, source); err != nil {
 			return 0, false, nil, err
 		}
@@ -458,9 +458,9 @@ func (h *Handler) upsertOAuthIdentityAccountWithRuntime(ctx context.Context, nam
 	return id, false, nil, nil
 }
 
-// accountErrorStateNeedsReset 判断一个已存在账号是否处于"重新导入有效凭证后应清除"的
-// 错误/封禁态：status='error'（RT 失效、鉴权失败等）或 401 unauthorized 冷却。
-// 限速冷却（rate_limited*）不在此列，避免重新导入误清合法的限速窗口。
+// accountErrorStateNeedsReset reports whether an existing account is in a state that should be cleared once valid credentials are re-imported:
+// error or ban state: status='error' (RT invalid, auth failed, etc.) or a 401 unauthorized cooldown.
+// Rate limit cooldowns (rate_limited*) are excluded, so re-importing does not wrongly clear a legitimate rate limit window.
 func accountErrorStateNeedsReset(row *database.AccountRow) bool {
 	if row == nil {
 		return false
@@ -471,21 +471,21 @@ func accountErrorStateNeedsReset(row *database.AccountRow) bool {
 	return strings.EqualFold(strings.TrimSpace(row.CooldownReason), "unauthorized")
 }
 
-// clearReimportedAccountErrorState 在重新导入 / 重新授权 / 合并凭证拿到有效凭证后，
-// 就地清除已有账号的 error / unauthorized 状态。返回是否真的清过（账号不在
-// 该状态时什么都不做，限速冷却更不会被碰）。
+// clearReimportedAccountErrorState runs after a re-import, re-authorization or merged credential obtains valid credentials,
+// and clears the error / unauthorized state of the existing account in place. It returns whether it actually cleared anything (an account not in
+// that state is left alone, and rate limit cooldowns are never touched).
 //
-// 库与跨实例冷却缓存必须一起清：调用方随后会 reloadTokenAccount 从库重建
-// 运行时账号，库里干净了内存才干净；而调度器挑号时还会回读缓存里的冷却
-// 记录并盖回账号，只清库会让账号继续被 unauthorized 缓存挡到 TTL 到期。
-// 内存里的 FailureStreak / PermanentRefreshFailures / Disabled 标志随重载
-// 一起归零，这里不需要单独处理。
+// The database and the cross-instance cooldown cache must be cleared together: the caller then calls reloadTokenAccount to rebuild from the database
+// the runtime account; once the database is clean, memory is clean too. But when the scheduler picks an account it also reads the cooldown from the cache
+// and writes it back onto the account; clearing only the database would leave the account blocked by the unauthorized cache until its TTL expires.
+// The in-memory FailureStreak / PermanentRefreshFailures / Disabled flags are reset along with the reload
+// so they need no separate handling here.
 func (h *Handler) clearReimportedAccountErrorState(ctx context.Context, row *database.AccountRow, action string) bool {
 	if h == nil || h.db == nil || !accountErrorStateNeedsReset(row) {
 		return false
 	}
 	if err := h.db.ClearError(ctx, row.ID); err != nil {
-		log.Printf("%s清除账号 %d 错误状态失败: %v", action, row.ID, err)
+		log.Printf("%s: failed to clear error state of account %d: %v", action, row.ID, err)
 		return false
 	}
 	if h.store != nil {
@@ -494,28 +494,28 @@ func (h *Handler) clearReimportedAccountErrorState(ctx context.Context, row *dat
 	return true
 }
 
-// reviveReimportedAccount 处理「重复导入命中了一个处于 error / unauthorized 态的
-// 已有账号」：凭证一字不差，本来只会计一次 duplicate 跳过；但用户把同一份凭证
-// 再导一遍，就是在明确要求把这个号捞回来重新判定（issue #618）。这里清掉旧
-// 状态、重载运行时账号并重新探测，让它回到号池；探测若再次失败会照常重新
-// 落 unauthorized / error，代价只是一次上游探针。
+// reviveReimportedAccount handles the case where a duplicate import hits an existing account that is in error / unauthorized state:
+// the credentials are identical, so it would normally just count one duplicate and skip; but when the user imports the same credentials again,
+// that is an explicit request to bring this account back and re-evaluate it (issue #618). Here the old state is cleared,
+// the runtime account is reloaded and probed again to return it to the pool; if the probe fails again, the account is marked as usual
+// as unauthorized / error, at the cost of a single upstream probe.
 //
-// 账号本身状态正常（含限速冷却）时不做任何事、返回 false，调用方按普通重复
-// 计数——正常号重复导入不该产生任何副作用。
+// If the account itself is in a normal state (including a rate limit cooldown), it does nothing and returns false, so the caller counts it as an ordinary duplicate
+// count: re-importing a normal account should have no side effects.
 func (h *Handler) reviveReimportedAccount(ctx context.Context, row *database.AccountRow, source string) bool {
 	if h == nil || h.db == nil || row == nil || !accountErrorStateNeedsReset(row) {
 		return false
 	}
-	if !h.clearReimportedAccountErrorState(ctx, row, "重复导入复活") {
+	if !h.clearReimportedAccountErrorState(ctx, row, "duplicate import revive") {
 		return false
 	}
 	if h.store != nil {
-		// reloadTokenAccount 先移除再按库重建；重建失败时账号会从运行时池消失。
-		// 那样不能对外报"已复活"——把原来的运行时对象放回去（仍是异常态，与
-		// 未复活的结论一致），返回 false 让调用方按普通重复计数。
+		// reloadTokenAccount removes the account first and then rebuilds it from the database; if the rebuild fails, the account disappears from the runtime pool.
+		// In that case it must not report "revived" externally: put the original runtime object back (it is still in an error state, consistent with
+		// the not-revived outcome), and return false so the caller counts it as an ordinary duplicate.
 		prev := h.store.FindByID(row.ID)
 		if err := h.reloadTokenAccount(ctx, row.ID, source); err != nil {
-			log.Printf("重复导入复活账号 %d 后重载运行时失败，保留原运行时状态: %v", row.ID, err)
+			log.Printf("reloading runtime for account %d after duplicate import revive failed; keeping the original runtime state: %v", row.ID, err)
 			if prev != nil && h.store.FindByID(row.ID) == nil {
 				h.store.AddAccount(prev)
 			}
@@ -524,8 +524,8 @@ func (h *Handler) reviveReimportedAccount(ctx context.Context, row *database.Acc
 		if acc := h.store.FindByID(row.ID); acc != nil &&
 			acc.GetAccessToken() == "" && !acc.IsCodexAgentIdentity() &&
 			!h.store.GetLazyMode() && strings.HasPrefix(source, "import") {
-			// 导入来源的重载不会自动换票（reloadTokenAccount 把 import* 来源
-			// 留给导入流程自己排队），裸 RT 账号在这里补上，走导入并发闸。
+			// Reloads from import sources do not refresh the token automatically (reloadTokenAccount leaves import* sources
+			// to the import flow to queue), so a bare RT account is handled here and goes through the import concurrency gate.
 			id := row.ID
 			h.runImportProbeTask(func(ctx context.Context) {
 				h.refreshImportedAccountAndProbe(ctx, id, source+"_refresh")
@@ -533,7 +533,7 @@ func (h *Handler) reviveReimportedAccount(ctx context.Context, row *database.Acc
 		}
 	}
 	h.db.InsertAccountEventAsync(row.ID, "updated", source+"_revive")
-	log.Printf("重复导入命中处于异常态的已有账号 %d，已清除错误/401 状态并重新探测 (source=%s)", row.ID, source)
+	log.Printf("duplicate import hit existing account %d in an abnormal state; cleared the error/401 state and re-probing (source=%s)", row.ID, source)
 	return true
 }
 
@@ -552,7 +552,7 @@ func (h *Handler) reloadTokenAccount(ctx context.Context, id int64, source strin
 	}
 	h.store.RemoveAccount(id)
 	if err := h.store.LoadAccountByID(ctx, id); err != nil {
-		log.Printf("更新账号 %d 后重新加载运行时失败: %v", id, err)
+		log.Printf("failed to reload runtime after updating account %d: %v", id, err)
 		return err
 	}
 	h.triggerTokenAccountProbe(id, source)
@@ -572,12 +572,12 @@ func (h *Handler) triggerTokenAccountProbe(id int64, source string) {
 	}
 }
 
-// UpdateOAuthAccountCode 用授权码更新已有 OAuth 账号的授权参数。
+// UpdateOAuthAccountCode updates the authorization parameters of an existing OAuth account using an authorization code.
 // POST /api/admin/accounts/:id/oauth/exchange-code
 func (h *Handler) UpdateOAuthAccountCode(c *gin.Context) {
 	id, err := strconv.ParseInt(c.Param("id"), 10, 64)
 	if err != nil || id <= 0 {
-		writeError(c, http.StatusBadRequest, "无效的账号 ID")
+		writeError(c, http.StatusBadRequest, "Invalid account ID")
 		return
 	}
 
@@ -588,7 +588,7 @@ func (h *Handler) UpdateOAuthAccountCode(c *gin.Context) {
 		ProxyURL  string `json:"proxy_url"`
 	}
 	if err := c.ShouldBindJSON(&req); err != nil {
-		writeError(c, http.StatusBadRequest, "请求格式错误")
+		writeError(c, http.StatusBadRequest, "Invalid request format")
 		return
 	}
 	req.SessionID = strings.TrimSpace(req.SessionID)
@@ -596,7 +596,7 @@ func (h *Handler) UpdateOAuthAccountCode(c *gin.Context) {
 	req.State = strings.TrimSpace(req.State)
 	req.ProxyURL = strings.TrimSpace(req.ProxyURL)
 	if req.SessionID == "" || req.Code == "" || req.State == "" {
-		writeError(c, http.StatusBadRequest, "session_id、code 和 state 均为必填")
+		writeError(c, http.StatusBadRequest, "session_id, code and state are all required")
 		return
 	}
 
@@ -613,24 +613,24 @@ func (h *Handler) UpdateOAuthAccountCode(c *gin.Context) {
 		return
 	}
 	if !strings.EqualFold(strings.TrimSpace(row.Type), "oauth") {
-		writeError(c, http.StatusBadRequest, "当前账号不是 OAuth 授权类型，不能重新授权")
+		writeError(c, http.StatusBadRequest, "The current account is not an OAuth account, so it cannot be re-authorized")
 		return
 	}
 
 	sess, ok := globalOAuthStore.get(req.SessionID)
 	if !ok {
-		writeError(c, http.StatusBadRequest, "OAuth 会话不存在或已过期（有效期 30 分钟）")
+		writeError(c, http.StatusBadRequest, "OAuth session does not exist or has expired (valid for 30 minutes)")
 		return
 	}
 	if req.State != sess.State {
-		writeError(c, http.StatusBadRequest, "state 不匹配，请重新发起授权")
+		writeError(c, http.StatusBadRequest, "state does not match; start authorization again")
 		return
 	}
 	if !sess.claimExchange(req.Code, req.State) {
-		writeError(c, http.StatusBadRequest, "该授权会话已处理或正在处理，请重新发起授权")
+		writeError(c, http.StatusBadRequest, "This authorization session has already been processed or is being processed; start authorization again")
 		return
 	}
-	defer sess.completeExchange(&oauthExchangeResult{Error: "请重新发起授权"})
+	defer sess.completeExchange(&oauthExchangeResult{Error: "Start authorization again"})
 
 	proxyURL := sess.ProxyURL
 	if req.ProxyURL != "" {
@@ -646,13 +646,13 @@ func (h *Handler) UpdateOAuthAccountCode(c *gin.Context) {
 	resinAccountID := fmt.Sprintf("%d", id)
 	tokenResp, accountInfo, err := doOAuthCodeExchange(c.Request.Context(), req.Code, sess.CodeVerifier, sess.RedirectURI, proxyURL, resinAccountID)
 	if err != nil {
-		writeError(c, http.StatusBadGateway, "授权码兑换失败: "+err.Error())
+		writeError(c, http.StatusBadGateway, "Authorization code exchange failed: "+err.Error())
 		return
 	}
 	globalOAuthStore.delete(req.SessionID)
 
 	if tokenResp.RefreshToken == "" {
-		writeError(c, http.StatusBadGateway, "授权服务器未返回 refresh_token，请确认已开启 offline_access scope")
+		writeError(c, http.StatusBadGateway, "The authorization server did not return a refresh_token; confirm the offline_access scope is enabled")
 		return
 	}
 
@@ -679,16 +679,16 @@ func (h *Handler) UpdateOAuthAccountCode(c *gin.Context) {
 			writeError(c, http.StatusNotFound, "账号不存在")
 			return
 		}
-		writeError(c, http.StatusInternalServerError, "Token 写入数据库失败: "+err.Error())
+		writeError(c, http.StatusInternalServerError, "Failed to write token to the database: "+err.Error())
 		return
 	}
-	// 与重新导入合并路径(upsertOAuthIdentityAccount)对齐:拿到新凭证后,
-	// 错误/401 态就地清除、交由探针重新判定,而不是让账号一直挂在"异常"
-	// 等一次可能失败的异步探针(issue #493)。限流冷却不在清除范围内。
-	h.clearReimportedAccountErrorState(ctx, row, "重新授权")
+	// Aligned with the re-import merge path (upsertOAuthIdentityAccount): once new credentials are obtained,
+	// the error / 401 state is cleared in place and left for a probe to re-judge, instead of leaving the account stuck at "abnormal"
+	// waiting on one asynchronous probe that may fail (issue #493). Rate limit cooldowns are outside the scope of the clearing.
+	h.clearReimportedAccountErrorState(ctx, row, "re-authorize")
 
 	if err := h.reloadTokenAccount(ctx, id, "oauth_reauth"); err != nil {
-		writeError(c, http.StatusInternalServerError, "重新加载运行时账号失败: "+err.Error())
+		writeError(c, http.StatusInternalServerError, "Failed to reload runtime account: "+err.Error())
 		return
 	}
 	h.db.InsertAccountEventAsync(id, "updated", "oauth_reauth")
@@ -707,14 +707,14 @@ func (h *Handler) UpdateOAuthAccountCode(c *gin.Context) {
 	}
 
 	c.JSON(http.StatusOK, gin.H{
-		"message":   "OAuth 账号授权参数更新成功",
+		"message":   "OAuth account authorization parameters updated successfully",
 		"id":        id,
 		"email":     email,
 		"plan_type": planType,
 	})
 }
 
-// ==================== 内部 HTTP 调用 ====================
+// ==================== Internal HTTP calls ====================
 
 type rawOAuthTokenResp struct {
 	AccessToken  string `json:"access_token"`
@@ -731,7 +731,7 @@ func doOAuthCodeExchange(ctx context.Context, code, codeVerifier, redirectURI, p
 	form.Set("redirect_uri", redirectURI)
 	form.Set("code_verifier", codeVerifier)
 
-	// Resin 反代模式：改写 URL
+	// Resin reverse-proxy mode: rewrite the URL
 	targetURL := oauthTokenURL
 	tempID := ""
 	if len(resinTempID) > 0 {
@@ -743,12 +743,12 @@ func doOAuthCodeExchange(ctx context.Context, code, codeVerifier, redirectURI, p
 
 	req, err := http.NewRequestWithContext(ctx, http.MethodPost, targetURL, strings.NewReader(form.Encode()))
 	if err != nil {
-		return nil, nil, fmt.Errorf("创建请求失败: %w", err)
+		return nil, nil, fmt.Errorf("failed to create request: %w", err)
 	}
 	req.Header.Set("Content-Type", "application/x-www-form-urlencoded")
 	req.Header.Set("Accept", "application/json")
 
-	// Resin 反代：注入临时账号身份头
+	// Resin reverse proxy: inject the temporary account identity header
 	if proxy.IsResinEnabled() && tempID != "" {
 		req.Header.Set("X-Resin-Account", tempID)
 	}
@@ -761,30 +761,30 @@ func doOAuthCodeExchange(ctx context.Context, code, codeVerifier, redirectURI, p
 	}
 	resp, err := client.Do(req)
 	if err != nil {
-		return nil, nil, fmt.Errorf("请求失败: %w", err)
+		return nil, nil, fmt.Errorf("request failed: %w", err)
 	}
 	defer resp.Body.Close()
 
 	body, _ := io.ReadAll(io.LimitReader(resp.Body, 1<<20))
 	if resp.StatusCode != http.StatusOK {
-		return nil, nil, fmt.Errorf("token 兑换失败 (HTTP %d)", resp.StatusCode)
+		return nil, nil, fmt.Errorf("token exchange failed (HTTP %d)", resp.StatusCode)
 	}
 
 	var tokenResp rawOAuthTokenResp
 	if err := json.Unmarshal(body, &tokenResp); err != nil {
-		return nil, nil, fmt.Errorf("解析响应失败: %w", err)
+		return nil, nil, fmt.Errorf("failed to parse response: %w", err)
 	}
 	if strings.TrimSpace(tokenResp.AccessToken) == "" {
-		return nil, nil, fmt.Errorf("token 兑换响应缺少 access_token")
+		return nil, nil, fmt.Errorf("token exchange response is missing access_token")
 	}
 
 	info := accountInfoFromTokens(tokenResp.IDToken, tokenResp.AccessToken)
 	return &tokenResp, info, nil
 }
 
-// ==================== OAuth 自动回调捕获 ====================
+// ==================== OAuth automatic callback capture ====================
 
-// OAuthCallback 接收 OpenAI OAuth 回调，自动完成 code exchange 并添加账号
+// OAuthCallback receives the OpenAI OAuth callback, automatically completes the code exchange and adds the account
 // GET /auth/callback?code=xxx&state=xxx
 func (h *Handler) OAuthCallback(c *gin.Context) {
 	code := c.Query("code")
@@ -792,23 +792,23 @@ func (h *Handler) OAuthCallback(c *gin.Context) {
 
 	if code == "" || state == "" {
 		c.HTML(http.StatusBadRequest, "", nil)
-		c.String(http.StatusBadRequest, oauthCallbackPage("授权失败", "缺少 code 或 state 参数", false))
+		c.String(http.StatusBadRequest, oauthCallbackPage("Authorization failed", "missing code or state parameter", false))
 		return
 	}
 
 	sessionID, sess, ok := globalOAuthStore.findByState(state)
 	if !ok {
-		c.String(http.StatusBadRequest, oauthCallbackPage("授权失败", "OAuth 会话不存在或已过期，请重新发起授权", false))
+		c.String(http.StatusBadRequest, oauthCallbackPage("Authorization failed", "OAuth session does not exist or has expired; start authorization again", false))
 		return
 	}
 	if !sess.claimExchange(code, state) {
-		c.String(http.StatusBadRequest, oauthCallbackPage("授权失败", "该授权回调已处理，请重新发起授权", false))
+		c.String(http.StatusBadRequest, oauthCallbackPage("Authorization failed", "This authorization callback was already processed; start authorization again", false))
 		return
 	}
-	result := &oauthExchangeResult{Error: "授权失败，请重新发起授权"}
+	result := &oauthExchangeResult{Error: "Authorization failed; start authorization again"}
 	defer func() { sess.completeExchange(result) }()
 
-	// 执行 code exchange（Resin 临时身份）
+	// Run the code exchange (Resin temporary identity)
 	proxyURL := sess.ProxyURL
 	if proxyURL == "" {
 		proxyURL = h.store.GetProxyURL()
@@ -819,18 +819,18 @@ func (h *Handler) OAuthCallback(c *gin.Context) {
 		log.Printf("OAuth callback token exchange failed: %s", security.SanitizeLog(err.Error()))
 		result = &oauthExchangeResult{
 			Success: false,
-			Error:   "兑换 token 失败，请重新发起授权",
+			Error:   "Token exchange failed; start authorization again",
 		}
-		c.String(http.StatusOK, oauthCallbackPage("授权失败", result.Error, false))
+		c.String(http.StatusOK, oauthCallbackPage("Authorization failed", result.Error, false))
 		return
 	}
 
 	if tokenResp.RefreshToken == "" {
 		result = &oauthExchangeResult{
 			Success: false,
-			Error:   "授权服务器未返回 refresh_token",
+			Error:   "The authorization server did not return a refresh_token",
 		}
-		c.String(http.StatusOK, oauthCallbackPage("授权失败", "未获取到 refresh_token，请确认已开启 offline_access", false))
+		c.String(http.StatusOK, oauthCallbackPage("Authorization failed", "refresh_token was not obtained; confirm offline_access is enabled", false))
 		return
 	}
 	seed := normalizeTokenCredentialSeed(tokenCredentialSeed{
@@ -840,8 +840,8 @@ func (h *Handler) OAuthCallback(c *gin.Context) {
 		expiresIn:    tokenResp.ExpiresIn,
 	})
 
-	// 公开自助门户发起的会话必须走「待审核」入库，不能因为 state 被带到公开
-	// /auth/callback 就绕过 SubmitAccountPortalCode 的 enabled=false 分支。
+	// Sessions started from the public self-service portal must go through pending review on entry; they must not, because the state is carried over to the public
+	// /auth/callback, bypass the enabled=false branch of SubmitAccountPortalCode.
 	if sess.SelfService {
 		ctx, cancel := context.WithTimeout(c.Request.Context(), 30*time.Second)
 		defer cancel()
@@ -853,18 +853,18 @@ func (h *Handler) OAuthCallback(c *gin.Context) {
 		if err == errDuplicateOAuthIdentity {
 			result = &oauthExchangeResult{
 				Success: true,
-				Message: "该账号已在系统中，无需重复提交",
+				Message: "This account is already in the system; no need to submit again",
 			}
-			c.String(http.StatusOK, oauthCallbackPage("提交成功", "该账号已在系统中，无需重复提交。", true))
+			c.String(http.StatusOK, oauthCallbackPage("Submitted successfully", "This account is already in the system; no need to submit it again.", true))
 			return
 		}
 		if err != nil {
 			log.Printf("OAuth callback account write failed: %s", security.SanitizeLog(err.Error()))
 			result = &oauthExchangeResult{
 				Success: false,
-				Error:   "账号保存失败，请联系管理员并重新发起授权",
+				Error:   "Failed to save the account; contact the administrator and start authorization again",
 			}
-			c.String(http.StatusOK, oauthCallbackPage("授权失败", result.Error, false))
+			c.String(http.StatusOK, oauthCallbackPage("Authorization failed", result.Error, false))
 			return
 		}
 		email := seed.email
@@ -874,16 +874,16 @@ func (h *Handler) OAuthCallback(c *gin.Context) {
 		security.SecurityAuditLog("ACCOUNT_PORTAL_SUBMITTED", "ip="+security.SanitizeLog(c.ClientIP())+" contact="+security.SanitizeLog(sess.ContactEmail)+" account="+security.SanitizeLog(email))
 		result = &oauthExchangeResult{
 			Success: true,
-			Message: "账号已提交，等待管理员审核",
+			Message: "Account submitted; waiting for administrator review",
 			ID:      id,
 			Email:   email,
 		}
-		log.Printf("自助门户回调新增待审核账号: id=%d email=%s", id, email)
-		c.String(http.StatusOK, oauthCallbackPage("提交成功", "已提交，等待管理员审核后生效。感谢你的贡献！", true))
+		log.Printf("self-service portal callback added a pending-review account: id=%d email=%s", id, email)
+		c.String(http.StatusOK, oauthCallbackPage("Submitted successfully", "Submitted. It will take effect after administrator review. Thank you for your contribution!", true))
 		return
 	}
 
-	// 自动添加账号
+	// Add the account automatically
 	name := ""
 	if seed.email != "" {
 		name = seed.email
@@ -900,9 +900,9 @@ func (h *Handler) OAuthCallback(c *gin.Context) {
 		log.Printf("OAuth callback account write failed: %s", security.SanitizeLog(err.Error()))
 		result = &oauthExchangeResult{
 			Success: false,
-			Error:   "账号保存失败，请联系管理员并重新发起授权",
+			Error:   "Failed to save the account; contact the administrator and start authorization again",
 		}
-		c.String(http.StatusOK, oauthCallbackPage("授权失败", result.Error, false))
+		c.String(http.StatusOK, oauthCallbackPage("Authorization failed", result.Error, false))
 		return
 	}
 
@@ -923,11 +923,11 @@ func (h *Handler) OAuthCallback(c *gin.Context) {
 		planType = seed.planType
 	}
 
-	message := fmt.Sprintf("账号 %s 添加成功", name)
-	pageMessage := fmt.Sprintf("账号 %s 已自动添加，可以关闭此页面。", name)
+	message := fmt.Sprintf("Account %s added successfully", name)
+	pageMessage := fmt.Sprintf("Account %s was added automatically. You can close this page.", name)
 	if updated {
-		message = fmt.Sprintf("账号已存在，已更新账号 %d", id)
-		pageMessage = fmt.Sprintf("账号已存在，已更新账号 %d，可以关闭此页面。", id)
+		message = fmt.Sprintf("Account already exists; updated account %d", id)
+		pageMessage = fmt.Sprintf("Account already exists; updated account %d. You can close this page.", id)
 	}
 	result = &oauthExchangeResult{
 		Success:  true,
@@ -937,28 +937,28 @@ func (h *Handler) OAuthCallback(c *gin.Context) {
 		PlanType: planType,
 	}
 
-	log.Printf("OAuth 回调自动添加账号成功: id=%d email=%s", id, email)
-	c.String(http.StatusOK, oauthCallbackPage("授权成功", pageMessage, true))
+	log.Printf("OAuth callback automatically added account successfully: id=%d email=%s", id, email)
+	c.String(http.StatusOK, oauthCallbackPage("Authorization succeeded", pageMessage, true))
 }
 
-// PollOAuthCallback 前端轮询回调结果
+// PollOAuthCallback is polled by the frontend for the callback result
 // GET /api/admin/oauth/poll-callback?session_id=xxx
 func (h *Handler) PollOAuthCallback(c *gin.Context) {
 	sessionID := c.Query("session_id")
 	if sessionID == "" {
-		writeError(c, http.StatusBadRequest, "session_id 为必填")
+		writeError(c, http.StatusBadRequest, "session_id is required")
 		return
 	}
 
 	sess, ok := globalOAuthStore.get(sessionID)
 	if !ok {
-		writeError(c, http.StatusNotFound, "OAuth 会话不存��或��过期")
+		writeError(c, http.StatusNotFound, "OAuth session does not exist or has expired")
 		return
 	}
 
 	result, processing := sess.callbackSnapshot()
 	if result != nil {
-		// 回调已完成，返回结果并清理 session
+		// Callback completed: return the result and clean up the session
 		c.JSON(http.StatusOK, gin.H{
 			"status": "completed",
 			"result": result,
@@ -968,21 +968,21 @@ func (h *Handler) PollOAuthCallback(c *gin.Context) {
 	}
 
 	if processing {
-		// 收到回调但尚未完成兑换（罕见竞态）
+		// Callback received but the exchange is not finished yet (rare race)
 		c.JSON(http.StatusOK, gin.H{
 			"status": "processing",
 		})
 		return
 	}
 
-	// 尚未收到回调
+	// Callback not received yet
 	c.JSON(http.StatusOK, gin.H{
 		"status": "waiting",
 	})
 }
 
-// oauthCallbackPage 生成简单的 HTML 回调结果页面。
-// title/message 可能来自数据库错误或 token claims，必须转义后再插入。
+// oauthCallbackPage generates a simple HTML callback result page.
+// title/message may come from database errors or token claims, so they must be escaped before insertion.
 func oauthCallbackPage(title, message string, success bool) string {
 	color := "#e53e3e"
 	icon := "&#10060;"

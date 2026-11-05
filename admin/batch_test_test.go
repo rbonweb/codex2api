@@ -74,8 +74,8 @@ func TestBatchOperationHTTPStatus(t *testing.T) {
 		message string
 		want    int
 	}{
-		{name: "success", status: "success", message: "测试通过", want: http.StatusOK},
-		{name: "upstream chinese", status: "failed", message: "上游返回 402: workspace deactivated", want: http.StatusPaymentRequired},
+		{name: "success", status: "success", message: "test passed", want: http.StatusOK},
+		{name: "upstream chinese", status: "failed", message: "upstream returned 402: workspace deactivated", want: http.StatusPaymentRequired},
 		{name: "http prefix", status: "failed", message: "HTTP 500: upstream failed", want: http.StatusInternalServerError},
 		{name: "embedded status", status: "failed", message: "token endpoint returned status 401", want: http.StatusUnauthorized},
 		{name: "status code", status: "failed", message: "token endpoint returned status code 403", want: http.StatusForbidden},
@@ -109,7 +109,7 @@ func TestEmitBatchTestProgressIncludesStructuredResult(t *testing.T) {
 		&banned,
 		&rateLimited,
 		"rate_limited",
-		"上游返回 429: 账号触发限流",
+		"upstream returned 429: account hit rate limiting",
 	)
 
 	if got.Type != "progress" || got.Action != "batch_test" {
@@ -233,7 +233,7 @@ func TestRunSingleBatchTestSkipsDeactivatedWorkspaceHandshake(t *testing.T) {
 	k12Seat.CustomHeaders = map[string]string{"Chatgpt-Account-Id": "org-ws"}
 	store.AddAccount(trigger)
 	store.AddAccount(k12Seat)
-	store.MarkDeactivatedWorkspace(trigger, "WHAM 用量探针返回 402: deactivated_workspace")
+	store.MarkDeactivatedWorkspace(trigger, "WHAM usage probe returned 402: deactivated_workspace")
 
 	handler := &Handler{store: store}
 	status, msg := handler.runSingleBatchTest(context.Background(), k12Seat)

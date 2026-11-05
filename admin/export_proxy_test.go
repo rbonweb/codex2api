@@ -19,8 +19,8 @@ func exportRequestContext(t *testing.T, target string) *gin.Context {
 	return c
 }
 
-// include_proxy 缺省时取渠道默认值,显式传入时压过默认值——Codex 默认不导出
-// 代理(代理 URL 常含明文口令)。
+// When include_proxy is omitted, the channel default applies; when passed explicitly, it overrides the default. Codex does not export by default
+// proxies (proxy URLs often contain plaintext passwords).
 func TestExportIncludeProxyParsing(t *testing.T) {
 	cases := []struct {
 		target       string
@@ -33,7 +33,7 @@ func TestExportIncludeProxyParsing(t *testing.T) {
 		{"/api/admin/accounts/export?include_proxy=true", false, true},
 		{"/api/admin/accounts/export?include_proxy=0", true, false},
 		{"/api/admin/accounts/export?include_proxy=false", true, false},
-		// 空值视为存在且为假,才能让前端用 include_proxy= 关掉默认开启的渠道。
+		// An empty value counts as present and false, so the frontend can use include_proxy= to turn off a channel that is on by default.
 		{"/api/admin/accounts/export?include_proxy=", true, false},
 	}
 	for _, tc := range cases {
@@ -43,7 +43,7 @@ func TestExportIncludeProxyParsing(t *testing.T) {
 	}
 }
 
-// 关闭时导出条目一个代理字段都不带,连账号行上已有的 ProxyURL 也不写出。
+// When off, exported entries carry no proxy fields at all, and even a ProxyURL already on the account row is not written out.
 func TestExportProxyResolverDisabledDropsEverything(t *testing.T) {
 	resolver := exportProxyResolver{}
 	url, label, enabled := resolver.resolve("http://user:pass@127.0.0.1:8080")
@@ -52,7 +52,7 @@ func TestExportProxyResolverDisabledDropsEverything(t *testing.T) {
 	}
 }
 
-// 开启时:代理表里有的补 label + enabled;账号自填的自定义代理只带 URL。
+// When on: proxies that exist in the proxy table get label + enabled added; a custom proxy the account entered itself carries only the URL.
 func TestExportProxyResolverEnabledResolvesTableMetadata(t *testing.T) {
 	resolver := exportProxyResolver{include: true, byURL: map[string]*database.ProxyRow{
 		"http://127.0.0.1:8080": {URL: "http://127.0.0.1:8080", Label: "hk-1", Enabled: false},
@@ -91,7 +91,7 @@ func codexExportRow() *database.AccountRow {
 	}
 }
 
-// 导出条目在开关关闭时都不得泄漏代理 URL。
+// Exported entries must never leak a proxy URL while the switch is off.
 func TestAccountRowToExportEntryOmitsProxyByDefault(t *testing.T) {
 	codex, ok := accountRowToCPAExportEntry(codexExportRow(), exportProxyResolver{})
 	if !ok {
@@ -103,13 +103,13 @@ func TestAccountRowToExportEntryOmitsProxyByDefault(t *testing.T) {
 
 }
 
-// 开启后 Codex 条目补上 URL + label + enabled。
+// When on, Codex entries get the URL + label + enabled added.
 func TestAccountRowToExportEntryCarriesProxyWhenEnabled(t *testing.T) {
 	resolver := exportProxyResolver{include: true, byURL: map[string]*database.ProxyRow{
 		"http://127.0.0.1:8080": {URL: "http://127.0.0.1:8080", Label: "hk-1", Enabled: true},
 	}}
 
-	// 走对外的分发器,确认 resolver 确实被透传到 Codex 分支而不是半途丢掉。
+	// Go through the public dispatcher, and confirm the resolver is really passed through to the Codex branch rather than dropped midway.
 	dispatched, ok := accountRowToExportEntry(codexExportRow(), resolver)
 	if !ok {
 		t.Fatal("codex export entry not produced")
@@ -127,7 +127,7 @@ func TestAccountRowToExportEntryCarriesProxyWhenEnabled(t *testing.T) {
 
 }
 
-// 代理表读失败不该让整次导出失败:降级成只带 URL。
+// A failed read of the proxy table must not fail the whole export: degrade to carrying only the URL.
 func TestNewExportProxyResolverDegradesWhenProxyTableUnavailable(t *testing.T) {
 	dbPath := filepath.Join(t.TempDir(), "export-proxy-degrade.sqlite")
 	db, err := database.New("sqlite", dbPath)
@@ -157,7 +157,7 @@ func TestNewExportProxyResolverDegradesWhenProxyTableUnavailable(t *testing.T) {
 }
 
 func TestNewExportProxyResolverDisabledSkipsQuery(t *testing.T) {
-	// db 为 nil 时仍不能 panic:关闭态压根不该碰代理表。
+	// It must still not panic when db is nil: the off state should never touch the proxy table at all.
 	handler := &Handler{}
 	if resolver := handler.newExportProxyResolver(context.Background(), false); resolver.include {
 		t.Fatal("resolver.include = true while include_proxy is off")

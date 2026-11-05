@@ -49,10 +49,10 @@ type proxyRiskScoringProfileRequest struct {
 func validateScamalyticsHost(raw string) error {
 	host := strings.ToLower(strings.TrimSpace(raw))
 	if host == "" {
-		return errors.New("Scamalytics Host 不能为空")
+		return errors.New("Scamalytics Host must not be empty")
 	}
 	if strings.ContainsAny(host, "/?#@:") || (host != "scamalytics.com" && !strings.HasSuffix(host, ".scamalytics.com")) {
-		return errors.New("Scamalytics Host 必须是 scamalytics.com 的域名")
+		return errors.New("Scamalytics Host must be a scamalytics.com domain")
 	}
 	return nil
 }
@@ -64,13 +64,13 @@ func validateProxyRiskScoringLink(raw string) error {
 	}
 	parsed, err := url.Parse(value)
 	if err != nil || parsed.Scheme == "" || parsed.Hostname() == "" {
-		return errors.New("文档或教程 URL 必须包含 http(s) scheme 和主机名")
+		return errors.New("the documentation or tutorial URL must include an http(s) scheme and a host name")
 	}
 	if parsed.Scheme != "http" && parsed.Scheme != "https" {
-		return errors.New("文档或教程 URL 仅支持 http 或 https")
+		return errors.New("the documentation or tutorial URL only supports http or https")
 	}
 	if parsed.User != nil {
-		return errors.New("文档或教程 URL 不得包含用户信息")
+		return errors.New("the documentation or tutorial URL must not contain user information")
 	}
 	return nil
 }
@@ -138,7 +138,7 @@ func mergeProxyRiskScoringProfile(current database.ProxyRiskScoringProfile, req 
 		return current, err
 	}
 	if current.Enabled && (strings.TrimSpace(current.ScamalyticsUser) == "" || strings.TrimSpace(current.ScamalyticsKey) == "") {
-		return current, errors.New("启用评分档案前必须配置 Scamalytics User 和 API Key")
+		return current, errors.New("the Scamalytics User and API Key must be configured before enabling a scoring profile")
 	}
 	if err := validateProxyRiskScoringLink(current.DocsURL); err != nil {
 		return current, err
@@ -194,7 +194,7 @@ func (h *Handler) ListProxyRiskScoringProfiles(c *gin.Context) {
 func (h *Handler) CreateProxyRiskScoringProfile(c *gin.Context) {
 	var req proxyRiskScoringProfileRequest
 	if err := c.ShouldBindJSON(&req); err != nil {
-		writeError(c, http.StatusBadRequest, "评分服务配置格式错误")
+		writeError(c, http.StatusBadRequest, "Invalid scoring service configuration format")
 		return
 	}
 	profile := database.ProxyRiskScoringProfile{Enabled: false}
@@ -217,12 +217,12 @@ func (h *Handler) CreateProxyRiskScoringProfile(c *gin.Context) {
 func (h *Handler) UpdateProxyRiskScoringProfile(c *gin.Context) {
 	id, err := strconv.ParseInt(strings.TrimSpace(c.Param("profile_id")), 10, 64)
 	if err != nil || id <= 0 {
-		writeError(c, http.StatusBadRequest, "评分服务档案 ID 无效")
+		writeError(c, http.StatusBadRequest, "Invalid scoring service profile ID")
 		return
 	}
 	var req proxyRiskScoringProfileRequest
 	if err := c.ShouldBindJSON(&req); err != nil {
-		writeError(c, http.StatusBadRequest, "评分服务配置格式错误")
+		writeError(c, http.StatusBadRequest, "Invalid scoring service configuration format")
 		return
 	}
 	ctx, cancel := context.WithTimeout(c.Request.Context(), 10*time.Second)
@@ -230,7 +230,7 @@ func (h *Handler) UpdateProxyRiskScoringProfile(c *gin.Context) {
 	current, err := h.db.GetProxyRiskScoringProfile(ctx, id)
 	if err != nil {
 		if errors.Is(err, sql.ErrNoRows) {
-			writeError(c, http.StatusNotFound, "评分服务档案不存在")
+			writeError(c, http.StatusNotFound, "Scoring service profile not found")
 			return
 		}
 		writeInternalError(c, err)
@@ -252,20 +252,20 @@ func (h *Handler) UpdateProxyRiskScoringProfile(c *gin.Context) {
 func (h *Handler) DeleteProxyRiskScoringProfile(c *gin.Context) {
 	id, err := strconv.ParseInt(strings.TrimSpace(c.Param("profile_id")), 10, 64)
 	if err != nil || id <= 0 {
-		writeError(c, http.StatusBadRequest, "评分服务档案 ID 无效")
+		writeError(c, http.StatusBadRequest, "Invalid scoring service profile ID")
 		return
 	}
 	ctx, cancel := context.WithTimeout(c.Request.Context(), 10*time.Second)
 	defer cancel()
 	if err := h.db.DeleteProxyRiskScoringProfile(ctx, id); err != nil {
 		if errors.Is(err, sql.ErrNoRows) {
-			writeError(c, http.StatusNotFound, "评分服务档案不存在")
+			writeError(c, http.StatusNotFound, "Scoring service profile not found")
 			return
 		}
 		writeInternalError(c, err)
 		return
 	}
-	c.JSON(http.StatusOK, gin.H{"message": "评分服务档案已删除"})
+	c.JSON(http.StatusOK, gin.H{"message": "Scoring service profile deleted"})
 }
 
 type proxyRiskScoringClient struct {
@@ -280,16 +280,16 @@ func newProxyRiskScoringClient(profile database.ProxyRiskScoringProfile) *proxyR
 
 func (client *proxyRiskScoringClient) requestIP(ctx context.Context, ip string) ([]byte, int, error) {
 	if client == nil {
-		return nil, 0, errors.New("评分客户端未初始化")
+		return nil, 0, errors.New("scoring client not initialized")
 	}
 	if err := validateScamalyticsHost(client.profile.ScamalyticsHost); err != nil {
 		return nil, 0, err
 	}
 	if strings.TrimSpace(client.profile.ScamalyticsUser) == "" || strings.TrimSpace(client.profile.ScamalyticsKey) == "" {
-		return nil, 0, errors.New("Scamalytics User 和 API Key 必须配置")
+		return nil, 0, errors.New("Scamalytics User and API Key must be configured")
 	}
 	if parsed := net.ParseIP(strings.TrimSpace(ip)); parsed == nil || parsed.To4() == nil {
-		return nil, 0, errors.New("评分请求必须使用 IPv4 地址")
+		return nil, 0, errors.New("scoring requests must use an IPv4 address")
 	}
 	requestURL := "https://" + strings.TrimSpace(client.profile.ScamalyticsHost) + "/v3/" + url.PathEscape(strings.TrimSpace(client.profile.ScamalyticsUser)) + "/?key=" + url.QueryEscape(strings.TrimSpace(client.profile.ScamalyticsKey)) + "&ip=" + url.QueryEscape(strings.TrimSpace(ip))
 	req, err := http.NewRequestWithContext(ctx, http.MethodGet, requestURL, nil)
@@ -310,7 +310,7 @@ func (client *proxyRiskScoringClient) requestIP(ctx context.Context, ip string) 
 		return nil, latency, readErr
 	}
 	if len(body) > proxyRiskScoringMaxResponseBytes {
-		return nil, latency, errors.New("Scamalytics 响应过大")
+		return nil, latency, errors.New("Scamalytics response is too large")
 	}
 	if resp.StatusCode < 200 || resp.StatusCode >= 300 {
 		message := strings.TrimSpace(string(body))
@@ -318,7 +318,7 @@ func (client *proxyRiskScoringClient) requestIP(ctx context.Context, ip string) 
 			message = message[:256]
 		}
 		if message == "" {
-			message = fmt.Sprintf("Scamalytics 返回 HTTP %d", resp.StatusCode)
+			message = fmt.Sprintf("Scamalytics returned HTTP %d", resp.StatusCode)
 		}
 		return nil, latency, errors.New(message)
 	}
@@ -357,7 +357,7 @@ func (client *proxyRiskScoringClient) checkIP(ctx context.Context, ip string) (d
 
 func parseProxyRiskScoringResponse(body []byte, latencyMS int) (database.ProxyRiskScoreSnapshot, *proxyRiskCredits, error) {
 	if !gjson.ValidBytes(body) {
-		return database.ProxyRiskScoreSnapshot{Status: database.ProxyRiskScoringStatusError(), LatencyMS: latencyMS, Error: "评分服务返回了无效 JSON"}, nil, errors.New("评分服务返回了无效 JSON")
+		return database.ProxyRiskScoreSnapshot{Status: database.ProxyRiskScoringStatusError(), LatencyMS: latencyMS, Error: "the scoring service returned invalid JSON"}, nil, errors.New("the scoring service returned invalid JSON")
 	}
 	root := gjson.ParseBytes(body)
 	if message := strings.TrimSpace(root.Get("error").String()); message != "" {
@@ -424,7 +424,7 @@ func parseProxyRiskScoreValue(value gjson.Result) (int, error) {
 	raw := strings.Trim(strings.TrimSpace(value.Raw), `"`)
 	parsed, err := strconv.ParseFloat(raw, 64)
 	if err != nil || math.IsNaN(parsed) || math.IsInf(parsed, 0) || math.Trunc(parsed) != parsed || parsed < 0 || parsed > 100 {
-		return 0, errors.New("评分服务返回了无效分数")
+		return 0, errors.New("the scoring service returned an invalid score")
 	}
 	return int(parsed), nil
 }
@@ -546,15 +546,15 @@ func resolveProxyRiskScoringIP(ctx context.Context, rawURL string, resolveHostna
 	}
 	if literal := net.ParseIP(host); literal != nil {
 		if literal.To4() == nil {
-			return "", errors.New("评分服务目前只支持 IPv4 代理")
+			return "", errors.New("the scoring service currently supports only IPv4 proxies")
 		}
 		if !allowPrivate && !database.IsPublicProxyRiskScoringIP(literal) {
-			return "", errors.New("代理 IP 属于私网或保留地址，默认不评分")
+			return "", errors.New("the proxy IP is a private or reserved address and is not scored by default")
 		}
 		return literal.To4().String(), nil
 	}
 	if !resolveHostnames {
-		return "", errors.New("代理 URL 使用域名；请先开启受限 DNS 解析")
+		return "", errors.New("the proxy URL uses a domain name; enable restricted DNS resolution first")
 	}
 	if lookup == nil {
 		lookup = func(ctx context.Context, host string) ([]net.IP, error) {
@@ -563,7 +563,7 @@ func resolveProxyRiskScoringIP(ctx context.Context, rawURL string, resolveHostna
 	}
 	ips, err := lookup(ctx, host)
 	if err != nil {
-		return "", fmt.Errorf("代理域名解析失败: %w", err)
+		return "", fmt.Errorf("proxy domain resolution failed: %w", err)
 	}
 	for _, ip := range ips {
 		if ip == nil || ip.To4() == nil {
@@ -574,7 +574,7 @@ func resolveProxyRiskScoringIP(ctx context.Context, rawURL string, resolveHostna
 		}
 		return ip.To4().String(), nil
 	}
-	return "", errors.New("代理域名没有可评分的公网 IPv4 地址")
+	return "", errors.New("the proxy domain has no public IPv4 address that can be scored")
 }
 
 type proxyRiskScoringJob struct {
@@ -591,14 +591,14 @@ type proxyRiskScoringJob struct {
 	Error     string    `json:"error,omitempty"`
 	CreatedAt time.Time `json:"created_at"`
 	UpdatedAt time.Time `json:"updated_at"`
-	// Current 是正在检测的代理标签（host:port），Items 是逐条结果（按 Seq 递增），
-	// 供前端轮询增量渲染：检测完一条就能在表格里看到一条。
+	// Current is the proxy label being checked now (host:port), Items are the per-item results (increasing by Seq),
+	// so the frontend can poll for incremental rendering: each item appears in the table as soon as it is checked.
 	Current string                    `json:"current,omitempty"`
 	Items   []proxyRiskScoringJobItem `json:"-"`
 	cancel  context.CancelFunc
 }
 
-// proxyRiskScoringJobItem 是任务里一条代理的检测结果。
+// proxyRiskScoringJobItem is the result for one proxy in the job.
 type proxyRiskScoringJobItem struct {
 	Seq       int                              `json:"seq"`
 	ProxyID   int64                            `json:"proxy_id"`
@@ -623,7 +623,7 @@ type proxyRiskScoringJobSnapshot struct {
 	CreatedAt time.Time `json:"created_at"`
 	UpdatedAt time.Time `json:"updated_at"`
 	Current   string    `json:"current,omitempty"`
-	// Items 只包含 Seq > after 的增量；LastSeq 供下次轮询作为 after。
+	// Items contains only the increments with Seq > after; LastSeq is used as after on the next poll.
 	Items   []proxyRiskScoringJobItem `json:"items"`
 	LastSeq int                       `json:"last_seq"`
 }
@@ -649,7 +649,7 @@ func (job *proxyRiskScoringJob) snapshotAfter(after int) proxyRiskScoringJobSnap
 	}
 }
 
-// appendItem 追加一条逐条结果（调用方须持有 job.mu）。
+// appendItem appends one per-item result (the caller must hold job.mu).
 func (job *proxyRiskScoringJob) appendItem(item proxyRiskScoringJobItem) {
 	item.Seq = len(job.Items) + 1
 	if item.CheckedAt.IsZero() {
@@ -658,7 +658,7 @@ func (job *proxyRiskScoringJob) appendItem(item proxyRiskScoringJobItem) {
 	job.Items = append(job.Items, item)
 }
 
-// proxyRiskScoringLabel 是进度里展示的代理标签：优先备注，否则 host:port（不带凭据）。
+// proxyRiskScoringLabel is the proxy label shown in progress: the remark if present, otherwise host:port (without credentials).
 func proxyRiskScoringLabel(proxy *database.ProxyRow) string {
 	if proxy == nil {
 		return ""
@@ -704,7 +704,7 @@ type proxyRiskScoringJobRequest struct {
 func (h *Handler) StartProxyRiskScoringJob(c *gin.Context) {
 	var req proxyRiskScoringJobRequest
 	if err := c.ShouldBindJSON(&req); err != nil {
-		writeError(c, http.StatusBadRequest, "评分任务格式错误")
+		writeError(c, http.StatusBadRequest, "Invalid scoring task format")
 		return
 	}
 	ctx, cancel := context.WithTimeout(c.Request.Context(), 15*time.Second)
@@ -727,11 +727,11 @@ func (h *Handler) StartProxyRiskScoringJob(c *gin.Context) {
 		}
 	}
 	if profile == nil {
-		writeError(c, http.StatusBadRequest, "没有可用的评分服务档案")
+		writeError(c, http.StatusBadRequest, "No scoring service profile available")
 		return
 	}
 	if !profile.Enabled {
-		writeError(c, http.StatusBadRequest, "评分服务档案未启用")
+		writeError(c, http.StatusBadRequest, "The scoring service profile is not enabled")
 		return
 	}
 	if err := validateScamalyticsHost(profile.ScamalyticsHost); err != nil {
@@ -739,11 +739,11 @@ func (h *Handler) StartProxyRiskScoringJob(c *gin.Context) {
 		return
 	}
 	if strings.TrimSpace(profile.ScamalyticsUser) == "" || strings.TrimSpace(profile.ScamalyticsKey) == "" {
-		writeError(c, http.StatusBadRequest, "评分前必须配置 Scamalytics User 和 API Key")
+		writeError(c, http.StatusBadRequest, "Scamalytics User and API Key must be configured before scoring")
 		return
 	}
 	if req.Force && !profile.AllowForceRefresh {
-		writeError(c, http.StatusBadRequest, "当前评分档案未允许强制刷新")
+		writeError(c, http.StatusBadRequest, "The current scoring profile does not allow forced refresh")
 		return
 	}
 	proxies, err := h.db.ListProxies(ctx)
@@ -767,7 +767,7 @@ func (h *Handler) StartProxyRiskScoringJob(c *gin.Context) {
 		proxies = filtered
 	}
 	if len(proxies) == 0 {
-		writeError(c, http.StatusBadRequest, "没有可评分的代理")
+		writeError(c, http.StatusBadRequest, "No proxy to score")
 		return
 	}
 	jobCtx, jobCancel := context.WithCancel(context.Background())
@@ -788,9 +788,9 @@ func (h *Handler) StartProxyRiskScoringJob(c *gin.Context) {
 		jobCancel()
 		h.updateProxyRiskScoringJob(job.ID, func(current *proxyRiskScoringJob) {
 			current.Status = "rejected"
-			current.Error = "后台任务正在关闭"
+			current.Error = "the background task is shutting down"
 		})
-		writeError(c, http.StatusServiceUnavailable, "评分后台队列暂不可用")
+		writeError(c, http.StatusServiceUnavailable, "The scoring background queue is temporarily unavailable")
 		return
 	}
 	c.JSON(http.StatusAccepted, job.snapshot())
@@ -818,7 +818,7 @@ func (h *Handler) runProxyRiskScoringJob(ctx context.Context, job *proxyRiskScor
 	h.updateProxyRiskScoringJob(job.ID, func(current *proxyRiskScoringJob) { current.Status = "running" })
 	if profile.MaxChecksPerJob > 0 && len(proxies) > profile.MaxChecksPerJob {
 		for _, proxy := range proxies[profile.MaxChecksPerJob:] {
-			h.recordProxyRiskScoringSkipped(ctx, job, profile, proxy, "超过单次任务检测上限")
+			h.recordProxyRiskScoringSkipped(ctx, job, profile, proxy, "exceeds the per-task check limit")
 		}
 		proxies = proxies[:profile.MaxChecksPerJob]
 	}
@@ -881,16 +881,16 @@ func (h *Handler) scoreOneProxyRisk(ctx context.Context, job *proxyRiskScoringJo
 		return
 	}
 	if profile.CreditReserve > 0 && profile.CreditsRemaining != nil && *profile.CreditsRemaining <= profile.CreditReserve {
-		h.recordProxyRiskScoringSkipped(ctx, job, profile, proxy, "评分服务剩余额度低于保护阈值")
+		h.recordProxyRiskScoringSkipped(ctx, job, profile, proxy, "the scoring service's remaining quota is below the protection threshold")
 		return
 	}
 	allowed, _, err := h.db.ReserveProxyRiskScoringCheck(ctx, profile.ID, time.Now())
 	if err != nil {
-		h.recordProxyRiskScoringSkipped(ctx, job, profile, proxy, "无法登记本地评分次数: "+err.Error())
+		h.recordProxyRiskScoringSkipped(ctx, job, profile, proxy, "unable to record the local scoring count: "+err.Error())
 		return
 	}
 	if !allowed {
-		h.recordProxyRiskScoringSkipped(ctx, job, profile, proxy, "达到每日评分次数上限")
+		h.recordProxyRiskScoringSkipped(ctx, job, profile, proxy, "reached the daily scoring limit")
 		return
 	}
 	label := proxyRiskScoringLabel(proxy)
@@ -945,7 +945,7 @@ func (h *Handler) recordProxyRiskScoringSkipped(ctx context.Context, job *proxyR
 func (h *Handler) GetProxyRiskScoringJob(c *gin.Context) {
 	job := h.getProxyRiskScoringJob(strings.TrimSpace(c.Param("job_id")))
 	if job == nil {
-		writeError(c, http.StatusNotFound, "评分任务不存在或已过期")
+		writeError(c, http.StatusNotFound, "Scoring task not found or expired")
 		return
 	}
 	after, _ := strconv.Atoi(strings.TrimSpace(c.Query("after")))
@@ -955,7 +955,7 @@ func (h *Handler) GetProxyRiskScoringJob(c *gin.Context) {
 func (h *Handler) CancelProxyRiskScoringJob(c *gin.Context) {
 	job := h.getProxyRiskScoringJob(strings.TrimSpace(c.Param("job_id")))
 	if job == nil {
-		writeError(c, http.StatusNotFound, "评分任务不存在或已过期")
+		writeError(c, http.StatusNotFound, "Scoring task not found or expired")
 		return
 	}
 	job.mu.RLock()
@@ -965,13 +965,13 @@ func (h *Handler) CancelProxyRiskScoringJob(c *gin.Context) {
 	if cancel != nil && status != "completed" && status != "cancelled" {
 		cancel()
 	}
-	c.JSON(http.StatusAccepted, gin.H{"message": "已请求取消评分任务"})
+	c.JSON(http.StatusAccepted, gin.H{"message": "Cancellation of the scoring task was requested"})
 }
 
 func (h *Handler) TestProxyRiskScoringProfile(c *gin.Context) {
 	id, err := strconv.ParseInt(strings.TrimSpace(c.Param("profile_id")), 10, 64)
 	if err != nil || id <= 0 {
-		writeError(c, http.StatusBadRequest, "评分服务档案 ID 无效")
+		writeError(c, http.StatusBadRequest, "Invalid scoring service profile ID")
 		return
 	}
 	ctx, cancel := context.WithTimeout(c.Request.Context(), 20*time.Second)
@@ -992,7 +992,7 @@ func (h *Handler) TestProxyRiskScoringProfile(c *gin.Context) {
 		c.JSON(http.StatusBadGateway, gin.H{"success": false, "error": err.Error(), "latency_ms": result.LatencyMS})
 		return
 	}
-	c.JSON(http.StatusOK, gin.H{"success": true, "latency_ms": result.LatencyMS, "score": result.Score, "risk_level": result.RiskLevel, "credits_remaining": resultCreditsRemaining(credits), "snapshot": result, "message": "内置 Scamalytics v3 评分引擎连接正常"})
+	c.JSON(http.StatusOK, gin.H{"success": true, "latency_ms": result.LatencyMS, "score": result.Score, "risk_level": result.RiskLevel, "credits_remaining": resultCreditsRemaining(credits), "snapshot": result, "message": "Built-in Scamalytics v3 scoring engine connection is healthy"})
 }
 
 func errorString(err error) string {
@@ -1012,7 +1012,7 @@ func resultCreditsRemaining(credits *proxyRiskCredits) *int64 {
 func (h *Handler) GetProxyRiskScore(c *gin.Context) {
 	proxyID, err := strconv.ParseInt(strings.TrimSpace(c.Param("id")), 10, 64)
 	if err != nil || proxyID <= 0 {
-		writeError(c, http.StatusBadRequest, "代理 ID 无效")
+		writeError(c, http.StatusBadRequest, "Invalid proxy ID")
 		return
 	}
 	ctx, cancel := context.WithTimeout(c.Request.Context(), 10*time.Second)
@@ -1032,14 +1032,14 @@ func (h *Handler) GetProxyRiskScore(c *gin.Context) {
 func (h *Handler) ListProxyRiskScoreHistory(c *gin.Context) {
 	proxyID, err := strconv.ParseInt(strings.TrimSpace(c.Param("id")), 10, 64)
 	if err != nil || proxyID <= 0 {
-		writeError(c, http.StatusBadRequest, "代理 ID 无效")
+		writeError(c, http.StatusBadRequest, "Invalid proxy ID")
 		return
 	}
 	profileID, _ := strconv.ParseInt(strings.TrimSpace(c.Query("profile_id")), 10, 64)
 	page, _ := strconv.Atoi(c.Query("page"))
 	pageSize, _ := strconv.Atoi(c.Query("page_size"))
 	if profileID <= 0 {
-		writeError(c, http.StatusBadRequest, "profile_id 必须有效")
+		writeError(c, http.StatusBadRequest, "profile_id must be valid")
 		return
 	}
 	ctx, cancel := context.WithTimeout(c.Request.Context(), 10*time.Second)

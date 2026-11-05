@@ -16,8 +16,8 @@ import (
 	"github.com/gin-gonic/gin"
 )
 
-// newImportProxyTestHandler 构造一个带真实 sqlite 库和已开启代理池的 Handler,
-// 因为 registerImportedProxies 的核心契约（写表 → 同步池）必须端到端验证。
+// newImportProxyTestHandler builds a Handler with a real sqlite database and an enabled proxy pool,
+// because the core contract of registerImportedProxies (write the table, then sync the pool) must be verified end to end.
 func newImportProxyTestHandler(t *testing.T) (*Handler, *sql.DB) {
 	t.Helper()
 	dbPath := filepath.Join(t.TempDir(), "import-proxies.sqlite")
@@ -60,8 +60,8 @@ func proxyURLsInTable(t *testing.T, rawDB *sql.DB) []string {
 	return urls
 }
 
-// 去重 + 规范化 + 非法条目跳过。非法代理的账号必须把 proxyURL 清空,才能退回
-// 表单填写的代理,而不是绑着一个没进池的 URL 变成不可调度。
+// Deduplication + normalisation + skipping invalid entries. An account with an invalid proxy must have its proxyURL cleared, so that it can fall back
+// to the form proxy, rather than stay bound to a URL that never entered the pool and become unschedulable.
 func TestRegisterImportedProxiesDedupsAndSkipsInvalid(t *testing.T) {
 	handler, rawDB := newImportProxyTestHandler(t)
 
@@ -83,7 +83,7 @@ func TestRegisterImportedProxiesDedupsAndSkipsInvalid(t *testing.T) {
 	if outcome.skipped != 1 {
 		t.Fatalf("skipped = %d, want 1 invalid proxy", outcome.skipped)
 	}
-	if !strings.Contains(outcome.warning(), "格式无效") {
+	if !strings.Contains(outcome.warning(), "invalid format") {
 		t.Fatalf("warning = %q, want it to mention the invalid proxy", outcome.warning())
 	}
 
@@ -99,7 +99,7 @@ func TestRegisterImportedProxiesDedupsAndSkipsInvalid(t *testing.T) {
 	}
 }
 
-// 重复导入同一份文件不该反复插入。
+// Importing the same file again should not insert again and again.
 func TestRegisterImportedProxiesIsIdempotent(t *testing.T) {
 	handler, rawDB := newImportProxyTestHandler(t)
 	newTokens := func() []importToken {
@@ -122,14 +122,14 @@ func TestRegisterImportedProxiesIsIdempotent(t *testing.T) {
 	}
 }
 
-// 这是整个方案的核心竞态锁:代理写完表后必须立刻同步进内存代理池。否则账号绑上
-// 一个「在 managedProxySet 却不在 proxyPoolSet」的 URL,会被判定为无可用出口而
-// 整批不可调度。
+// This is the core race guard of the whole design: once the proxies are written to the table they must be synced into the in-memory proxy pool at once. Otherwise an account bound to
+// a URL that is "in managedProxySet but not in proxyPoolSet" would be judged to have no usable egress and
+// the whole batch would be unschedulable.
 func TestRegisterImportedProxiesReloadsPoolSoAccountsAreSchedulable(t *testing.T) {
 	handler, _ := newImportProxyTestHandler(t)
 	store := handler.store
 
-	// 前置断言:导入前这个 URL 对代理池完全陌生,不会被误判成"已托管但被禁用"。
+	// Precondition: before the import this URL is completely unknown to the proxy pool, so it is not mistaken for "managed but disabled".
 	if store.ManagedProxyUnavailable("http://127.0.0.1:8080") {
 		t.Fatal("proxy is unavailable before import, test premise is wrong")
 	}
@@ -142,8 +142,8 @@ func TestRegisterImportedProxiesReloadsPoolSoAccountsAreSchedulable(t *testing.T
 	if outcome.unusable != 0 {
 		t.Fatalf("unusable = %d, want 0 right after registration", outcome.unusable)
 	}
-	// 关键断言:registerImportedProxies 一返回,代理就已经在启用集里——写账号
-	// 不会开出 fail-closed 窗口。
+	// Key assertion: as soon as registerImportedProxies returns, the proxy is already in the enabled set, so writing the account
+	// does not open a fail-closed window.
 	if store.ManagedProxyUnavailable("http://127.0.0.1:8080") {
 		t.Fatal("imported proxy is still unusable after registration: proxy pool was not reloaded")
 	}
@@ -152,8 +152,8 @@ func TestRegisterImportedProxiesReloadsPoolSoAccountsAreSchedulable(t *testing.T
 	}
 }
 
-// 目标端早就存在同 URL 且被禁用时,ON CONFLICT DO NOTHING 不会复活它,绑定它的
-// 账号一律不可调度——必须显式告警而不是静默导入一批废号。
+// When the target already has the same URL disabled, ON CONFLICT DO NOTHING does not revive it, so an account bound to it
+// is never schedulable. An explicit alert is required rather than silently importing a batch of dead accounts.
 func TestRegisterImportedProxiesWarnsWhenTargetProxyIsDisabled(t *testing.T) {
 	handler, rawDB := newImportProxyTestHandler(t)
 
@@ -175,10 +175,10 @@ func TestRegisterImportedProxiesWarnsWhenTargetProxyIsDisabled(t *testing.T) {
 	if outcome.unusable != 1 {
 		t.Fatalf("unusable = %d, want 1", outcome.unusable)
 	}
-	if !strings.Contains(outcome.warning(), "禁用或测试失败") {
+	if !strings.Contains(outcome.warning(), "disabled or failed") {
 		t.Fatalf("warning = %q, want it to flag the disabled target proxy", outcome.warning())
 	}
-	// 标签保持原样:导入不该悄悄改写目标端已有代理的元数据。
+	// The label stays as it was: an import must not quietly rewrite the metadata of a proxy that already exists on the target.
 	var label string
 	if err := rawDB.QueryRow(`SELECT label FROM proxies WHERE url = ?`, "http://127.0.0.1:8080").Scan(&label); err != nil {
 		t.Fatalf("read label: %v", err)
@@ -188,7 +188,7 @@ func TestRegisterImportedProxiesWarnsWhenTargetProxyIsDisabled(t *testing.T) {
 	}
 }
 
-// 源端禁用的代理一律以启用态导入(照搬禁用会让账号立刻 fail-closed),但要告警。
+// Proxies disabled at the source are always imported as enabled (copying the disabled state would make the accounts fail closed at once), but an alert is raised.
 func TestRegisterImportedProxiesWarnsWhenSourceMarkedDisabled(t *testing.T) {
 	handler, _ := newImportProxyTestHandler(t)
 	disabled := false
@@ -197,7 +197,7 @@ func TestRegisterImportedProxiesWarnsWhenSourceMarkedDisabled(t *testing.T) {
 	tokens := []importToken{
 		{refreshToken: "rt-1", proxyURL: "http://127.0.0.1:8080", proxyEnabled: &disabled},
 		{refreshToken: "rt-2", proxyURL: "http://127.0.0.1:8081", proxyEnabled: &enabled},
-		// 老文件不带 proxy_enabled,按启用处理,不该计入告警。
+		// An old file has no proxy_enabled; it is treated as enabled and must not count toward alerts.
 		{refreshToken: "rt-3", proxyURL: "http://127.0.0.1:8082"},
 	}
 	outcome, err := handler.registerImportedProxies(context.Background(), tokens)
@@ -207,16 +207,16 @@ func TestRegisterImportedProxiesWarnsWhenSourceMarkedDisabled(t *testing.T) {
 	if outcome.inserted != 3 {
 		t.Fatalf("inserted = %d, want 3", outcome.inserted)
 	}
-	if !strings.Contains(outcome.warning(), "源端是禁用状态") {
+	if !strings.Contains(outcome.warning(), "disabled at the source") {
 		t.Fatalf("warning = %q, want it to flag the source-disabled proxy", outcome.warning())
 	}
-	// 以启用态导入,所以对代理池而言立即可用。
+	// Imported as enabled, so it is immediately usable for the proxy pool.
 	if outcome.unusable != 0 {
 		t.Fatalf("unusable = %d, want 0", outcome.unusable)
 	}
 }
 
-// 超限时一条都不注册,并把所有 token 的代理清空退回表单值——半生效状态最难解释。
+// When the limit is exceeded, none are registered, and every token's proxy is cleared so that it falls back to the form value; a half-applied state is the hardest to explain.
 func TestRegisterImportedProxiesRejectsWholeBatchOverCap(t *testing.T) {
 	handler, rawDB := newImportProxyTestHandler(t)
 
@@ -238,7 +238,7 @@ func TestRegisterImportedProxiesRejectsWholeBatchOverCap(t *testing.T) {
 	if outcome.skipped != maxImportedProxies+1 {
 		t.Fatalf("skipped = %d, want %d", outcome.skipped, maxImportedProxies+1)
 	}
-	if !strings.Contains(outcome.warning(), "上限") {
+	if !strings.Contains(outcome.warning(), "per-import limit") {
 		t.Fatalf("warning = %q, want it to mention the cap", outcome.warning())
 	}
 	if got := proxyURLsInTable(t, rawDB); len(got) != 0 {
@@ -251,11 +251,11 @@ func TestRegisterImportedProxiesRejectsWholeBatchOverCap(t *testing.T) {
 	}
 }
 
-// 代理池同步失败必须整次导入中止:继续写账号只会产出一批不可调度的号。
+// A proxy pool sync failure must abort the whole import: carrying on to write accounts would only produce a batch of unschedulable accounts.
 func TestRegisterImportedProxiesFailsWhenPoolReloadFails(t *testing.T) {
 	handler, rawDB := newImportProxyTestHandler(t)
-	// 换一个没有配 loader 的 store,让 ReloadProxyPool 必然报错;代理表本身仍可写,
-	// 才能验证"表已写入但池没同步"这条路径确实被拦下。
+	// Use a store with no loader configured, so ReloadProxyPool is bound to fail; the proxy table itself is still writable,
+	// so that the path "table written but pool not synced" can be verified as really being blocked.
 	brokenStore := auth.NewStore(nil, nil, &database.SystemSettings{MaxConcurrency: 4, ProxyPoolEnabled: true})
 	t.Cleanup(brokenStore.Stop)
 	brokenStore.SetProxyPoolEnabled(true)
@@ -265,8 +265,8 @@ func TestRegisterImportedProxiesFailsWhenPoolReloadFails(t *testing.T) {
 	if _, err := handler.registerImportedProxies(context.Background(), tokens); err == nil {
 		t.Fatal("registerImportedProxies returned nil error, want the import to abort")
 	}
-	// 代理已经落表是预期的(下次导入会 ON CONFLICT 跳过),关键是调用方拿到错误
-	// 后不会继续写账号。
+	// The proxies are expected to have been written to the table already (the next import will skip them via ON CONFLICT); the key point is that the caller gets the error
+	// and does not go on to write accounts.
 	if got := proxyURLsInTable(t, rawDB); len(got) != 1 {
 		t.Fatalf("proxies table = %v, want the row that was written before the reload failed", got)
 	}
@@ -277,7 +277,7 @@ func TestCountDisabledAtSource(t *testing.T) {
 	enabled := true
 	bindings := []importProxyBinding{
 		{url: "http://a:8080", enabled: &disabled},
-		// 同一代理被多个账号引用时只算一条。
+		// A proxy referenced by several accounts counts as one.
 		{url: "http://a:8080", enabled: &disabled},
 		{url: "http://b:8080", enabled: &enabled},
 		{url: "http://c:8080"},
@@ -288,7 +288,7 @@ func TestCountDisabledAtSource(t *testing.T) {
 	}
 }
 
-// 文件内代理优先于表单代理;开关关闭时文件内代理完全不生效。
+// A proxy in the file takes precedence over the form proxy; when the switch is off, proxies in the file have no effect at all.
 func TestImportSettingsProxyForToken(t *testing.T) {
 	fileToken := importToken{proxyURL: "http://from-file:8080"}
 	bareToken := importToken{}
@@ -312,8 +312,8 @@ func TestImportSettingsProxyForToken(t *testing.T) {
 	}
 }
 
-// 文件带来的代理是被动数据,不覆盖目标端已有绑定;表单代理是操作员的显式换绑
-// 意图,维持既有的覆盖语义。
+// Proxies brought in by the file are passive data and do not overwrite bindings that already exist on the target; a form proxy is the operator's explicit rebinding
+// intent, so the existing overwrite semantics are kept.
 func TestImportSettingsProxyOverwritePolicy(t *testing.T) {
 	fileToken := importToken{proxyURL: "http://from-file:8080"}
 
@@ -328,8 +328,8 @@ func TestImportSettingsProxyOverwritePolicy(t *testing.T) {
 	}
 }
 
-// 回归锁:代理字段绝不能进去重指纹。同一份凭据配不同代理仍然是同一个账号,
-// 参与指纹会让它被当成两条独立记录导入两遍。
+// Regression lock: proxy fields must never go into the deduplication fingerprint. The same credentials with different proxies are still the same account,
+// and including them in the fingerprint would make it be imported twice as two separate records.
 func TestImportDedupIsUnaffectedByProxyFields(t *testing.T) {
 	enabled := true
 	base := importToken{
@@ -338,8 +338,8 @@ func TestImportDedupIsUnaffectedByProxyFields(t *testing.T) {
 		email:            "user@example.com",
 		chatgptAccountID: "workspace-1",
 		planType:         "plus",
-		// 固定过期时间:缺省值是"此刻 +1h",两次调用会差出几百纳秒,把真正的
-		// 代理字段漂移淹没掉。
+		// Fix the expiry time: the default is "now +1h", and two calls would differ by a few hundred nanoseconds, which would drown out the real
+		// proxy field drift.
 		expiresAt: "2026-08-31T12:00:00Z",
 	}
 	withProxy := base
@@ -362,7 +362,7 @@ func TestImportDedupIsUnaffectedByProxyFields(t *testing.T) {
 	}
 }
 
-// 三种 JSON 形态都要把代理三件套带进 importToken。
+// All three JSON shapes must carry the three proxy fields into importToken.
 func TestParseImportJSONTokensStreamCarriesProxyFields(t *testing.T) {
 	cases := []struct {
 		name string
@@ -370,7 +370,7 @@ func TestParseImportJSONTokensStreamCarriesProxyFields(t *testing.T) {
 	}{
 		{"top-level array", `[{"refresh_token":"rt-1","email":"a@example.com","proxy_url":"http://127.0.0.1:8080","proxy_label":"hk-1","proxy_enabled":false}]`},
 		{"single flat object", `{"refresh_token":"rt-1","email":"a@example.com","proxy_url":"http://127.0.0.1:8080","proxy_label":"hk-1","proxy_enabled":false}`},
-		// 代理是账号属性,不同导出实现有的写在条目根上、有的塞进 credentials,两处都要收。
+		// A proxy is an account attribute. Some export implementations put it on the entry root and others stuff it into credentials, so both places must be read.
 		{"sub2api wrapper, proxy on entry", `{"accounts":[{"credentials":{"refresh_token":"rt-1","email":"a@example.com"},"proxy_url":"http://127.0.0.1:8080","proxy_label":"hk-1","proxy_enabled":false}]}`},
 		{"sub2api wrapper, proxy in credentials", `{"accounts":[{"credentials":{"refresh_token":"rt-1","email":"a@example.com","proxy_url":"http://127.0.0.1:8080","proxy_label":"hk-1","proxy_enabled":false}}]}`},
 	}
@@ -386,15 +386,15 @@ func TestParseImportJSONTokensStreamCarriesProxyFields(t *testing.T) {
 		if tok.proxyURL != "http://127.0.0.1:8080" || tok.proxyLabel != "hk-1" {
 			t.Fatalf("%s: proxy = (%q, %q), want (http://127.0.0.1:8080, hk-1)", tc.name, tok.proxyURL, tok.proxyLabel)
 		}
-		// 显式 false 必须能和"字段缺失"区分开,否则源端禁用状态无声丢失。
+		// An explicit false must be distinguishable from "field missing", or the disabled state at the source is silently lost.
 		if tok.proxyEnabled == nil || *tok.proxyEnabled {
 			t.Fatalf("%s: proxy_enabled = %v, want explicit false", tc.name, tok.proxyEnabled)
 		}
 	}
 }
 
-// 条目根和 credentials 同时带代理时以条目根为准,且 label/enabled 跟着 URL 走,
-// 不能跨两处拼出一组配错的元数据。
+// When both the entry root and credentials carry a proxy, the entry root wins, and label/enabled follow the URL,
+// so that metadata from the two places is never mixed into a wrongly paired set.
 func TestSub2apiEntryProxyFieldsPreferEntryLevel(t *testing.T) {
 	entryEnabled := true
 	credentialEnabled := false
@@ -413,7 +413,7 @@ func TestSub2apiEntryProxyFieldsPreferEntryLevel(t *testing.T) {
 		t.Fatalf("proxyFields = (%q, %q, %v), want the entry-level trio", url, label, enabled)
 	}
 
-	// 根上没有 URL 时整组回退到 credentials。
+	// When there is no URL on the root, the whole group falls back to credentials.
 	entry.ProxyURL = ""
 	url, label, enabled = entry.proxyFields()
 	if url != "http://credentials:8080" || label != "credentials-label" || enabled == nil || *enabled {
@@ -421,7 +421,7 @@ func TestSub2apiEntryProxyFieldsPreferEntryLevel(t *testing.T) {
 	}
 }
 
-// 老文件不带代理字段时 proxyEnabled 保持 nil(按启用处理),不能被零值填成 false。
+// When an old file has no proxy fields, proxyEnabled stays nil (treated as enabled) and must not be filled with the zero value false.
 func TestParseImportJSONTokensStreamLeavesProxyUnsetForLegacyFiles(t *testing.T) {
 	tokens, err := parseImportJSONTokensStream(strings.NewReader(`[{"refresh_token":"rt-1","email":"a@example.com"}]`))
 	if err != nil {
@@ -435,7 +435,7 @@ func TestParseImportJSONTokensStreamLeavesProxyUnsetForLegacyFiles(t *testing.T)
 	}
 }
 
-// Agent Identity 条目走的是另一条分支,代理同样要带上。
+// Agent Identity entries take a different branch, and they must carry the proxy too.
 func TestParseImportJSONTokensStreamCarriesProxyForAgentIdentity(t *testing.T) {
 	body := `[{"auth_mode":"agentIdentity","agent_runtime_id":"runtime-1","agent_private_key":"key-1",` +
 		`"email":"agent@example.com","proxy_url":"http://127.0.0.1:8080","proxy_label":"hk-1","proxy_enabled":true}]`
@@ -461,8 +461,8 @@ func TestImportedProxyLabelIsBatchScoped(t *testing.T) {
 	}
 }
 
-// newImportEndToEndHandler 组一套「真实 sqlite + 已开代理池的 Store」的 Handler，
-// 用来端到端验证导入后账号确实绑上代理且立刻可调度。
+// newImportEndToEndHandler builds a Handler with a "real sqlite + Store with the proxy pool enabled" setup,
+// to verify end to end that after import the account really is bound to a proxy and is schedulable at once.
 func newImportEndToEndHandler(t *testing.T) (*Handler, *auth.Store, *database.DB) {
 	t.Helper()
 	gin.SetMode(gin.TestMode)
@@ -507,8 +507,8 @@ func accountRowByRefreshToken(t *testing.T, db *database.DB, refreshToken string
 	return nil
 }
 
-// 全链路:文件带代理 → 代理注册进表和内存池 → 账号绑上它 → 立刻可调度。
-// 这条路径就是整个功能的目的,少任何一环都会退化成"导入成功但账号全废"。
+// Full path: the file carries a proxy → the proxy is registered in the table and the in-memory pool → the account is bound to it → it is schedulable at once.
+// This path is the whole purpose of the feature; missing any one step degrades it to "import succeeded but all accounts are dead".
 func TestImportAccountsCommonBindsAndRegistersFileProxy(t *testing.T) {
 	handler, store, db := newImportEndToEndHandler(t)
 
@@ -529,7 +529,7 @@ func TestImportAccountsCommonBindsAndRegistersFileProxy(t *testing.T) {
 		t.Fatalf("account proxy_url = %q, want the file-carried proxy", row.ProxyURL)
 	}
 
-	// 关键:代理池已同步,账号有可用出口,不是绑了个未入池 URL 的死号。
+	// Key point: the proxy pool is synced and the account has a usable egress; it is not a dead account bound to a URL that never entered the pool.
 	account := &auth.Account{DBID: row.ID, ProxyURL: row.ProxyURL}
 	if !store.AccountHasUsableEgress(account) {
 		t.Fatal("imported account has no usable egress: the proxy pool was not in sync when the account was written")
@@ -539,7 +539,7 @@ func TestImportAccountsCommonBindsAndRegistersFileProxy(t *testing.T) {
 	}
 }
 
-// 开关关闭时文件内代理完全不生效:不注册、不绑定,表单代理照常生效。
+// When the switch is off, proxies in the file have no effect at all: nothing is registered or bound, and the form proxy still applies as usual.
 func TestImportAccountsCommonIgnoresFileProxyWhenSwitchOff(t *testing.T) {
 	handler, _, db := newImportEndToEndHandler(t)
 
@@ -567,8 +567,8 @@ func TestImportAccountsCommonIgnoresFileProxyWhenSwitchOff(t *testing.T) {
 	}
 }
 
-// 文件带来的代理不覆盖目标端已有绑定——那里可能已经做过精细分配(自动均衡等),
-// 静默冲掉属于数据损坏。而表单填写的代理是操作员的显式换绑意图,维持覆盖语义。
+// Proxies brought in by the file do not overwrite bindings that already exist on the target: those may already have been finely allocated (for example by auto-balancing),
+// and silently overwriting them counts as data corruption. A form proxy is the operator's explicit rebinding intent, so the overwrite semantics are kept.
 func TestImportAccountsCommonProxyOverwriteSemantics(t *testing.T) {
 	cases := []struct {
 		name     string

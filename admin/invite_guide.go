@@ -15,61 +15,61 @@ import (
 	"github.com/gin-gonic/gin"
 )
 
-// 导入后自动探测的账号数上限。每个账号 = 一次 Cloudflare 防护端点的请求，万级导入
-// 全量探测会持续数小时打上游，并显著抬高被 managed challenge 的概率。超出的部分不
-// 静默丢弃——弹窗会显示「已抽检 50/2000」，用户想要完整数据可以显式点继续。
+// The cap on accounts probed automatically after import. Each account is one request to a Cloudflare-protected endpoint, and a 10,000-scale import
+// probed in full would hit the upstream for hours and significantly raise the chance of a managed challenge. The excess is not
+// silently dropped: the dialog shows "sampled 50/2000", and a user who wants the full data can click continue explicitly.
 const inviteGuideProbeCap = 50
 
-// 单次「继续探测」允许追加的账号数，同样按闸门排队。
+// The number of accounts a single "continue probing" may add; these are also queued through the gate.
 const inviteGuideProbeBatch = 50
 
-// inviteGuidePlanState 是单个账号在方案里的状态。
+// inviteGuidePlanState is the state of a single account in the plan.
 const (
-	inviteGuideStatePending    = "pending"    // 还没探测出结果
-	inviteGuideStateEligible   = "eligible"   // 有资格且还有奖励次数
-	inviteGuideStateExhausted  = "exhausted"  // 有资格但本月奖励次数已用尽
-	inviteGuideStateIneligible = "ineligible" // 上游明确判定无资格
+	inviteGuideStatePending    = "pending"    // not yet probed
+	inviteGuideStateEligible   = "eligible"   // eligible and still has reward count left
+	inviteGuideStateExhausted  = "exhausted"  // eligible, but this month's reward count is used up
+	inviteGuideStateIneligible = "ineligible" // the upstream explicitly ruled it ineligible
 )
 
-// inviteGuideAccountPlan 是单个账号的邀请收益评估。
+// inviteGuideAccountPlan is the invite earnings assessment for a single account.
 type inviteGuideAccountPlan struct {
 	ID       int64  `json:"id"`
 	Email    string `json:"email,omitempty"`
 	PlanType string `json:"plan_type,omitempty"`
 	State    string `json:"state"`
 
-	// remaining_* 用指针透传上游语义：nil = 上游没给这个字段（未知），
-	// 0 = 上游明确说没了。两者的处置完全不同，不能都退化成 0。
+	// remaining_* pass the upstream semantics through pointers: nil = the upstream did not give this field (unknown),
+	// 0 = the upstream explicitly said none is left. The two are handled completely differently, so they must not both collapse to 0.
 	RemainingSendCapacity   *int `json:"remaining_send_capacity,omitempty"`
 	RemainingRewardCapacity *int `json:"remaining_reward_capacity,omitempty"`
 
-	// GrantAmount 是邀请人（referrer）单次邀请能拿到的额度，不含受邀人那份。
+	// GrantAmount is the amount the inviter (referrer) gets per invite, excluding the invitee's share.
 	GrantAmount      float64 `json:"grant_amount,omitempty"`
 	PotentialCredits float64 `json:"potential_credits"`
 	OfferID          string  `json:"offer_id,omitempty"`
 	Title            string  `json:"title,omitempty"`
 	IneligibleReason string  `json:"ineligible_reason,omitempty"`
 
-	// 本月发送用量，来自 time_frame_rules 的 send 规则。与下面的 Invites* 不是
-	// 同一个窗口：这是「月」，那是跟踪端点的 90 天，混用会给出错误的数字。
+	// This month's send usage, from the send rule in time_frame_rules. It is not
+	// the same window as the Invites* fields below: this is a "month", while those are the 90-day tracking endpoint; mixing them would give wrong numbers.
 	MonthlySent      *int `json:"monthly_sent,omitempty"`
 	MonthlySendTotal *int `json:"monthly_send_total,omitempty"`
 
-	// 近 90 天的实际邀请记录，来自 tracking 快照。指针区分「没有跟踪数据」与
-	// 「确实是 0」——导入时只探资格不探记录，多数账号这里就是没有数据。
+	// Actual invite records from the last 90 days, from the tracking snapshot. The pointers distinguish "no tracking data" from
+	// "really 0". The import probes eligibility only, not records, so for most accounts there is no data here.
 	InvitesSent     *int `json:"invites_sent,omitempty"`
 	InvitesAccepted *int `json:"invites_accepted,omitempty"`
 	InvitesPending  *int `json:"invites_pending,omitempty"`
 
-	// SuggestedInvites 是分配建议：这个号建议发几封。没有传 emails 预算时等于
-	// 剩余奖励次数；传了则按「单次收益高的号优先」贪心分配。
+	// SuggestedInvites is the allocation suggestion: how many invites this account should send. When no emails budget is passed it equals
+	// the remaining reward count; when a budget is passed it is allocated greedily, with "higher per-invite earnings first".
 	SuggestedInvites int        `json:"suggested_invites"`
 	ObservedAt       *time.Time `json:"observed_at,omitempty"`
 }
 
-// inviteTrackingCounts 汇总一份跟踪快照里的发送/接受/在途数量。
-// 实测状态取值：redeemed（已兑换）、expired（发出但受邀人未在有效期内使用）。
-// expired 既不算接受也不算在途，但仍计入「已发」。
+// inviteTrackingCounts summarises the sent, accepted and in-flight counts in one tracking snapshot.
+// Observed status values: redeemed (already used) and expired (sent, but the invitee did not use it within the validity period).
+// expired counts neither as accepted nor as in-flight, but it is still counted as "sent".
 func inviteTrackingCounts(items []proxy.CodexInviteTrackingItem) (sent, accepted, pending int) {
 	sent = len(items)
 	for _, item := range items {
@@ -83,7 +83,7 @@ func inviteTrackingCounts(items []proxy.CodexInviteTrackingItem) (sent, accepted
 	return sent, accepted, pending
 }
 
-// findSendCapacityRule 取 send 维度的月度配额规则（发送次数，与奖励次数不同）。
+// findSendCapacityRule gets the monthly quota rule for the send dimension (send count, which is different from the reward count).
 func findSendCapacityRule(rules []proxy.CodexInviteTimeFrameRule) *proxy.CodexInviteTimeFrameRule {
 	for i := range rules {
 		if strings.EqualFold(strings.TrimSpace(rules[i].CapacityType), "send") {
@@ -93,29 +93,29 @@ func findSendCapacityRule(rules []proxy.CodexInviteTimeFrameRule) *proxy.CodexIn
 	return nil
 }
 
-// inviteGuidePlanResponse 是引导弹窗的完整数据。
+// inviteGuidePlanResponse is the full data for the guide dialog.
 type inviteGuidePlanResponse struct {
 	Enabled bool `json:"enabled"`
 
-	Total     int `json:"total"`     // 请求评估的账号总数
-	Probed    int `json:"probed"`    // 已拿到探测结果的
-	Pending   int `json:"pending"`   // 仍在排队/探测中的
-	Unprobed  int `json:"unprobed"`  // 因封顶而完全没排进队列的
-	Eligible  int `json:"eligible"`  // 有资格且有奖励次数的
-	ProbeCap  int `json:"probe_cap"` // 自动探测封顶值，前端用于解释「已抽检」
+	Total     int `json:"total"`     // total accounts requested for assessment
+	Probed    int `json:"probed"`    // accounts that have a probe result
+	Pending   int `json:"pending"`   // accounts still queued or being probed
+	Unprobed  int `json:"unprobed"`  // accounts never queued at all because of the cap
+	Eligible  int `json:"eligible"`  // accounts that are eligible and have reward count left
+	ProbeCap  int `json:"probe_cap"` // automatic probe cap; the frontend uses it to explain "sampled"
 	RewardCap int `json:"total_reward_slots"`
 
 	TotalPotentialCredits float64 `json:"total_potential_credits"`
-	// EmailBudget 回显请求里的邀请人邮箱预算（0 = 未限制）。
+	// EmailBudget echoes the inviter email budget in the request (0 = unlimited).
 	EmailBudget int                      `json:"email_budget"`
 	Accounts    []inviteGuideAccountPlan `json:"accounts"`
 }
 
-// lookupInviteAccount 按 DBID 取账号。
+// lookupInviteAccount gets an account by DBID.
 //
-// 刻意不用 h.findAccountByID：那个实现会 h.store.Accounts() 复制整个号池再线性
-// 扫描，而这里一次请求要查上百个 ID（邀请页下拉一屏就是 100 个账号），万级号池下
-// 等于上百次全量切片复制 + 上百万次比较。store.FindByID 走 DBID 索引，O(1)。
+// It deliberately does not use h.findAccountByID: that implementation copies the whole account pool with h.store.Accounts() and then scans it linearly,
+// whereas this request looks up hundreds of IDs (one screen of the invite page dropdown is 100 accounts). With a pool at the 10,000 level,
+// that means hundreds of full slice copies plus millions of comparisons. store.FindByID uses the DBID index, O(1).
 func (h *Handler) lookupInviteAccount(id int64) *auth.Account {
 	if h == nil || h.store == nil {
 		return nil
@@ -123,9 +123,9 @@ func (h *Handler) lookupInviteAccount(id int64) *auth.Account {
 	return h.store.FindByID(id)
 }
 
-// inviteGuideCandidate 判断账号能否作为邀请发起方。与前端 isCodexInviteCandidate
-// 同口径：AT-only 号没有可持续用于 referral 的 Codex OAuth 凭证。
-// enabled/locked/status 不参与判断——那些只是调度开关，不影响 access token 可用性。
+// inviteGuideCandidate decides whether an account can be an invite sender. It matches the frontend isCodexInviteCandidate
+// on the same basis: an AT-only account has no lasting Codex OAuth credential that can be used for referrals.
+// enabled/locked/status are not part of the decision: they are only scheduling switches and do not affect whether the access token is usable.
 func inviteGuideCandidate(acc *auth.Account) bool {
 	if acc == nil || acc.GetAccessToken() == "" {
 		return false
@@ -133,28 +133,28 @@ func inviteGuideCandidate(acc *auth.Account) bool {
 	return acc.RefreshToken != ""
 }
 
-// referrerGrantAmount 取「邀请人能拿到的」那份奖励。上游对每次邀请下发两条 grant：
-// recipient=referrer 是邀请人（我方收益），recipient=recipient 是受邀人。必须按
-// recipient 过滤，否则把受邀人那份也算进自己的收益，预估会正好翻一倍。
+// referrerGrantAmount takes the reward the inviter gets. The upstream issues two grants per invite:
+// recipient=referrer is the inviter (our earnings), recipient=recipient is the invitee. Filtering must be done by
+// recipient, otherwise the invitee's share would also be counted as our earnings and the estimate would exactly double.
 func referrerGrantAmount(grants []proxy.CodexInviteGrant) float64 {
 	for _, g := range grants {
 		if strings.EqualFold(strings.TrimSpace(g.Recipient), "referrer") {
 			return g.Amount
 		}
 	}
-	// 上游没标 recipient 时：只有一条就按它算，多条无从分辨则不猜。
+	// When the upstream does not mark a recipient: with a single grant, that one is used; with several, there is no way to tell them apart, so nothing is guessed.
 	if len(grants) == 1 {
 		return grants[0].Amount
 	}
 	return 0
 }
 
-// probeInviteEligibilityForGuide 探测单个账号的邀请资格并写入快照。
-// includeTracking 为真时顺带抓已发邀请记录（已发/已接受计数的唯一来源）。
+// probeInviteEligibilityForGuide probes the invite eligibility of a single account and writes it to the snapshot.
+// When includeTracking is true, it also fetches the sent invite records (the only source of the sent/accepted counts).
 //
-// 导入路径刻意传 false：跟踪记录对「先用哪个号发」的排序没有影响，为它把导入的
-// 上游请求数翻倍不划算。用户在下拉里显式点「探测积分」时才传 true。
-// 失败只记日志：引导是锦上添花，探不到就显示为未知，不影响导入本身。
+// The import path deliberately passes false: tracking records have no effect on the ordering of "which account to send from first", and doubling the upstream requests of the import for them is not worth it.
+// The user passes true only when they explicitly click "probe credits" in the dropdown.
+// Failures are only logged: the guide is a nice-to-have; if it cannot be probed it shows as unknown, and the import itself is not affected.
 func (h *Handler) probeInviteEligibilityForGuide(ctx context.Context, accountID int64, includeTracking bool) {
 	account := h.lookupInviteAccount(accountID)
 	if !inviteGuideCandidate(account) {
@@ -165,8 +165,8 @@ func (h *Handler) probeInviteEligibilityForGuide(ctx context.Context, accountID 
 	scope := inviteEligibilityScope(programID, entrypoint)
 	generation := account.GetCredentialGeneration()
 
-	// 已有未过期快照就不重复打上游：同一账号可能被多次导入触发，也可能刚在
-	// 邀请页被查过。这一步让整个引导功能在缓存热的时候零上游开销。
+	// If there is an unexpired snapshot, do not hit the upstream again: the same account may be triggered by several imports, or may have just been checked on
+	// the invite page. This step makes the whole guide feature cost zero upstream requests while the cache is warm.
 	var cached proxy.CodexInviteEligibility
 	if meta := h.readInviteCache(ctx, inviteEligibilityCacheNamespace,
 		database.CodexInviteSnapshotEligibility, accountID, generation, scope, &cached); meta != nil {
@@ -178,10 +178,10 @@ func (h *Handler) probeInviteEligibilityForGuide(ctx context.Context, accountID 
 	result, err := proxy.QueryCodexInviteEligibility(probeCtx, account,
 		h.store.ResolveProxyForAccount(account), programID, entrypoint)
 	if err != nil {
-		log.Printf("邀请资格探测失败: account=%d err=%v", accountID, err)
+		log.Printf("invite eligibility probe failed: account=%d err=%v", accountID, err)
 		return
 	}
-	// 与邀请页同一条规则：挑战页借用 403，缓存它等于把一次拦截固化成「无资格」。
+	// Same rule as the invite page: a challenge page borrows a 403, and caching it would turn one block into a permanent "ineligible".
 	if result.OK && !result.Challenged {
 		h.writeInviteCache(ctx, inviteEligibilityCacheNamespace, database.CodexInviteSnapshotEligibility,
 			accountID, generation, scope, result.StatusCode, inviteEligibilitySnapshotTTL, result)
@@ -190,8 +190,8 @@ func (h *Handler) probeInviteEligibilityForGuide(ctx context.Context, accountID 
 		return
 	}
 
-	// 跟踪记录串在资格之后而不是并发：上游在 Cloudflare bot 管理后面，第一个请求
-	// 拿到的 __cf_bm 能让第二个少被挑战——与邀请页的取数顺序一致。
+	// The tracking records run after eligibility, not concurrently: the upstream sits behind Cloudflare bot management, and the first request
+	// gets a __cf_bm that makes the second one less likely to be challenged; this matches the fetch order of the invite page.
 	period, limit := proxy.NormalizeInviteTracking("", 0)
 	trackingScope := inviteTrackingScope(programID, period, limit)
 	var cachedTracking proxy.CodexInviteTracking
@@ -205,7 +205,7 @@ func (h *Handler) probeInviteEligibilityForGuide(ctx context.Context, accountID 
 	tracking, err := proxy.QueryCodexInviteTracking(trackingCtx, account,
 		h.store.ResolveProxyForAccount(account), programID, period, limit)
 	if err != nil {
-		log.Printf("邀请记录探测失败: account=%d err=%v", accountID, err)
+		log.Printf("invite record probe failed: account=%d err=%v", accountID, err)
 		return
 	}
 	if tracking.OK && !tracking.Challenged {
@@ -215,8 +215,8 @@ func (h *Handler) probeInviteEligibilityForGuide(ctx context.Context, accountID 
 	}
 }
 
-// enqueueInviteGuideProbes 把账号排进导入探测闸门。返回实际排队数与被封顶挡下的数量。
-// 复用 runImportProbeTask 是关键：它带自适应并发许可，不会在大批量导入时瞬时打爆上游。
+// enqueueInviteGuideProbes queues accounts into the import probe gate. It returns the number actually queued and the number blocked by the cap.
+// Reusing runImportProbeTask is the key: it carries an adaptive concurrency permit, so a large import does not flood the upstream in an instant.
 func (h *Handler) enqueueInviteGuideProbes(ids []int64, limit int, includeTracking bool) (queued int, skipped int) {
 	if h == nil || limit <= 0 {
 		return 0, len(ids)
@@ -234,8 +234,8 @@ func (h *Handler) enqueueInviteGuideProbes(ids []int64, limit int, includeTracki
 	return queued, 0
 }
 
-// scheduleInviteGuideProbes 是导入路径的入口：筛出可邀请的 Codex 账号并排队探测。
-// 开关关闭时直接返回，一个上游请求都不发。
+// scheduleInviteGuideProbes is the entry point of the import path: it filters out the Codex accounts that can invite and queues them for probing.
+// When the switch is off it returns straight away and sends no upstream request at all.
 func (h *Handler) scheduleInviteGuideProbes(ctx context.Context, ids []int64) {
 	if h == nil || len(ids) == 0 || !h.inviteGuideEnabled(ctx) {
 		return
@@ -250,24 +250,24 @@ func (h *Handler) scheduleInviteGuideProbes(ctx context.Context, ids []int64) {
 		return
 	}
 	queued, skipped := h.enqueueInviteGuideProbes(candidates, inviteGuideProbeCap, false)
-	log.Printf("邀请引导: 导入 %d 个账号，排队探测 %d 个，封顶跳过 %d 个", len(ids), queued, skipped)
+	log.Printf("invite guide: imported %d accounts, queued %d for probing, skipped %d because of the cap", len(ids), queued, skipped)
 }
 
-// inviteGuideEnabled 读取开关。读不到时按默认开启——引导默认可见是产品预期，
-// 一次数据库抖动不该把功能静默关掉。
+// inviteGuideEnabled reads the switch. When it cannot be read it defaults to on: the guide being visible by default is the product's intent,
+// and a single database hiccup should not silently turn the feature off.
 func (h *Handler) inviteGuideEnabled(ctx context.Context) bool {
 	if h == nil || h.db == nil {
 		return database.InviteGuideDefaultEnabled
 	}
 	cfg, err := h.db.LoadInviteGuideConfig(ctx)
 	if err != nil {
-		log.Printf("读取邀请引导设置失败，按默认开启处理: %v", err)
+		log.Printf("failed to read the invite guide setting, treating it as enabled by default: %v", err)
 		return database.InviteGuideDefaultEnabled
 	}
 	return cfg.IsEnabled()
 }
 
-// buildInviteGuidePlan 按账号 ID 汇总评估结果并排出建议顺序。
+// buildInviteGuidePlan summarises the assessment results by account ID and sorts them into the suggested order.
 func (h *Handler) buildInviteGuidePlan(ctx context.Context, ids []int64, emailBudget int) inviteGuidePlanResponse {
 	programID, entrypoint := proxy.NormalizeInviteProgram("", "")
 	scope := inviteEligibilityScope(programID, entrypoint)
@@ -318,8 +318,8 @@ func (h *Handler) buildInviteGuidePlan(ctx context.Context, ids []int64, emailBu
 			item.MonthlySent, item.MonthlySendTotal = &sent, &total
 		}
 
-		// 已发/已接受来自跟踪快照。只读缓存，没有就不填——导入探测只写资格，
-		// 多数账号这里本来就没有数据，编一个 0 会被读成「一封都没发过」。
+		// Sent/accepted come from the tracking snapshot. Read the cache only; if there is nothing, leave them empty: the import probe only writes eligibility,
+		// so most accounts have no data here anyway, and inventing a 0 would be read as "none sent yet".
 		var tracking proxy.CodexInviteTracking
 		if h.readInviteCache(ctx, inviteTrackingCacheNamespace, database.CodexInviteSnapshotTracking,
 			id, account.GetCredentialGeneration(), trackingScope, &tracking) != nil {
@@ -336,7 +336,7 @@ func (h *Handler) buildInviteGuidePlan(ctx context.Context, ids []int64, emailBu
 				item.IneligibleReason = elig.IneligibleReasonCode
 			}
 		case elig.RemainingRewardCapacity != nil && *elig.RemainingRewardCapacity == 0:
-			// 还能发，但发了也拿不到奖励——对「攒积分」这个目标等于没有价值。
+			// Can still send, but a send earns no reward; for the goal of "building up credits" that is worth nothing.
 			item.State = inviteGuideStateExhausted
 		default:
 			item.State = inviteGuideStateEligible
@@ -361,9 +361,9 @@ func (h *Handler) buildInviteGuidePlan(ctx context.Context, ids []int64, emailBu
 	return resp
 }
 
-// sortInviteGuidePlan 排出「先用哪个号发」的顺序：可发的排前面，其次按单次收益、
-// 剩余奖励次数、预估总收益降序。单次收益优先于剩余次数——邮箱是稀缺资源时，
-// 把一封邮件用在单次给得更多的号上才是最优。
+// sortInviteGuidePlan sorts "which account to send from first": sendable ones come first, then by per-invite earnings,
+// remaining reward count and estimated total earnings, all descending. Per-invite earnings come before remaining count: when emails are scarce,
+// the best use of one email is on the account that pays more per invite.
 func sortInviteGuidePlan(items []inviteGuideAccountPlan) {
 	rank := map[string]int{
 		inviteGuideStateEligible:   0,
@@ -386,8 +386,8 @@ func sortInviteGuidePlan(items []inviteGuideAccountPlan) {
 	})
 }
 
-// applyInviteGuideEmailBudget 在受邀邮箱有限时做贪心分配。列表已按单次收益降序，
-// 依次把预算分给靠前的号即为最优——总收益 = Σ(单次收益)，取值最高的前 N 个名额。
+// applyInviteGuideEmailBudget allocates greedily when invitee emails are limited. The list is already sorted by per-invite earnings, descending,
+// so handing the budget out in order to the front accounts is optimal: total earnings = Σ(per-invite earnings), taking the top N slots by value.
 func applyInviteGuideEmailBudget(items []inviteGuideAccountPlan, budget int) {
 	if budget <= 0 {
 		return
@@ -410,7 +410,7 @@ func applyInviteGuideEmailBudget(items []inviteGuideAccountPlan, budget int) {
 	}
 }
 
-// parseInviteGuideIDs 解析逗号分隔的账号 ID，去重并保序。
+// parseInviteGuideIDs parses comma-separated account IDs, deduplicating them and keeping their order.
 func parseInviteGuideIDs(raw string) []int64 {
 	seen := make(map[int64]struct{})
 	ids := make([]int64, 0, 8)
@@ -432,26 +432,26 @@ func parseInviteGuideIDs(raw string) []int64 {
 	return ids
 }
 
-// GetInviteGuidePlan 汇总一批账号的邀请收益评估。
+// GetInviteGuidePlan summarises the invite earnings assessment for a batch of accounts.
 // GET /api/admin/accounts/invite/plan?ids=1,2,3&emails=5
 func (h *Handler) GetInviteGuidePlan(c *gin.Context) {
 	ids := parseInviteGuideIDs(c.Query("ids"))
 	if len(ids) == 0 {
-		writeError(c, http.StatusBadRequest, "缺少账号 ID")
+		writeError(c, http.StatusBadRequest, "missing account ID")
 		return
 	}
 	budget, _ := strconv.Atoi(strings.TrimSpace(c.Query("emails")))
 	c.JSON(http.StatusOK, h.buildInviteGuidePlan(c.Request.Context(), ids, budget))
 }
 
-// ProbeInviteGuidePlan 为指定账号补探测（弹窗里的「继续探测剩余」）。
+// ProbeInviteGuidePlan probes the specified accounts further (the "continue probing the rest" in the dialog).
 // POST /api/admin/accounts/invite/plan/probe  {"ids":[1,2,3]}
 func (h *Handler) ProbeInviteGuidePlan(c *gin.Context) {
 	var req struct {
 		IDs []int64 `json:"ids"`
 	}
 	if err := c.ShouldBindJSON(&req); err != nil {
-		writeError(c, http.StatusBadRequest, "请求体解析失败: "+err.Error())
+		writeError(c, http.StatusBadRequest, "failed to parse request body: "+err.Error())
 		return
 	}
 	candidates := make([]int64, 0, len(req.IDs))
@@ -461,40 +461,40 @@ func (h *Handler) ProbeInviteGuidePlan(c *gin.Context) {
 		}
 	}
 	if len(candidates) == 0 {
-		writeError(c, http.StatusBadRequest, "没有可探测的 Codex 账号")
+		writeError(c, http.StatusBadRequest, "no Codex accounts can be probed")
 		return
 	}
 	queued, skipped := h.enqueueInviteGuideProbes(candidates, inviteGuideProbeBatch, true)
 	c.JSON(http.StatusOK, gin.H{"queued": queued, "skipped": skipped})
 }
 
-// GetInviteGuideSettings 返回引导弹窗开关。
+// GetInviteGuideSettings returns the guide dialog switch.
 // GET /api/admin/settings/invite-guide
 func (h *Handler) GetInviteGuideSettings(c *gin.Context) {
 	c.JSON(http.StatusOK, gin.H{"enabled": h.inviteGuideEnabled(c.Request.Context())})
 }
 
-// UpdateInviteGuideSettings 更新引导弹窗开关。弹窗里的「今后不弹出」打到这里。
+// UpdateInviteGuideSettings updates the guide dialog switch. The "don't show again" option in the dialog sends its change here.
 // PUT /api/admin/settings/invite-guide  {"enabled":false}
 func (h *Handler) UpdateInviteGuideSettings(c *gin.Context) {
 	var req struct {
 		Enabled *bool `json:"enabled"`
 	}
 	if err := c.ShouldBindJSON(&req); err != nil {
-		writeError(c, http.StatusBadRequest, "请求体解析失败: "+err.Error())
+		writeError(c, http.StatusBadRequest, "failed to parse request body: "+err.Error())
 		return
 	}
 	if req.Enabled == nil {
-		writeError(c, http.StatusBadRequest, "缺少 enabled 字段")
+		writeError(c, http.StatusBadRequest, "missing enabled field")
 		return
 	}
 	if h.db == nil {
-		writeError(c, http.StatusServiceUnavailable, "数据库不可用")
+		writeError(c, http.StatusServiceUnavailable, "database unavailable")
 		return
 	}
 	if err := h.db.SaveInviteGuideConfig(c.Request.Context(),
 		database.InviteGuideConfig{Enabled: req.Enabled}); err != nil {
-		writeError(c, http.StatusInternalServerError, "保存失败: "+err.Error())
+		writeError(c, http.StatusInternalServerError, "failed to save: "+err.Error())
 		return
 	}
 	c.JSON(http.StatusOK, gin.H{"enabled": *req.Enabled})

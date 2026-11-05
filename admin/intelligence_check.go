@@ -57,7 +57,7 @@ func (h *Handler) SaveIntelligenceSettings(c *gin.Context) {
 	c.Request.Body = http.MaxBytesReader(c.Writer, c.Request.Body, 2*1024*1024)
 	var settings ic.Settings
 	if err := c.ShouldBindJSON(&settings); err != nil {
-		c.JSON(400, gin.H{"error": "无效的检测配置"})
+		c.JSON(400, gin.H{"error": "invalid check configuration"})
 		return
 	}
 	if err := ic.ValidateSettings(settings); err != nil {
@@ -101,13 +101,13 @@ func (h *Handler) ListIntelligenceAccounts(c *gin.Context) {
 }
 func intelligenceIDs(ids []int64, maxCount int) ([]int64, error) {
 	if len(ids) == 0 || len(ids) > maxCount {
-		return nil, fmt.Errorf("请选择 1–%d 个账号", maxCount)
+		return nil, fmt.Errorf("select 1-%d accounts", maxCount)
 	}
 	seen := map[int64]bool{}
 	result := make([]int64, 0, len(ids))
 	for _, id := range ids {
 		if id <= 0 {
-			return nil, fmt.Errorf("无效的账号 ID")
+			return nil, fmt.Errorf("invalid account ID")
 		}
 		if !seen[id] {
 			result = append(result, id)
@@ -123,7 +123,7 @@ func (h *Handler) SetIntelligenceAccounts(c *gin.Context) {
 		Enabled    *bool   `json:"enabled"`
 	}
 	if c.ShouldBindJSON(&body) != nil || body.Enabled == nil {
-		c.JSON(400, gin.H{"error": "请提供账号和检测开关"})
+		c.JSON(400, gin.H{"error": "provide the accounts and the check switches"})
 		return
 	}
 	ids, err := intelligenceIDs(body.AccountIDs, 200)
@@ -143,7 +143,7 @@ func (h *Handler) CreateIntelligenceRuns(c *gin.Context) {
 		AccountIDs []int64 `json:"account_ids"`
 	}
 	if c.ShouldBindJSON(&body) != nil {
-		c.JSON(400, gin.H{"error": "无效的账号集合"})
+		c.JSON(400, gin.H{"error": "invalid account set"})
 		return
 	}
 	ids, err := intelligenceIDs(body.AccountIDs, 200)
@@ -161,18 +161,18 @@ func (h *Handler) CreateIntelligenceRuns(c *gin.Context) {
 		enabledQuestion = enabledQuestion || q.Enabled
 	}
 	if !enabledQuestion {
-		c.JSON(400, gin.H{"error": "请先保存至少一道启用题目"})
+		c.JSON(400, gin.H{"error": "save at least one enabled question first"})
 		return
 	}
 	for _, id := range ids {
 		account := h.store.FindByID(id)
 		if account == nil {
-			c.JSON(400, gin.H{"error": fmt.Sprintf("账号 %d 不在运行时池中", id)})
+			c.JSON(400, gin.H{"error": fmt.Sprintf("account %d is not in the runtime pool", id)})
 			return
 		}
 		model, effort := settings.GPTModel, settings.ReasoningEffort
 		if err = h.validateQualityTestForAccount(c.Request.Context(), account, qualityTestRequest{Model: model, ReasoningEffort: effort}); err != nil {
-			c.JSON(400, gin.H{"error": fmt.Sprintf("账号 %d: %s", id, err)})
+			c.JSON(400, gin.H{"error": fmt.Sprintf("account %d: %s", id, err)})
 			return
 		}
 	}
@@ -205,7 +205,7 @@ func (h *Handler) ListIntelligenceRuns(c *gin.Context) {
 func (h *Handler) GetIntelligenceRun(c *gin.Context) {
 	id, err := strconv.ParseInt(c.Param("id"), 10, 64)
 	if err != nil || id <= 0 {
-		c.JSON(400, gin.H{"error": "无效的检测 ID"})
+		c.JSON(400, gin.H{"error": "invalid check ID"})
 		return
 	}
 	run, err := h.db.GetIntelligenceCheckRun(c.Request.Context(), id)
@@ -221,7 +221,7 @@ func (h *Handler) GetIntelligenceBars(c *gin.Context) {
 	for _, part := range parts {
 		id, err := strconv.ParseInt(part, 10, 64)
 		if err != nil {
-			c.JSON(400, gin.H{"error": "无效的账号 ID"})
+			c.JSON(400, gin.H{"error": "invalid account ID"})
 			return
 		}
 		ids = append(ids, id)

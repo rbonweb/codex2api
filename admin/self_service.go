@@ -13,23 +13,23 @@ import (
 	"github.com/gin-gonic/gin"
 )
 
-// ==================== 账号自助添加公开门户 ====================
+// ==================== Public self-service account submission portal ====================
 //
-// 面向外部/游客的公开页：填联系邮箱 → 生成 ChatGPT 授权链接 → 登录后回填授权码 →
-// 账号以「待审核」状态入库（enabled=false + tag self-service），管理员批准后才进调度池。
-// 本期不做人机验证，仅 IP 限流 + 邮箱格式校验。凭证与 token 不回显给提交者。
+// Public page for external visitors: enter a contact email → generate a ChatGPT authorization link → after signing in, paste back the authorization code →
+// The account is stored in the "pending review" state (enabled=false + tag self-service) and only enters the scheduling pool after an admin approves it.
+// No human verification in this release; only per-IP rate limiting and email format checks. Credentials and tokens are never echoed back to the submitter.
 
 const (
 	selfServiceTag       = "self-service"
 	selfServiceSource    = "self-service"
-	selfServiceRateLimit = 10        // 单 IP 窗口内最多请求数
-	selfServiceRateWin   = time.Hour // 限流窗口
-	selfServiceEmailMax  = 254       // 邮箱长度上限
+	selfServiceRateLimit = 10        // Maximum number of requests per IP within the window
+	selfServiceRateWin   = time.Hour // Rate limit window
+	selfServiceEmailMax  = 254       // Maximum email length
 )
 
 var selfServiceEmailRe = regexp.MustCompile(`^[^@\s]+@[^@\s]+\.[^@\s]+$`)
 
-// selfServiceRateLimiter 简单的按 IP 滑动计数限流（内存版，够用即可）。
+// selfServiceRateLimiter is a simple per-IP sliding-count rate limiter (in-memory, good enough for now).
 type selfServiceRateLimiter struct {
 	mu   sync.Mutex
 	hits map[string][]time.Time
@@ -37,7 +37,7 @@ type selfServiceRateLimiter struct {
 
 var globalSelfServiceLimiter = &selfServiceRateLimiter{hits: make(map[string][]time.Time)}
 
-// allow 报告某 IP 是否在窗口内仍有配额；有则记一次。now 由调用方传入以便测试。
+// allow reports whether an IP still has quota within the window; if so, it records one request. now is passed in by the caller so tests can control time.
 func (l *selfServiceRateLimiter) allow(ip string, now time.Time) bool {
 	l.mu.Lock()
 	defer l.mu.Unlock()
@@ -56,7 +56,7 @@ func (l *selfServiceRateLimiter) allow(ip string, now time.Time) bool {
 	return true
 }
 
-// PublicAccountPortalPageEnabled 报告账号自助门户是否开启（默认关）。
+// PublicAccountPortalPageEnabled reports whether the account self-service portal is enabled (off by default).
 func (h *Handler) PublicAccountPortalPageEnabled(ctx context.Context) (bool, error) {
 	if h == nil || h.db == nil {
 		return false, nil
@@ -71,11 +71,11 @@ func (h *Handler) PublicAccountPortalPageEnabled(ctx context.Context) (bool, err
 	return settings.PublicAccountPortalPageEnabled, nil
 }
 
-// accountPortalMiddleware 门控公开门户 API：开关关闭一律 404；开启则按 IP 限流。
+// accountPortalMiddleware gates the public portal API: when the switch is off, every request gets a 404; when it is on, requests are rate limited per IP.
 func (h *Handler) accountPortalMiddleware() gin.HandlerFunc {
 	return func(c *gin.Context) {
 		if h == nil || h.db == nil {
-			writeError(c, http.StatusServiceUnavailable, "服务未就绪")
+			writeError(c, http.StatusServiceUnavailable, "service not ready")
 			c.Abort()
 			return
 		}
@@ -88,13 +88,13 @@ func (h *Handler) accountPortalMiddleware() gin.HandlerFunc {
 			return
 		}
 		if !ok {
-			writeError(c, http.StatusNotFound, "账号自助门户未启用")
+			writeError(c, http.StatusNotFound, "account self-service portal is not enabled")
 			c.Abort()
 			return
 		}
 		if !globalSelfServiceLimiter.allow(c.ClientIP(), time.Now()) {
 			security.SecurityAuditLog("ACCOUNT_PORTAL_RATE_LIMITED", "ip="+security.SanitizeLog(c.ClientIP()))
-			writeError(c, http.StatusTooManyRequests, "请求过于频繁，请稍后再试")
+			writeError(c, http.StatusTooManyRequests, "too many requests, please try again later")
 			c.Abort()
 			return
 		}
@@ -110,7 +110,7 @@ func normalizeContactEmail(raw string) (string, bool) {
 	return email, true
 }
 
-// GenerateAccountPortalAuthURL 生成 ChatGPT 授权链接（公开）。
+// GenerateAccountPortalAuthURL generates a ChatGPT authorization link (public).
 // POST /api/account-portal/generate-auth-url  body: { contact_email }
 func (h *Handler) GenerateAccountPortalAuthURL(c *gin.Context) {
 	var req struct {
@@ -120,29 +120,29 @@ func (h *Handler) GenerateAccountPortalAuthURL(c *gin.Context) {
 
 	email, ok := normalizeContactEmail(req.ContactEmail)
 	if !ok {
-		writeError(c, http.StatusBadRequest, "请填写有效的联系邮箱")
+		writeError(c, http.StatusBadRequest, "enter a valid contact email")
 		return
 	}
 
 	state, err := oauthRandomHex(32)
 	if err != nil {
-		writeError(c, http.StatusInternalServerError, "生成 state 失败")
+		writeError(c, http.StatusInternalServerError, "failed to generate state")
 		return
 	}
 	codeVerifier, err := oauthRandomHex(64)
 	if err != nil {
-		writeError(c, http.StatusInternalServerError, "生成 code_verifier 失败")
+		writeError(c, http.StatusInternalServerError, "failed to generate code_verifier")
 		return
 	}
 	sessionID, err := oauthRandomHex(16)
 	if err != nil {
-		writeError(c, http.StatusInternalServerError, "生成 session_id 失败")
+		writeError(c, http.StatusInternalServerError, "failed to generate session_id")
 		return
 	}
 
 	authURL, err := buildOAuthAuthorizeURL(oauthDefaultRedirectURI, state, codeVerifier)
 	if err != nil {
-		writeError(c, http.StatusBadRequest, "客户端身份配置无效: "+err.Error())
+		writeError(c, http.StatusBadRequest, "invalid client identity configuration: "+err.Error())
 		return
 	}
 	globalOAuthStore.set(sessionID, &oauthSession{
@@ -160,7 +160,7 @@ func (h *Handler) GenerateAccountPortalAuthURL(c *gin.Context) {
 	})
 }
 
-// SubmitAccountPortalCode 用回填的授权码兑换并以「待审核」入库（公开）。
+// SubmitAccountPortalCode exchanges the pasted-back authorization code and stores the account as "pending review" (public).
 // POST /api/account-portal/submit-code  body: { session_id, code, state }
 func (h *Handler) SubmitAccountPortalCode(c *gin.Context) {
 	var req struct {
@@ -169,31 +169,31 @@ func (h *Handler) SubmitAccountPortalCode(c *gin.Context) {
 		State     string `json:"state"`
 	}
 	if err := c.ShouldBindJSON(&req); err != nil {
-		writeError(c, http.StatusBadRequest, "请求格式错误")
+		writeError(c, http.StatusBadRequest, "invalid request format")
 		return
 	}
 	req.SessionID = strings.TrimSpace(req.SessionID)
 	req.Code = strings.TrimSpace(req.Code)
 	req.State = strings.TrimSpace(req.State)
 	if req.SessionID == "" || req.Code == "" || req.State == "" {
-		writeError(c, http.StatusBadRequest, "session_id、code 和 state 均为必填")
+		writeError(c, http.StatusBadRequest, "session_id, code and state are all required")
 		return
 	}
 
 	sess, ok := globalOAuthStore.get(req.SessionID)
 	if !ok || !sess.SelfService {
-		writeError(c, http.StatusBadRequest, "会话不存在或已过期（有效期 30 分钟），请重新发起授权")
+		writeError(c, http.StatusBadRequest, "session does not exist or has expired (valid for 30 minutes), please start authorization again")
 		return
 	}
 	if req.State != sess.State {
-		writeError(c, http.StatusBadRequest, "state 不匹配，请重新发起授权")
+		writeError(c, http.StatusBadRequest, "state does not match, please start authorization again")
 		return
 	}
 	if !sess.claimExchange(req.Code, req.State) {
-		writeError(c, http.StatusBadRequest, "该授权会话已处理或正在处理，请重新发起授权")
+		writeError(c, http.StatusBadRequest, "this authorization session has already been processed or is being processed, please start authorization again")
 		return
 	}
-	defer sess.completeExchange(&oauthExchangeResult{Error: "请重新发起授权"})
+	defer sess.completeExchange(&oauthExchangeResult{Error: "please start authorization again"})
 
 	proxyURL := strings.TrimSpace(sess.ProxyURL)
 	if proxyURL == "" {
@@ -202,13 +202,13 @@ func (h *Handler) SubmitAccountPortalCode(c *gin.Context) {
 
 	tokenResp, accountInfo, err := doOAuthCodeExchange(c.Request.Context(), req.Code, sess.CodeVerifier, sess.RedirectURI, proxyURL, "oauth-"+req.SessionID)
 	if err != nil {
-		writeError(c, http.StatusBadGateway, "授权码兑换失败，请重新发起授权并获取新的授权码")
+		writeError(c, http.StatusBadGateway, "authorization code exchange failed, please start authorization again and get a new authorization code")
 		return
 	}
 	globalOAuthStore.delete(req.SessionID)
 
 	if tokenResp.RefreshToken == "" {
-		writeError(c, http.StatusBadGateway, "授权未返回 refresh_token，请重新发起授权")
+		writeError(c, http.StatusBadGateway, "authorization did not return a refresh_token, please start authorization again")
 		return
 	}
 	seed := normalizeTokenCredentialSeed(tokenCredentialSeed{
@@ -228,11 +228,11 @@ func (h *Handler) SubmitAccountPortalCode(c *gin.Context) {
 
 	if _, err := h.upsertSelfServiceAccount(ctx, name, proxyURL, seed, sess.ContactEmail); err != nil {
 		if err == errDuplicateOAuthIdentity {
-			// 已在池中（或已提交待审核）：对提交者返回中性的成功语义，避免探测账号是否存在。
-			c.JSON(http.StatusOK, gin.H{"message": "该账号已在系统中，无需重复提交"})
+			// Already in the pool (or already submitted for review): return a neutral success response so the submitter cannot probe whether the account exists.
+			c.JSON(http.StatusOK, gin.H{"message": "this account is already in the system, no need to submit it again"})
 			return
 		}
-		writeError(c, http.StatusInternalServerError, "提交失败，请稍后重试")
+		writeError(c, http.StatusInternalServerError, "submission failed, please try again later")
 		return
 	}
 
@@ -242,14 +242,14 @@ func (h *Handler) SubmitAccountPortalCode(c *gin.Context) {
 	}
 	security.SecurityAuditLog("ACCOUNT_PORTAL_SUBMITTED", "ip="+security.SanitizeLog(c.ClientIP())+" contact="+security.SanitizeLog(sess.ContactEmail)+" account="+security.SanitizeLog(email))
 
-	// 不回显 token / refresh_token；仅告知已进入待审核。
+	// Do not echo the token or refresh_token; only report that the submission is now pending review.
 	c.JSON(http.StatusOK, gin.H{
-		"message": "已提交，等待管理员审核后生效。感谢你的贡献！",
+		"message": "Submitted. It will take effect after an admin reviews it. Thank you for your contribution!",
 	})
 }
 
-// upsertSelfServiceAccount 以「待审核」状态入库：enabled=false + note(联系人) + tag self-service，
-// 不加入运行时调度池（管理员批准后再启用）。重复账号返回 errDuplicateOAuthIdentity。
+// upsertSelfServiceAccount stores the account as "pending review": enabled=false + note (contact) + tag self-service,
+// it is not added to the runtime scheduling pool (it is enabled only after admin approval). A duplicate account returns errDuplicateOAuthIdentity.
 func (h *Handler) upsertSelfServiceAccount(ctx context.Context, name, proxyURL string, seed tokenCredentialSeed, contactEmail string) (int64, error) {
 	seed = normalizeTokenCredentialSeed(seed)
 	if seed.email != "" && effectiveWorkspaceIDFromSeed(seed) != "" {
@@ -262,15 +262,15 @@ func (h *Handler) upsertSelfServiceAccount(ctx context.Context, name, proxyURL s
 		}
 	}
 
-	note := "自助提交联系人: " + contactEmail
+	note := "self-service contact: " + contactEmail
 	id, err := h.db.InsertPendingAccountWithCredentials(ctx, name, h.newCodexAccountCredentials(seed), proxyURL, note, []string{selfServiceTag})
 	if err != nil {
 		return 0, err
 	}
 	h.db.InsertAccountEventAsync(id, "added", selfServiceSource)
-	// 公开提交不走 /api/admin/accounts* 失效中间件；不主动丢快照的话，
-	// 账号页 SWR 会继续吐旧列表，待审核面板第一次查询就是 0。
+	// Public submissions do not go through the /api/admin/accounts* invalidation middleware; unless the snapshot is dropped explicitly,
+	// the accounts page SWR cache keeps serving the old list, so the first query of the pending review panel returns 0.
 	h.invalidateAccountSnapshotCaches()
-	log.Printf("自助门户新增待审核账号 %d (%s, 联系人 %s)", id, name, contactEmail)
+	log.Printf("self-service portal added pending review account %d (%s, contact %s)", id, name, contactEmail)
 	return id, nil
 }

@@ -44,7 +44,7 @@ func TestBuildAdminImageGenerationRequestOmitsAutoSize(t *testing.T) {
 		Style:        "cinematic",
 	})
 	if err != nil {
-		t.Fatalf("buildAdminImageGenerationRequest 返回错误: %v", err)
+		t.Fatalf("buildAdminImageGenerationRequest returned error: %v", err)
 	}
 
 	var payload map[string]any
@@ -155,11 +155,11 @@ func TestNormalizeImageJobUpscale(t *testing.T) {
 
 func TestNormalizePortalImageJobPayloadLocalizesBatchValidation(t *testing.T) {
 	invalidUpscale := imageGenerationJobPayload{Prompt: "test", Model: "gpt-image-2", Upscale: "8k"}
-	if err := normalizePortalImageJobPayload(&invalidUpscale, false); err == nil || err.Error() != "放大规格必须为 2k 或 4k" {
+	if err := normalizePortalImageJobPayload(&invalidUpscale, false); err == nil || err.Error() != "upscale size must be 2k or 4k" {
 		t.Fatalf("invalid upscale error = %v", err)
 	}
 	invalidCount := imageGenerationJobPayload{Prompt: "test", Model: "gpt-image-2", N: maxImageJobOutputCount + 1}
-	if err := normalizePortalImageJobPayload(&invalidCount, false); err == nil || !strings.Contains(err.Error(), fmt.Sprintf("1 到 %d", maxImageJobOutputCount)) {
+	if err := normalizePortalImageJobPayload(&invalidCount, false); err == nil || !strings.Contains(err.Error(), fmt.Sprintf("between 1 and %d", maxImageJobOutputCount)) {
 		t.Fatalf("invalid count error = %v", err)
 	}
 }
@@ -327,7 +327,7 @@ func TestSaveImageJobAssetsPersistsFilesAndMetadata(t *testing.T) {
 
 	jobID, err := db.InsertImageGenerationJob(context.Background(), database.ImageGenerationJobInput{Prompt: "a blue square"})
 	if err != nil {
-		t.Fatalf("InsertImageGenerationJob 返回错误: %v", err)
+		t.Fatalf("InsertImageGenerationJob returned error: %v", err)
 	}
 	pngBytes := tinyPNG(t)
 	response := map[string]any{
@@ -355,7 +355,7 @@ func TestSaveImageJobAssetsPersistsFilesAndMetadata(t *testing.T) {
 		TemplateID:   12,
 	}, raw)
 	if err != nil {
-		t.Fatalf("saveImageJobAssets 返回错误: %v", err)
+		t.Fatalf("saveImageJobAssets returned error: %v", err)
 	}
 	if len(warnings) != 0 {
 		t.Fatalf("warnings = %#v", warnings)
@@ -527,7 +527,7 @@ func TestImageAssetFileRouteRequiresAdminAuth(t *testing.T) {
 
 	jobID, err := db.InsertImageGenerationJob(context.Background(), database.ImageGenerationJobInput{Prompt: "asset"})
 	if err != nil {
-		t.Fatalf("InsertImageGenerationJob 返回错误: %v", err)
+		t.Fatalf("InsertImageGenerationJob returned error: %v", err)
 	}
 	dir := t.TempDir()
 	if err := imagestore.Configure(imagestore.Config{Backend: imagestore.BackendLocal, LocalDir: dir}); err != nil {
@@ -552,7 +552,7 @@ func TestImageAssetFileRouteRequiresAdminAuth(t *testing.T) {
 		OutputFormat:  "png",
 	})
 	if err != nil {
-		t.Fatalf("InsertImageAsset 返回错误: %v", err)
+		t.Fatalf("InsertImageAsset returned error: %v", err)
 	}
 
 	unauthorized := httptest.NewRecorder()
@@ -597,10 +597,10 @@ func TestDeleteImageGenerationJobRouteDeletesAssetsAndFiles(t *testing.T) {
 	}
 	jobID, err := db.InsertImageGenerationJob(context.Background(), database.ImageGenerationJobInput{Prompt: "delete job"})
 	if err != nil {
-		t.Fatalf("InsertImageGenerationJob 返回错误: %v", err)
+		t.Fatalf("InsertImageGenerationJob returned error: %v", err)
 	}
 	if err := db.MarkImageJobSucceeded(context.Background(), jobID, 123); err != nil {
-		t.Fatalf("MarkImageJobSucceeded 返回错误: %v", err)
+		t.Fatalf("MarkImageJobSucceeded returned error: %v", err)
 	}
 	path := filepath.Join(dir, "job-asset.png")
 	if err := os.WriteFile(path, tinyPNG(t), 0o644); err != nil {
@@ -614,7 +614,7 @@ func TestDeleteImageGenerationJobRouteDeletesAssetsAndFiles(t *testing.T) {
 		Bytes:       len(tinyPNG(t)),
 	})
 	if err != nil {
-		t.Fatalf("InsertImageAsset 返回错误: %v", err)
+		t.Fatalf("InsertImageAsset returned error: %v", err)
 	}
 
 	req := httptest.NewRequest(http.MethodDelete, "/api/admin/images/jobs/"+strconv.FormatInt(jobID, 10), nil)
@@ -650,7 +650,7 @@ func TestExternalImageJobRoutesCreateAndQueryOwnJob(t *testing.T) {
 
 	keyID, err := db.InsertAPIKey(context.Background(), "external", "sk-external")
 	if err != nil {
-		t.Fatalf("InsertAPIKey 返回错误: %v", err)
+		t.Fatalf("InsertAPIKey returned error: %v", err)
 	}
 
 	body := strings.NewReader(`{"prompt":"draw a cat","model":"gpt-image-2","size":"auto","quality":"auto","output_format":"png"}`)
@@ -885,10 +885,10 @@ func TestExternalImageJobRouteRejectsOtherAPIKeyJob(t *testing.T) {
 
 	ownerID, err := db.InsertAPIKey(context.Background(), "owner", "sk-owner")
 	if err != nil {
-		t.Fatalf("InsertAPIKey owner 返回错误: %v", err)
+		t.Fatalf("InsertAPIKey owner returned error: %v", err)
 	}
 	if _, err := db.InsertAPIKey(context.Background(), "other", "sk-other"); err != nil {
-		t.Fatalf("InsertAPIKey other 返回错误: %v", err)
+		t.Fatalf("InsertAPIKey other returned error: %v", err)
 	}
 	jobID, err := db.InsertImageGenerationJob(context.Background(), database.ImageGenerationJobInput{
 		Prompt:       "private job",
@@ -898,7 +898,7 @@ func TestExternalImageJobRouteRejectsOtherAPIKeyJob(t *testing.T) {
 		APIKeyMasked: "sk-o...wner",
 	})
 	if err != nil {
-		t.Fatalf("InsertImageGenerationJob 返回错误: %v", err)
+		t.Fatalf("InsertImageGenerationJob returned error: %v", err)
 	}
 
 	req := httptest.NewRequest(http.MethodGet, "/v1/images/jobs/"+strconv.FormatInt(jobID, 10), nil)
@@ -923,7 +923,7 @@ func TestExternalImageJobRouteRequiresAPIKey(t *testing.T) {
 	router := gin.New()
 	handler.RegisterExternalImageRoutes(router, imageProxy)
 	if _, err := db.InsertAPIKey(context.Background(), "existing", "sk-existing"); err != nil {
-		t.Fatalf("InsertAPIKey 返回错误: %v", err)
+		t.Fatalf("InsertAPIKey returned error: %v", err)
 	}
 
 	req := httptest.NewRequest(http.MethodPost, "/v1/images/jobs", strings.NewReader(`{"prompt":"draw"}`))
@@ -955,7 +955,7 @@ func TestExternalImageJobRouteEnforcesModelAllowList(t *testing.T) {
 			ModelAllow: []string{"gpt-5.4"},
 		},
 	}); err != nil {
-		t.Fatalf("InsertAPIKeyWithOptions 返回错误: %v", err)
+		t.Fatalf("InsertAPIKeyWithOptions returned error: %v", err)
 	}
 
 	req := httptest.NewRequest(http.MethodPost, "/v1/images/jobs", strings.NewReader(`{"prompt":"draw","model":"gpt-image-2"}`))
@@ -983,7 +983,7 @@ func TestExternalImageJobRouteNormalizesEditPayload(t *testing.T) {
 
 	keyID, err := db.InsertAPIKey(context.Background(), "external-edit", "sk-external-edit")
 	if err != nil {
-		t.Fatalf("InsertAPIKey 返回错误: %v", err)
+		t.Fatalf("InsertAPIKey returned error: %v", err)
 	}
 
 	body := strings.NewReader(`{"prompt":" edit this ","model":"unknown-model","input_images":["","data:image/png;base64,aGk="],"output_format":""}`)
@@ -1035,7 +1035,7 @@ func TestExternalImageJobRouteRejectsPrivateInputImageURL(t *testing.T) {
 	handler.RegisterExternalImageRoutes(router, imageProxy)
 
 	if _, err := db.InsertAPIKey(context.Background(), "external-private-url", "sk-private-url"); err != nil {
-		t.Fatalf("InsertAPIKey 返回错误: %v", err)
+		t.Fatalf("InsertAPIKey returned error: %v", err)
 	}
 
 	req := httptest.NewRequest(http.MethodPost, "/v1/images/jobs", strings.NewReader(`{"prompt":"edit","input_images":["http://127.0.0.1/private.png"]}`))
@@ -1083,7 +1083,7 @@ func TestExternalImageJobRouteFetchesPublicInputImageAsDataURL(t *testing.T) {
 	handler.RegisterExternalImageRoutes(router, imageProxy)
 
 	if _, err := db.InsertAPIKey(context.Background(), "external-fetch-url", "sk-fetch-url"); err != nil {
-		t.Fatalf("InsertAPIKey 返回错误: %v", err)
+		t.Fatalf("InsertAPIKey returned error: %v", err)
 	}
 
 	body := fmt.Sprintf(`{"prompt":"edit","input_images":["http://example.com:%s/source.png"]}`, serverURL.Port())

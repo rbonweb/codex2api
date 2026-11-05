@@ -42,11 +42,11 @@ func TestPromptFilterNewAPIBindingAdminLifecycleMasksSecretsAndReloadsStore(t *t
 	invalidAPIKeyID := insertTestAPIKey(t, db, "Invalid Platform Binding")
 	invalidCode := strings.Repeat("a", 33)
 	invalid := do(http.MethodPost, "/api/admin/prompt-filter/newapi-bindings", `{"api_key_id":`+jsonNumber(invalidAPIKeyID)+`,"platform_code":"`+invalidCode+`"}`)
-	if invalid.Code != http.StatusBadRequest || !strings.Contains(invalid.Body.String(), "最长 32 字符") {
+	if invalid.Code != http.StatusBadRequest || !strings.Contains(invalid.Body.String(), "at most 32 characters") {
 		t.Fatalf("overlong platform code response=%d body=%s", invalid.Code, invalid.Body.String())
 	}
 
-	createBody := `{"api_key_id":` + jsonNumber(apiKeyID) + `,"platform_code":"gateway-a","platform_name":"示例平台 NewAPI","prompt_filter_scope":"local_only"}`
+	createBody := `{"api_key_id":` + jsonNumber(apiKeyID) + `,"platform_code":"gateway-a","platform_name":"example platform NewAPI","prompt_filter_scope":"local_only"}`
 	created := do(http.MethodPost, "/api/admin/prompt-filter/newapi-bindings", createBody)
 	if created.Code != http.StatusCreated {
 		t.Fatalf("create status=%d body=%s", created.Code, created.Body.String())
@@ -82,12 +82,12 @@ func TestPromptFilterNewAPIBindingAdminLifecycleMasksSecretsAndReloadsStore(t *t
 		t.Fatalf("invalid scope status=%d body=%s", invalidScope.Code, invalidScope.Body.String())
 	}
 
-	patched := do(http.MethodPatch, "/api/admin/prompt-filter/newapi-bindings/"+jsonNumber(apiKeyID), `{"platform_name":"示例平台生产站","enabled":false,"prompt_filter_scope":"off"}`)
+	patched := do(http.MethodPatch, "/api/admin/prompt-filter/newapi-bindings/"+jsonNumber(apiKeyID), `{"platform_name":"example platform production site","enabled":false,"prompt_filter_scope":"off"}`)
 	if patched.Code != http.StatusOK {
 		t.Fatalf("patch status=%d body=%s", patched.Code, patched.Body.String())
 	}
 	runtimeBinding, _ = store.GetPromptFilterNewAPIBinding(apiKeyID)
-	if runtimeBinding.PlatformName != "示例平台生产站" || runtimeBinding.Enabled || runtimeBinding.PromptFilterScope != database.PromptFilterScopeOff {
+	if runtimeBinding.PlatformName != "example platform production site" || runtimeBinding.Enabled || runtimeBinding.PromptFilterScope != database.PromptFilterScopeOff {
 		t.Fatalf("runtime patch binding=%#v", runtimeBinding)
 	}
 	if strings.Contains(patched.Body.String(), "policy_mode") || strings.Contains(patched.Body.String(), "policy_profile") {
@@ -95,7 +95,7 @@ func TestPromptFilterNewAPIBindingAdminLifecycleMasksSecretsAndReloadsStore(t *t
 	}
 
 	unsafeGenerated := do(http.MethodPost, "/api/admin/prompt-filter/newapi-bindings/"+jsonNumber(apiKeyID)+"/secret/generate", `{"grace_seconds":0}`)
-	if unsafeGenerated.Code != http.StatusBadRequest || !strings.Contains(unsafeGenerated.Body.String(), "60 到 86400") {
+	if unsafeGenerated.Code != http.StatusBadRequest || !strings.Contains(unsafeGenerated.Body.String(), "between 60 and 86400") {
 		t.Fatalf("unsafe generated-secret rotation status=%d body=%s", unsafeGenerated.Code, unsafeGenerated.Body.String())
 	}
 	unchangedBinding, _ := store.GetPromptFilterNewAPIBinding(apiKeyID)
@@ -151,7 +151,7 @@ func TestPromptFilterNewAPIBindingSecretRotationCompletesAfterClientCancellation
 	apiKeyID := insertTestAPIKey(t, db, "Canceled Binding Rotation")
 	originalSecret := "01234567890123456789012345678901"
 	if err := db.CreatePromptFilterNewAPIBinding(context.Background(), &database.PromptFilterNewAPIBinding{
-		APIKeyID: apiKeyID, PlatformCode: "gateway-a-canceled", PlatformName: "示例平台取消测试", Secret: originalSecret,
+		APIKeyID: apiKeyID, PlatformCode: "gateway-a-canceled", PlatformName: "example platform cancel test", Secret: originalSecret,
 		Enabled: true,
 	}); err != nil {
 		t.Fatalf("create binding: %v", err)

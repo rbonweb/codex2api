@@ -20,13 +20,13 @@ type unlockPromptConversationRequest struct {
 func (h *Handler) UnlockPromptConversation(c *gin.Context) {
 	lockKey := strings.ToLower(strings.TrimSpace(c.Param("lock_key")))
 	if len(lockKey) != 64 {
-		writeError(c, http.StatusBadRequest, "会话锁标识无效")
+		writeError(c, http.StatusBadRequest, "Invalid conversation lock ID")
 		return
 	}
 	var request unlockPromptConversationRequest
 	if c.Request != nil && c.Request.ContentLength != 0 {
 		if err := c.ShouldBindJSON(&request); err != nil {
-			writeError(c, http.StatusBadRequest, "请求体无效")
+			writeError(c, http.StatusBadRequest, "Invalid request body")
 			return
 		}
 	}
@@ -39,7 +39,7 @@ func (h *Handler) UnlockPromptConversation(c *gin.Context) {
 		request.Scope = database.PromptConversationRestrictionScopeConversation
 	}
 	if request.Scope != database.PromptConversationRestrictionScopeConversation && request.Scope != database.PromptConversationRestrictionScopeUserCooldown {
-		writeError(c, http.StatusBadRequest, "解锁作用域无效")
+		writeError(c, http.StatusBadRequest, "Invalid unlock scope")
 		return
 	}
 	ctx, cancel := context.WithTimeout(c.Request.Context(), 5*time.Second)
@@ -47,7 +47,7 @@ func (h *Handler) UnlockPromptConversation(c *gin.Context) {
 	if request.Scope == database.PromptConversationRestrictionScopeUserCooldown {
 		current, err := h.db.GetPromptConversationLock(ctx, lockKey)
 		if errors.Is(err, sql.ErrNoRows) {
-			writeError(c, http.StatusNotFound, "用户冷却记录不存在")
+			writeError(c, http.StatusNotFound, "User cooldown record not found")
 			return
 		}
 		if err != nil {
@@ -56,7 +56,7 @@ func (h *Handler) UnlockPromptConversation(c *gin.Context) {
 		}
 		keys, err := h.db.UnlockPromptConversationUserCooldown(ctx, current.Platform, current.NewAPIUserID, request.Reason)
 		if errors.Is(err, sql.ErrNoRows) {
-			writeError(c, http.StatusNotFound, "活动用户冷却不存在或已经解除")
+			writeError(c, http.StatusNotFound, "Active user cooldown not found or already lifted")
 			return
 		}
 		if err != nil {
@@ -78,7 +78,7 @@ func (h *Handler) UnlockPromptConversation(c *gin.Context) {
 	}
 	item, err := h.db.UnlockPromptConversation(ctx, lockKey, request.Reason)
 	if errors.Is(err, sql.ErrNoRows) {
-		writeError(c, http.StatusNotFound, "活动会话锁不存在或已经解锁")
+		writeError(c, http.StatusNotFound, "Active conversation lock not found or already unlocked")
 		return
 	}
 	if err != nil {

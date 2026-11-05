@@ -31,8 +31,8 @@ func autoResetCreditsAccountEligible(account *auth.Account, settings autoResetCr
 	if account == nil || strings.TrimSpace(account.GetAccessToken()) == "" {
 		return false
 	}
-	// 管理员禁用（DispatchPaused）或 401 即时摘除（Disabled）的账号不接流量，
-	// 自动消耗只会白白浪费重置券；手动重置不经过这里，仍可按需使用。
+	// Accounts disabled by an admin (DispatchPaused) or removed instantly on 401 (Disabled) receive no traffic,
+	// automatic consumption would only waste reset vouchers; manual reset does not go through here and can still be used on demand.
 	if atomic.LoadInt32(&account.DispatchPaused) != 0 || atomic.LoadInt32(&account.Disabled) != 0 {
 		return false
 	}

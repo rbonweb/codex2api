@@ -13,29 +13,29 @@ import (
 	"github.com/gin-gonic/gin"
 )
 
-// 导入时选择账号分组的公共件。
+// Helpers for choosing account groups during import.
 //
-// 分组绑定本身早就有（SetAccountGroups / batch-update），这里解决的是「导入当场就绑」：
-// 各导入入口把用户选的 group_ids 传进来，成功新建的账号统一绑一次。
+// Group binding itself has existed for a long time (SetAccountGroups / batch-update). This part handles "bind right at import time":
+// each import entry point passes in the group_ids the user selected, and every account created successfully is bound once.
 //
-// 两条贯穿所有入口的规则：
-//   - 校验放在插账号**之前**：指向不存在分组这类最常见的输入错误在零副作用时就被拒掉，
-//     插入之后只可能因 DB 故障失败，那时账号保留、响应里说明分组没绑上。
-//   - 落库后必须同步运行时账号池：分组会影响并发上限、自动暂停阈值以及哪些 API Key 能
-//     调度到该账号，漏了同步就要等下一次全量加载才生效。
+// Two rules apply to every entry point:
+//   - Validation runs **before** the account is inserted: the most common input error, a group that does not exist, is rejected while there are still no side effects,
+//     so after insertion the only possible failure is a DB error; the account is kept and the response says the group was not bound.
+//   - After the write, the runtime account pool must be synced: groups affect the concurrency limit, auto-pause thresholds and which API Keys can
+//     schedule to the account; skipping the sync means the change only takes effect at the next full load.
 //
-// 命中已存在账号（重复/更新路径）的分组一律不动，避免反复导入同一份文件冲掉
-// 运维在后台手工调整过的归属；因此各入口只收集「真正新建」的账号 ID。
+// Groups of accounts that already exist (the duplicate and update paths) are never touched, so importing the same file again does not overwrite
+// ownership that operators adjusted by hand in the admin panel; so each entry point only collects the IDs of accounts that were actually created.
 
-// importGroupIDsField 是各入口统一使用的字段名，出错信息里也用它。
+// importGroupIDsField is the field name every entry point uses, and it also appears in error messages.
 const importGroupIDsField = "group_ids"
 
-// importGroupIDsContextKey 在 gin context 上传递本次导入选中的分组。
-// 文件导入按格式分成 4 个解析函数再汇到 importAccountsCommon，用请求上下文传递
-// 比给这一串函数逐个加参数更少噪音（与 proxy 侧传递请求级身份的做法一致）。
+// importGroupIDsContextKey carries the groups selected for this import on the gin context.
+// File import splits by format into 4 parse functions that feed into importAccountsCommon; passing the groups through the request context
+// is less noisy than adding a parameter to every function in the chain (consistent with how the proxy side passes request-level identity).
 const importGroupIDsContextKey = "importGroupIDs"
 
-// importGroupIDsFromContext 取出本次导入选中的分组；没有则返回 nil（不绑）。
+// importGroupIDsFromContext returns the groups selected for this import; it returns nil (no binding) when there are none.
 func importGroupIDsFromContext(c *gin.Context) []int64 {
 	if c == nil {
 		return nil
@@ -48,8 +48,8 @@ func importGroupIDsFromContext(c *gin.Context) []int64 {
 	return ids
 }
 
-// resolveImportGroupIDsJSON 解析 JSON 请求体里的 group_ids 并校验分组存在。
-// 未传或空数组返回 nil，表示不绑分组（不是"清空"）。
+// resolveImportGroupIDsJSON parses group_ids from the JSON request body and checks that the groups exist.
+// A missing or empty array returns nil, meaning no group binding (not "clear the groups").
 func (h *Handler) resolveImportGroupIDsJSON(ctx context.Context, raw json.RawMessage) ([]int64, error) {
 	parsed, err := parseOptionalIntegerSliceField(raw, importGroupIDsField)
 	if err != nil {
@@ -58,8 +58,8 @@ func (h *Handler) resolveImportGroupIDsJSON(ctx context.Context, raw json.RawMes
 	return h.verifyImportGroupIDs(ctx, parsed.Values)
 }
 
-// resolveImportGroupIDsForm 解析 multipart 表单里的 group_ids。
-// 兼容两种写法：JSON 数组（"[2,3]"，前端默认发这个）与逗号分隔（"2,3"，便于 curl 手测）。
+// resolveImportGroupIDsForm parses group_ids from the multipart form.
+// Two formats are accepted: a JSON array ("[2,3]", which the frontend sends by default) and a comma-separated list ("2,3", handy for manual curl tests).
 func (h *Handler) resolveImportGroupIDsForm(ctx context.Context, raw string) ([]int64, error) {
 	raw = strings.TrimSpace(raw)
 	if raw == "" {
@@ -76,20 +76,20 @@ func (h *Handler) resolveImportGroupIDsForm(ctx context.Context, raw string) ([]
 		}
 		value, err := strconv.ParseInt(part, 10, 64)
 		if err != nil || value <= 0 {
-			return nil, fmt.Errorf("%s 必须是正整数数组", importGroupIDsField)
+			return nil, fmt.Errorf("%s must be an array of positive integers", importGroupIDsField)
 		}
 		values = append(values, value)
 	}
 	return h.verifyImportGroupIDs(ctx, values)
 }
 
-// verifyImportGroupIDs 去重后校验分组存在；有不存在的 ID 直接报错，交由调用方回 400。
+// verifyImportGroupIDs removes duplicates and then checks that the groups exist; an ID that does not exist is reported as an error straight away, and the caller returns 400.
 func (h *Handler) verifyImportGroupIDs(ctx context.Context, groupIDs []int64) ([]int64, error) {
 	unique := make([]int64, 0, len(groupIDs))
 	seen := make(map[int64]struct{}, len(groupIDs))
 	for _, id := range groupIDs {
 		if id <= 0 {
-			return nil, fmt.Errorf("%s 中的值必须是正整数", importGroupIDsField)
+			return nil, fmt.Errorf("values in %s must be positive integers", importGroupIDsField)
 		}
 		if _, ok := seen[id]; ok {
 			continue
@@ -102,33 +102,33 @@ func (h *Handler) verifyImportGroupIDs(ctx context.Context, groupIDs []int64) ([
 	}
 	missing, err := h.db.VerifyAccountGroupIDs(ctx, unique)
 	if err != nil {
-		return nil, fmt.Errorf("校验账号分组失败: %w", err)
+		return nil, fmt.Errorf("failed to verify account groups: %w", err)
 	}
 	if len(missing) > 0 {
 		values := make([]string, 0, len(missing))
 		for _, value := range missing {
 			values = append(values, strconv.FormatInt(value, 10))
 		}
-		return nil, fmt.Errorf("%s 包含不存在的分组 ID: %s", importGroupIDsField, strings.Join(values, ", "))
+		return nil, fmt.Errorf("%s contains group IDs that do not exist: %s", importGroupIDsField, strings.Join(values, ", "))
 	}
 	return unique, nil
 }
 
-// bindImportedAccountGroups 给本次新建的账号绑定分组：先落库（单事务），再同步运行时账号池。
-// 返回错误表示分组没绑上——账号已经入库，调用方应把这个情况告诉用户而不是静默。
+// bindImportedAccountGroups binds groups to the accounts created in this import: it writes to the DB first (in one transaction), then syncs the runtime account pool.
+// An error means the groups were not bound: the accounts are already stored, so the caller should tell the user rather than fail silently.
 func (h *Handler) bindImportedAccountGroups(ctx context.Context, accountIDs []int64, groupIDs []int64) error {
 	if len(accountIDs) == 0 || len(groupIDs) == 0 {
 		return nil
 	}
-	// 分组渠道校验(issue #487):同一次导入的账号平台一致,取首个账号判定渠道。
+	// Group channel check (issue #487): the accounts in one import share a platform, so the first account decides the channel.
 	if row, err := h.db.GetAccountByID(ctx, accountIDs[0]); err == nil {
 		if err := h.validateGroupChannelForRows(ctx, []*database.AccountRow{row}, groupIDs); err != nil {
-			log.Printf("导入: 分组渠道校验失败 (accounts=%v, groups=%v): %v", accountIDs, groupIDs, err)
+			log.Printf("import: group channel check failed (accounts=%v, groups=%v): %v", accountIDs, groupIDs, err)
 			return err
 		}
 	}
 	if err := h.db.BatchSetAccountGroups(ctx, accountIDs, groupIDs); err != nil {
-		log.Printf("导入: 绑定账号分组失败 (accounts=%v, groups=%v): %v", accountIDs, groupIDs, err)
+		log.Printf("import: failed to bind account groups (accounts=%v, groups=%v): %v", accountIDs, groupIDs, err)
 		return err
 	}
 	if h.store != nil {
@@ -139,7 +139,7 @@ func (h *Handler) bindImportedAccountGroups(ctx context.Context, accountIDs []in
 	return nil
 }
 
-// importedAccountIDs 收集一次导入里新建的账号 ID。导入是并发的，收集必须加锁。
+// importedAccountIDs collects the IDs of accounts created in one import. Imports run concurrently, so collecting must take a lock.
 type importedAccountIDs struct {
 	mu  sync.Mutex
 	ids []int64

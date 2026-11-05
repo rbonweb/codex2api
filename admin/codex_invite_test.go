@@ -28,7 +28,7 @@ func TestCollectInviteEmails(t *testing.T) {
 		if err != nil {
 			t.Fatalf("unexpected error: %v", err)
 		}
-		// A@ 与 a@ 视为重复（忽略大小写），保留首次出现的大小写形式。
+		// A@ and a@ count as duplicates (case-insensitive); the first-seen casing is kept.
 		want := []string{"A@example.com", "b@example.com", "c@example.com", "d@example.com"}
 		if len(got) != len(want) {
 			t.Fatalf("got %v, want %v", got, want)
@@ -83,7 +83,7 @@ func TestInviteCacheReadWrite(t *testing.T) {
 	const scope = "prog|persistent"
 
 	t.Run("snapshot path serves after restart-equivalent cold cache", func(t *testing.T) {
-		// cache=nil 等价于「进程重启、运行态缓存全空」：数据必须还能从库里读回来。
+		// cache=nil is equivalent to "process restarted, runtime cache empty": the data must still be readable back from the database.
 		h := newInviteCacheTestHandler(t, false)
 		h.writeInviteCache(ctx, inviteEligibilityCacheNamespace, database.CodexInviteSnapshotEligibility,
 			42, 3, scope, 200, time.Minute, inviteCacheProbe{Value: "from-upstream"})
@@ -119,7 +119,7 @@ func TestInviteCacheReadWrite(t *testing.T) {
 	})
 
 	t.Run("credential generation change misses", func(t *testing.T) {
-		// 重新授权后资格属于另一份身份，旧快照不能继续端出来。
+		// After re-authorization, eligibility belongs to another identity, so the old snapshot must not keep being served.
 		h := newInviteCacheTestHandler(t, true)
 		h.writeInviteCache(ctx, inviteEligibilityCacheNamespace, database.CodexInviteSnapshotEligibility,
 			42, 3, scope, 200, time.Minute, inviteCacheProbe{Value: "old-identity"})
@@ -160,7 +160,7 @@ func TestInviteCacheReadWrite(t *testing.T) {
 	})
 }
 
-// 归一化后的参数才进作用域，否则「不传」与「传默认值」会各存一份相同内容。
+// Only normalized parameters go into the scope; otherwise "not passed" and "passed the default value" would each store identical content.
 func TestInviteCacheScopeNormalization(t *testing.T) {
 	programA, entryA := proxy.NormalizeInviteProgram("", "")
 	programB, entryB := proxy.NormalizeInviteProgram(proxy.DefaultProgramID, proxy.DefaultEntrypoint)

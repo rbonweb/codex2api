@@ -10,23 +10,23 @@ import (
 )
 
 const (
-	// accountHealthBlockCount / accountHealthBlockMinutes 决定「健康状态」条的粒度：
-	// 20 个格子 × 10 分钟 ≈ 覆盖最近 3.3 小时。需与前端 AccountHealthBar 保持一致。
+	// accountHealthBlockCount / accountHealthBlockMinutes set the granularity of the health status bar:
+	// 20 cells × 10 minutes ≈ covers the last 3.3 hours. Must stay in sync with the frontend AccountHealthBar.
 	accountHealthBlockCount   = 20
 	accountHealthBlockMinutes = 10
 )
 
-// GetAccountHealthBars 返回各账号最近一段时间的请求成败分桶，用于账号管理页的
-// 「健康状态」条。GET /api/accounts/health-bars
+// GetAccountHealthBars returns each account's recent success and failure request buckets, used for the
+// health status bar on the account management page. GET /api/accounts/health-bars
 //
-// 返回结构：{ buckets: { "<accountId>": [{success,failed}, ...20], ... },
+// Response shape: { buckets: { "<accountId>": [{success,failed}, ...20], ... },
 //
 //	block_count: 20, block_minutes: 10 }
 func (h *Handler) GetAccountHealthBars(c *gin.Context) {
 	ctx := c.Request.Context()
 	ids, err := parseAccountListIDs(c.Query("ids"))
 	if err != nil {
-		writeError(c, http.StatusBadRequest, "ids 参数无效")
+		writeError(c, http.StatusBadRequest, "Invalid ids parameter")
 		return
 	}
 
@@ -38,7 +38,7 @@ func (h *Handler) GetAccountHealthBars(c *gin.Context) {
 		accountHealthBlockMinutes*time.Minute,
 	)
 	if err != nil {
-		writeError(c, http.StatusInternalServerError, "获取健康状态失败："+err.Error())
+		writeError(c, http.StatusInternalServerError, "Failed to get health status: "+err.Error())
 		return
 	}
 

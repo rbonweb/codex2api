@@ -11,10 +11,10 @@ import (
 
 func intPtr(v int) *int { return &v }
 
-// 上游对每次邀请下发两条 grant，邀请人和受邀人各一条，金额相同。取错会让预估翻倍。
+// The upstream issues two grants per invite, one for the inviter and one for the invitee, with the same amount. Picking the wrong one doubles the estimate.
 func TestReferrerGrantAmount(t *testing.T) {
 	t.Run("picks referrer not recipient", func(t *testing.T) {
-		// 形状取自实测响应（offer credits_1000）。
+		// The shape is taken from a real observed response (offer credits_1000).
 		grants := []proxy.CodexInviteGrant{
 			{Recipient: "referrer", Amount: 1000, GrantType: "personal_credits"},
 			{Recipient: "recipient", Amount: 1000, GrantType: "personal_credits"},
@@ -41,7 +41,7 @@ func TestReferrerGrantAmount(t *testing.T) {
 	})
 
 	t.Run("ambiguous multiple unlabeled grants yield zero", func(t *testing.T) {
-		// 分不清归属时不猜——宁可显示 0 也不给用户一个编造的收益数字。
+		// When ownership cannot be told apart, do not guess: showing 0 is better than giving the user an invented earnings figure.
 		grants := []proxy.CodexInviteGrant{{Amount: 100}, {Amount: 200}}
 		if got := referrerGrantAmount(grants); got != 0 {
 			t.Fatalf("got %v, want 0", got)
@@ -70,7 +70,7 @@ func TestSortInviteGuidePlan(t *testing.T) {
 	for i := range items {
 		got[i] = items[i].ID
 	}
-	// 可发的在前；同为可发时先比单次收益（1000 > 500），再比剩余次数（2 > 1）。
+	// Sendable ones come first; among sendable ones, compare per-invite earnings first (1000 > 500), then remaining count (2 > 1).
 	want := []int64{6, 4, 2, 3, 5, 1}
 	for i := range want {
 		if got[i] != want[i] {
@@ -79,19 +79,19 @@ func TestSortInviteGuidePlan(t *testing.T) {
 	}
 }
 
-// 邮箱有限时把名额分给单次收益最高的号，才是总收益最大的分法。
+// When emails are limited, giving the slots to the accounts with the highest per-invite earnings is the split that maximises total earnings.
 func TestApplyInviteGuideEmailBudget(t *testing.T) {
 	t.Run("greedy allocation by per-invite value", func(t *testing.T) {
 		items := []inviteGuideAccountPlan{
 			{ID: 1, State: inviteGuideStateEligible, GrantAmount: 1000, SuggestedInvites: 2},
 			{ID: 2, State: inviteGuideStateEligible, GrantAmount: 500, SuggestedInvites: 3},
 		}
-		applyInviteGuideEmailBudget(items, 3) // 只有 3 个受邀邮箱
+		applyInviteGuideEmailBudget(items, 3) // only 3 invitee emails
 
 		if items[0].SuggestedInvites != 2 || items[0].PotentialCredits != 2000 {
 			t.Fatalf("top account: invites=%d credits=%v, want 2/2000", items[0].SuggestedInvites, items[0].PotentialCredits)
 		}
-		// 预算只剩 1 个名额给第二个号。
+		// Only 1 slot of budget is left for the second account.
 		if items[1].SuggestedInvites != 1 || items[1].PotentialCredits != 500 {
 			t.Fatalf("second account: invites=%d credits=%v, want 1/500", items[1].SuggestedInvites, items[1].PotentialCredits)
 		}
@@ -143,7 +143,7 @@ func TestParseInviteGuideIDs(t *testing.T) {
 	}
 }
 
-// 「没配过」必须读成开启，否则功能默认关闭，与产品预期相反。
+// "Never configured" must read as enabled; otherwise the feature would default to off, the opposite of the product's intent.
 func TestInviteGuideConfigDefault(t *testing.T) {
 	var unset database.InviteGuideConfig
 	if !unset.IsEnabled() {
@@ -161,8 +161,8 @@ func TestInviteGuideConfigDefault(t *testing.T) {
 	}
 }
 
-// remaining_reward_capacity=0 时账号还能发，但发了拿不到积分——对「攒积分」这个
-// 目标没有价值，必须与「有资格」区分开，否则会被排到前面误导用户。
+// When remaining_reward_capacity=0, the account can still send, but a send earns no credits: for the goal of "building up credits" this
+// has no value, so it must be kept distinct from "eligible", or it would be ranked first and mislead the user.
 func TestInviteGuideExhaustedIsNotEligible(t *testing.T) {
 	items := []inviteGuideAccountPlan{
 		{ID: 1, State: inviteGuideStateExhausted, RemainingSendCapacity: intPtr(5), RemainingRewardCapacity: intPtr(0)},
@@ -174,8 +174,8 @@ func TestInviteGuideExhaustedIsNotEligible(t *testing.T) {
 	}
 }
 
-// 封顶是这个功能最关键的安全阀:万级导入若不设上限，会持续数小时打 Cloudflare
-// 防护的上游端点。被挡下的部分必须如实回报，让弹窗能显示「已抽检 N/M」。
+// The cap is the most critical safety valve of this feature: if a 10,000-scale import had no limit, it would keep hitting a Cloudflare-protected
+// upstream endpoint for hours. The blocked part must be reported honestly, so the dialog can show "sampled N/M".
 func TestEnqueueInviteGuideProbesCap(t *testing.T) {
 	h := &Handler{}
 	ids := make([]int64, 120)
@@ -206,8 +206,8 @@ func TestEnqueueInviteGuideProbesCap(t *testing.T) {
 	})
 }
 
-// created_ids 是前端拉取方案的唯一入口；漏发等于整个引导不触发。空值必须省略，
-// 否则老前端会收到一个多余字段。
+// created_ids is the only entry point through which the frontend fetches the plan; leaving it out means the whole guide never triggers. An empty value must be omitted,
+// or old frontends would receive an extra field.
 func TestImportEventCreatedIDsSerialization(t *testing.T) {
 	withIDs, err := json.Marshal(importEvent{Type: "complete", CreatedIDs: []int64{7, 9}})
 	if err != nil {
@@ -226,20 +226,20 @@ func TestImportEventCreatedIDsSerialization(t *testing.T) {
 	}
 }
 
-// 状态取值取自实测跟踪响应：redeemed / expired。expired 是「发出了但受邀人没在
-// 有效期内使用」——仍算已发，但既不算接受也不算在途，混进任何一边都会给出错数。
+// The status values are taken from a real tracking response: redeemed / expired. expired means "sent, but the invitee did not
+// use it within the validity period": it still counts as sent, but counts neither as accepted nor as in-flight; putting it on either side would give wrong numbers.
 func TestInviteTrackingCounts(t *testing.T) {
 	items := []proxy.CodexInviteTrackingItem{
 		{Status: "redeemed"},
 		{Status: "expired"},
 		{Status: "expired"},
 		{Status: "pending"},
-		{Status: "ACCEPTED"}, // 大小写不敏感
-		{Status: ""},         // 上游没给状态：只计入已发
+		{Status: "ACCEPTED"}, // case-insensitive
+		{Status: ""},         // the upstream gave no status: counted as sent only
 	}
 	sent, accepted, pending := inviteTrackingCounts(items)
 	if sent != 6 {
-		t.Fatalf("sent = %d, want 6 (每条记录都算已发)", sent)
+		t.Fatalf("sent = %d, want 6 (every record counts as sent)", sent)
 	}
 	if accepted != 2 {
 		t.Fatalf("accepted = %d, want 2 (redeemed + ACCEPTED)", accepted)
@@ -256,8 +256,8 @@ func TestInviteTrackingCounts(t *testing.T) {
 	})
 }
 
-// send 与 reward 是两条独立的配额规则，取错会把「本月已发 7/10」显示成
-// 「1/3」（那是奖励次数）。
+// send and reward are two independent quota rules; picking the wrong one would show "sent this month 7/10" as
+// "1/3" (that is the reward count).
 func TestFindSendCapacityRule(t *testing.T) {
 	rules := []proxy.CodexInviteTimeFrameRule{
 		{CapacityType: "reward", InvitesSent: 1, InvitesTotal: 3},

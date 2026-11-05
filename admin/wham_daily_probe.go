@@ -13,10 +13,10 @@ import (
 )
 
 var (
-	errWhamDailyUsageUnavailable  = errors.New("官方用量统计不可用")
-	errWhamDailyUsageUnsupported  = errors.New("codex_at 类型账号不支持官方用量统计")
-	errWhamDailyUsageUnauthorized = errors.New("上游鉴权失败（401），请先刷新账号后重试")
-	errWhamDailyUsageRateLimited  = errors.New("上游限流（429），请稍后重试")
+	errWhamDailyUsageUnavailable  = errors.New("official usage statistics are unavailable")
+	errWhamDailyUsageUnsupported  = errors.New("codex_at accounts do not support official usage statistics")
+	errWhamDailyUsageUnauthorized = errors.New("upstream authentication failed (401), please refresh the account and try again")
+	errWhamDailyUsageRateLimited  = errors.New("upstream rate limited (429), please try again later")
 )
 
 func upstreamDailyUsageError(status int, body []byte) error {
@@ -25,65 +25,65 @@ func upstreamDailyUsageError(status int, body []byte) error {
 		snippet = snippet[:200]
 	}
 	if snippet == "" {
-		return fmt.Errorf("上游返回 %d", status)
+		return fmt.Errorf("upstream returned %d", status)
 	}
-	return fmt.Errorf("上游返回 %d：%s", status, snippet)
+	return fmt.Errorf("upstream returned %d: %s", status, snippet)
 }
 
 const (
-	// whamDailyUsageProbeTick 是调度检查间隔。每一跳只挑「到期」的账号刷，
-	// 不是每跳全量：真实间隔由下面两个按账号状态的值决定。
+	// whamDailyUsageProbeTick is the scheduling check interval. Each tick only picks accounts that are "due" to refresh,
+	// not all accounts every tick: the real interval is set by the two per-account-state values below.
 	whamDailyUsageProbeTick = 30 * time.Minute
 
-	// whamDailyUsageProbeBaseInterval 是正常账号的刷新间隔。
+	// whamDailyUsageProbeBaseInterval is the refresh interval for normal accounts.
 	whamDailyUsageProbeBaseInterval = time.Hour
 
-	// whamDailyUsageProbeRateLimitedInterval 是限流/额度耗尽账号的刷新间隔。
-	// 这类账号短期内额度不会有新消耗，没必要按小时打上游。
+	// whamDailyUsageProbeRateLimitedInterval is the refresh interval for rate-limited or quota-exhausted accounts.
+	// Such accounts will not see new quota consumption in the short term, so there is no need to hit upstream every hour.
 	whamDailyUsageProbeRateLimitedInterval = 6 * time.Hour
 
-	// whamDailyUsageProbeConcurrency 限制并发，避免大号池同时打上游。
+	// whamDailyUsageProbeConcurrency limits concurrency, so a large account pool does not hit upstream all at once.
 	whamDailyUsageProbeConcurrency = 4
 
-	// whamDailyUsageBackfillCooldown 是列表页即时回补的最短间隔。page-stats
-	// 会随翻页/前端重试反复打来，同一账号在冷却内只回补一次。
+	// whamDailyUsageBackfillCooldown is the minimum interval for instant backfill from the list page. page-stats
+	// keeps arriving with page turns and frontend retries, so the same account is backfilled only once within the cooldown.
 	whamDailyUsageBackfillCooldown = 2 * time.Minute
 
-	// whamDailyUsageBackfillFailureCooldown 是回补失败后的冷却。上游拉不到
-	//（401/网络/滞后）短时间内重试也不会好，按普通冷却每 2 分钟打一次只是
-	// 白白消耗上游配额；失败账号交给小时级探针兜底即可。
+	// whamDailyUsageBackfillFailureCooldown is the cooldown after a backfill failure. When upstream cannot be fetched
+	// (401 / network / lag), retrying within a short time will not help, and hitting it every 2 minutes with the normal cooldown would only
+	// waste upstream quota; failed accounts are left to the hourly probe as a fallback.
 	whamDailyUsageBackfillFailureCooldown = 15 * time.Minute
 
-	// whamDailyUsageKeepDays 是本地快照保留期。上游可回溯约 84 天，本地留一年足够看趋势。
+	// whamDailyUsageKeepDays is the retention period for local snapshots. Upstream can be queried back about 84 days; keeping one year locally is enough to see trends.
 	whamDailyUsageKeepDays = 365
 
-	// whamDailyUsageMinAccountAge 是自动刷新官方结算的最短账号年龄。
-	// 官方统计基本在账号产生请求后的次日才出数，导入当天拉上游只会空转。
+	// whamDailyUsageMinAccountAge is the minimum account age for automatic refresh of official settlement.
+	// Official statistics usually appear the day after an account makes requests, so pulling upstream on the day of import would just spin idle.
 	whamDailyUsageMinAccountAge = 24 * time.Hour
 )
 
 var whamDailyUsageProbeOnce sync.Once
 
-// StartWhamDailyUsageProbe 周期性把官方结算用量（counts + 模型×速度拆分）落库。
+// StartWhamDailyUsageProbe periodically stores official settlement usage (counts + model × speed breakdown).
 //
-// 上游 daily-workspace-usage-counts 可回溯深度有限（实测约 84 天），更久的历史只在
-// 本地库里，所以这个任务是长期历史的唯一来源。稳态每轮滚动回补 7 天，首次同步
-// 深回补 84 天，漏跑几轮不会留下空洞。
+// Upstream daily-workspace-usage-counts has limited lookback depth (measured at about 84 days); older history exists only in
+// the local database, so this task is the only source of long-term history. In steady state each round backfills a rolling 7 days; the first sync does a
+// deep backfill of 84 days, so missed rounds leave no gaps.
 func (h *Handler) StartWhamDailyUsageProbe(ctx context.Context) {
 	if h == nil || h.db == nil || h.store == nil {
 		return
 	}
 	whamDailyUsageProbeOnce.Do(func() {
 		go func() {
-			// 启动后先等一会：避开进程刚起来时的账号加载与刷新高峰。
+			// Wait a moment after startup to avoid the account loading and refresh peak right after the process starts.
 			select {
 			case <-ctx.Done():
 				return
 			case <-time.After(2 * time.Minute):
 			}
-			// lastAttempt 只在这个循环 goroutine 里读写，不需要锁。
-			// 记录的是尝试时间而非成功时间：失败也等下一个整间隔再试，
-			// 避免坏号每跳都打一次上游。
+			// lastAttempt is only read and written in this loop goroutine, so no lock is needed.
+			// It records the attempt time, not the success time: a failure also waits a full interval before retrying,
+			// so a bad account does not hit upstream on every tick.
 			lastAttempt := map[int64]time.Time{}
 			h.runWhamDailyUsageProbe(ctx, lastAttempt)
 			ticker := time.NewTicker(whamDailyUsageProbeTick)
@@ -100,8 +100,8 @@ func (h *Handler) StartWhamDailyUsageProbe(ctx context.Context) {
 	})
 }
 
-// whamDailyUsageProbeIntervalFor 按账号当前状态给出刷新间隔：限流/额度耗尽的
-// 账号额度短期不会变化，降频到 6 小时；其余账号按小时刷新。
+// whamDailyUsageProbeIntervalFor gives the refresh interval based on the account's current state: rate-limited / quota-exhausted
+// accounts have no quota change in the short term, so they drop to every 6 hours; other accounts refresh hourly.
 func whamDailyUsageProbeIntervalFor(account *auth.Account) time.Duration {
 	switch account.RuntimeStatus() {
 	case "rate_limited", auth.ResponsesRateLimitedCooldownReason, "rate_limited_7d", "usage_limited", "usage_limit", "usage_exhausted":
@@ -110,15 +110,15 @@ func whamDailyUsageProbeIntervalFor(account *auth.Account) time.Duration {
 	return whamDailyUsageProbeBaseInterval
 }
 
-// whamDailyUsageDueTargets 从候选账号里挑出到期该刷的，并就地维护 lastAttempt
-// 计时表（记录本轮尝试、清掉已不存在的账号）。
+// whamDailyUsageDueTargets picks out the candidate accounts that are due for refresh, and maintains lastAttempt in place
+// (recording this round's attempts and clearing accounts that no longer exist).
 func whamDailyUsageDueTargets(all []*auth.Account, lastAttempt map[int64]time.Time, now time.Time) []*auth.Account {
 	targets := make([]*auth.Account, 0, len(all))
 	current := make(map[int64]struct{}, len(all))
 	for _, account := range all {
 		current[account.DBID] = struct{}{}
-		// 减去半个 tick 的裕量：不然 1h 间隔恰好落在 1h tick 边界上，
-		// 计时误差会让账号每次都差一点点到期、实际两小时才刷一次。
+		// Subtract half a tick of margin: otherwise a 1h interval lands exactly on the 1h tick boundary,
+		// and timing error would make the account miss being due every time by a hair, so it actually refreshes only every two hours.
 		due := whamDailyUsageProbeIntervalFor(account) - whamDailyUsageProbeTick/2
 		if last, ok := lastAttempt[account.DBID]; ok && now.Sub(last) < due {
 			continue
@@ -126,7 +126,7 @@ func whamDailyUsageDueTargets(all []*auth.Account, lastAttempt map[int64]time.Ti
 		lastAttempt[account.DBID] = now
 		targets = append(targets, account)
 	}
-	// 已删除的账号从计时表清掉，防止长期运行下缓慢泄漏。
+	// Remove deleted accounts from the timing table, to prevent a slow leak over long runs.
 	for id := range lastAttempt {
 		if _, ok := current[id]; !ok {
 			delete(lastAttempt, id)
@@ -136,7 +136,7 @@ func whamDailyUsageDueTargets(all []*auth.Account, lastAttempt map[int64]time.Ti
 }
 
 func (h *Handler) runWhamDailyUsageProbe(ctx context.Context, lastAttempt map[int64]time.Time) {
-	// 先把缺工作区的 PAT 补全，补上的账号本轮就能进候选。(issue #662)
+	// First fill in the PATs that lack a workspace, so accounts that get filled in can enter the candidates this round. (issue #662)
 	h.hydratePATWorkspaces(ctx)
 	all := h.whamDailyUsageProbeTargets()
 	if len(all) == 0 {
@@ -175,15 +175,15 @@ func (h *Handler) runWhamDailyUsageProbe(ctx context.Context, lastAttempt map[in
 			defer mu.Unlock()
 			if err != nil {
 				failCount++
-				// 401 在这里不裁决账号状态：wham 侧鉴权失败不代表账号不可用
-				// （与 usage 探针的既有语义一致），只记录等下一轮。
-				log.Printf("官方用量快照失败 account=%d: %v", acc.DBID, err)
+				// A 401 does not decide the account state here: an authentication failure on the wham side does not mean the account is unusable
+				// (consistent with the existing meaning in the usage probe); it only logs and waits for the next round.
+				log.Printf("official usage snapshot failed account=%d: %v", acc.DBID, err)
 				return
 			}
 			okCount++
-			// 拆分端点失败不算整体失败：counts 已落库，份额下一轮再补。
+			// A breakdown endpoint failure does not count as a whole failure: counts are already stored, and the shares are filled in next round.
 			if outcome.BreakdownErr != nil {
-				log.Printf("官方模型拆分快照失败 account=%d: %v", acc.DBID, outcome.BreakdownErr)
+				log.Printf("official model breakdown snapshot failed account=%d: %v", acc.DBID, outcome.BreakdownErr)
 			}
 		}(account)
 	}
@@ -192,16 +192,16 @@ func (h *Handler) runWhamDailyUsageProbe(ctx context.Context, lastAttempt map[in
 	if okCount > 0 {
 		pruneCtx, cancel := context.WithTimeout(ctx, 15*time.Second)
 		if err := h.db.PruneAccountDailyUsage(pruneCtx, whamDailyUsageKeepDays); err != nil {
-			log.Printf("清理官方用量快照失败: %v", err)
+			log.Printf("failed to clean up official usage snapshots: %v", err)
 		}
 		cancel()
 	}
-	log.Printf("官方用量快照完成 成功=%d 失败=%d 耗时=%s", okCount, failCount, time.Since(started).Round(time.Millisecond))
+	log.Printf("official usage snapshots done ok=%d failed=%d took=%s", okCount, failCount, time.Since(started).Round(time.Millisecond))
 }
 
-// enqueueWhamDailyUsageBackfill 给当前页缺少官方结算快照的账号补一次上游拉取。
-// 后台小时级探针会覆盖全池，但列表打开时快照往往还是空的：page-stats 只读本地表，
-// 不在这里即时回补的话，「官方结算」胶囊要等用户手动刷新或下一次探针才会出现。
+// enqueueWhamDailyUsageBackfill triggers one upstream pull for accounts on the current page that lack an official settlement snapshot.
+// The background hourly probe covers the whole pool, but when the list opens the snapshot is often still empty: page-stats only reads the local table,
+// so without an instant backfill here, the "Official billed" pill only appears after a manual refresh or the next probe.
 func (h *Handler) enqueueWhamDailyUsageBackfill(ids []int64) {
 	if h == nil || h.store == nil || len(ids) == 0 {
 		return
@@ -256,9 +256,9 @@ func whamDailyUsageBackfillEligible(account *auth.Account) bool {
 	return account.GetAccessToken() != ""
 }
 
-// whamDailyUsageChannelSupported 判断账号所属渠道是否有 ChatGPT WHAM 端点。
-// WHAM 只属于 ChatGPT 控制面，所有账号现在都是 Codex 账号，只需账号存在。
-// 探针候选与手动刷新都要过这道门。
+// whamDailyUsageChannelSupported checks whether the account's channel has a ChatGPT WHAM endpoint.
+// WHAM belongs only to the ChatGPT control plane, and all accounts are now Codex accounts, so it only requires that the account exists.
+// Probe candidates and manual refreshes both pass through this gate.
 func whamDailyUsageChannelSupported(account *auth.Account) bool {
 	if account == nil {
 		return false
@@ -266,10 +266,10 @@ func whamDailyUsageChannelSupported(account *auth.Account) bool {
 	return true
 }
 
-// isCodexATAccount 识别 at-... 形态的纯 AT 凭据。未补充工作区 ID 的纯 AT 凭据能调用
-// Codex Responses，但不具备 ChatGPT WHAM analytics 稳定需要的工作区鉴权，
-// 不能把「Responses 可用」等同于「官方结算统计可用」。(issue #564)
-// 若已通过 whoami 或自定义头获取到了有效工作区 ID，则允许进行官方统计同步。(issue #662)
+// isCodexATAccount detects plain AT credentials in the at-... form. Plain AT credentials without a supplied workspace ID can call
+// Codex Responses, but lack the workspace authentication that ChatGPT WHAM analytics needs to be stable,
+// so "Responses works" must not be treated as "official settlement statistics work". (issue #564)
+// If a valid workspace ID has been obtained through whoami or a custom header, official statistics sync is allowed. (issue #662)
 func isCodexATAccount(account *auth.Account) bool {
 	if account == nil {
 		return false
@@ -304,10 +304,10 @@ func (h *Handler) finishWhamDailyUsageBackfill(id int64) {
 	h.whamDailyBackfillMu.Unlock()
 }
 
-// markWhamDailySynced 记录该账号至少成功同步过一次官方用量——即使上游返回
-// 空数据（官方统计有滞后，或账号确实没有官方客户端消耗）。page-stats 据此
-// 下发显式空态，前端停止转圈与重拉，也不再触发回补。进程内存即可：重启后
-// 最多多回补一次就重新标记。
+// markWhamDailySynced records that this account has successfully synced official usage at least once, even when upstream returns
+// empty data (official statistics lag, or the account really has no official client usage). page-stats uses this to
+// send an explicit empty state, so the frontend stops spinning and re-fetching and no longer triggers a backfill. Process memory is enough: after a restart
+// at most one extra backfill happens before it is marked again.
 func (h *Handler) markWhamDailySynced(id int64) {
 	if h == nil || id <= 0 {
 		return
@@ -359,19 +359,19 @@ func (h *Handler) runWhamDailyUsageBackfill(accounts []*auth.Account) {
 			outcome, err := h.syncWhamDailyUsage(ctx, acc)
 			if err != nil {
 				h.markWhamDailyBackfillFailed(acc.DBID)
-				log.Printf("官方用量即时回补失败 account=%d: %v", acc.DBID, err)
+				log.Printf("official usage instant backfill failed account=%d: %v", acc.DBID, err)
 				return
 			}
 			if outcome.BreakdownErr != nil {
-				log.Printf("官方模型拆分即时回补失败 account=%d: %v", acc.DBID, outcome.BreakdownErr)
+				log.Printf("official model breakdown instant backfill failed account=%d: %v", acc.DBID, outcome.BreakdownErr)
 			}
 		}(account)
 	}
 	wg.Wait()
 }
 
-// whamDailyUsageProbeTargets 挑出该拉统计的账号：只有 OAuth 登录的 Codex 账号
-// 才有 wham analytics 端点权限，codex_at 账号没有。
+// whamDailyUsageProbeTargets picks the accounts whose statistics should be pulled: only OAuth-signed-in Codex accounts
+// have permission for the wham analytics endpoint; codex_at accounts do not.
 func (h *Handler) whamDailyUsageProbeTargets() []*auth.Account {
 	if h == nil || h.store == nil {
 		return nil

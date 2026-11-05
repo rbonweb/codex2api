@@ -44,7 +44,7 @@ func TestUpdateAccountSchedulerPersistsCodexFingerprintMode(t *testing.T) {
 	store := auth.NewStore(db, nil, nil)
 	handler := &Handler{db: db, store: store}
 
-	// 未配置时默认 off，出站行为与升级前一致。
+	// When not configured, it defaults to off, and outbound behavior matches the behavior before the upgrade.
 	if got := accountFingerprintCredential(t, db, accountID); got != "" {
 		t.Fatalf("initial credential = %q, want empty", got)
 	}
@@ -57,7 +57,7 @@ func TestUpdateAccountSchedulerPersistsCodexFingerprintMode(t *testing.T) {
 		t.Fatalf("credential = %q, want %q", got, auth.CodexFingerprintModeSession)
 	}
 
-	// null 表示重置为默认档 off。
+	// null means reset to the default level, off.
 	recorder = patchAccountScheduler(t, handler, accountID, `{"codex_fingerprint_mode":null}`)
 	if recorder.Code != http.StatusOK {
 		t.Fatalf("reset status = %d, want %d: %s", recorder.Code, http.StatusOK, recorder.Body.String())
@@ -82,8 +82,8 @@ func TestUpdateAccountSchedulerRejectsInvalidCodexFingerprintMode(t *testing.T) 
 	}
 }
 
-// TestUpdateAccountSchedulerSyncsRuntimeCodexFingerprintMode 验证改动立即对运行时账号
-// 生效，不必等下一次全量重载。
+// TestUpdateAccountSchedulerSyncsRuntimeCodexFingerprintMode verifies that a change takes effect immediately for runtime accounts
+// without waiting for the next full reload.
 func TestUpdateAccountSchedulerSyncsRuntimeCodexFingerprintMode(t *testing.T) {
 	gin.SetMode(gin.TestMode)
 	db := newTestAdminDB(t)
@@ -131,7 +131,7 @@ func TestAccountResponseExposesCodexFingerprintMode(t *testing.T) {
 		t.Fatalf("detailed mode = %q, want %q", detailed.CodexFingerprintMode, auth.CodexFingerprintModeFull)
 	}
 
-	// 摘要响应也要带上指纹模式，供列表和快捷抽屉渲染。
+	// The summary response must also carry the fingerprint mode, for the list and quick drawer to render.
 	summary := handler.buildAccountResponse(row, nil, nil, nil, nil, false)
 	if summary.CodexFingerprintMode != auth.CodexFingerprintModeFull {
 		t.Fatalf("summary mode = %q, want %q", summary.CodexFingerprintMode, auth.CodexFingerprintModeFull)

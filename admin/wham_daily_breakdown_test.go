@@ -54,8 +54,8 @@ func utcDay(offset int) string {
 	return time.Now().UTC().AddDate(0, 0, offset).Format("2006-01-02")
 }
 
-// counts 失败不能拖累拆分落库：两个端点并行、独立写自己的列。
-// 拆分端点是稠密的，全 0 行与未来日期必须跳过，否则会造出一堆空行。
+// A counts failure must not hold back the breakdown write: the two endpoints run in parallel and each writes its own columns independently.
+// The breakdown endpoint is dense: all-zero rows and future dates must be skipped, otherwise a pile of empty rows would be created.
 func TestSyncWhamDailyUsageBreakdownSurvivesCountsFailure(t *testing.T) {
 	handler, account := newWhamDailyTestHandler(t)
 	handler.queryWhamDailyUsage = func(context.Context, *auth.Account, string, string, string) (*proxy.WhamDailyUsageResponse, *http.Response, error) {
@@ -98,8 +98,8 @@ func TestSyncWhamDailyUsageBreakdownSurvivesCountsFailure(t *testing.T) {
 	}
 }
 
-// 拆分失败是软失败：counts 照常落库并标记已同步，错误只随 outcome 带回。
-// 同时验证结算判定按日期：今天的行即便带 token 也是未结算。
+// A breakdown failure is a soft failure: counts are still stored and marked as synced, and the error is only returned with the outcome.
+// Also verifies that the settlement check is by date: today's row is still unsettled even if it carries tokens.
 func TestSyncWhamDailyUsageBreakdownFailureIsSoft(t *testing.T) {
 	handler, account := newWhamDailyTestHandler(t)
 	yesterday, today := utcDay(-1), utcDay(0)
@@ -107,7 +107,7 @@ func TestSyncWhamDailyUsageBreakdownFailureIsSoft(t *testing.T) {
 		return &proxy.WhamDailyUsageResponse{GroupBy: "day", Data: []proxy.WhamDailyUsageDay{
 			{Date: yesterday, Totals: proxy.WhamDailyUsageCounts{Turns: 14, Credits: 3.34, TextTotalTokens: whamInt64Ptr(1000)},
 				Models: []proxy.WhamDailyUsageModel{{Model: "gpt-5.6-sol"}}},
-			// 2026-09 形态的当天行：有 token 与 credits，turns=0，没有 models。
+			// A same-day row in the 2026-09 shape: has tokens and credits, turns=0, and no models.
 			{Date: today, Totals: proxy.WhamDailyUsageCounts{Turns: 0, Credits: 54.35, TextTotalTokens: whamInt64Ptr(18641788)}},
 		}}, &http.Response{StatusCode: http.StatusOK}, nil
 	}
@@ -140,8 +140,8 @@ func TestSyncWhamDailyUsageBreakdownFailureIsSoft(t *testing.T) {
 	}
 }
 
-// 读 body / 解析失败时查询函数会带回一个 200 的 resp（body 已读掉），分类器必须原样
-// 返回真实错误，而不是报成「上游返回 200」。
+// When reading the body or parsing fails, the query function returns a 200 resp (the body has already been read), so the classifier must return
+// the real error, not report it as "upstream returned 200".
 func TestClassifyWhamDailyUpstreamErrorKeepsParseErrors(t *testing.T) {
 	parseErr := errors.New("parse daily usage response: unexpected end of JSON input")
 	got := classifyWhamDailyUpstreamError(&http.Response{StatusCode: http.StatusOK, Body: http.NoBody}, parseErr)
@@ -156,9 +156,9 @@ func TestClassifyWhamDailyUpstreamErrorKeepsParseErrors(t *testing.T) {
 	}
 }
 
-// 深回补按端点各自决定：counts 首轮 429、拆分成功（拆分以零 counts 建了行）之后，
-// 下一轮 counts 仍要走 84 天，否则历史永远拿不到；拆分已深拉过就回到 7 天。两者都深
-// 拉过一次后全部回到滚动窗口。
+// The deep backfill is decided per endpoint: after counts hit a 429 on the first round, or after the breakdown succeeded (it created rows with zero counts),
+// the next counts round must still cover 84 days, otherwise the history is never fetched; once the breakdown has done its deep pull, it returns to 7 days. Both do a deep
+// pull once, then both return to the rolling window.
 func TestSyncWhamDailyUsageDeepBackfillIsPerEndpoint(t *testing.T) {
 	handler, account := newWhamDailyTestHandler(t)
 	var (
@@ -214,8 +214,8 @@ func TestSyncWhamDailyUsageDeepBackfillIsPerEndpoint(t *testing.T) {
 	}
 }
 
-// 上游确实没有数据的账号（新号/闲置号）只深拉一次，之后按滚动窗口，不会每轮都拉
-// 84 天的稠密拆分。
+// Accounts that really have no upstream data (new or idle accounts) get only one deep pull; after that they use the rolling window and are not pulled
+// the 84-day dense breakdown every round.
 func TestSyncWhamDailyUsageEmptyAccountDeepBackfillsOnce(t *testing.T) {
 	handler, account := newWhamDailyTestHandler(t)
 	var (
@@ -256,8 +256,8 @@ func TestSyncWhamDailyUsageEmptyAccountDeepBackfillsOnce(t *testing.T) {
 	}
 }
 
-// 接口把归一化占比换成当天份额，再按当天官方 credits 分摊成绝对成本；
-// 拆分先到、counts 还没来的行不进 items 与 totals。
+// The endpoint turns normalized shares into same-day shares, then spreads them over the same-day official credits to get absolute costs;
+// rows where the breakdown arrives before counts are not added to items and totals.
 func TestGetAccountWhamDailyUsageProjectsBreakdownShares(t *testing.T) {
 	gin.SetMode(gin.TestMode)
 	handler, account := newWhamDailyTestHandler(t)

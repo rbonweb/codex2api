@@ -31,7 +31,7 @@ func (h *Handler) StartIntelligenceChecks(ctx context.Context, deviceConfig ...*
 					return
 				}
 				if err := h.intelligenceTick(ctx); err != nil && ctx.Err() == nil {
-					log.Printf("降智检测调度失败: %v", err)
+					log.Printf("intelligence check scheduling failed: %v", err)
 				}
 				select {
 				case <-ctx.Done():
@@ -88,7 +88,7 @@ func (h *Handler) runIntelligenceCheck(parent context.Context, run database.Inte
 	result := intelligenceExecution{}
 	if h.db != nil {
 		if err := h.db.ValidateIntelligenceCheckAccountSettings(ctx, run.Settings, run.Channel, run.AccountID); err != nil {
-			result.Error = "配置错误：" + err.Error()
+			result.Error = "configuration error: " + err.Error()
 			result.Interrupted = true
 		}
 	}
@@ -99,19 +99,19 @@ func (h *Handler) runIntelligenceCheck(parent context.Context, run database.Inte
 	observation := ic.Observation{CredentialRejected: result.CredentialRejected, Interrupted: result.Interrupted, Output: result.Output, Error: result.Error, Complete: result.Complete, DurationMS: result.DurationMS, InputTokens: int64(result.InputTokens), OutputTokens: int64(result.OutputTokens), ReasoningTokens: int64(result.ReasoningTokens), ResponseModel: result.ResponseModel, EffectiveContext: result.EffectiveContext}
 	if parent.Err() != nil {
 		observation.Interrupted = true
-		observation.Error = "服务关闭，检测已中断"
+		observation.Error = "service shut down; the check was interrupted"
 		observation.Complete = false
 	}
 	finishCtx, finishCancel := context.WithTimeout(context.Background(), 5*time.Second)
 	defer finishCancel()
 	committed, err := h.db.FinishIntelligenceCheck(finishCtx, run.ID, run.LeaseOwner, observation, time.Now())
 	if err != nil {
-		log.Printf("降智检测 %d 保存失败: %v", run.ID, err)
+		log.Printf("intelligence check %d failed to save: %v", run.ID, err)
 		return
 	}
 	if committed {
 		if err = h.store.RefreshIntelligenceAccount(finishCtx, run.AccountID); err != nil {
-			log.Printf("降智检测 %d 调度同步失败，等待 outbox: %v", run.ID, err)
+			log.Printf("intelligence check %d scheduling sync failed, waiting for the outbox: %v", run.ID, err)
 		}
 		h.invalidateAccountSnapshotCaches()
 	}

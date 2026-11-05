@@ -25,7 +25,7 @@ func (h *Handler) buildAccountResponse(
 	email := row.GetCredential("email")
 	planType := row.GetCredential("plan_type")
 	accountTimezone := strings.TrimSpace(row.GetCredential(auth.AccountTimezoneCredentialKey))
-	// 指纹收敛只作用于 Codex 官方出站路径。
+	// Fingerprint convergence only applies to the Codex official outbound path.
 	codexFingerprintMode := auth.NormalizeCodexFingerprintMode(row.GetCredential(auth.CodexFingerprintModeCredentialKey))
 	ignoreUsageLimitStatusOverride := row.GetCredentialOptionalBool("ignore_usage_limit_status_override")
 	ignoreUsageLimitStatusEffective := h.store.IgnoreUsageLimitStatus()
@@ -35,9 +35,9 @@ func (h *Handler) buildAccountResponse(
 	modelMapping := ""
 	var customHeaders map[string]string
 	var allowedAPIKeyIDs []int64
-	// 工作区 ID 不是密钥:Team/K12 徽章悬停要显示空间 ID。当前页
-	// ListActiveByIDs 已带完整凭据;custom_headers 只用来算生效空间,
-	// 摘要响应仍会剥掉原文。
+	// The workspace ID is not a secret: hovering the Team/K12 badge must show the workspace ID. The current page
+	// ListActiveByIDs already carries full credentials; custom_headers is only used to work out the effective workspace,
+	// the summary response still strips the raw value.
 	headers := row.GetCredentialStringMap("custom_headers")
 	tokenWorkspaceID := openaiidentity.NormalizeWorkspaceID(row.GetCredential("workspace_id"))
 	workspaceIDOverride := openaiidentity.WorkspaceOverrideFromHeaders(headers)

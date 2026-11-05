@@ -31,8 +31,8 @@ func TestPromptPolicyIncidentListAndDetailAPI(t *testing.T) {
 	zero := 0
 	incident := database.PromptPolicyIncidentInput{
 		IncidentID: "incident-admin", RequestCorrelationID: "request-admin", Endpoint: "/v1/responses", Model: "gpt-5.4",
-		Protocol: "responses", Transport: "sse", StatusCode: 400, AccountID: 73, AccountName: "account@example.com", AccountGroupIDs: []int64{4}, AccountGroupNames: []string{"打铁"},
-		APIKeyID: 9, APIKeyName: "test-key", APIKeyAllowedGroupIDs: []int64{1, 4}, APIKeyAllowedGroupNames: []string{"示例平台", "打铁"}, UpstreamErrorCode: "cyber_policy",
+		Protocol: "responses", Transport: "sse", StatusCode: 400, AccountID: 73, AccountName: "account@example.com", AccountGroupIDs: []int64{4}, AccountGroupNames: []string{"Iron Forge"},
+		APIKeyID: 9, APIKeyName: "test-key", APIKeyAllowedGroupIDs: []int64{1, 4}, APIKeyAllowedGroupNames: []string{"Example Platform", "Iron Forge"}, UpstreamErrorCode: "cyber_policy",
 		LocalEvaluationState: database.PromptPolicyEvaluationCompleted, LocalOutcome: database.PromptPolicyOutcomeNoHit,
 		LocalScore: &zero, LocalRawScore: &zero, LocalAuditScore: &zero, LocalAuditRawScore: &zero,
 		LocalMatchedPatterns: `[{"name":"test","weight":0}]`, PromptFingerprint: adminPolicyFingerprint("prompt"), PromptPreview: "prompt", PromptText: "prompt",
@@ -146,7 +146,7 @@ func TestPromptPolicyAuditHealthAPI(t *testing.T) {
 		t.Fatalf("health response=%s err=%v", recorder.Body.String(), err)
 	}
 
-	// 管理员主动关闭审查/会话锁属于配置选择,不应报 degraded。
+	// An admin turning off review / the session lock is a configuration choice and must not report degraded.
 	cfg.Review.Enabled = false
 	cfg.Advanced.Enforcement.ConversationLockEnabled = false
 	store.SetPromptFilterConfig(cfg)
@@ -156,7 +156,7 @@ func TestPromptPolicyAuditHealthAPI(t *testing.T) {
 		t.Fatalf("disabled-feature health response=%s err=%v", recorder.Body.String(), err)
 	}
 
-	// 审查启用但 key 池为空才是真实故障。
+	// Review enabled with an empty key pool is the only real failure.
 	cfg.Review.Enabled = true
 	cfg.Review.APIKey = ""
 	store.SetPromptFilterConfig(cfg)
@@ -178,8 +178,8 @@ func TestPromptPolicyIncidentHistoricalRoutingUsesCurrentDirectory(t *testing.T)
 	t.Cleanup(store.Stop)
 	account := &auth.Account{DBID: 73, Email: "current-account@example.com", AccessToken: "test-token"}
 	store.AddAccount(account)
-	store.SetGroupName(4, "打铁")
-	store.SetGroupName(5, "示例平台")
+	store.SetGroupName(4, "Iron Forge")
+	store.SetGroupName(5, "Example Platform")
 	store.ApplyAccountGroups(account.DBID, []int64{4})
 	store.SetAPIKeyAllowedGroups(9, []int64{4, 5})
 

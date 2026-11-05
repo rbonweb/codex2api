@@ -63,7 +63,7 @@ func toAccountGroupResponse(g database.AccountGroup) accountGroupResponse {
 
 const maxAccountGroupProxyURLs = 64
 
-// sanitizeAccountGroupProxyURLs 去空行/去重并逐条校验 scheme(http/https/socks5)。
+// sanitizeAccountGroupProxyURLs removes blank lines and duplicates, and validates the scheme (http/https/socks5) of each entry.
 func sanitizeAccountGroupProxyURLs(urls []string) ([]string, error) {
 	cleaned := make([]string, 0, len(urls))
 	seen := make(map[string]struct{}, len(urls))
@@ -82,7 +82,7 @@ func sanitizeAccountGroupProxyURLs(urls []string) ([]string, error) {
 		cleaned = append(cleaned, u)
 	}
 	if len(cleaned) > maxAccountGroupProxyURLs {
-		return nil, errors.New("分组代理数量不能超过 64 条")
+		return nil, errors.New("group proxy count cannot exceed 64 entries")
 	}
 	return cleaned, nil
 }
@@ -116,7 +116,7 @@ type createAccountGroupReq struct {
 
 func validateAutoPauseThreshold(name string, value float64) error {
 	if value < 0 || value > 1 {
-		return errors.New(name + " 需在 0 到 1 之间")
+		return errors.New(name + " must be between 0 and 1")
 	}
 	return nil
 }
@@ -124,16 +124,16 @@ func validateAutoPauseThreshold(name string, value float64) error {
 func parseAccountGroupBaseConcurrencyOverride(raw json.RawMessage) (database.OptionalNullInt64, error) {
 	trimmed := strings.TrimSpace(string(raw))
 	if strings.HasPrefix(trimmed, `"`) {
-		return database.OptionalNullInt64{}, errors.New("base_concurrency_override 必须是整数或 null")
+		return database.OptionalNullInt64{}, errors.New("base_concurrency_override must be an integer or null")
 	}
-	// 最小 1，无上限（与全局 max_concurrency / 账号级覆盖一致）
+	// Minimum 1, no upper limit (consistent with the global max_concurrency and the account-level override)
 	return parseOptionalIntegerField(raw, "base_concurrency_override", 1, math.MaxInt64)
 }
 
 func (h *Handler) CreateAccountGroup(c *gin.Context) {
 	var req createAccountGroupReq
 	if err := c.ShouldBindJSON(&req); err != nil {
-		writeError(c, http.StatusBadRequest, "请求格式错误")
+		writeError(c, http.StatusBadRequest, "Invalid request format")
 		return
 	}
 	name, err := sanitizeAccountGroupName(req.Name)
@@ -143,12 +143,12 @@ func (h *Handler) CreateAccountGroup(c *gin.Context) {
 	}
 	description := strings.TrimSpace(req.Description)
 	if utf8.RuneCountInString(description) > 240 {
-		writeError(c, http.StatusBadRequest, "描述长度不能超过 240 字符")
+		writeError(c, http.StatusBadRequest, "Description cannot exceed 240 characters")
 		return
 	}
 	color := strings.TrimSpace(req.Color)
 	if utf8.RuneCountInString(color) > 20 {
-		writeError(c, http.StatusBadRequest, "颜色长度不能超过 20 字符")
+		writeError(c, http.StatusBadRequest, "Color cannot exceed 20 characters")
 		return
 	}
 	sortOrder := int64(0)
@@ -181,7 +181,7 @@ func (h *Handler) CreateAccountGroup(c *gin.Context) {
 		return
 	}
 	if len(groups) >= maxAccountGroups {
-		writeError(c, http.StatusBadRequest, "分组数量已达上限")
+		writeError(c, http.StatusBadRequest, "Group limit reached")
 		return
 	}
 	id, err := h.db.CreateAccountGroup(ctx, name, description, color, req.AutoPause5hThreshold, req.AutoPause7dThreshold, baseConcurrencyOverride.Value, sortOrder)
@@ -228,21 +228,21 @@ type updateAccountGroupReq struct {
 	BaseConcurrencyOverride json.RawMessage `json:"base_concurrency_override"`
 	AutoPause5hThreshold    *float64        `json:"auto_pause_5h_threshold"`
 	AutoPause7dThreshold    *float64        `json:"auto_pause_7d_threshold"`
-	// ProxyURLs 缺省(null)表示不修改;传空数组表示清空组代理。
+	// ProxyURLs omitted (null) means no change; an empty array clears the group proxies.
 	ProxyURLs *[]string `json:"proxy_urls"`
-	// Channel 缺省表示不修改;仅空组允许改渠道。
+	// Channel omitted means no change; the channel can only be changed on an empty group.
 	Channel *string `json:"channel"`
 }
 
 func (h *Handler) UpdateAccountGroup(c *gin.Context) {
 	id, err := strconv.ParseInt(c.Param("id"), 10, 64)
 	if err != nil {
-		writeError(c, http.StatusBadRequest, "无效的分组 ID")
+		writeError(c, http.StatusBadRequest, "Invalid group ID")
 		return
 	}
 	var req updateAccountGroupReq
 	if err := c.ShouldBindJSON(&req); err != nil {
-		writeError(c, http.StatusBadRequest, "请求格式错误")
+		writeError(c, http.StatusBadRequest, "Invalid request format")
 		return
 	}
 	if req.Name != nil {
@@ -256,7 +256,7 @@ func (h *Handler) UpdateAccountGroup(c *gin.Context) {
 	if req.Description != nil {
 		desc := strings.TrimSpace(*req.Description)
 		if utf8.RuneCountInString(desc) > 240 {
-			writeError(c, http.StatusBadRequest, "描述长度不能超过 240 字符")
+			writeError(c, http.StatusBadRequest, "Description cannot exceed 240 characters")
 			return
 		}
 		req.Description = &desc
@@ -264,7 +264,7 @@ func (h *Handler) UpdateAccountGroup(c *gin.Context) {
 	if req.Color != nil {
 		color := strings.TrimSpace(*req.Color)
 		if utf8.RuneCountInString(color) > 20 {
-			writeError(c, http.StatusBadRequest, "颜色长度不能超过 20 字符")
+			writeError(c, http.StatusBadRequest, "Color cannot exceed 20 characters")
 			return
 		}
 		req.Color = &color
@@ -311,7 +311,7 @@ func (h *Handler) UpdateAccountGroup(c *gin.Context) {
 	ctx, cancel := context.WithTimeout(c.Request.Context(), 5*time.Second)
 	defer cancel()
 	if req.Channel != nil {
-		// 渠道只在空组上可改:带成员改渠道会让存量成员瞬间跨渠道违规。
+		// The channel can only be changed on an empty group: changing it while it has members would instantly put existing members in violation across channels.
 		groups, err := h.db.ListAccountGroups(ctx)
 		if err != nil {
 			writeInternalError(c, err)
@@ -319,7 +319,7 @@ func (h *Handler) UpdateAccountGroup(c *gin.Context) {
 		}
 		for _, group := range groups {
 			if group.ID == id && database.NormalizeAccountGroupChannel(group.Channel) != *req.Channel && group.MemberCount > 0 {
-				writeError(c, http.StatusConflict, "分组内还有账号,请先移出成员再切换渠道")
+				writeError(c, http.StatusConflict, "The group still has accounts; remove the members before switching channels")
 				return
 			}
 		}
@@ -361,7 +361,7 @@ func (h *Handler) UpdateAccountGroup(c *gin.Context) {
 func (h *Handler) DeleteAccountGroup(c *gin.Context) {
 	id, err := strconv.ParseInt(c.Param("id"), 10, 64)
 	if err != nil {
-		writeError(c, http.StatusBadRequest, "无效的分组 ID")
+		writeError(c, http.StatusBadRequest, "Invalid group ID")
 		return
 	}
 	force := strings.EqualFold(c.Query("force"), "true")
@@ -420,11 +420,11 @@ func sanitizeAccountGroupName(raw string) (string, error) {
 		return "", errors.New("分组名称不能为空")
 	}
 	if utf8.RuneCountInString(name) > maxAccountGroupNameRuneSize {
-		return "", errors.New("分组名称长度超过 80 字符")
+		return "", errors.New("group name exceeds 80 characters")
 	}
 	for _, r := range name {
 		if r < 0x20 || r == 0x7f {
-			return "", errors.New("分组名称包含非法控制字符")
+			return "", errors.New("group name contains illegal control characters")
 		}
 	}
 	return name, nil
@@ -468,20 +468,20 @@ func dedupeInt64(ids []int64) []int64 {
 	return out
 }
 
-// accountRowGroupChannel 返回账号所属的分组渠道。移除其它上游后，所有账号都属于 Codex 渠道。
+// accountRowGroupChannel returns the group channel an account belongs to. After the other upstreams are removed, all accounts belong to the Codex channel.
 func accountRowGroupChannel(_ *database.AccountRow) string {
 	return database.AccountGroupChannelCodex
 }
 
-// validateGroupChannelForRows 校验目标分组的渠道与账号平台一致(issue #487):
-// 账号不得进入其它渠道的分组。groupIDs 为空直接放行。
+// validateGroupChannelForRows checks that the target group's channel matches the account platform (issue #487):
+// an account must not join a group from another channel. Empty groupIDs pass straight through.
 func (h *Handler) validateGroupChannelForRows(ctx context.Context, rows []*database.AccountRow, groupIDs []int64) error {
 	if len(groupIDs) == 0 || len(rows) == 0 {
 		return nil
 	}
 	groups, err := h.db.ListAccountGroups(ctx)
 	if err != nil {
-		return fmt.Errorf("校验分组渠道失败: %w", err)
+		return fmt.Errorf("failed to validate group channel: %w", err)
 	}
 	channelByID := make(map[int64]string, len(groups))
 	nameByID := make(map[int64]string, len(groups))
@@ -497,10 +497,10 @@ func (h *Handler) validateGroupChannelForRows(ctx context.Context, rows []*datab
 		for _, groupID := range groupIDs {
 			groupChannel, ok := channelByID[groupID]
 			if !ok {
-				continue // 不存在的分组由既有校验负责报错
+				continue // Nonexistent groups are reported by the existing validation
 			}
 			if groupChannel != accountChannel {
-				return fmt.Errorf("分组「%s」是 %s 渠道分组,不能加入 %s 账号(账号 %d)",
+				return fmt.Errorf("group '%s' is a %s channel group and cannot be joined by a %s account (account %d)",
 					nameByID[groupID], groupChannelDisplayName(groupChannel), groupChannelDisplayName(accountChannel), row.ID)
 			}
 		}

@@ -33,7 +33,7 @@ func TestParseCgroupLimit(t *testing.T) {
 	cases := map[string]uint64{
 		"max\n":                 0,
 		"":                      0,
-		"9223372036854771712\n": 0, // cgroup v1 未设限哨兵
+		"9223372036854771712\n": 0, // cgroup v1 unlimited sentinel
 		"536870912\n":           536870912,
 		"not-a-number":          0,
 	}
@@ -71,7 +71,7 @@ func TestCollectOpsMemoryContainerFields(t *testing.T) {
 		t.Fatalf("container percent = %f, want 25", got.ContainerPercent)
 	}
 
-	// 无 cgroup 时回退进程 RSS,分母用宿主总内存。
+	// Without a cgroup, fall back to process RSS; the denominator is the host's total memory.
 	readContainerMemoryFn = func() (uint64, uint64, bool) { return 0, 0, false }
 	fallback := collectOpsMemory(func(mem *runtime.MemStats) { *mem = runtime.MemStats{Sys: 42} })
 	if fallback.ContainerSource != "process" || fallback.ContainerUsedBytes != fallback.ProcessBytes {

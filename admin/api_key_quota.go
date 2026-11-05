@@ -31,7 +31,7 @@ const (
 func (h *Handler) ResetAPIKeyQuota(c *gin.Context) {
 	id, err := strconv.ParseInt(c.Param("id"), 10, 64)
 	if err != nil || id <= 0 {
-		writeError(c, http.StatusBadRequest, "无效的 API Key ID")
+		writeError(c, http.StatusBadRequest, "Invalid API Key ID")
 		return
 	}
 
@@ -50,7 +50,7 @@ func (h *Handler) ResetAPIKeyQuota(c *gin.Context) {
 
 	h.invalidateResetAPIKeyCaches(ctx, *target)
 	security.SecurityAuditLog("API_KEY_QUOTA_RESET", fmt.Sprintf("id=%d ip=%s", id, c.ClientIP()))
-	c.JSON(http.StatusOK, gin.H{"message": "API Key 累计额度及 5h/7d 用量已重置"})
+	c.JSON(http.StatusOK, gin.H{"message": "API Key cumulative quota and 5h/7d usage have been reset"})
 }
 
 // ResetAllAPIKeyQuotas renews cumulative and 5h/7d quota periods for all API
@@ -73,7 +73,7 @@ func (h *Handler) ResetAllAPIKeyQuotas(c *gin.Context) {
 	}
 	security.SecurityAuditLog("API_KEY_QUOTA_RESET_ALL", fmt.Sprintf("count=%d ip=%s", len(targets), c.ClientIP()))
 	c.JSON(http.StatusOK, gin.H{
-		"message":     "所有 API Key 累计额度及 5h/7d 用量已重置",
+		"message":     "Cumulative quota and 5h/7d usage of all API Keys have been reset",
 		"reset_count": len(targets),
 	})
 }

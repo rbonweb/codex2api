@@ -19,13 +19,13 @@ const (
 	patWhoAmITimeout             = 10 * time.Second
 )
 
-// patWhoAmIURLForTest 允许测试替换 whoami 端点 URL。生产代码不要赋值。
+// patWhoAmIURLForTest lets tests replace the whoami endpoint URL. Production code must not assign it.
 var patWhoAmIURLForTest = ""
 
-// errPATWhoAmINoWorkspace 表示 whoami 成功但没给出工作区 ID。
+// errPATWhoAmINoWorkspace means whoami succeeded but did not return a workspace ID.
 var errPATWhoAmINoWorkspace = errors.New("whoami response has no chatgpt_account_id")
 
-// PersonalAccessTokenMetadata 是 /v1/user-auth-credential/whoami 返回的身份元数据结构。
+// PersonalAccessTokenMetadata is the identity metadata structure returned by /v1/user-auth-credential/whoami.
 type PersonalAccessTokenMetadata struct {
 	Email                   *string `json:"email"`
 	ChatGPTUserID           string  `json:"chatgpt_user_id"`
@@ -34,8 +34,8 @@ type PersonalAccessTokenMetadata struct {
 	ChatGPTAccountIsFedramp bool    `json:"chatgpt_account_is_fedramp"`
 }
 
-// patWhoAmIStatusError 表示 whoami 端点返回了非 2xx：这是这枚 token 自己的问题
-// （无权限 / 已吊销），不代表网络不通，批量导入时不应因此熔断后续 token。
+// patWhoAmIStatusError means the whoami endpoint returned a non-2xx status: the problem is with this token itself,
+// (no permission / revoked), not a network failure, so a batch import must not trip the circuit breaker for the remaining tokens because of it.
 type patWhoAmIStatusError struct {
 	StatusCode int
 }
@@ -44,8 +44,8 @@ func (e *patWhoAmIStatusError) Error() string {
 	return fmt.Sprintf("whoami returned status %d", e.StatusCode)
 }
 
-// newPATWhoAmIClient 复用按代理池化的严格客户端（连接复用、代理配置失败不静默绕过），
-// 只覆盖超时与重定向策略：带 Bearer PAT 的请求绝不自动跟随重定向发往别的 host。
+// newPATWhoAmIClient reuses the strict client pooled per proxy (connection reuse; a proxy configuration failure is not silently bypassed),
+// and only overrides the timeout and redirect policy: a request carrying a Bearer PAT must never automatically follow a redirect to another host.
 func newPATWhoAmIClient(proxyURL string) (*http.Client, error) {
 	base, err := auth.BuildHTTPClientChecked(proxyURL)
 	if err != nil {
@@ -57,8 +57,8 @@ func newPATWhoAmIClient(proxyURL string) (*http.Client, error) {
 	return &client, nil
 }
 
-// QueryPersonalAccessTokenMetadata 调用 OpenAI Auth API 的 /v1/user-auth-credential/whoami
-// 获取 PAT 的 workspace ID (ChatGPT-Account-Id)、用户 ID、邮箱和套餐类型。
+// QueryPersonalAccessTokenMetadata calls /v1/user-auth-credential/whoami on the OpenAI Auth API
+// to get the PAT's workspace ID (ChatGPT-Account-Id), user ID, email and plan type.
 func QueryPersonalAccessTokenMetadata(ctx context.Context, accessToken string, proxyURL string) (*PersonalAccessTokenMetadata, error) {
 	token := strings.TrimSpace(accessToken)
 	if token == "" {

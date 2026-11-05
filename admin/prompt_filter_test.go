@@ -199,8 +199,8 @@ func TestPromptReviewAPIKeyDescriptorsNeverExposeSecrets(t *testing.T) {
 	}
 }
 
-// 短 Key 曾因前 3 位与后 4 位重叠被整串还原(如 "hunter2"→"hun••••ter2"),
-// 多字节 Key 曾被按字节切坏;掩码只允许在长度足够时露出前 3 + 后 4。
+// Short keys were once fully revealed because their first 3 and last 4 characters overlapped (e.g. "hunter2"→"hun••••ter2"),
+// multi-byte keys were once cut wrongly by bytes; the mask only allows showing the first 3 + last 4 when the length is sufficient.
 func TestMaskPromptReviewAPIKeyNeverRevealsShortOrOverlappingKeys(t *testing.T) {
 	fullyMasked := "••••"
 	cases := []struct {

@@ -34,7 +34,7 @@ func TestProxyRiskScoringLabelHidesCredentials(t *testing.T) {
 	if got := proxyRiskScoringLabel(&database.ProxyRow{ID: 7, URL: "http://user:secret@1.2.3.4:8080"}); got != "1.2.3.4:8080" {
 		t.Fatalf("label = %q", got)
 	}
-	if got := proxyRiskScoringLabel(&database.ProxyRow{ID: 7, URL: "http://1.2.3.4:8080", Label: " 香港-01 "}); got != "香港-01" {
+	if got := proxyRiskScoringLabel(&database.ProxyRow{ID: 7, URL: "http://1.2.3.4:8080", Label: " Hong Kong-01 "}); got != "Hong Kong-01" {
 		t.Fatalf("label = %q", got)
 	}
 	if got := proxyRiskScoringLabel(&database.ProxyRow{ID: 7, URL: "::bad"}); got != "#7" {

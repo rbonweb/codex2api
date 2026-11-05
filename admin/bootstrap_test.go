@@ -37,18 +37,18 @@ func TestDefaultBootstrapSettingsUseRecommendedPromptFilterPreset(t *testing.T) 
 	}
 }
 
-// issue #199: Docker 端口映射后宿主机访问的源 IP 是网桥地址(私网)而非 loopback，
-// 未配置 BOOTSTRAP_ALLOWED_CIDR 时必须默认放行私网来源，否则本地 Docker 部署
-// 无法完成页面初始化。
+// issue #199: after Docker port mapping, the source IP of host access is the bridge address (private network) rather than loopback,
+// so when BOOTSTRAP_ALLOWED_CIDR is not set, private-network sources must be allowed by default, otherwise local Docker deployments
+// cannot finish page initialization.
 func TestBootstrapAllowClientIPDefaultsAllowPrivate(t *testing.T) {
 	t.Setenv("BOOTSTRAP_ALLOWED_CIDR", "")
 
 	allowed := []string{
 		"127.0.0.1", "::1", // loopback
-		"172.17.0.1", "172.18.0.1", // docker 网桥
-		"10.0.0.5", "192.168.1.100", // 常见私网
-		"fd00::1",      // ULA IPv6 私网
-		"169.254.10.1", // 链路本地
+		"172.17.0.1", "172.18.0.1", // docker bridge
+		"10.0.0.5", "192.168.1.100", // common private networks
+		"fd00::1",      // ULA IPv6 private network
+		"169.254.10.1", // link-local
 	}
 	for _, ip := range allowed {
 		if !bootstrapAllowClientIP(ip) {
@@ -70,7 +70,7 @@ func TestBootstrapAllowClientIPExplicitCIDROverridesDefault(t *testing.T) {
 	if !bootstrapAllowClientIP("203.0.113.7") {
 		t.Error("IP inside configured CIDR should be allowed")
 	}
-	// 显式配置后私网默认放行不再生效，只认配置的网段 + loopback
+	// Once explicitly configured, the default private-network allowance no longer applies; only the configured subnets and loopback are accepted
 	if bootstrapAllowClientIP("172.17.0.1") {
 		t.Error("private IP outside configured CIDR should be denied when CIDR is set")
 	}
@@ -90,7 +90,7 @@ func TestBootstrapAllowClientIPNoneDisablesDefault(t *testing.T) {
 	}
 }
 
-// resetBootstrapGlobals 清空包级的令牌与限频状态，避免用例之间互相污染。
+// resetBootstrapGlobals clears the package-level token and rate limit state, so test cases do not pollute each other.
 func resetBootstrapGlobals(t *testing.T) {
 	t.Helper()
 	reset := func() {
@@ -104,8 +104,8 @@ func resetBootstrapGlobals(t *testing.T) {
 	t.Cleanup(reset)
 }
 
-// newBootstrapTestEngine 按 config 的默认可信代理(回环 + 私网)装配路由，
-// 与线上默认部署的 ClientIP 解析行为一致。
+// newBootstrapTestEngine wires the routes using the config's default trusted proxies (loopback + private networks),
+// matching the ClientIP resolution of the default production deployment.
 func newBootstrapTestEngine(t *testing.T, h *Handler) *gin.Engine {
 	t.Helper()
 	gin.SetMode(gin.TestMode)
@@ -157,8 +157,8 @@ func storedAdminSecret(t *testing.T, h *Handler) string {
 	return settings.AdminSecret
 }
 
-// 私网来源(Docker Desktop / rootless 端口转发、私网反代)默认能过 IP 门，
-// 这时必须靠一次性令牌把住初始化，不能谁先到谁设密钥。
+// Private-network sources (Docker Desktop / rootless port forwarding, private reverse proxies) pass the IP gate by default,
+// so at that point the one-time token must guard initialization; whoever arrives first must not set the key.
 func TestPostBootstrapRequiresOneTimeToken(t *testing.T) {
 	t.Setenv("BOOTSTRAP_ALLOWED_CIDR", "")
 	resetBootstrapGlobals(t)
@@ -187,7 +187,7 @@ func TestPostBootstrapRequiresOneTimeToken(t *testing.T) {
 		t.Fatalf("stored admin secret = %q, want operator-secret", got)
 	}
 
-	// 令牌用后即废：同一令牌重放只能拿到 409，且不会再生成新令牌。
+	// A token is void after use: replaying the same token gets only 409, and no new token is generated.
 	code, _ = doBootstrap(t, r, bootstrapReq{remote: "192.168.97.1:40000", token: token})
 	if code != http.StatusConflict {
 		t.Fatalf("replayed token: status=%d, want 409", code)
@@ -197,15 +197,15 @@ func TestPostBootstrapRequiresOneTimeToken(t *testing.T) {
 	}
 }
 
-// IP 门必须看直连 TCP 对端：对端属于默认可信的私网段时 X-Forwarded-For 完全由
-// 请求方控制，不能让它把请求伪装进 BOOTSTRAP_ALLOWED_CIDR 或冒充内网。
+// The IP gate must look at the direct TCP peer: when the peer is in a default-trusted private subnet, X-Forwarded-For is entirely controlled by
+// the requester, and must not let it disguise the request as BOOTSTRAP_ALLOWED_CIDR or pose as an internal network.
 func TestPostBootstrapIPGateIgnoresForwardedFor(t *testing.T) {
 	resetBootstrapGlobals(t)
 	h := &Handler{db: newTestAdminDB(t)}
 	r := newBootstrapTestEngine(t, h)
 
 	t.Setenv("BOOTSTRAP_ALLOWED_CIDR", "203.0.113.0/24")
-	// 私网反代把伪造头原样透传：旧实现按 ClientIP 判断会命中白名单。
+	// A private reverse proxy passes the forged header through unchanged: the old implementation judged by ClientIP and matched the allowlist.
 	code, body := doBootstrap(t, r, bootstrapReq{remote: "172.18.0.5:40000", xff: "203.0.113.7"})
 	if code != http.StatusForbidden || body["code"] != "bootstrap_ip_forbidden" {
 		t.Fatalf("spoofed XFF into allowed CIDR: status=%d body=%v, want 403", code, body)
@@ -215,17 +215,17 @@ func TestPostBootstrapIPGateIgnoresForwardedFor(t *testing.T) {
 	}
 
 	t.Setenv("BOOTSTRAP_ALLOWED_CIDR", "")
-	// 公网直连时转发头本就不被采纳，依旧拒绝。
+	// For direct public connections the forwarding header is never accepted in the first place, so it is still rejected.
 	if code, _ := doBootstrap(t, r, bootstrapReq{remote: "203.0.113.9:40000", xff: "192.168.1.77"}); code != http.StatusForbidden {
 		t.Fatalf("public peer with private XFF: status=%d, want 403", code)
 	}
-	// 私网对端声称自己是公网地址也不影响判定：过 IP 门后仍要令牌。
+	// A private-network peer claiming to be a public address does not change the decision: after passing the IP gate, the token is still required.
 	if code, _ := doBootstrap(t, r, bootstrapReq{remote: "192.168.97.1:40000", xff: "8.8.8.8"}); code != http.StatusUnauthorized {
 		t.Fatalf("private peer with public XFF: status=%d, want 401 (gate passes, token missing)", code)
 	}
 }
 
-// 限频只统计令牌错误的请求：扫描器把窗口打满后，持有正确令牌的部署者仍能完成初始化。
+// The rate limit only counts requests with a wrong token: after scanners fill the window, a deployer holding the correct token can still complete initialization.
 func TestPostBootstrapRateLimitDoesNotLockOutValidToken(t *testing.T) {
 	t.Setenv("BOOTSTRAP_ALLOWED_CIDR", "")
 	resetBootstrapGlobals(t)
@@ -264,7 +264,7 @@ func TestPostBootstrapEnvSecretSkipsToken(t *testing.T) {
 	}
 }
 
-// 运行时清空管理密钥后重新进入待初始化状态，bootstrap-status 负责补发令牌。
+// When the admin key is cleared at runtime and the system returns to pending initialization, bootstrap-status reissues the token.
 func TestGetBootstrapStatusIssuesTokenWhenPending(t *testing.T) {
 	resetBootstrapGlobals(t)
 	h := &Handler{db: newTestAdminDB(t)}

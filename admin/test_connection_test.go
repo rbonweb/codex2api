@@ -45,8 +45,8 @@ func TestBuildConnectionTestPayloadUsesStoreContent(t *testing.T) {
 	}
 }
 
-// TestBuildConnectionTestPayloadRandomizesMultiLineContent 验证多行测活内容
-// 按行随机抽取并展开变量（issue #320）。
+// TestBuildConnectionTestPayloadRandomizesMultiLineContent verifies that multi-line probe content
+// is picked randomly line by line and its variables are expanded (issue #320).
 func TestBuildConnectionTestPayloadRandomizesMultiLineContent(t *testing.T) {
 	store := auth.NewStore(nil, nil, nil)
 	store.SetTestContent("ping-a\nping-b\ncount {{rand:1-1}}")
@@ -76,7 +76,7 @@ func TestFormatUsageLimitedTestErrorReportsSuccessfulProbeAsLimited(t *testing.T
 	if !limited {
 		t.Fatal("limited = false, want true")
 	}
-	for _, want := range []string{"返回 200", "5h 用量头", "限流状态"} {
+	for _, want := range []string{"returned 200", "5h usage header", "rate-limited state"} {
 		if !strings.Contains(msg, want) {
 			t.Fatalf("message %q does not contain %q", msg, want)
 		}
@@ -181,7 +181,7 @@ func TestFormatUpstreamTestErrorIncludesMessageAndEvent(t *testing.T) {
 	}`)
 
 	got := formatUpstreamTestError(event, "fallback")
-	for _, want := range []string{"model unavailable", "model_not_available", "上游事件", "response.failed"} {
+	for _, want := range []string{"model unavailable", "model_not_available", "Upstream events", "response.failed"} {
 		if !strings.Contains(got, want) {
 			t.Fatalf("formatted error %q does not contain %q", got, want)
 		}
@@ -192,7 +192,7 @@ func TestFormatNoOutputUpstreamErrorIncludesCompletedEvent(t *testing.T) {
 	event := []byte(`{"type":"response.completed","response":{"status":"completed","output":[]}}`)
 
 	got := formatNoOutputUpstreamError(event)
-	for _, want := range []string{"没有返回文本输出", "上游事件", `"output": []`} {
+	for _, want := range []string{"returned no text output", "Upstream events", `"output": []`} {
 		if !strings.Contains(got, want) {
 			t.Fatalf("formatted no-output error %q does not contain %q", got, want)
 		}
@@ -201,12 +201,12 @@ func TestFormatNoOutputUpstreamErrorIncludesCompletedEvent(t *testing.T) {
 
 func TestConnectionTestPayloadUsesGlobalTestContent(t *testing.T) {
 	store := auth.NewStore(nil, nil, nil)
-	store.SetTestContent("全局测活 {{date}}")
+	store.SetTestContent("global probe {{date}}")
 	handler := &Handler{store: store}
 	account := &auth.Account{DBID: 9, AccessToken: "codex-token"}
 
 	payload := handler.buildAccountConnectionTestPayload(context.Background(), account, "gpt-5.5")
-	if !strings.Contains(string(payload), "全局测活") || strings.Contains(string(payload), "{{date}}") {
+	if !strings.Contains(string(payload), "global probe") || strings.Contains(string(payload), "{{date}}") {
 		t.Fatalf("payload %s must carry the rendered global test content", payload)
 	}
 }

@@ -21,29 +21,29 @@ const (
 	accountListSnapshotLargeMin = 2000
 	accountListPageMax          = 500
 	accountListPageDefault      = 20
-	// requestCountFullPoolScanMax 是「账号数量超载」阈值:超过就不再单条
-	// ANY() 扫近 7 天全表,改走分批聚合。
+	// requestCountFullPoolScanMax is the "too many accounts" threshold: above it, no single
+	// ANY() query scans the whole 7-day table; switch to batched aggregation instead.
 	requestCountFullPoolScanMax = accountListPageMax
-	// requestCountBatchSize 是全池刷新每一批的 ID 数。比单页上限更保守,
-	// 让规划器稳定走 (account_id, created_at),避免 500 个 ID 仍被估成顺序扫。
+	// requestCountBatchSize is the number of IDs per batch in a full-pool refresh. It is more conservative than the single-page limit,
+	// so the planner reliably uses (account_id, created_at), and 500 IDs are not still estimated as a sequential scan.
 	requestCountBatchSize = 100
-	// requestCountBatchRefreshBaseTimeout / requestCountBatchBudget 决定分批
-	// 全池刷新的后台时限:基础 + 每批预算,再按 Max 封顶。固定时限在 3 万+
-	// 池上会周期性超时;配合断点续跑(requestCountStaging),超时也不再整轮作废。
+	// requestCountBatchRefreshBaseTimeout / requestCountBatchBudget set the batched
+	// full-pool refresh's background time limit: base + per-batch budget, capped at Max. A fixed limit at 30k+
+	// accounts regularly times out; with resumable runs (requestCountStaging), a timeout no longer voids the whole round.
 	requestCountBatchRefreshBaseTimeout = time.Minute
 	requestCountBatchBudget             = 3 * time.Second
 	requestCountBatchRefreshMaxTimeout  = 20 * time.Minute
-	// requestCountStagingMaxAge 是断点续跑半成品的最大搁置时长:换天或搁太久
-	// 的部分聚合结果口径已陈,直接重来。
+	// requestCountStagingMaxAge is the maximum age of a resumable partial run: after a day change or too long a wait,
+	// the partial aggregate's basis is stale, so it starts over.
 	requestCountStagingMaxAge = 30 * time.Minute
-	// requestCountCacheTTL 是请求数统计缓存的保鲜期。它只喂列表排序与统计卡,
-	// 不需要 10s 级新鲜度;前端静默刷新退避后轮询间隔最长 80s,TTL 太短会让
-	// 几乎每次轮询都撞上过期缓存、stats_state 长期停在 stale(表现为
-	// 「统计刷新中…」常驻)。
-	// 另一侧约束:刷新是对全渠道账号扫 7 天 usage_logs 的三条 GROUP BY,
-	// 万级号池 + 大日志量下单轮就要秒级;TTL 过短等于让这组重查询近乎
-	// 永续循环,把数据库拖垮(表现为管理页整体变慢、接口超时)。统计本身
-	// 是 7 天累计值,分钟级陈旧完全可接受。
+	// requestCountCacheTTL is the freshness window of the request count cache. It only feeds list sorting and the stats cards,
+	// so it does not need 10s-level freshness; after frontend silent-refresh backoff, the polling interval is up to 80s, and a TTL that is too short would make
+	// nearly every poll hit an expired cache and stats_state stayed at stale for a long time (shown as
+	// "stats refreshing..." staying on screen).
+	// On the other side: a refresh runs three GROUP BY queries over 7 days of usage_logs for all channel accounts,
+	// which takes seconds per round with tens of thousands of accounts and a large log volume; a TTL that is too short would make these heavy queries almost
+	// a perpetual loop and drag the database down (showing as a slow admin page and API timeouts). The stats themselves
+	// are 7-day cumulative values, so being a few minutes stale is fully acceptable.
 	requestCountCacheTTL = 5 * time.Minute
 )
 
@@ -176,7 +176,7 @@ type accountPageQuery struct {
 	HealthTier   string
 	ProxyURL     string
 	ProxyFilter  string
-	// Subscription 订阅状态筛选（Codex 渠道）：见 subscriptionFilterMatches。
+	// Subscription status filter (Codex channel): see subscriptionFilterMatches.
 	Subscription string
 	Sort         string
 	Order        string
@@ -464,10 +464,10 @@ func (h *Handler) disabledUsageSorts(channel string, poolSize int) []string {
 	return usageLogSortKeys()
 }
 
-// requestCountCacheComplete 报告该渠道的请求数统计是否聚合成功过。只看
-// 「有没有」不看新鲜度:排序读的是列表快照里上一轮聚合的计数,条目过期后
-// 旧值仍在、后台照常重聚合。若这里要求未过期,大池排序会在每个 TTL 周期
-// 的重聚合窗口内被禁用一次,前端表现为排序反复变灰、用户选中的排序被打断。
+// requestCountCacheComplete reports whether the request count stats for this channel have ever been aggregated successfully. It only checks
+// "whether" and ignores freshness: sorting reads the counts from the last aggregation in the list snapshot, and after an entry expires
+// the old value is still there and the background re-aggregates as usual. If this required non-expired data, large-pool sorting would be disabled once every TTL period
+// during the re-aggregation window, and the frontend would show sorting greyed out again and again, interrupting the sort the user selected.
 func (h *Handler) requestCountCacheComplete(channel string) bool {
 	if h == nil {
 		return false
@@ -528,10 +528,10 @@ func (h *Handler) refreshAccountListSnapshotAsync(channel string) {
 	}()
 }
 
-// shouldInvalidateAccountSnapshotCaches 判定一次管理请求是否改动了账号数据:
-// 非只读方法 + 账号/分组路由前缀 + 2xx/3xx。挂在路由组中间件上,覆盖全部
-// 现有与未来的账号变更端点(含流式批量操作),避免逐 handler 手工失效。
-// 单条/批量删除和按状态清理走增量剔除,不在这里整份作废,否则大批量清理会再投影全池。
+// shouldInvalidateAccountSnapshotCaches decides whether an admin request changed account data:
+// a non-read-only method, plus the account/group route prefix, plus a 2xx/3xx status. It sits on the route-group middleware and covers all
+// existing and future account-change endpoints (including streaming batch operations), avoiding manual per-handler invalidation.
+// Single and batch deletes and status-based cleanup use incremental removal and are not fully invalidated here; otherwise a large cleanup would re-project the whole pool.
 func shouldInvalidateAccountSnapshotCaches(method, path string, status int) bool {
 	if method == http.MethodGet || method == http.MethodHead || method == http.MethodOptions {
 		return false
@@ -546,8 +546,8 @@ func shouldInvalidateAccountSnapshotCaches(method, path string, status int) bool
 		strings.HasPrefix(path, "/api/admin/account-groups")
 }
 
-// isAccountListDeletePath 只匹配会从活跃列表拿走账号的删除接口。
-// 回收站彻底清除/清空仍走整份失效:那些账号本来就不在列表快照里。
+// isAccountListDeletePath only matches delete endpoints that remove accounts from the active list.
+// Permanent purge/empty of the recycle bin still does a full invalidation: those accounts are not in the list snapshot to begin with.
 func isAccountListDeletePath(method, path string) bool {
 	switch method {
 	case http.MethodDelete:
@@ -574,9 +574,9 @@ func isAccountListDeletePath(method, path string) bool {
 	}
 }
 
-// invalidateAccountSnapshotCaches 在账号发生变更(封禁/禁用/导入等)后
-// 丢弃列表快照与分析缓存,让下一次读取同步重建。否则 stale-while-revalidate
-// 的读路径会把变更前的统计卡/筛选计数原样返回给变更后的第一次刷新。
+// invalidateAccountSnapshotCaches runs after an account change (ban/disable/import, etc.)
+// to drop the list snapshots and analysis caches, so the next read rebuilds them synchronously. Otherwise stale-while-revalidate
+// reads would return the pre-change stats cards and filter counts unchanged to the first refresh after the change.
 func (h *Handler) invalidateAccountSnapshotCaches() {
 	h.accountCachesGen.Add(1)
 	h.accountListCacheMu.Lock()
@@ -587,9 +587,9 @@ func (h *Handler) invalidateAccountSnapshotCaches() {
 	h.accountAnalysisCacheMu.Unlock()
 }
 
-// pruneAccountsFromSnapshotCaches 从各渠道列表快照里拿掉已删除账号并重算
-// 统计卡。比整份失效便宜:不必再 ListAccountListProjection 全池。
-// 代数加一,避免在途全量重建把已删账号写回缓存。
+// pruneAccountsFromSnapshotCaches removes deleted accounts from each channel's list snapshot and recomputes
+// the stats cards. It is cheaper than a full invalidation: there is no need to run ListAccountListProjection over the whole pool again.
+// Bump the generation so an in-flight full rebuild does not write the deleted accounts back into the cache.
 func (h *Handler) pruneAccountsFromSnapshotCaches(ids []int64) {
 	if len(ids) == 0 {
 		return
@@ -668,8 +668,8 @@ func (h *Handler) rebuildAccountListSnapshot(ctx context.Context, channel string
 	return snapshot, nil
 }
 
-// installAccountListSnapshot 只在代数未漂移时入缓存:读库期间发生过账号
-// 变更的快照可能早于变更,返回给当前调用方无妨,但不能留给后续请求。
+// installAccountListSnapshot only caches the snapshot if the generation has not drifted: if an account changed during the DB read,
+// the snapshot may predate the change. Returning it to the current caller is fine, but it must not be kept for later requests.
 func (h *Handler) installAccountListSnapshot(channel string, snapshot *accountListSnapshot, gen uint64) {
 	if h.accountCachesGen.Load() != gen {
 		return
@@ -763,7 +763,7 @@ func valueOrZero(value *int64) int64 {
 	return *value
 }
 
-// requestCountCacheEntry 是单个渠道的请求数统计缓存。
+// requestCountCacheEntry is the request count cache for a single channel.
 type requestCountCacheEntry struct {
 	counts     map[int64]*database.AccountRequestCount
 	today      map[int64]*database.AccountTimeRangeUsage
@@ -781,8 +781,8 @@ func requestCountCacheReady(entry *requestCountCacheEntry, now time.Time) bool {
 	return database.StartOfDay(now).Equal(entry.todayStart)
 }
 
-// getCachedRequestCountsNonBlocking 返回指定渠道的请求数统计。统计按渠道独立
-// 缓存与刷新:在 codex 页刷新只扫 codex 账号的日志行。ids 是该渠道当前的账号列表,过期时交给后台刷新用。
+// getCachedRequestCountsNonBlocking returns the request counts for the given channel. Stats are kept per channel
+// in their own cache and refresh: refreshing on the codex page only scans the log rows of codex accounts. ids is the channel's current account list, handed to the background refresh when the entry expires.
 func (h *Handler) getCachedRequestCountsNonBlocking(channel string, ids []int64) (map[int64]*database.AccountRequestCount, map[int64]*database.AccountTimeRangeUsage, string) {
 	now := time.Now()
 	h.reqCountMu.RLock()
@@ -796,8 +796,8 @@ func (h *Handler) getCachedRequestCountsNonBlocking(channel string, ids []int64)
 		return entry.counts, entry.today, "stale"
 	}
 	if len(ids) > requestCountFullPoolScanMax {
-		// 大池子首屏不走 warming:空计数即可先出列表,分批聚合在后台跑。
-		// 返回 stale 让前端短轮询接到聚完后的快照,而不是整页转圈。
+		// The first screen of a large pool skips warming: empty counts are enough to list the accounts first, and batched aggregation runs in the background.
+		// Return stale so the frontend's short polling picks up the snapshot once aggregation finishes, instead of spinning the whole page.
 		return map[int64]*database.AccountRequestCount{}, map[int64]*database.AccountTimeRangeUsage{}, "stale"
 	}
 	return map[int64]*database.AccountRequestCount{}, map[int64]*database.AccountTimeRangeUsage{}, "warming"
@@ -829,19 +829,19 @@ func (h *Handler) refreshRequestCountsAsync(channel string, ids []int64) {
 		started := time.Now()
 		counts, today, todayStart, err := h.loadAccountRequestStats(ctx, channel, ids)
 		if err != nil {
-			// 静默失败会让请求数/用量排序与统计永久停在 warming 且无从排查
-			// (issue #493),失败必须留痕。
-			log.Printf("刷新账号请求统计失败 channel=%s(排序/统计将继续使用旧值): %v", channel, err)
+			// A silent failure would leave request count/usage sorting and stats stuck in warming forever, with no way to trace it
+			// (issue #493), so failures must be logged.
+			log.Printf("failed to refresh account request stats channel=%s (sorting/stats will keep using the old values): %v", channel, err)
 			return
 		}
 		if elapsed := time.Since(started); elapsed > 2*time.Second {
-			log.Printf("账号请求统计刷新耗时 %s channel=%s ids=%d batches=%d(分批 7 天聚合)", elapsed.Round(time.Millisecond), channel, len(ids), accountRequestStatBatchCount(len(ids)))
+			log.Printf("account request stats refresh took %s channel=%s ids=%d batches=%d (batched 7-day aggregation)", elapsed.Round(time.Millisecond), channel, len(ids), accountRequestStatBatchCount(len(ids)))
 		}
 		h.storeRequestCountCache(channel, counts, today, todayStart)
-		// stats_state 是烙在列表快照里的:快照重建时统计缓存还没刷完,烙出来
-		// 就是 stale,并一直随快照被返回。统计刷完后把本渠道快照标记为过期,
-		// 下一次轮询即触发重建、烙上 ready——否则要等快照自然过期再叠一轮轮询,
-		// 前端退避后「统计刷新中…」会挂几分钟。
+		// stats_state is baked into the list snapshot: if the snapshot is rebuilt before the stats cache finishes refreshing, it is baked in as
+		// stale and keeps being returned with the snapshot. Once the stats finish refreshing, mark this channel's snapshot as expired,
+		// so the next poll triggers a rebuild and bakes in ready. Otherwise it would wait for the snapshot to expire naturally and then add another round of polling,
+		// and after frontend backoff "stats refreshing..." would hang for several minutes.
 		h.expireAccountListSnapshot(channel)
 	}()
 }
@@ -863,7 +863,7 @@ func (h *Handler) loadAccountRequestStats(ctx context.Context, channel string, i
 		}
 		return counts, today, todayStart, nil
 	}
-	// 断点续跑:上一轮超时/出错留下的半成品接着跑,只查还没完成的账号。
+	// Resumable run: continue the partial work left by a previous round that timed out or failed, and only query accounts not yet done.
 	staging := h.takeRequestCountStaging(channel, todayStart)
 	remaining := make([]int64, 0, len(ids))
 	for _, id := range ids {
@@ -899,9 +899,9 @@ func (h *Handler) loadAccountRequestStats(ctx context.Context, channel string, i
 	return staging.counts, staging.today, todayStart, nil
 }
 
-// requestCountStaging 是大池分批聚合的断点续跑状态。一轮超时/出错不再整轮
-// 作废:进度存回 Handler,下一轮跳过已完成账号接着跑。刷新协程间由
-// reqCountRefreshing 串行化,这里的锁只负责跨轮的存取与内存可见性。
+// requestCountStaging is the resumable state of batched aggregation for large pools. A timed-out or failed round is no longer
+// discarded whole: progress is saved back to Handler, and the next round skips completed accounts and continues. Refresh goroutines are
+// serialized by reqCountRefreshing; the lock here only handles storing and reading across rounds and memory visibility.
 type requestCountStaging struct {
 	counts     map[int64]*database.AccountRequestCount
 	today      map[int64]*database.AccountTimeRangeUsage
@@ -916,7 +916,7 @@ func (h *Handler) takeRequestCountStaging(channel string, todayStart time.Time) 
 	staging := h.reqCountStaging[channel]
 	delete(h.reqCountStaging, channel)
 	if staging != nil {
-		// 换天(今日口径已变)或搁太久(数据太陈)的半成品不能续,重来。
+		// A partial run from a previous day (the today basis has changed) or one left too long (the data is too old) cannot be resumed; start over.
 		if !staging.todayStart.Equal(todayStart) || time.Since(staging.startedAt) > requestCountStagingMaxAge {
 			staging = nil
 		}
@@ -942,8 +942,8 @@ func (h *Handler) saveRequestCountStaging(channel string, staging *requestCountS
 	h.reqCountStagingMu.Unlock()
 }
 
-// requestCountBatchRefreshTimeout 按批数缩放全池刷新时限:固定时限在 3 万+
-// 池上会周期性超时,叠加整轮作废就是永远白干的重扫循环。
+// requestCountBatchRefreshTimeout scales the full-pool refresh time limit by batch count: a fixed limit at 30k+
+// accounts regularly times out, and combined with voiding the whole round it becomes an endless re-scan loop that never makes progress.
 func requestCountBatchRefreshTimeout(batches int) time.Duration {
 	timeout := requestCountBatchRefreshBaseTimeout + time.Duration(batches)*requestCountBatchBudget
 	if timeout > requestCountBatchRefreshMaxTimeout {
@@ -1007,8 +1007,8 @@ func (h *Handler) storeRequestCountCache(channel string, counts map[int64]*datab
 	h.reqCountMu.Unlock()
 }
 
-// expireAccountListSnapshot 把指定渠道的列表快照标记为过期,但保留内容:
-// 读路径仍按 stale-while-revalidate 先返回旧值,只是下一次读取会立刻触发重建。
+// expireAccountListSnapshot marks the given channel's list snapshot as expired, but keeps its content:
+// reads still return the old value first under stale-while-revalidate, but the next read triggers a rebuild immediately.
 func (h *Handler) expireAccountListSnapshot(channel string) {
 	// Invalidate in-flight rebuilds as well as the cached TTL. A probe may
 	// finish while an older projection query is still running; without a new
@@ -1092,7 +1092,7 @@ func accountListStatusMatches(item *accountListSnapshotItem, status, channel str
 	limited := accountListRateLimited(item)
 	switch status {
 	case "normal":
-		// 过载暂停、禁用都归入「正常」；真正可调度的账号走 scheduling/active。
+		// Overload-paused and disabled accounts are grouped under "normal"; accounts that are truly schedulable go through scheduling/active.
 		return accountListNormal(item)
 	case "active", "scheduling":
 		return accountListSchedulable(item)
@@ -1128,7 +1128,7 @@ func accountListUnsampled(item *accountListSnapshotItem) bool {
 	if item.Status == "unauthorized" || item.Status == "error" {
 		return false
 	}
-	// k12 等 team 型工作区可能只返回 5h 窗口：任一窗口有数据即算已采样。
+	// Team-type workspaces such as k12 may return only the 5h window: if any window has data, it counts as sampled.
 	if item.UsagePercent5hOK || item.UsagePercent7dOK {
 		return false
 	}

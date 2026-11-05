@@ -136,7 +136,7 @@ func TestAccountGroupBaseConcurrencyOverrideAPIThreeState(t *testing.T) {
 			t.Fatalf("invalid patch %s status = %d, want %d: %s", body, recorder.Code, http.StatusBadRequest, recorder.Body.String())
 		}
 	}
-	// 51 曾是上限，现已放开：应成功写入
+	// 51 used to be the limit and is now lifted: the write should succeed
 	recorder = patch(`{"base_concurrency_override":51}`)
 	if recorder.Code != http.StatusOK {
 		t.Fatalf("patch 51 status = %d, want %d: %s", recorder.Code, http.StatusOK, recorder.Body.String())
@@ -144,7 +144,7 @@ func TestAccountGroupBaseConcurrencyOverrideAPIThreeState(t *testing.T) {
 	if got := account.GetBaseConcurrencyEffective(); got != 51 {
 		t.Fatalf("runtime effective after high-value patch = %d, want 51", got)
 	}
-	// 恢复到 2，后续断言依赖该值
+	// Restore to 2; later assertions depend on this value
 	recorder = patch(`{"base_concurrency_override":2}`)
 	if recorder.Code != http.StatusOK {
 		t.Fatalf("patch restore 2 status = %d, want %d: %s", recorder.Code, http.StatusOK, recorder.Body.String())
@@ -200,7 +200,7 @@ func TestCreateAccountGroupRejectsInvalidBaseConcurrencyOverride(t *testing.T) {
 			t.Fatalf("body %s status = %d, want %d: %s", body, recorder.Code, http.StatusBadRequest, recorder.Body.String())
 		}
 	}
-	// 无上限：>50 应允许
+	// No upper limit: >50 should be allowed
 	recorder := invokeAccountGroupHandler(t, http.MethodPost, "/api/admin/account-groups", nil,
 		`{"name":"large","base_concurrency_override":51}`, handler.CreateAccountGroup)
 	if recorder.Code != http.StatusOK {

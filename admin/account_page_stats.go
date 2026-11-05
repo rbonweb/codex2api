@@ -14,22 +14,22 @@ import (
 type accountPageStatsItem struct {
 	Usage5hDetail *accountUsageWindow `json:"usage_5h_detail,omitempty"`
 	Usage7dDetail *accountUsageWindow `json:"usage_7d_detail,omitempty"`
-	// UsageTodayDetail 是"今日"(服务器时区当天 0 点起)的网关侧聚合。
-	// 与 5h/7d 不同,这个字段对每个请求到的账号都必下发:零值代表
-	// "今天没跑过",缺字段才代表"还没加载",前端据此区分 0 和占位。
+	// UsageTodayDetail is the gateway-side aggregate for "today" (from 00:00 in the server time zone).
+	// Unlike 5h/7d, this field is always sent for every account requested: a zero value means
+	// "not run today"; only a missing field means "not loaded yet". The frontend uses this to tell 0 apart from a placeholder.
 	UsageTodayDetail *accountUsageWindow `json:"usage_today_detail,omitempty"`
 	Billed5h         *float64            `json:"billed_5h,omitempty"`
 	Billed7d         *float64            `json:"billed_7d,omitempty"`
-	// OfficialUSD 是官方结算口径的累计成本（本地快照全窗口，默认一年）。
-	// 与上面按本地日志算的 Billed7d 是两套账：网关只看得到自己转发的请求，
-	// 官方账单还含用户直接用官方客户端的消耗。读的是快照表，不打上游。
+	// OfficialUSD is the cumulative cost on the official billing basis (the full local snapshot window, one year by default).
+	// It is a separate ledger from Billed7d above, which is computed from local logs: the gateway only sees the requests it forwards,
+	// while the official bill also includes usage from official clients used directly. It reads the snapshot table and does not hit the upstream.
 	OfficialUSD *float64 `json:"official_usd,omitempty"`
-	// OfficialUSD7d 是 OfficialUSD 的兼容别名。列表徽章已改为「官方结算」，
-	// 不再只展示 7 天；旧前端仍读这个字段。
+	// OfficialUSD7d is a compatibility alias for OfficialUSD. The list badge now reads "official billing",
+	// no longer showing only 7 days; old frontends still read this field.
 	OfficialUSD7d *float64 `json:"official_usd_7d,omitempty"`
-	// OfficialUsageSynced 表示官方快照已成功同步过、但上游窗口内没有数据
-	//（官方统计有滞后，或账号没有官方客户端消耗）。前端据此显示静态占位
-	// 并停止重拉，而不是把「暂无数据」当成「还在加载」无限转圈。
+	// OfficialUsageSynced means the official snapshot has synced successfully before, but the upstream window has no data
+	// (official stats lag, or the account has no official client usage). The frontend uses this to show a static placeholder
+	// and stops refetching, instead of showing "no data yet" as "still loading" in an endless spinner.
 	OfficialUsageSynced bool `json:"official_usage_synced,omitempty"`
 }
 
@@ -39,7 +39,7 @@ type accountPageStatsItem struct {
 func (h *Handler) GetAccountPageStats(c *gin.Context) {
 	ids, err := parseAccountListIDs(c.Query("ids"))
 	if err != nil {
-		writeError(c, http.StatusBadRequest, "ids 参数无效")
+		writeError(c, http.StatusBadRequest, "Invalid ids parameter")
 		return
 	}
 	if len(ids) == 0 {
@@ -47,7 +47,7 @@ func (h *Handler) GetAccountPageStats(c *gin.Context) {
 		return
 	}
 	if len(ids) > accountListPageMax {
-		writeError(c, http.StatusBadRequest, "ids 最多允许 500 个")
+		writeError(c, http.StatusBadRequest, "Up to 500 ids are allowed")
 		return
 	}
 
@@ -60,35 +60,35 @@ func (h *Handler) GetAccountPageStats(c *gin.Context) {
 		return
 	}
 
-	// 今日口径与全局统计一致:服务器时区(TZ 配置,默认宿主时区)当天 0 点起。
-	// 失败时整列不下发,让前端保持占位,避免把"查询失败"显示成 0。
+	// The today basis matches the global stats: from 00:00 in the server time zone (TZ setting, defaults to the host time zone).
+	// On failure the whole column is not sent, so the frontend keeps its placeholder instead of showing "query failed" as 0.
 	todaySince := database.StartOfDay(now)
 	usageToday, todayErr := h.db.GetAccountUsageSinceByIDs(ctx, ids, todaySince)
 	if todayErr != nil {
-		log.Printf("获取当前页账号今日用量失败: %v", todayErr)
+		log.Printf("failed to get today's usage for the current page accounts: %v", todayErr)
 	}
 	todayModels, todayModelErr := h.db.GetAccountModelCountsSinceByIDs(ctx, ids, todaySince)
 	if todayModelErr != nil {
-		log.Printf("获取当前页账号今日模型分布失败: %v", todayModelErr)
+		log.Printf("failed to get today's model distribution for the current page accounts: %v", todayModelErr)
 		todayModels = map[int64]map[string]database.AccountModelCount{}
 	}
 
 	billing5hWindows, billing7dWindows := h.accountBillingWindows(ids)
 	billed5h, err := h.db.GetAccountsBilledSince(ctx, billing5hWindows)
 	if err != nil {
-		log.Printf("获取当前页账号 5h 成本失败: %v", err)
+		log.Printf("failed to get 5h cost for the current page accounts: %v", err)
 		billed5h = map[int64]float64{}
 	}
 	billed7d, err := h.db.GetAccountsBilledSince(ctx, billing7dWindows)
 	if err != nil {
-		log.Printf("获取当前页账号长窗口成本失败: %v", err)
+		log.Printf("failed to get long-window cost for the current page accounts: %v", err)
 		billed7d = map[int64]float64{}
 	}
 
-	// 官方结算快照缺失只是少一行展示，不能拖垮整页统计。
+	// A missing official billing snapshot only drops one display row; it must not take down the whole page's stats.
 	officialTotals, err := h.db.SumAccountDailyUsage(ctx, ids, whamDailyUsageKeepDays)
 	if err != nil {
-		log.Printf("获取当前页账号官方结算成本失败: %v", err)
+		log.Printf("failed to get official billing cost for the current page accounts: %v", err)
 		officialTotals = map[int64]database.AccountDailyUsageTotal{}
 	}
 
@@ -139,9 +139,9 @@ func (h *Handler) GetAccountPageStats(c *gin.Context) {
 		if value, ok := billed7d[id]; ok {
 			item.Billed7d = &value
 		}
-		// 没有快照的账号不下发这个字段，前端显示占位而不是 $0；
-		// 当前页缺快照时异步回补，不挡本次响应。已经成功同步过但
-		// 上游没有数据的账号下发显式空态，不再反复回补。
+		// Accounts without a snapshot do not get this field; the frontend shows a placeholder instead of $0;
+		// a missing snapshot on the current page is backfilled asynchronously without blocking this response. Accounts that synced successfully before but
+		// have no upstream data get an explicit empty state and are not backfilled again and again.
 		if total, ok := officialTotals[id]; ok {
 			usd := total.Credits / proxy.WhamCreditsPerUSD
 			item.OfficialUSD = &usd

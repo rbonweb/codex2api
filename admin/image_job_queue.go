@@ -384,7 +384,7 @@ func (h *Handler) failStaleQueuedImages(ctx context.Context) {
 			}
 		}
 		statusCtx, stop := imageJobStatusContext()
-		_ = h.db.FinishLeasedImageJob(statusCtx, id, owner, database.ImageJobFailed, fmt.Sprintf("图片任务排队超过 %s 仍未开始，已取消；未请求上游，可直接重试", h.imageQueue.maxQueueWait), 0)
+		_ = h.db.FinishLeasedImageJob(statusCtx, id, owner, database.ImageJobFailed, fmt.Sprintf("image job still had not started after queuing for more than %s, so it was cancelled; the upstream was not called and it can be retried directly", h.imageQueue.maxQueueWait), 0)
 		stop()
 		log.Printf("[image-queue] expired stale queued job=%d", id)
 	}

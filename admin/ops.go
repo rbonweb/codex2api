@@ -182,11 +182,11 @@ func parseLinuxProcessRSS(r io.Reader) (uint64, bool) {
 	return 0, false
 }
 
-// readProcessMemory 返回当前进程实际驻留在物理内存中的字节数。
+// readProcessMemory returns the number of bytes the current process actually keeps resident in physical memory.
 //
-// runtime.MemStats.Sys 是 Go 运行时从 OS 申请/保留过的虚拟内存总量，包含已空闲
-// 甚至已归还的堆页，流量峰值过后仍会保持高水位，不能当成当前进程内存展示。
-// Linux/Docker 使用 /proc/self/status 的 VmRSS；非 Linux 才回退到 Sys。
+// runtime.MemStats.Sys is the total virtual memory the Go runtime has requested or reserved from the OS, including memory that is already free
+// and heap pages already returned, so it stays high after a traffic peak; it must not be shown as current process memory.
+// Linux/Docker uses VmRSS from /proc/self/status; only non-Linux falls back to Sys.
 func readProcessMemory() uint64 {
 	var mem runtime.MemStats
 	runtime.ReadMemStats(&mem)
@@ -210,8 +210,8 @@ func readProcessMemoryWithFallback(mem *runtime.MemStats) uint64 {
 	return mem.Sys
 }
 
-// 容器(cgroup)内存:优先 v2 再回退 v1;用量对齐 docker stats 口径,
-// 扣掉 inactive_file 页缓存。limit 为 "max"/v1 未设限哨兵时返回 0。
+// Container (cgroup) memory: prefers v2 and falls back to v1; usage is aligned with the docker stats definition,
+// minus the inactive_file page cache. Returns 0 when the limit is "max" or the v1 unlimited sentinel.
 var readContainerMemoryFn = readContainerMemory
 
 func readContainerMemory() (usedBytes uint64, limitBytes uint64, ok bool) {
@@ -260,7 +260,7 @@ func parseCgroupUint(raw string) (uint64, bool) {
 	return v, true
 }
 
-// cgroup v1 未设限时是按页对齐的 MaxInt64 哨兵值;统一把过大的值当未设限。
+// With cgroup v1, an unlimited value is a page-aligned MaxInt64 sentinel; any value that large is treated as unlimited.
 func parseCgroupLimit(raw string) uint64 {
 	trimmed := strings.TrimSpace(raw)
 	if trimmed == "" || trimmed == "max" {
@@ -298,7 +298,7 @@ func collectOpsMemory(readMemStats memStatsReader) opsMemoryResponse {
 	containerUsed, containerLimit, containerOK := readContainerMemoryFn()
 	containerSource := "cgroup"
 	if !containerOK {
-		// 拿不到 cgroup(非容器/非 Linux)时退回进程 RSS,进度条仍有意义。
+		// When no cgroup is available (not a container, or not Linux), fall back to process RSS so the progress bar stays meaningful.
 		containerUsed = processBytes
 		containerSource = "process"
 	}
@@ -370,7 +370,7 @@ func responseCacheOpsResponseFromSnapshot(snapshot proxy.ResponseCacheOpsSnapsho
 	}
 }
 
-// GetOpsOverview 获取系统运维概览
+// GetOpsOverview returns the system operations overview
 func (h *Handler) GetOpsOverview(c *gin.Context) {
 	ctx, cancel := context.WithTimeout(c.Request.Context(), 5*time.Second)
 	defer cancel()

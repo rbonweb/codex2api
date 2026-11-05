@@ -13,12 +13,12 @@ import (
 	"github.com/gin-gonic/gin"
 )
 
-// autoBalanceProxiesReq 是代理均衡绑定的请求体。
-//   - Channel: codex/空(全部 OAuth)。同一出口上的 OAuth 账号过多时,
-//     均衡绑定把账号摊开,降低上游按出口聚合限流的概率。
-//   - Mode: unbound(默认,只分配未绑定账号) / all(全量重排,但尽量保留现有绑定以减少换 IP)。
-//   - MaxPerProxy: 每条代理的账号数上限,0 表示不限。
-//   - ProxyIDs: 限定参与分配的代理,空表示所有启用且未测出错误的代理。
+// autoBalanceProxiesReq is the request body for proxy balance binding.
+//   - Channel: codex/empty (all OAuth). When too many OAuth accounts sit on the same egress,
+//     balanced binding spreads the accounts out, lowering the chance the upstream rate-limits by egress aggregation.
+//   - Mode: unbound (default, assigns only unbound accounts) / all (full reshuffle, but keeps existing bindings where possible to reduce IP changes).
+//   - MaxPerProxy: maximum accounts per proxy; 0 means no limit.
+//   - ProxyIDs: limits which proxies take part in assignment; empty means all enabled proxies with no connectivity-test error.
 type autoBalanceProxiesReq struct {
 	Channel     string  `json:"channel"`
 	Mode        string  `json:"mode"`
@@ -32,15 +32,15 @@ type autoBalanceDistribution struct {
 	BoundCount int64  `json:"bound_count"`
 }
 
-// balanceAccount 是参与均衡分配的一个账号:ID + 当前绑定(trim 后,可为空)。
+// balanceAccount is one account taking part in balanced assignment: ID + its current binding (trimmed; may be empty).
 type balanceAccount struct {
 	id      int64
 	current string
 }
 
-// isOAuthProxyBalanceTarget 只允许真正可刷新的 OAuth 账号参与自动均衡。
-// API Key、AT-only、Session Token 与 Agent Identity 账号都不应被
-// 自动改变出口；它们已有的手工绑定仍会作为 baseline 负载参与容量计算。
+// isOAuthProxyBalanceTarget only lets genuinely refreshable OAuth accounts take part in automatic balancing.
+// API Key, AT-only, Session Token, and Agent Identity accounts should not be
+// moved automatically to a different egress; their existing manual bindings still count as baseline load in the capacity calculation.
 func isOAuthProxyBalanceTarget(row *database.AccountRow) bool {
 	if row == nil || strings.TrimSpace(row.GetCredential("refresh_token")) == "" {
 		return false
@@ -73,26 +73,26 @@ func selectOAuthProxyBalanceTargets(rows []*database.AccountRow, mode string) []
 	return targets
 }
 
-// balanceResult 是纯分配算法的产出。
+// balanceResult is the output of the pure assignment algorithm.
 type balanceResult struct {
-	// assignments 只包含绑定发生变化的账号(写库范围)。
+	// assignments contains only the accounts whose binding changes (the write scope).
 	assignments map[int64]string
-	// load 是分配完成后各候选代理的账号数(含基线负载)。
+	// load is the number of accounts on each candidate proxy after assignment (including baseline load).
 	load map[string]int64
-	// kept 是保持原绑定不动的账号数;skipped 是全部代理到达上限后放不下的账号数。
+	// kept is the number of accounts that kept their original binding; skipped is the number of accounts that could not fit once every proxy reached its limit.
 	kept    int
 	skipped int
 }
 
-// computeProxyAssignments 把 targets 按"最少绑定优先"分配到 candidates 上。
+// computeProxyAssignments assigns targets to candidates by "fewest bindings first".
 //
-// 分配原则:
-//  1. 稳定优先:账号当前绑定仍在候选池且未超上限的保持不动
-//     (上游对换 IP 敏感,重排只动必须动的账号);
-//  2. 其余账号按账号 ID 升序,逐个放进当前负载最低的代理;
-//     并列取 URL 字典序,保证结果确定可复现;
-//  3. baseline 是各代理上不参与本次分配的既有绑定数(含其它渠道账号),
-//     避免把号堆到已被其它渠道占满的代理上。
+// Assignment principles:
+//  1. Stability first: an account whose current binding is still in the candidate pool and not over the limit stays put
+//     (the upstream is sensitive to IP changes, so reshuffling should only move accounts that must move);
+//  2. The remaining accounts go in ascending account ID order, each into the proxy with the lowest current load;
+//     ties go to the URL in lexicographic order, so the result is deterministic and reproducible;
+//  3. baseline is the number of existing bindings on each proxy that do not take part in this assignment (including accounts from other channels),
+//     so accounts are not piled onto proxies that other channels already fill.
 func computeProxyAssignments(targets []balanceAccount, candidates []string, baseline map[string]int64, maxPerProxy int64) balanceResult {
 	result := balanceResult{
 		assignments: make(map[int64]string),
@@ -133,7 +133,7 @@ func computeProxyAssignments(targets []balanceAccount, candidates []string, base
 		return best, best != ""
 	}
 
-	// 第一遍:保留仍然有效的现有绑定。
+	// First pass: keep the existing bindings that are still valid.
 	pending := make([]balanceAccount, 0, len(sorted))
 	for _, t := range sorted {
 		if t.current != "" {
@@ -145,7 +145,7 @@ func computeProxyAssignments(targets []balanceAccount, candidates []string, base
 		}
 		pending = append(pending, t)
 	}
-	// 第二遍:剩余账号放进负载最低的代理。
+	// Second pass: put the remaining accounts into the proxy with the lowest load.
 	for _, t := range pending {
 		url, ok := pickLeastLoaded()
 		if !ok {
@@ -158,12 +158,12 @@ func computeProxyAssignments(targets []balanceAccount, candidates []string, base
 	return result
 }
 
-// AutoBalanceProxies 把指定渠道的 OAuth 账号按"最少绑定优先"均匀分配到候选代理上。
+// AutoBalanceProxies evenly assigns the OAuth accounts of the given channel to the candidate proxies using "fewest bindings first".
 // POST /api/admin/proxies/auto-balance
 func (h *Handler) AutoBalanceProxies(c *gin.Context) {
 	var req autoBalanceProxiesReq
 	if err := c.ShouldBindJSON(&req); err != nil {
-		writeError(c, http.StatusBadRequest, "请求格式错误")
+		writeError(c, http.StatusBadRequest, "Invalid request format")
 		return
 	}
 	mode := strings.ToLower(strings.TrimSpace(req.Mode))
@@ -171,16 +171,16 @@ func (h *Handler) AutoBalanceProxies(c *gin.Context) {
 		mode = "unbound"
 	}
 	if mode != "unbound" && mode != "all" {
-		writeError(c, http.StatusBadRequest, "mode 仅支持 unbound / all")
+		writeError(c, http.StatusBadRequest, "mode only supports unbound / all")
 		return
 	}
 	channel := strings.ToLower(strings.TrimSpace(req.Channel))
 	if channel != "" && channel != database.UpstreamChannelCodex {
-		writeError(c, http.StatusBadRequest, "channel 仅支持 codex / 空")
+		writeError(c, http.StatusBadRequest, "channel only supports codex / empty")
 		return
 	}
 	if req.MaxPerProxy < 0 {
-		writeError(c, http.StatusBadRequest, "max_per_proxy 不能为负数")
+		writeError(c, http.StatusBadRequest, "max_per_proxy cannot be negative")
 		return
 	}
 
@@ -193,7 +193,7 @@ func (h *Handler) AutoBalanceProxies(c *gin.Context) {
 		return
 	}
 	if len(proxies) == 0 {
-		writeError(c, http.StatusBadRequest, "没有可用代理(需启用且连通性测试未失败)")
+		writeError(c, http.StatusBadRequest, "No proxy available (must be enabled and not failing the connectivity test)")
 		return
 	}
 
@@ -203,15 +203,15 @@ func (h *Handler) AutoBalanceProxies(c *gin.Context) {
 		return
 	}
 
-	// 待分配账号集合只包含可刷新的 OAuth 账号。unbound 模式只挑未绑定的;
-	// all 模式重排全部 OAuth，非 OAuth 账号不参与但其已有绑定仍计入 baseline。
+	// The set of accounts to assign only includes refreshable OAuth accounts. unbound mode picks only unbound ones;
+	// all mode reshuffles all OAuth accounts; non-OAuth accounts do not take part, but their existing bindings still count toward baseline.
 	targets := selectOAuthProxyBalanceTargets(rows, mode)
 	if len(targets) == 0 {
-		c.JSON(http.StatusOK, gin.H{"message": "没有需要分配的 OAuth 账号", "assigned": 0, "kept": 0, "skipped": 0})
+		c.JSON(http.StatusOK, gin.H{"message": "No OAuth accounts need assignment", "assigned": 0, "kept": 0, "skipped": 0})
 		return
 	}
 
-	// 基线负载 = 全量绑定数减去本次目标账号的贡献(目标账号的绑定会在算法里重新计入)。
+	// Baseline load = total bindings minus the contribution of the target accounts (their bindings are counted again inside the algorithm).
 	candidates := make([]string, 0, len(proxies))
 	for _, p := range proxies {
 		candidates = append(candidates, strings.TrimSpace(p.URL))
@@ -261,7 +261,7 @@ func (h *Handler) AutoBalanceProxies(c *gin.Context) {
 		channel, mode, len(result.assignments), result.kept, result.skipped, len(proxies), req.MaxPerProxy, c.ClientIP()))
 
 	c.JSON(http.StatusOK, gin.H{
-		"message":      "OAuth 账号均衡绑定完成",
+		"message":      "OAuth account balanced binding completed",
 		"assigned":     len(result.assignments),
 		"kept":         result.kept,
 		"skipped":      result.skipped,
@@ -270,8 +270,8 @@ func (h *Handler) AutoBalanceProxies(c *gin.Context) {
 	})
 }
 
-// candidateProxiesForBalance 返回参与均衡分配的代理:启用且连通性测试未失败;
-// ids 非空时限定范围(未启用/出错的仍会被过滤)。
+// candidateProxiesForBalance returns the proxies taking part in balanced assignment: enabled and not failing the connectivity test;
+// when ids is non-empty, the scope is limited to them (disabled or failing ones are still filtered out).
 func (h *Handler) candidateProxiesForBalance(ctx context.Context, ids []int64) ([]*database.ProxyRow, error) {
 	var proxies []*database.ProxyRow
 	var err error

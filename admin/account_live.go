@@ -58,11 +58,11 @@ type AccountLiveCredits struct {
 func (h *Handler) GetAccountLiveState(c *gin.Context) {
 	ids, err := parseAccountListIDs(c.Query("ids"))
 	if err != nil {
-		writeError(c, http.StatusBadRequest, "ids 参数无效")
+		writeError(c, http.StatusBadRequest, "Invalid ids parameter")
 		return
 	}
 	if len(ids) > accountListPageMax {
-		writeError(c, http.StatusBadRequest, "ids 最多允许 500 个")
+		writeError(c, http.StatusBadRequest, "Up to 500 ids are allowed")
 		return
 	}
 
