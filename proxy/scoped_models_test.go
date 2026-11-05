@@ -93,10 +93,10 @@ func TestFilterCodexManifestUnknownSchemaFailsClosed(t *testing.T) {
 
 func TestScopedModelRecordsDoesNotNeedDatabase(t *testing.T) {
 	store := auth.NewStore(nil, nil, &database.SystemSettings{MaxConcurrency: 1})
-	store.AddAccount(&auth.Account{DBID: 1, UpstreamType: auth.UpstreamGrok, APIKey: "xai"})
+	store.AddAccount(&auth.Account{DBID: 1, AccessToken: "codex-1", PlanType: "plus"})
 	handler := NewHandler(store, nil, nil, nil)
 	if got := handler.scopedModelRecords(context.Background(), &database.APIKeyRow{ID: 1}); len(got) == 0 {
-		t.Fatal("conservative Grok defaults missing")
+		t.Fatal("conservative Codex catalog defaults missing")
 	}
 }
 

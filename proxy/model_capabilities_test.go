@@ -130,42 +130,42 @@ func TestCodexCapabilityInvalidModalityDefaultsToText(t *testing.T) {
 	}
 }
 
-func TestLiveCapabilitiesRespectRelayTransportAndVisibility(t *testing.T) {
+// The relay version also varied the relay's HTTP/WebSocket transport. Codex accounts have no transport
+// setting (every Codex account is websocket-capable), so this keeps the Codex facts: the live descriptor
+// reports prefer_websockets, and an account restricted to API key 2 is only considered for that key.
+func TestLiveCapabilitiesCodexAccountsPreferWebsocketsAndHonourVisibility(t *testing.T) {
 	for _, observed := range []bool{false, true} {
-		for _, transport := range []string{auth.OpenAIResponsesTransportHTTP, auth.OpenAIResponsesTransportWebsocket} {
-			t.Run(fmt.Sprintf("%s/observed=%v", transport, observed), func(t *testing.T) {
-				db := newTestModelRegistryDB(t)
-				ctx := context.Background()
-				store := auth.NewStore(nil, nil, nil)
-				store.AddAccount(&auth.Account{DBID: 100, AccessToken: "codex-test", PlanType: "plus"})
-				id, err := db.InsertOpenAIResponsesAccount(ctx, "relay", map[string]interface{}{"api_key": "test-token", "base_url": "https://relay.example", "models": []string{"gpt-6-astra"}}, "")
-				if err != nil {
+		t.Run(fmt.Sprintf("observed=%v", observed), func(t *testing.T) {
+			db := newTestModelRegistryDB(t)
+			ctx := context.Background()
+			store := auth.NewStore(nil, nil, nil)
+			store.AddAccount(&auth.Account{DBID: 100, AccessToken: "codex-test", PlanType: "plus"})
+			id, err := db.InsertAccount(ctx, "restricted", "restricted-refresh", "")
+			if err != nil {
+				t.Fatal(err)
+			}
+			row, err := db.GetAccountByID(ctx, id)
+			if err != nil {
+				t.Fatal(err)
+			}
+			restricted := &auth.Account{DBID: id, CredentialGeneration: row.CredentialGeneration, AccessToken: "codex-restricted", PlanType: "plus"}
+			restricted.SetAllowedAPIKeyIDs([]int64{2})
+			store.AddAccount(restricted)
+			source := []byte(`{"models":[{"slug":"gpt-6-astra","prefer_websockets":true,"context_window":1000,"use_responses_lite":true}]}`)
+			if observed {
+				if err := db.SaveModelCapabilities(ctx, database.ModelCapabilitySnapshot{AccountID: id, CredentialGeneration: row.CredentialGeneration, ObservedAt: 1, Models: parseCodexModelCapabilities(source)}); err != nil {
 					t.Fatal(err)
 				}
-				row, err := db.GetAccountByID(ctx, id)
-				if err != nil {
-					t.Fatal(err)
+			}
+			h := NewHandler(store, db, nil, nil)
+			for _, key := range []int64{1, 2} {
+				result := h.applyUpstreamModelCapabilities(ctx, &database.APIKeyRow{ID: key}, source)
+				if !gjson.GetBytes(result, "models.0.prefer_websockets").Bool() ||
+					gjson.GetBytes(result, "models.0.context_window").Int() != 1000 || !gjson.GetBytes(result, "models.0.use_responses_lite").Bool() {
+					t.Fatalf("key=%d want websocket preference kept; descriptor=%s", key, result)
 				}
-				relay := &auth.Account{DBID: id, CredentialGeneration: row.CredentialGeneration, UpstreamType: auth.UpstreamOpenAIResponses, BaseURL: "https://relay.example", APIKey: "test-token", Models: []string{"gpt-6-astra"}, ResponsesUpstreamTransport: transport}
-				relay.SetAllowedAPIKeyIDs([]int64{2})
-				store.AddAccount(relay)
-				source := []byte(`{"models":[{"slug":"gpt-6-astra","prefer_websockets":true,"context_window":1000,"use_responses_lite":true}]}`)
-				if observed {
-					if err := db.SaveModelCapabilities(ctx, database.ModelCapabilitySnapshot{AccountID: id, CredentialGeneration: row.CredentialGeneration, ObservedAt: 1, Models: parseCodexModelCapabilities(source)}); err != nil {
-						t.Fatal(err)
-					}
-				}
-				h := NewHandler(store, db, nil, nil)
-				for _, key := range []int64{1, 2} {
-					result := h.applyUpstreamModelCapabilities(ctx, &database.APIKeyRow{ID: key}, source)
-					wantWS := key == 1 || transport == auth.OpenAIResponsesTransportWebsocket
-					if gjson.GetBytes(result, "models.0.prefer_websockets").Bool() != wantWS ||
-						gjson.GetBytes(result, "models.0.context_window").Int() != 1000 || !gjson.GetBytes(result, "models.0.use_responses_lite").Bool() {
-						t.Fatalf("key=%d want websocket=%v; descriptor=%s", key, wantWS, result)
-					}
-				}
-			})
-		}
+			}
+		})
 	}
 }
 

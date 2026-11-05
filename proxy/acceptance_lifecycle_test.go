@@ -5,7 +5,6 @@ import (
 	"bufio"
 	"bytes"
 	"context"
-	"encoding/json"
 	"errors"
 	"io"
 	"net"
@@ -72,10 +71,8 @@ func setupLifecycleTestHandler(t *testing.T, upstreamURL string, model string) (
 
 // -----------------------------------------------------------------------------
 // 场景 12: §4.1 每入口 stream/non-stream、native/converted 及实际支持的 upstream 组合
-// 覆盖: Responses HTTP (SSE/JSON), Responses WS, Realtime WS 文本子集,
-// ChatCompletions (SSE/JSON via native Grok & Responses), Messages (SSE/JSON),
-// Gemini Native (streamGenerateContent & generateContent via Antigravity OAuth),
-// Grok Native Chat, Antigravity 渠道组合
+// 覆盖: Responses HTTP (SSE/非流式), Responses WS, Realtime WS 文本子集,
+// ChatCompletions (SSE/非流式 via Codex Responses 上游)
 // -----------------------------------------------------------------------------
 func TestAcceptanceScenario12_FullProtocolCoverageMatrix(t *testing.T) {
 	gin.SetMode(gin.TestMode)
@@ -117,21 +114,11 @@ func TestAcceptanceScenario12_FullProtocolCoverageMatrix(t *testing.T) {
 			stream:    false,
 			reqBody:   `{"model":"gpt-5.5","stream":false,"input":"test"}`,
 			mockHandler: func(w http.ResponseWriter, r *http.Request) {
-				w.Header().Set("Content-Type", "application/json")
-				resp := map[string]any{
-					"id":     "resp_json",
-					"object": "response",
-					"status": "completed",
-					"output": []any{
-						map[string]any{
-							"type": "message",
-							"content": []any{
-								map[string]any{"type": "output_text", "text": runawayText},
-							},
-						},
-					},
-				}
-				_ = json.NewEncoder(w).Encode(resp)
+				// Codex always answers over SSE, even for a non-stream client request.
+				w.Header().Set("Content-Type", "text/event-stream")
+				flusher := w.(http.Flusher)
+				_, _ = io.WriteString(w, "data: "+`{"type":"response.output_text.delta","delta":"`+runawayText+`"}`+"\n\n")
+				flusher.Flush()
 			},
 			invoke: func(h *Handler, c *gin.Context) { h.Responses(c) },
 		},
@@ -167,27 +154,6 @@ func TestAcceptanceScenario12_FullProtocolCoverageMatrix(t *testing.T) {
 				chunk := `{"type":"response.output_text.delta","delta":"` + runawayText + `"}`
 				_, _ = io.WriteString(w, "data: "+chunk+"\n\n")
 				flusher.Flush()
-			},
-			invoke: func(h *Handler, c *gin.Context) { h.ChatCompletions(c) },
-		},
-		{
-			name:      "Grok_Native_ChatCompletions_Stream",
-			endpoint:  "/v1/chat/completions",
-			routePath: "/v1/chat/completions",
-			model:     "grok-beta",
-			stream:    true,
-			reqBody:   `{"model":"grok-beta","stream":true,"messages":[{"role":"user","content":"hi"}]}`,
-			mockHandler: func(w http.ResponseWriter, r *http.Request) {
-				// C12: 区分 Native Grok chat 返回标准的 chat.completion.chunk
-				w.Header().Set("Content-Type", "text/event-stream")
-				flusher := w.(http.Flusher)
-				chunk := `{"id":"grok-1","choices":[{"index":0,"delta":{"content":"` + runawayText + `"}}],"object":"chat.completion.chunk"}`
-				_, _ = io.WriteString(w, "data: "+chunk+"\n\n")
-				flusher.Flush()
-				select {
-				case <-r.Context().Done():
-				case <-time.After(2 * time.Second):
-				}
 			},
 			invoke: func(h *Handler, c *gin.Context) { h.ChatCompletions(c) },
 		},
@@ -946,32 +912,18 @@ func TestAcceptanceScenario16_RecoveryBlockedCallsExactlyOne(t *testing.T) {
 			setup: func(h *Handler, store *auth.Store, upstreamURL string) {
 				// 添加第二个候选账号供轮换
 				store.AddAccount(&auth.Account{
-					DBID:         202,
-					UpstreamType: auth.UpstreamOpenAIResponses,
-					Status:       auth.StatusReady,
-					BaseURL:      upstreamURL,
-					APIKey:       "sk-recovery-rotate-2",
-					Models:       []string{"gpt-5.5"},
+					DBID:        202,
+					Status:      auth.StatusReady,
+					AccessToken: "at-recovery-rotate-2",
+					PlanType:    "plus",
+					AccountID:   "acct-lifecycle-202",
+					Models:      []string{"gpt-5.5"},
 				})
 			},
 			trigger: func(h *Handler, upstreamURL string) *httptest.ResponseRecorder {
 				rec := httptest.NewRecorder()
 				c, _ := gin.CreateTestContext(rec)
 				c.Request = httptest.NewRequest(http.MethodPost, "/v1/responses", strings.NewReader(`{"model":"gpt-5.5","stream":true,"input":"hi"}`))
-				c.Request.Header.Set("Content-Type", "application/json")
-				h.Responses(c)
-				return rec
-			},
-		},
-		{
-			name:     "ContextRepair",
-			policy:   database.ContinuousRetryPolicy{Enabled: false},
-			maxRetry: 2,
-			trigger: func(h *Handler, upstreamURL string) *httptest.ResponseRecorder {
-				rec := httptest.NewRecorder()
-				c, _ := gin.CreateTestContext(rec)
-				// 携带 previous_response_id 模拟上下文修复链路
-				c.Request = httptest.NewRequest(http.MethodPost, "/v1/responses", strings.NewReader(`{"model":"gpt-5.5","stream":true,"previous_response_id":"resp_prev_123","input":"continue"}`))
 				c.Request.Header.Set("Content-Type", "application/json")
 				h.Responses(c)
 				return rec
@@ -1362,7 +1314,8 @@ func TestAcceptanceScenario20_ConcurrentRequestsAndLeaseIsolation(t *testing.T) 
 
 	// Mock Upstream 针对不同请求参数返回正常与异常数据
 	upstream := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		body, _ := io.ReadAll(r.Body)
+		// Codex bodies are zstd-compressed, so decode before matching.
+		body := readUpstreamRequestBody(r)
 		w.Header().Set("Content-Type", "text/event-stream")
 		flusher := w.(http.Flusher)
 		if strings.Contains(string(body), "runaway") {

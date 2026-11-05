@@ -432,33 +432,19 @@ func TestCompactMappingTargetSuffixIsStripped(t *testing.T) {
 	}
 }
 
-// 恒等 suffixed→suffixed 规则不得把仅列出带后缀名字的账号从 compact 池中
-// 踢除（PR #350 之前该规则是死配置，账号按基础名参与过滤）。
-func TestCompactAccountFilterParityWithStaleSuffixRule(t *testing.T) {
-	rejected := &auth.Account{
-		DBID:         3,
-		UpstreamType: auth.UpstreamOpenAIResponses,
-		BaseURL:      "http://example.invalid",
-		APIKey:       "sk-x",
-		Models:       []string{"gpt-5.6-sol-openai-compact"},
-		ModelMapping: `{"gpt-5.6-sol-openai-compact":"gpt-5.6-sol-openai-compact"}`,
-		PlanType:     "api",
-	}
-	accepted := &auth.Account{
-		DBID:         4,
-		UpstreamType: auth.UpstreamOpenAIResponses,
-		BaseURL:      "http://example.invalid",
-		APIKey:       "sk-x",
-		Models:       []string{"gpt-5.6-sol", "gpt-5.6-sol-openai-compact"},
-		ModelMapping: `{"gpt-5.6-sol-openai-compact":"gpt-5.6-sol-openai-compact"}`,
-		PlanType:     "api",
-	}
+// The relay version covered per-account Models lists and stale suffix mapping rules. Codex accounts
+// carry no account-level mapping, so this keeps the Codex side: a Codex account passes the compact
+// filter only when Codex accounts are allowed, and a nil account never passes.
+func TestCompactAccountFilterAcceptsCodexAccountOnlyWhenAllowed(t *testing.T) {
+	codex := &auth.Account{DBID: 3, AccessToken: "at-codex", PlanType: "plus"}
 
-	filter := accountFilterForCompactResponsesModelWithOriginal("gpt-5.6-sol", "gpt-5.6-sol", false)
-	if filter(rejected) {
-		t.Error("account without the base model should stay rejected (pre-#350 parity)")
+	if !accountFilterForCompactResponsesModelWithOriginal("gpt-5.5", "gpt-5.5", true)(codex) {
+		t.Error("codex account should pass the compact filter when codex accounts are allowed")
 	}
-	if !filter(accepted) {
-		t.Error("account listing the base model should be accepted")
+	if accountFilterForCompactResponsesModelWithOriginal("gpt-5.5", "gpt-5.5", false)(codex) {
+		t.Error("codex account must be rejected when codex accounts are not allowed")
+	}
+	if accountFilterForCompactResponsesModelWithOriginal("gpt-5.5", "gpt-5.5", true)(nil) {
+		t.Error("nil account must be rejected")
 	}
 }

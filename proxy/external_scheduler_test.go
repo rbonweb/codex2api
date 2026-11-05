@@ -258,7 +258,6 @@ func externalSchedulerIngressRouter(row *database.APIKeyRow) *gin.Engine {
 	}
 	router.POST("/v1/responses", echo)
 	router.GET("/v1/responses", echo)
-	router.POST("/v1/messages", echo)
 	router.POST("/v1/images/generations", echo)
 	router.GET("/v1/models", echo)
 	router.POST("/backend-api/codex/responses/*subpath", echo)
@@ -319,16 +318,19 @@ func TestExternalSchedulerIngress(t *testing.T) {
 	}
 }
 
-func TestExternalSchedulerIngressUsesAnthropicErrorsOnMessages(t *testing.T) {
+func TestExternalSchedulerIngressUsesOpenAIErrorsOnResponses(t *testing.T) {
 	gin.SetMode(gin.TestMode)
 	external := &database.APIKeyRow{ID: 7, Enabled: true, Limits: database.APIKeyLimits{ExternalScheduler: true}}
 	recorder := httptest.NewRecorder()
-	externalSchedulerIngressRouter(external).ServeHTTP(recorder, httptest.NewRequest(http.MethodPost, "/v1/messages", strings.NewReader(`{}`)))
+	externalSchedulerIngressRouter(external).ServeHTTP(recorder, httptest.NewRequest(http.MethodPost, "/v1/responses", strings.NewReader(`{}`)))
 
 	body := recorder.Body.String()
-	if recorder.Code != http.StatusBadRequest || gjson.Get(body, "type").String() != "error" ||
+	if recorder.Code != http.StatusBadRequest || gjson.Get(body, "type").Exists() ||
 		gjson.Get(body, "error.type").String() != "invalid_request_error" || gjson.Get(body, "error.code").String() != "pinned_account_required" {
-		t.Fatalf("status = %d body = %s, want an Anthropic invalid_request_error", recorder.Code, body)
+		t.Fatalf("status = %d body = %s, want an OpenAI-format invalid_request_error", recorder.Code, body)
+	}
+	if got := recorder.Header().Get(pinnedAccountErrorHeader); got != "pinned_account_required" {
+		t.Fatalf("%s = %q, want pinned_account_required", pinnedAccountErrorHeader, got)
 	}
 }
 
