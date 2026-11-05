@@ -2,76 +2,18 @@
   <img src="assets/banner.svg" alt="Codex2API" width="100%">
 </p>
 
-<p align="center">
-  <b>English</b> | <a href="README.zh-CN.md">中文</a>
-</p>
+**A ChatGPT/Codex-only, OpenAI-compatible gateway.** Codex2API pools ChatGPT/Codex accounts (Codex OAuth and Agent-Identity accounts) behind one Base URL and serves `/v1/responses`, `/v1/chat/completions`, `/v1/images/*`, `/v1/models`, and the realtime and live endpoints, with health scoring, dynamic concurrency, rate-limit recovery, usage tracking, and an admin dashboard behind the scenes.
 
-<p align="center">
-  <img src="https://img.shields.io/badge/Go-1.26-00ADD8?style=for-the-badge&logo=go&logoColor=white" alt="Go">
-  <img src="https://img.shields.io/badge/Gin-1.12-00ACD7?style=for-the-badge" alt="Gin">
-  <img src="https://img.shields.io/badge/React-19-61DAFB?style=for-the-badge&logo=react&logoColor=111827" alt="React">
-  <img src="https://img.shields.io/badge/Vite-8-646CFF?style=for-the-badge&logo=vite&logoColor=white" alt="Vite">
-  <img src="https://img.shields.io/badge/DB-PostgreSQL%20%7C%20SQLite-4169E1?style=for-the-badge&logo=postgresql&logoColor=white" alt="Database">
-  <img src="https://img.shields.io/badge/Cache-Redis%20%7C%20Memory-DC382D?style=for-the-badge&logo=redis&logoColor=white" alt="Cache">
-  <img src="https://img.shields.io/badge/API-OpenAI-10A37F?style=for-the-badge" alt="API">
-  <img src="https://img.shields.io/badge/Docker-Ready-2496ED?style=for-the-badge&logo=docker&logoColor=white" alt="Docker">
-</p>
-
-**An OpenAI-compatible gateway for Codex accounts.** Codex2API pools Codex OAuth and Agent Identity accounts behind one Base URL and serves `/v1/responses`, `/v1/chat/completions`, Images, `/v1/models`, `/v1/realtime`, and the native `/backend-api/codex/*` routes, with health scoring, dynamic concurrency, rate-limit recovery, usage tracking, and an admin dashboard behind the scenes.
-
-Run it as a full **PostgreSQL + Redis** production stack or as a single-container **SQLite + in-memory cache** deployment. Point Codex CLI, the OpenAI SDK, or any OpenAI-compatible client at one Base URL, then manage accounts, proxies, API keys, prompt filtering, image workflows, and runtime settings from the built-in dashboard.
+Run it as a single container against an external PostgreSQL such as Neon, as a single container with SQLite and an in-memory cache, or as a full stack with bundled PostgreSQL and Redis. Point Codex CLI, the OpenAI SDK, or any OpenAI-compatible client at one Base URL, then manage accounts, proxies, API keys, prompt filtering, image workflows, and runtime settings from the built-in dashboard.
 
 <table>
 <tr><td width="210"><b>One compatible gateway</b></td><td>OpenAI-style Responses (HTTP and WebSocket) / Chat Completions / Images / Realtime, prefixless compatibility routes, and native Codex forwarding are all exposed through one service.</td></tr>
-<tr><td><b>Account-pool scheduler</b></td><td>Selection is driven by account status, health tier, scheduler score, dynamic concurrency, cooldown recovery, and recent usage so unhealthy accounts are avoided automatically. Supports <code>round_robin</code> and <code>remaining_quota</code> modes, with per-account credit billing flags.</td></tr>
+<tr><td><b>Account-pool scheduler</b></td><td>Selection is driven by account status, health tier, scheduler score, dynamic concurrency, cooldown recovery, and recent usage so unhealthy accounts are avoided automatically. Supports <code>round_robin</code>, <code>remaining_quota</code> and <code>fill_first</code> modes, with per-account credit billing flags.</td></tr>
 <tr><td><b>Visual admin console</b></td><td>The embedded React / Vite dashboard covers account import and testing, API keys, proxy pools, image studio (text-to-image + image-to-image), prompt filtering, usage analytics, operations, scheduler board, and system settings.</td></tr>
-<tr><td><b>Two deployment shapes</b></td><td>Use PostgreSQL + Redis for production or SQLite + Memory for lightweight single-node deployments; Docker images, source builds, local development, and the interactive deploy script are ready to use. SQLite mode binds to <code>127.0.0.1</code> by default for security.</td></tr>
+<tr><td><b>Flexible deployment</b></td><td>Docker Compose with an external PostgreSQL (such as Neon) or SQLite, a full PostgreSQL + Redis stack, Render, or a source build. Images are published to <code>ghcr.io/rbonweb/codex2api</code> on every push to <code>main</code>.</td></tr>
 <tr><td><b>Billing and observability</b></td><td>Per-account 5h/7d windowed USD cost tracking, credit quota support, API key usage tracking, OAuth PKCE token acquisition, prompt filtering, and a usage dashboard with request logs and trend charts.</td></tr>
 <tr><td><b>Quality check</b></td><td>Compare selected accounts, models, and reasoning effort with an editable pelican-on-a-bicycle HTML/SVG animation challenge. Run up to three background tests across accounts, keep persistent test history, and review isolated animation previews, source, timing/token metrics, and HTML downloads.</td></tr>
 </table>
-
----
-
-## Sponsors
-
-<p align="center">
-  <a href="https://proxylane.dev/?r=r4zpan9djwesjumv0vamthoz&amp;utm_source=codex2api&amp;utm_medium=partnership&amp;utm_campaign=codex2api_sponsor_202610&amp;utm_content=github_readme"><img src="assets/proxylane-banner.png" alt="ProxyLane 住宅代理：首单七折 CODEX2API30" width="100%"></a>
-</p>
-
-<p align="center">
-  <b><a href="https://proxylane.dev/?r=r4zpan9djwesjumv0vamthoz&amp;utm_source=codex2api&amp;utm_medium=partnership&amp;utm_campaign=codex2api_sponsor_202610&amp;utm_content=github_readme">ProxyLane</a></b> 提供住宅代理，支持 HTTP / HTTPS / SOCKS5，提供中文界面及 USDT 付款。<br>
-  免费 3GB 测试流量，限前 50 名，兑换码：<code>CODEX2API3GB</code>。<br>
-  首次购买使用优惠码 <code>CODEX2API30</code> 享七折优惠。
-</p>
-
-<p align="center">
-  <a href="https://www.rapidproxy.io/?ref=codex2api"><img src="assets/rapidproxy-banner.png" alt="RapidProxy 代理 IP：动态住宅 $0.55/GB 起，静态住宅 $5/IP/月" width="100%"></a>
-</p>
-
-<p align="center">
-  <b><a href="https://www.rapidproxy.io/?ref=codex2api">RapidProxy</a></b> 为开发者和企业提供高性能代理 IP 服务，覆盖全球 200+ 国家和地区的 9000 万+ 住宅 IP，支持智能轮换、精准地理定位、流量永不过期及高并发连接。<br>
-  广泛适用于网页采集、AI 数据获取、SEO 监控和电商分析，支持 HTTP / HTTPS / SOCKS5 协议。<br>
-  支持免费试用，九折优惠码：<code>RAPID10</code>
-</p>
-
-<p align="center">
-  <a href="https://www.ipwo.net/?ref=githubcodex2api"><img src="assets/ipwo-banner.webp" alt="IPWO 住宅代理" width="100%"></a>
-</p>
-
-<p align="center">
-  <b><a href="https://www.ipwo.net/?ref=githubcodex2api">IPWO</a></b> 提供覆盖 195+ 地区的住宅代理 IP 资源，支持动态、静态及不限量住宅代理方案。<br>
-  可用于区域化访问测试、网页数据采集和跨境业务等场景，支持 HTTP / HTTPS / SOCKS5 协议。<br>
-  支持免费测试，九折优惠码：<code>0203</code>
-</p>
-
----
-
-## Live Demo
-
-- Demo URL: [https://codex2api-latest-vu8j.onrender.com](https://codex2api-latest-vu8j.onrender.com)
-- Demo password: `codex2api`
-
-> The demo is only for trying the admin dashboard and basic UI flows. Do not upload real Refresh Tokens, Access Tokens, API keys, or any other sensitive data.
 
 ---
 
@@ -79,7 +21,7 @@ Run it as a full **PostgreSQL + Redis** production stack or as a single-containe
 
 > Screenshots use demo data. The actual dashboard depends on your account pool, request logs, and runtime environment.
 
-![CodexProxy Dashboard](docs/screenshots/dashboard.png)
+![Codex2API dashboard](docs/screenshots/dashboard.png)
 
 <details>
 <summary>More admin dashboard screenshots</summary>
@@ -101,15 +43,13 @@ Run it as a full **PostgreSQL + Redis** production stack or as a single-containe
 | ![Usage Guide](docs/screenshots/guide.png) | ![API Reference](docs/screenshots/api-reference.png) |
 
 </details>
-
 ---
 
 ## Contents
 
-- [Sponsors](#sponsors)
-- [Live Demo](#live-demo)
 - [Screenshots](#screenshots)
 - [Quick Start](#quick-start)
+- [Releases and Images](#releases-and-images)
 - [Documentation](#documentation)
 - [Upgrade and Local Development](#upgrade-and-local-development)
 - [Configuration](#configuration)
@@ -119,10 +59,7 @@ Run it as a full **PostgreSQL + Redis** production stack or as a single-containe
 - [Core Capabilities](#core-capabilities)
 - [Project Structure](#project-structure)
 - [Notes](#notes)
-- [Community](#community)
 - [Disclaimer and License](#disclaimer-and-license)
-- [Star History](#star-history)
-- [Links](#links)
 
 ---
 
@@ -134,48 +71,34 @@ Run it as a full **PostgreSQL + Redis** production stack or as a single-containe
 
 | Mode | File | Use Case |
 | --- | --- | --- |
-| Docker image deployment | `docker-compose.yml` | Recommended for servers and test environments using the prebuilt image |
-| Local source container build | `docker-compose.local.yml` | Full container verification after local source changes |
-| SQLite lightweight deployment | `docker-compose.sqlite.yml` | Single-node deployment without PostgreSQL or Redis |
-| SQLite local source build | `docker-compose.sqlite.local.yml` | Local source verification for the lightweight SQLite mode |
+| Gateway only | `docker-compose.yml` | Single container. Use an external PostgreSQL such as Neon via `DATABASE_URL`, or SQLite stored at `/data` |
+| Full stack | `docker-compose.full.yml` | Gateway plus bundled PostgreSQL and Redis on one host |
+| Render | Existing Image service | Runs `ghcr.io/rbonweb/codex2api:latest` and redeploys after every release |
 | Local development | `go run .` + `npm run dev` | Backend and frontend development |
 
 ### Commands
 
-Standard image mode:
+Gateway only, with an external PostgreSQL such as Neon:
 
 ```bash
-git clone https://github.com/james-6-23/codex2api.git
+git clone https://github.com/rbonweb/codex2api.git
 cd codex2api
 cp .env.example .env
+# edit .env: set DATABASE_URL, ADMIN_SECRET and the other values you need
 docker compose pull
 docker compose up -d
 docker compose logs -f codex2api
 ```
 
-Standard local build mode:
+Gateway only, with SQLite (no external database): in `.env`, set `DATABASE_DRIVER=sqlite`, `DATABASE_PATH=/data/codex2api.db` and `CACHE_DRIVER=memory` (copy `.env.sqlite.example` for these values), then run the same `docker compose` commands. The database lives in the `/data` volume.
+
+Full stack with bundled PostgreSQL and Redis:
 
 ```bash
 cp .env.example .env
-docker compose -f docker-compose.local.yml up -d --build
-docker compose -f docker-compose.local.yml logs -f codex2api
-```
-
-SQLite image mode:
-
-```bash
-cp .env.sqlite.example .env
-docker compose -f docker-compose.sqlite.yml pull
-docker compose -f docker-compose.sqlite.yml up -d
-docker compose -f docker-compose.sqlite.yml logs -f codex2api
-```
-
-SQLite local build mode:
-
-```bash
-cp .env.sqlite.example .env
-docker compose -f docker-compose.sqlite.local.yml up -d --build
-docker compose -f docker-compose.sqlite.local.yml logs -f codex2api
+docker compose -f docker-compose.full.yml pull
+docker compose -f docker-compose.full.yml up -d
+docker compose -f docker-compose.full.yml logs -f codex2api
 ```
 
 After startup:
@@ -185,12 +108,27 @@ After startup:
 
 Notes:
 
-- Standard and SQLite modes both read `.env`.
-- Before switching deployment modes, replace `.env` with the matching example file.
-- The SQLite lightweight mode runs a single `codex2api` container and stores data at `/data/codex2api.db`.
-- **SQLite compose files bind to `127.0.0.1` by default for security.** To expose the SQLite service on all interfaces, set `BIND_HOST=0.0.0.0` in `.env` or override the port binding in the compose file. The standard compose files bind to `0.0.0.0` by default.
-- The image studio library is stored under `/data/images`; uploaded admin backgrounds are stored under `/data/backgrounds`; Docker configurations persist `/data`.
+- Every compose file reads `.env`. Before switching deployment modes, replace `.env` with the matching example file.
+- `docker-compose.yml` runs a single `codex2api` container and persists `/data` in a named volume.
+- The image studio library is stored under `/data/images`; uploaded admin backgrounds are stored under `/data/backgrounds`.
 - `docker compose down` does not delete named volumes by default. Data is removed only by commands such as `docker compose down -v`, `docker volume rm`, or `docker volume prune`.
+
+### Render
+
+Create a Render `Web Service`, choose `Existing Image`, and use `ghcr.io/rbonweb/codex2api:latest`. Set `DATABASE_URL` to your PostgreSQL connection string, plus `ADMIN_SECRET` and `CODEX_PORT=10000`. The image is public, so no registry credentials are needed. Add a Render deploy hook as the repository secret `RENDER_DEPLOY_HOOK_URL` to redeploy automatically after every image build. See [DEPLOYMENT.md](docs/DEPLOYMENT.md) for the full walkthrough.
+
+---
+
+## Releases and Images
+
+Every push to `main` is released automatically:
+
+1. `.github/workflows/fork-release.yml` tags the next patch version `vX.Y.Z`. It takes the higher of the newest `vX.Y.Z` tag and the newest version in `CHANGELOG.md`, then adds one to the patch number. Pushes that only change `docs/` or Markdown files do not release.
+2. `.github/workflows/docker-image.yml` builds the public multi-arch image (`linux/amd64`, `linux/arm64`) and pushes `ghcr.io/rbonweb/codex2api` with the tags `X.Y.Z`, `X.Y` and `latest`.
+3. `.github/workflows/release.yml` publishes a GitHub release with binaries for Linux, macOS and Windows.
+4. The last step of the image build triggers the Render deploy hook, when `RENDER_DEPLOY_HOOK_URL` is configured. `.github/workflows/render-deploy.yml` redeploys the current image by hand.
+
+Use `ghcr.io/rbonweb/codex2api:latest` to follow the newest release, or pin a version such as `ghcr.io/rbonweb/codex2api:X.Y.Z`.
 
 ---
 
@@ -198,10 +136,8 @@ Notes:
 
 | Document | Description | Path |
 | --- | --- | --- |
-| [Chinese README](README.zh-CN.md) | Main Chinese project overview | `README.zh-CN.md` |
-| [Usage Guide](docs/USAGE.md) | Client setup, SDK examples, media workflows, and troubleshooting | `docs/USAGE.md` |
+| [Documentation index](docs/README.md) | Overview of all project documents | `docs/README.md` |
 | [API Documentation](docs/API.md) | API endpoints, request and response examples, error codes | `docs/API.md` |
-| [Codex Multi-Agent v2 Compatibility](docs/CODEX_MULTI_AGENT_V2_COMPAT.md) | Opt-in plaintext compatibility for third-party subagents, risks, rollout, rollback | `docs/CODEX_MULTI_AGENT_V2_COMPAT.md` |
 | [Deployment Guide](docs/DEPLOYMENT.md) | Deployment modes, upgrade guide, backup and restore | `docs/DEPLOYMENT.md` |
 | [Configuration Guide](docs/CONFIGURATION.md) | Environment variables, system settings, configuration priority | `docs/CONFIGURATION.md` |
 | [Architecture](docs/ARCHITECTURE.md) | System architecture, scheduling algorithm, storage design | `docs/ARCHITECTURE.md` |
@@ -212,13 +148,13 @@ Notes:
 
 ## Upgrade and Local Development
 
-Upgrade the standard image deployment:
+Upgrade a gateway-only deployment:
 
 ```bash
-git pull && docker compose pull && docker compose up -d && docker compose logs -f codex2api
+docker compose pull && docker compose up -d && docker compose logs -f codex2api
 ```
 
-Back up the database before upgrading:
+For the full stack, add `-f docker-compose.full.yml` to each command. Back up the bundled database before upgrading:
 
 ```bash
 docker exec codex2api-postgres pg_dump -U codex2api codex2api > backup_$(date +%Y%m%d_%H%M%S).sql
@@ -251,7 +187,6 @@ cd frontend && npm ci && npm run dev
 ```
 
 Vite proxies `/api` and `/health` to the backend. During development, open `http://localhost:5173/admin/`.
-
 ---
 
 ## Configuration
@@ -281,11 +216,11 @@ Vite proxies `/api` and `/health` to the backend. During development, open `http
 | `REDIS_DB` | Redis database number |
 | `REDIS_TLS` | Enable TLS for `host:port` Redis addresses |
 | `REDIS_INSECURE_SKIP_VERIFY` | Skip Redis TLS certificate verification, default `false` |
-| `TZ` | Timezone, for example `Asia/Shanghai` |
+| `TZ` | Timezone, for example `UTC` |
 
 Cloud Redis providers such as Aiven and Upstash often require TLS. Prefer a `rediss://...` URL when your provider gives one.
 
-The standard `.env.example` declares `DATABASE_DRIVER=postgres` and `CACHE_DRIVER=redis`. For the lightweight SQLite mode, use `.env.sqlite.example`.
+The standard `.env.example` declares `DATABASE_DRIVER=postgres` and `CACHE_DRIVER=redis`. For the lightweight SQLite mode, use `.env.sqlite.example`, which sets `DATABASE_DRIVER=sqlite`, `DATABASE_PATH=/data/codex2api.db` and `CACHE_DRIVER=memory`.
 
 ### Runtime Settings
 
@@ -319,7 +254,6 @@ Each successful budget change receives a read-only generation and is polled by e
   - Otherwise, the database `AdminSecret` value is used.
   - If neither is set, `/admin` opens the first-run setup page. It requires the one-time bootstrap token printed in the service log (`docker compose logs codex2api | grep "bootstrap token"`); the token is per-process, regenerated on restart, and revoked once setup succeeds.
   - After login, the frontend sends `X-Admin-Key` when calling `/api/admin/*`.
-
 ---
 
 ## Public API
@@ -423,7 +357,6 @@ curl -X POST http://localhost:8080/api/admin/oauth/exchange-code \
 ```
 
 See [API.md](docs/API.md) for the full OAuth flow and all admin endpoints.
-
 ---
 
 ## Admin Dashboard
@@ -445,7 +378,6 @@ Open `/admin/` in a browser.
 | Settings | `/admin/settings` | Runtime parameters, response-context cache budgets, and admin secret settings |
 | Usage Guide | `/admin/docs` | Codex CLI and OpenAI SDK integration examples |
 | API Reference | `/admin/api-reference` | OpenAI-style endpoints and admin API reference |
-
 ---
 
 ## Core Capabilities
@@ -540,7 +472,6 @@ When an account has a credit-based billing model instead of a usage-based Free/P
 | `credit_skip_usage_window` | bool | When true, skip 7d/5h usage-window penalties for this account |
 
 **Windowed USD cost**: The accounts table displays per-account billed cost over two windows -- the past 5 hours and the past 7 days -- aligned with each account's usage reset boundaries. This shows actual spending per account rather than estimated token costs.
-
 ---
 
 ## Project Structure
@@ -549,8 +480,8 @@ When an account has a credit-based billing model instead of a usage-based Free/P
 codex2api/
 |- main.go                      # Application entrypoint
 |- Dockerfile                   # Multi-stage image build
-|- docker-compose.yml           # Image deployment template
-|- docker-compose.local.yml     # Local source build template
+|- docker-compose.yml           # Gateway only (external PostgreSQL or SQLite)
+|- docker-compose.full.yml      # Gateway + PostgreSQL + Redis
 |- .env.example                 # Environment variable example
 |- admin/                       # Admin API
 |- auth/                        # Account pool, scheduler, token management
@@ -561,7 +492,7 @@ codex2api/
 `- frontend/                    # React + Vite admin dashboard
    |- src/pages/                # Dashboard / Accounts / API Keys / Proxies / Images / Prompt Filter / Ops / Usage / Settings / Docs
    |- src/components/           # UI components
-   |- src/locales/              # zh/en locales
+   |- src/locales/              # UI translations
    `- vite.config.js            # Vite config
 ```
 
@@ -569,7 +500,7 @@ codex2api/
 
 ## Notes
 
-- `docker-compose.yml` pulls the GHCR image for deployment. `docker-compose.local.yml` uses `build: .` for local source builds.
+- `docker-compose.yml` and `docker-compose.full.yml` pull the public GHCR image `ghcr.io/rbonweb/codex2api`.
 - The frontend base path is fixed at `/admin/` for both local development and production.
 - Before manually building the Go binary, run `npm run build` in `frontend/`.
 - For manual builds, pass the same version through `VITE_APP_VERSION` and Go's `-ldflags '-X github.com/codex2api/internal/version.Version=...'`, building the frontend first. For release builds, the dashboard uses the running backend version and shows the frontend build version with a rebuild hint when they differ. This hint does not replace embedded frontend assets; rebuild the frontend and then compile Go to update them.
@@ -578,35 +509,10 @@ codex2api/
 
 ---
 
-## Community
-
-- QQ group: [Join the "codex2api" group chat](https://qun.qq.com/universal-share/share?ac=1&authKey=6vwawW4MeqdACT7PajnHlf2lLkjfuNXEMSos67l9FBiAJ8t%2BKeaXJXB0dgsnhFa1&busi_data=eyJncm91cENvZGUiOiI4MTY3Mzk4NDIiLCJ0b2tlbiI6ImU1YW1KR3dNaXZoUXZDUWpYTWVncmdmMXhQV1RwQ21tbEhkdjB5VW45aWVPSjhFM2grMkRHNGdhWnhEU29oS08iLCJ1aW4iOiIxMTYzNDc2OTQ5In0%3D&data=adSomD6r40Al25rBr8PocFCKumQR5oxi1kq5jXjXxeJ49Z5cj4QLzbNf6vfIQKWMORrJntrZtcoyQuHg2ksUeA&svctype=4&tempid=h5_group_info) (group ID: 816739842)
-- Telegram group: [Join the Telegram group](https://t.me/+9hJAA3ZWQxxmMzE5)
-
-Join the group to discuss deployment, usage, and development questions.
-
----
-
 ## Disclaimer and License
 
 - This project is for learning, research, and technical discussion only.
-- This project is released under the `MIT License`.
 - The project provides no warranty for direct or indirect consequences. Production use is at your own risk.
+- Released under the MIT License. See [LICENSE](LICENSE).
 
----
-
-## Star History
-
-<a href="https://star-history.dera.page/#james-6-23/codex2api&Date">
-  <picture>
-    <source media="(prefers-color-scheme: dark)" srcset="https://star-history.dera.page/svg?repos=james-6-23/codex2api&type=Date&theme=dark" />
-    <source media="(prefers-color-scheme: light)" srcset="https://star-history.dera.page/svg?repos=james-6-23/codex2api&type=Date" />
-    <img alt="Star History Chart" src="https://star-history.dera.page/svg?repos=james-6-23/codex2api&type=Date" />
-  </picture>
-</a>
-
----
-
-## Links
-
-- [LINUX DO](https://linux.do/)
+Based on james-6-23/codex2api (MIT License).
