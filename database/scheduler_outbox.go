@@ -214,10 +214,6 @@ func (db *DB) installSQLiteSchedulerOutboxTriggers(ctx context.Context) error {
 		  OR COALESCE(json_extract(OLD.credentials,'$.agent_runtime_id'),'') IS NOT COALESCE(json_extract(NEW.credentials,'$.agent_runtime_id'),'')
 		  OR COALESCE(json_extract(OLD.credentials,'$.agent_private_key'),'') IS NOT COALESCE(json_extract(NEW.credentials,'$.agent_private_key'),'')
 		  OR COALESCE(json_extract(OLD.credentials,'$.task_id'),'') IS NOT COALESCE(json_extract(NEW.credentials,'$.task_id'),'')
-		  OR COALESCE(json_extract(OLD.credentials,'$.grok_principal_id'),'') IS NOT COALESCE(json_extract(NEW.credentials,'$.grok_principal_id'),'')
-		  OR COALESCE(json_extract(OLD.credentials,'$.grok_oidc_issuer'),'') IS NOT COALESCE(json_extract(NEW.credentials,'$.grok_oidc_issuer'),'')
-		  OR COALESCE(json_extract(OLD.credentials,'$.antigravity_quota'),'') IS NOT COALESCE(json_extract(NEW.credentials,'$.antigravity_quota'),'')
-		  OR COALESCE(json_extract(OLD.credentials,'$.antigravity_quota_epoch'),'') IS NOT COALESCE(json_extract(NEW.credentials,'$.antigravity_quota_epoch'),'')
 		  OR OLD.credential_generation IS NOT NEW.credential_generation
 		BEGIN
 			INSERT INTO scheduler_outbox(entity_type,entity_id,event_type) VALUES('account',NEW.id,'updated');
@@ -277,38 +273,6 @@ func (db *DB) installSQLiteSchedulerOutboxTriggers(ctx context.Context) error {
 		CREATE TRIGGER scheduler_outbox_settings_update AFTER UPDATE ON system_settings BEGIN
 			INSERT INTO scheduler_outbox(entity_type,entity_id,event_type) VALUES('settings',NEW.id,'updated');
 		END;
-
-		CREATE TRIGGER grok_maintenance_accounts_insert AFTER INSERT ON accounts
-		WHEN LOWER(COALESCE(json_extract(NEW.credentials,'$.upstream_type'),''))='grok'
-		 AND NEW.status<>'deleted' AND COALESCE(NEW.error_message,'')<>'deleted' AND COALESCE(NEW.enabled,1)<>0
-		BEGIN
-			INSERT INTO maintenance_jobs(entity_id,job_kind,due_at) VALUES(NEW.id,'grok_freshness',CURRENT_TIMESTAMP)
-			ON CONFLICT(entity_id,job_kind) DO UPDATE SET due_at=CURRENT_TIMESTAMP,updated_at=CURRENT_TIMESTAMP;
-		END;
-		CREATE TRIGGER grok_maintenance_accounts_update AFTER UPDATE OF credentials,credential_generation,status,error_message,enabled,deleted_at ON accounts
-		WHEN OLD.credential_generation IS NOT NEW.credential_generation
-		  OR COALESCE(json_extract(OLD.credentials,'$.upstream_type'),'') IS NOT COALESCE(json_extract(NEW.credentials,'$.upstream_type'),'')
-		  OR COALESCE(json_extract(OLD.credentials,'$.base_url'),'') IS NOT COALESCE(json_extract(NEW.credentials,'$.base_url'),'')
-		  OR COALESCE(json_extract(OLD.credentials,'$.api_key'),'') IS NOT COALESCE(json_extract(NEW.credentials,'$.api_key'),'')
-		  OR COALESCE(json_extract(OLD.credentials,'$.refresh_token'),'') IS NOT COALESCE(json_extract(NEW.credentials,'$.refresh_token'),'')
-		  OR COALESCE(json_extract(OLD.credentials,'$.access_token'),'') IS NOT COALESCE(json_extract(NEW.credentials,'$.access_token'),'')
-		  OR COALESCE(json_extract(OLD.credentials,'$.models'),'') IS NOT COALESCE(json_extract(NEW.credentials,'$.models'),'')
-		  OR COALESCE(json_extract(OLD.credentials,'$.model_mapping'),'') IS NOT COALESCE(json_extract(NEW.credentials,'$.model_mapping'),'')
-		  OR OLD.status IS NOT NEW.status OR OLD.error_message IS NOT NEW.error_message
-		  OR OLD.enabled IS NOT NEW.enabled OR OLD.deleted_at IS NOT NEW.deleted_at
-		BEGIN
-			DELETE FROM maintenance_jobs WHERE entity_id=NEW.id AND job_kind='grok_freshness'
-			 AND (LOWER(COALESCE(json_extract(NEW.credentials,'$.upstream_type'),''))<>'grok'
-			      OR NEW.status='deleted' OR COALESCE(NEW.error_message,'')='deleted' OR COALESCE(NEW.enabled,1)=0);
-			INSERT INTO maintenance_jobs(entity_id,job_kind,due_at)
-			SELECT NEW.id,'grok_freshness',CURRENT_TIMESTAMP
-			WHERE LOWER(COALESCE(json_extract(NEW.credentials,'$.upstream_type'),''))='grok'
-			  AND NEW.status<>'deleted' AND COALESCE(NEW.error_message,'')<>'deleted' AND COALESCE(NEW.enabled,1)<>0
-			ON CONFLICT(entity_id,job_kind) DO UPDATE SET due_at=CURRENT_TIMESTAMP,updated_at=CURRENT_TIMESTAMP;
-		END;
-		CREATE TRIGGER grok_maintenance_accounts_delete AFTER DELETE ON accounts BEGIN
-			DELETE FROM maintenance_jobs WHERE entity_id=OLD.id AND job_kind='grok_freshness';
-		END;
 	`
 	_, err := db.conn.ExecContext(ctx, query)
 	return err
@@ -362,10 +326,6 @@ func (db *DB) installPostgresSchedulerOutboxTriggers(ctx context.Context) error 
 			COALESCE(OLD.credentials->>'agent_runtime_id','') IS DISTINCT FROM COALESCE(NEW.credentials->>'agent_runtime_id','') OR
 			COALESCE(OLD.credentials->>'agent_private_key','') IS DISTINCT FROM COALESCE(NEW.credentials->>'agent_private_key','') OR
 			COALESCE(OLD.credentials->>'task_id','') IS DISTINCT FROM COALESCE(NEW.credentials->>'task_id','') OR
-			COALESCE(OLD.credentials->>'grok_principal_id','') IS DISTINCT FROM COALESCE(NEW.credentials->>'grok_principal_id','') OR
-			COALESCE(OLD.credentials->>'grok_oidc_issuer','') IS DISTINCT FROM COALESCE(NEW.credentials->>'grok_oidc_issuer','') OR
-			COALESCE(OLD.credentials->>'antigravity_quota','') IS DISTINCT FROM COALESCE(NEW.credentials->>'antigravity_quota','') OR
-			COALESCE(OLD.credentials->>'antigravity_quota_epoch','') IS DISTINCT FROM COALESCE(NEW.credentials->>'antigravity_quota_epoch','') OR
 			OLD.credential_generation IS DISTINCT FROM NEW.credential_generation
 		) EXECUTE FUNCTION codex2api_scheduler_outbox_row('account','id');
 		CREATE TRIGGER scheduler_outbox_accounts_delete AFTER DELETE ON accounts FOR EACH ROW EXECUTE FUNCTION codex2api_scheduler_outbox_row('account','id');
@@ -408,44 +368,11 @@ func (db *DB) installPostgresSchedulerOutboxTriggers(ctx context.Context) error 
 		DROP TRIGGER IF EXISTS scheduler_outbox_settings_update ON system_settings;
 		CREATE TRIGGER scheduler_outbox_settings_update AFTER UPDATE ON system_settings FOR EACH ROW EXECUTE FUNCTION codex2api_scheduler_outbox_row('settings','id');
 
-		CREATE OR REPLACE FUNCTION codex2api_grok_maintenance_account() RETURNS trigger AS $$
-		DECLARE
-			account_id BIGINT;
-		BEGIN
-			IF TG_OP = 'DELETE' THEN
-				DELETE FROM maintenance_jobs WHERE entity_id=OLD.id AND job_kind='grok_freshness';
-				RETURN OLD;
-			END IF;
-			account_id := NEW.id;
-			IF lower(COALESCE(NEW.credentials->>'upstream_type',''))='grok'
-			   AND NEW.status<>'deleted' AND COALESCE(NEW.error_message,'')<>'deleted' AND COALESCE(NEW.enabled,true) THEN
-				INSERT INTO maintenance_jobs(entity_id,job_kind,due_at,updated_at)
-				VALUES(account_id,'grok_freshness',NOW(),NOW())
-				ON CONFLICT(entity_id,job_kind) DO UPDATE SET due_at=NOW(),updated_at=NOW();
-			ELSE
-				DELETE FROM maintenance_jobs WHERE entity_id=account_id AND job_kind='grok_freshness';
-			END IF;
-			RETURN NEW;
-		END;
-		$$ LANGUAGE plpgsql;
+		-- The Grok maintenance trigger and function belong to a removed provider; drop them on existing databases.
 		DROP TRIGGER IF EXISTS grok_maintenance_accounts_insert ON accounts;
 		DROP TRIGGER IF EXISTS grok_maintenance_accounts_update ON accounts;
 		DROP TRIGGER IF EXISTS grok_maintenance_accounts_delete ON accounts;
-		CREATE TRIGGER grok_maintenance_accounts_insert AFTER INSERT ON accounts FOR EACH ROW EXECUTE FUNCTION codex2api_grok_maintenance_account();
-		CREATE TRIGGER grok_maintenance_accounts_update AFTER UPDATE OF credentials,credential_generation,status,error_message,enabled,deleted_at ON accounts
-		FOR EACH ROW WHEN (
-			OLD.credential_generation IS DISTINCT FROM NEW.credential_generation OR
-			COALESCE(OLD.credentials->>'upstream_type','') IS DISTINCT FROM COALESCE(NEW.credentials->>'upstream_type','') OR
-			COALESCE(OLD.credentials->>'base_url','') IS DISTINCT FROM COALESCE(NEW.credentials->>'base_url','') OR
-			COALESCE(OLD.credentials->>'api_key','') IS DISTINCT FROM COALESCE(NEW.credentials->>'api_key','') OR
-			COALESCE(OLD.credentials->>'refresh_token','') IS DISTINCT FROM COALESCE(NEW.credentials->>'refresh_token','') OR
-			COALESCE(OLD.credentials->>'access_token','') IS DISTINCT FROM COALESCE(NEW.credentials->>'access_token','') OR
-			COALESCE(OLD.credentials->'models','null'::jsonb) IS DISTINCT FROM COALESCE(NEW.credentials->'models','null'::jsonb) OR
-			COALESCE(OLD.credentials->>'model_mapping','') IS DISTINCT FROM COALESCE(NEW.credentials->>'model_mapping','') OR
-			OLD.status IS DISTINCT FROM NEW.status OR OLD.error_message IS DISTINCT FROM NEW.error_message OR
-			OLD.enabled IS DISTINCT FROM NEW.enabled OR OLD.deleted_at IS DISTINCT FROM NEW.deleted_at
-		) EXECUTE FUNCTION codex2api_grok_maintenance_account();
-		CREATE TRIGGER grok_maintenance_accounts_delete AFTER DELETE ON accounts FOR EACH ROW EXECUTE FUNCTION codex2api_grok_maintenance_account();
+		DROP FUNCTION IF EXISTS codex2api_grok_maintenance_account();
 	`
 	_, err := db.conn.ExecContext(ctx, query)
 	return err

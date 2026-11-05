@@ -560,6 +560,7 @@ func (db *DB) migrateSQLite(ctx context.Context) error {
 		{"accounts", "note", "TEXT DEFAULT ''"},
 		{"accounts", "deleted_at", "TIMESTAMP NULL"},
 		{"accounts", "credential_generation", "INTEGER NOT NULL DEFAULT 1"},
+		{"accounts", "credential_family_id", "TEXT NOT NULL DEFAULT ''"},
 		{"usage_logs", "channel", "TEXT DEFAULT ''"},
 		{"usage_logs", "input_tokens", "INTEGER DEFAULT 0"},
 		{"usage_logs", "output_tokens", "INTEGER DEFAULT 0"},
