@@ -98,8 +98,6 @@ func TestSchedulerQueueOverloadCommittedSSE(t *testing.T) {
 	}{
 		{continuousRetryProtocolResponses, `"type":"response.failed"`},
 		{continuousRetryProtocolChat, `"error"`},
-		{continuousRetryProtocolAnthropic, "event: error"},
-		{continuousRetryProtocolGemini, `"status":"UNAVAILABLE"`},
 	} {
 		r := httptest.NewRecorder()
 		c, _ := gin.CreateTestContext(r)
@@ -127,29 +125,6 @@ func TestSchedulerQueueOverloadCommittedSSE(t *testing.T) {
 	}
 }
 
-func TestSchedulerQueueOverloadGeminiJSON(t *testing.T) {
-	gin.SetMode(gin.TestMode)
-	r := httptest.NewRecorder()
-	c, _ := gin.CreateTestContext(r)
-	c.Request = httptest.NewRequest(http.MethodPost, "/v1beta/models/gemini:generateContent", nil)
-	if !writeSchedulerQueueError(c, auth.ErrSchedulerQueueFull, continuousRetryProtocolGemini) {
-		t.Fatal("overload not handled")
-	}
-	var payload struct {
-		Error struct {
-			Code    int    `json:"code"`
-			Message string `json:"message"`
-			Status  string `json:"status"`
-		} `json:"error"`
-	}
-	if err := json.Unmarshal(r.Body.Bytes(), &payload); err != nil {
-		t.Fatalf("invalid Gemini JSON response: %s", r.Body.String())
-	}
-	if r.Code != http.StatusServiceUnavailable || r.Header().Get("Retry-After") != "1" || payload.Error.Code != http.StatusServiceUnavailable || payload.Error.Status != "UNAVAILABLE" || payload.Error.Message != schedulerQueueFullMessage {
-		t.Fatalf("Gemini overload response = %d, retry-after=%q, %s", r.Code, r.Header().Get("Retry-After"), r.Body.String())
-	}
-}
-
 func TestSelectionTimeoutHTTPProtocols(t *testing.T) {
 	gin.SetMode(gin.TestMode)
 	for _, tc := range []struct {
@@ -158,8 +133,6 @@ func TestSelectionTimeoutHTTPProtocols(t *testing.T) {
 	}{
 		{continuousRetryProtocolResponses, `"type":"response.failed"`},
 		{continuousRetryProtocolChat, `"error"`},
-		{continuousRetryProtocolAnthropic, "event: error"},
-		{continuousRetryProtocolGemini, `"status":"UNAVAILABLE"`},
 	} {
 		for _, committed := range []bool{false, true} {
 			r := httptest.NewRecorder()

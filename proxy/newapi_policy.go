@@ -573,10 +573,6 @@ func (h *Handler) enforceRequiredNewAPIIdentityAtIngress(c *gin.Context) bool {
 		var err error
 		body, err = readRawRequestBody(c)
 		if err != nil {
-			if requestUsesAnthropicErrorEnvelope(c) {
-				sendAnthropicError(c, http.StatusBadRequest, "invalid_request_error", "Failed to read request body")
-				return true
-			}
 			api.SendErrorWithStatus(c, api.NewAPIError(api.ErrCodeInvalidRequest, "Failed to read request body", api.ErrorTypeInvalidRequest), http.StatusBadRequest)
 			return true
 		}
@@ -591,10 +587,6 @@ func (h *Handler) rejectRequiredNewAPIIdentity(c *gin.Context, cfg promptfilter.
 	apiErr := h.requiredNewAPIIdentityError(c, cfg, body)
 	if apiErr == nil {
 		return false
-	}
-	if requestUsesAnthropicErrorEnvelope(c) {
-		sendAnthropicError(c, http.StatusUnauthorized, string(apiErr.Type), apiErr.Message)
-		return true
 	}
 	api.SendErrorWithStatus(c, apiErr, http.StatusUnauthorized)
 	return true
@@ -644,14 +636,6 @@ func (h *Handler) sendNewAPIPolicyDecision(c *gin.Context, cfg promptfilter.Conf
 	}
 	metadata := buildNewAPIPolicyDecisionMetadataWithSecret(policyContext.Identity, decision, verdict, cfg, body, endpoint, model, "", policyContext.VerificationSecret)
 	writeNewAPIPolicyDecisionHeaders(c, metadata)
-	if requestUsesAnthropicErrorEnvelope(c) {
-		message := localPromptBlockMessage(cfg)
-		if metadata.ReasonCode == promptConversationLockedReasonCode {
-			message = promptConversationLockedMessage
-		}
-		sendAnthropicError(c, http.StatusBadRequest, "invalid_request_error", message)
-		return true
-	}
 	api.SendErrorWithStatus(c, newAPILocalPromptPolicyDecisionAPIError(metadata, cfg), http.StatusBadRequest)
 	return true
 }

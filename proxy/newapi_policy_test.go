@@ -968,38 +968,6 @@ func TestBoundPreviousSecretGraceSignsDecisionWithVerifiedSecret(t *testing.T) {
 	}
 }
 
-func TestSignedNewAPIPolicyBlockUsesAnthropicErrorEnvelopeForMessages(t *testing.T) {
-	gin.SetMode(gin.TestMode)
-	body := []byte(`{"model":"claude-sonnet-4","messages":[{"role":"user","content":"hello"}]}`)
-	baseCfg := promptGuardTestConfig()
-	baseCfg.Advanced.Enforcement.LocalBlockMessage = "Blocked by Example Gateway"
-	handler := newPromptFilterBindingTestHandler(t, baseCfg, []database.PromptFilterNewAPIBinding{{
-		APIKeyID: 101, PlatformCode: "gateway-a", Secret: "gateway-a-secret", Enabled: true, RequireSignedIdentity: true,
-		PolicyMode: database.PromptFilterPolicyModeEnforce, PolicyProfile: database.PromptFilterPolicyProfileBalanced,
-	}})
-	c, recorder := signedNewAPIPolicyContextWithSecret(t, "messages-policy-block", newAPIIdentity{UserID: "42", ClientIP: "203.0.113.8"}, "/v1/messages", body, "gateway-a-secret")
-	c.Set(contextAPIKeyID, int64(101))
-	addSignedNewAPIPolicyMetaWithSecret(t, c, newAPIPolicyMeta{
-		PlatformID: "gateway-a", Profile: promptfilter.GuardProfileBalanced, Mode: promptfilter.GuardModeEnforce,
-		Provider: string(promptfilter.ModelFamilyAnthropic), Protocol: string(promptfilter.ProtocolMessages),
-	}, true, "gateway-a-secret")
-	cfg := handler.promptFilterConfigForRequest(c)
-	decision := promptfilter.Decision{Action: promptfilter.ActionBlock, Profile: promptfilter.GuardProfileBalanced, ReasonCode: "prompt_policy_match"}
-	verdict := promptfilter.Verdict{Action: promptfilter.ActionBlock, FullText: "blocked tool output"}
-	if !handler.sendNewAPIPolicyDecision(c, cfg, decision, verdict, body, "/v1/messages", "claude-sonnet-4", body) {
-		t.Fatal("signed NewAPI Messages policy decision was not returned")
-	}
-	if recorder.Code != http.StatusBadRequest || gjson.GetBytes(recorder.Body.Bytes(), "type").String() != "error" || gjson.GetBytes(recorder.Body.Bytes(), "error.type").String() != "invalid_request_error" {
-		t.Fatalf("Messages policy response = %d %s", recorder.Code, recorder.Body.String())
-	}
-	if got := gjson.GetBytes(recorder.Body.Bytes(), "error.message").String(); got != "Blocked by Example Gateway" {
-		t.Fatalf("message = %q, want configured local block message", got)
-	}
-	if recorder.Header().Get("X-Codex2API-Policy-Decision-ID") == "" || recorder.Header().Get("X-Codex2API-Policy-Response-Signature") == "" {
-		t.Fatalf("Messages policy response lost signed decision headers: %v", recorder.Header())
-	}
-}
-
 func TestConfiguredLocalBlockMessageDoesNotReplaceRestrictionMessages(t *testing.T) {
 	cfg := promptfilter.DefaultConfig()
 	cfg.Advanced.Enforcement.LocalBlockMessage = "Blocked by Example Gateway"
@@ -1141,8 +1109,6 @@ func TestAuthMiddlewareEnforcesBoundIdentityAndRestoresV1Body(t *testing.T) {
 		}
 		c.Data(http.StatusOK, "application/json", body)
 	})
-	v1.POST("/messages", func(c *gin.Context) { c.Status(http.StatusNoContent) })
-	v1.POST("/messages/count_tokens", func(c *gin.Context) { c.Status(http.StatusNoContent) })
 
 	missing := httptest.NewRequest(http.MethodGet, "/v1/models", nil)
 	missing.Header.Set("Authorization", "Bearer "+apiKey)
@@ -1152,29 +1118,6 @@ func TestAuthMiddlewareEnforcesBoundIdentityAndRestoresV1Body(t *testing.T) {
 		t.Fatalf("unsigned V1 GET = %d %s", missingRecorder.Code, missingRecorder.Body.String())
 	}
 	assertNoPromptPolicyPenaltyHeaders(t, missingRecorder.Header())
-
-	for _, path := range []string{"/v1/messages", "/v1/messages/count_tokens"} {
-		anthropicBody := []byte(`{"model":"claude-sonnet-4","messages":[{"role":"user","content":"hello"}]}`)
-		unsigned := httptest.NewRequest(http.MethodPost, path, bytes.NewReader(anthropicBody))
-		unsigned.Header.Set("Authorization", "Bearer "+apiKey)
-		unsignedRecorder := httptest.NewRecorder()
-		router.ServeHTTP(unsignedRecorder, unsigned)
-		if unsignedRecorder.Code != http.StatusUnauthorized || gjson.GetBytes(unsignedRecorder.Body.Bytes(), "type").String() != "error" || gjson.GetBytes(unsignedRecorder.Body.Bytes(), "error.type").String() != "authentication_error" || !strings.Contains(gjson.GetBytes(unsignedRecorder.Body.Bytes(), "error.message").String(), "NewAPI") {
-			t.Fatalf("unsigned Anthropic endpoint %s = %d %s", path, unsignedRecorder.Code, unsignedRecorder.Body.String())
-		}
-		assertNoPromptPolicyPenaltyHeaders(t, unsignedRecorder.Header())
-	}
-
-	wrongPlatformBody := []byte(`{"model":"claude-sonnet-4","messages":[{"role":"user","content":"hello"}]}`)
-	wrongPlatform := httptest.NewRequest(http.MethodPost, "/v1/messages", bytes.NewReader(wrongPlatformBody))
-	wrongPlatform.Header.Set("Authorization", "Bearer "+apiKey)
-	setSignedNewAPIRequestHeaders(t, wrongPlatform, wrongPlatformBody, "messages-wrong-platform", newAPIIdentity{UserID: "42", ClientIP: "203.0.113.8"}, "gateway-b", "gateway-a-secret", "")
-	wrongPlatformRecorder := httptest.NewRecorder()
-	router.ServeHTTP(wrongPlatformRecorder, wrongPlatform)
-	if wrongPlatformRecorder.Code != http.StatusUnauthorized || gjson.GetBytes(wrongPlatformRecorder.Body.Bytes(), "type").String() != "error" || gjson.GetBytes(wrongPlatformRecorder.Body.Bytes(), "error.type").String() != "authentication_error" {
-		t.Fatalf("wrong-platform Anthropic response = %d %s", wrongPlatformRecorder.Code, wrongPlatformRecorder.Body.String())
-	}
-	assertNoPromptPolicyPenaltyHeaders(t, wrongPlatformRecorder.Header())
 
 	body := []byte(`{"model":"gpt-5.5","input":"hello"}`)
 	valid := httptest.NewRequest(http.MethodPost, "/v1/responses", bytes.NewReader(body))

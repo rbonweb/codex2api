@@ -97,10 +97,6 @@ func continuousRetryProtocolOf(c *gin.Context) continuousRetryHTTPProtocol {
 	}
 	path := c.Request.URL.Path
 	switch {
-	case strings.HasPrefix(path, "/v1beta/"), strings.HasPrefix(path, "/v1alpha/"):
-		return continuousRetryProtocolGemini
-	case strings.HasSuffix(path, "/messages"), strings.HasSuffix(path, "/count_tokens"):
-		return continuousRetryProtocolAnthropic
 	case strings.HasSuffix(path, "/chat/completions"):
 		return continuousRetryProtocolChat
 	default:
@@ -134,8 +130,6 @@ func writeSchedulerQuotaExhaustedErrorForProtocol(c *gin.Context, retryAfterSeco
 	}
 	message := schedulerQuotaExhaustedMessage(reason)
 	switch protocol {
-	case continuousRetryProtocolAnthropic:
-		sendAnthropicError(c, http.StatusTooManyRequests, "rate_limit_error", message)
 	case continuousRetryProtocolChat:
 		c.JSON(http.StatusTooManyRequests, gin.H{"error": gin.H{
 			"code":    http.StatusTooManyRequests,
@@ -143,8 +137,6 @@ func writeSchedulerQuotaExhaustedErrorForProtocol(c *gin.Context, retryAfterSeco
 			"reason":  reason,
 			"message": message,
 		}})
-	case continuousRetryProtocolGemini:
-		writeGeminiNativeError(c, http.StatusTooManyRequests, message)
 	default:
 		c.JSON(http.StatusTooManyRequests, gin.H{"error": gin.H{
 			"code":    http.StatusTooManyRequests,
@@ -176,12 +168,6 @@ func writeSchedulerQueueError(c *gin.Context, err error, protocol continuousRetr
 	}
 	message := apiErr.Message
 	switch protocol {
-	case continuousRetryProtocolGemini:
-		writeGeminiNativeError(c, http.StatusServiceUnavailable, message)
-	case continuousRetryProtocolAnthropic:
-		if !writeCommittedAnthropicRetryError(c, "overloaded_error", message) {
-			sendAnthropicError(c, http.StatusServiceUnavailable, "overloaded_error", message)
-		}
 	case continuousRetryProtocolChat:
 		if !writeCommittedChatRetryError(c, message) {
 			c.JSON(http.StatusServiceUnavailable, gin.H{"error": apiErr})

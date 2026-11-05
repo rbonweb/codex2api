@@ -142,10 +142,6 @@ func parsePinnedAccountID(raw string) (int64, bool) {
 
 func writeExternalSchedulerIngressError(c *gin.Context, route string, status int, code, message string) {
 	c.Header(pinnedAccountErrorHeader, code)
-	if route == "/v1/messages" || route == "/messages" {
-		writeAnthropicCodedError(c, status, code, message)
-		return
-	}
 	writeOpenAICodedError(c, status, code, message)
 }
 
@@ -252,14 +248,6 @@ func (p *pinnedAccountDispatch) writeFailure(c *gin.Context, protocol continuous
 		c.Header("Retry-After", retryAfter)
 	}
 	switch protocol {
-	case continuousRetryProtocolAnthropic:
-		if isStream && writeCommittedAnthropicRetryError(c, mapHTTPStatusToAnthropicError(status), message) {
-			return
-		}
-		if !claimContinuousRetryTerminal(c, protocol) {
-			return
-		}
-		writeAnthropicCodedError(c, status, code, message)
 	case continuousRetryProtocolChat:
 		if isStream && writeCommittedChatRetryError(c, message) {
 			return
@@ -324,17 +312,6 @@ func writeOpenAICodedError(c *gin.Context, status int, code, message string) {
 		"error": gin.H{
 			"message": message,
 			"type":    errType,
-			"code":    code,
-		},
-	})
-}
-
-func writeAnthropicCodedError(c *gin.Context, status int, code, message string) {
-	c.JSON(status, gin.H{
-		"type": "error",
-		"error": gin.H{
-			"type":    mapHTTPStatusToAnthropicError(status),
-			"message": message,
 			"code":    code,
 		},
 	})

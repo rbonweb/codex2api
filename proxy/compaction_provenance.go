@@ -7,10 +7,8 @@ import (
 	"encoding/hex"
 	"encoding/json"
 	"errors"
-	"fmt"
 	"log"
 	"net/http"
-	"net/url"
 	"os"
 	"strings"
 	"time"
@@ -94,41 +92,8 @@ func compactionProvenanceTTL() time.Duration {
 	return ttl
 }
 
-func canonicalCompactionBaseURL(raw string) string {
-	parsed, err := url.Parse(strings.TrimSpace(raw))
-	if err != nil || parsed.Scheme == "" || parsed.Host == "" {
-		return ""
-	}
-	parsed.Scheme = strings.ToLower(parsed.Scheme)
-	parsed.Host = strings.ToLower(parsed.Host)
-	parsed.RawQuery = ""
-	parsed.Fragment = ""
-	parsed.Path = strings.TrimRight(parsed.Path, "/")
-	return parsed.String()
-}
-
 func accountCompactionDomain(account *auth.Account) string {
 	if account == nil {
-		return ""
-	}
-	if account.IsOpenAIResponsesAPI() {
-		baseURL, _ := account.OpenAIResponsesCredentials()
-		if normalized, err := auth.NormalizeOpenAIResponsesBaseURL(baseURL); err == nil {
-			baseURL = normalized
-		}
-		if canonical := canonicalCompactionBaseURL(baseURL); canonical != "" {
-			return "responses:" + canonical
-		}
-		return ""
-	}
-	if account.IsGrokAPI() {
-		// Grok resolves the actual upstream route from the model catalog at
-		// request time. The configured base URL is therefore not a safe
-		// compatibility boundary for opaque compaction state. Keep Grok state
-		// account-local until the resolved route is available at record time.
-		if account.ID() > 0 {
-			return fmt.Sprintf("grok:account:%d", account.ID())
-		}
 		return ""
 	}
 	return nativeCodexCompactionDomain
