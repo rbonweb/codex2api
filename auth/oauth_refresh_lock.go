@@ -17,10 +17,6 @@ const (
 	oauthRefreshLeaseHold      = 4 * time.Minute
 	oauthRefreshLeaseWait      = 5*time.Minute + 5*time.Second
 	oauthRefreshLeasePoll      = 100 * time.Millisecond
-	// The legacy Grok refresher only understands the account-id refresh lock.
-	// It is acquired after the family lease and held through refresh/CAS/runtime
-	// publication. Its ownerless TTL outlives the family lease hold deadline.
-	grokLegacyRefreshBridgeTTL = oauthRefreshLeaseHold + time.Minute
 )
 
 var oauthRefreshLeaseOwnerSequence atomic.Uint64
@@ -62,28 +58,6 @@ type oauthRefreshLease struct {
 func (lease *oauthRefreshLease) arm(parent context.Context) {
 	lease.ctx, lease.cancel = context.WithTimeout(parent, oauthRefreshLeaseHold)
 	lease.criticalCtx, lease.criticalCancel = context.WithTimeout(context.WithoutCancel(parent), oauthRefreshLeaseHold)
-}
-
-// grokLegacyRefreshBridgeLock is the rolling-upgrade bridge to Grok versions
-// that only acquire TokenCache.AcquireRefreshLock(accountID). New versions take
-// this lock after the stable family lease, and hold both through the credential
-// CAS and runtime/cache publication. The legacy API has no owner token, so the
-// TTL deliberately exceeds the maximum family-wait plus refresh-hold window.
-//
-// This bridge provides mutual exclusion with an old binary; it cannot make that
-// binary understand credential generations or a new database fence. A strict
-// "only the new version refreshes" rollout must still disable refresh on old
-// instances before they overlap with the new deployment.
-type grokLegacyRefreshBridgeLock struct {
-	store     *Store
-	accountID int64
-	acquired  bool
-	released  atomic.Bool
-}
-
-type grokOAuthRefreshLocks struct {
-	legacy *grokLegacyRefreshBridgeLock
-	family *oauthRefreshLease
 }
 
 func oauthRefreshTokenFingerprint(refreshToken string) string {
@@ -160,109 +134,6 @@ func (s *Store) acquireOAuthRefreshLease(ctx context.Context, refreshToken strin
 	}
 }
 
-// acquireOAuthRefreshFamilyLease serializes Grok rotations by a stable,
-// irreversible family id. Unlike an RT fingerprint, the key does not change
-// when the provider rotates refresh_token.
-func (s *Store) acquireOAuthRefreshFamilyLease(ctx context.Context, familyID string) (*oauthRefreshLease, error) {
-	familyID = strings.TrimSpace(familyID)
-	if familyID == "" {
-		return nil, fmt.Errorf("credential_family_id 为空")
-	}
-	return s.acquireOAuthRefreshLease(ctx, "grok-family:"+familyID)
-}
-
-// acquireGrokOAuthRefreshLocks fixes the rolling-upgrade lock order as:
-//
-//  1. the stable credential-family lease used by current binaries;
-//  2. the legacy account-id refresh lock understood by old binaries.
-//
-// New instances serialize on the stable family before contending with an old
-// binary. After both locks are held the caller must re-read the complete stored
-// credentials, because an old binary may have rotated them while it held only
-// the account lock.
-// Shared-cache errors fail closed: falling back to a process-local family lock
-// would allow another instance to consume the same rotating refresh token.
-func (s *Store) acquireGrokOAuthRefreshLocks(ctx context.Context, accountID int64, familyID string) (*grokOAuthRefreshLocks, error) {
-	if s == nil {
-		return nil, fmt.Errorf("账号存储未配置")
-	}
-	if accountID <= 0 {
-		return nil, fmt.Errorf("无效的 Grok 账号 ID")
-	}
-
-	family, err := s.acquireOAuthRefreshFamilyLease(ctx, familyID)
-	if err != nil {
-		return nil, err
-	}
-	legacy := &grokLegacyRefreshBridgeLock{store: s, accountID: accountID}
-	if s.tokenCache != nil {
-		deadline := time.Now().Add(oauthRefreshLeaseWait)
-		lockCtx := family.Context()
-		for {
-			acquired, err := s.tokenCache.AcquireRefreshLock(lockCtx, accountID, grokLegacyRefreshBridgeTTL)
-			if err != nil {
-				if s.tokenCache.SharedAcrossInstances() {
-					family.Release()
-					return nil, fmt.Errorf("获取 Grok 旧版兼容刷新锁失败: %w", err)
-				}
-				log.Printf("获取 Grok 本地旧版兼容刷新锁失败，继续使用家族进程内锁: %v", err)
-				break
-			}
-			if acquired {
-				legacy.acquired = true
-				break
-			}
-			if time.Now().After(deadline) {
-				family.Release()
-				return nil, fmt.Errorf("等待账号 %d 的旧版 Grok 刷新任务超时", accountID)
-			}
-			timer := time.NewTimer(oauthRefreshLeasePoll)
-			select {
-			case <-lockCtx.Done():
-				timer.Stop()
-				family.Release()
-				return nil, lockCtx.Err()
-			case <-timer.C:
-			}
-		}
-	}
-	return &grokOAuthRefreshLocks{legacy: legacy, family: family}, nil
-}
-
-func (locks *grokOAuthRefreshLocks) Context() context.Context {
-	if locks == nil || locks.family == nil {
-		return context.Background()
-	}
-	return locks.family.Context()
-}
-
-func (locks *grokOAuthRefreshLocks) Release() {
-	if locks == nil {
-		return
-	}
-	// Release in reverse acquisition order.
-	if locks.legacy != nil {
-		locks.legacy.Release()
-	}
-	if locks.family != nil {
-		locks.family.Release()
-	}
-}
-
-func (lock *grokLegacyRefreshBridgeLock) Release() {
-	if lock == nil || lock.store == nil || !lock.acquired || lock.released.Swap(true) {
-		return
-	}
-	if lock.store.tokenCache == nil {
-		return
-	}
-	releaseCtx, cancel := context.WithTimeout(context.Background(), 3*time.Second)
-	if err := lock.store.tokenCache.ReleaseRefreshLock(releaseCtx, lock.accountID); err != nil {
-		log.Printf("释放 Grok 旧版兼容刷新锁失败: %v", err)
-	}
-	cancel()
-}
-
 func (s *Store) acquireOAuthRefreshLocalLock(ctx context.Context, fingerprint string) (*oauthRefreshLocalLock, error) {
 	s.oauthRefreshLocksMu.Lock()
 	local := s.oauthRefreshLocks[fingerprint]
@@ -305,13 +176,6 @@ func (lease *oauthRefreshLease) CriticalContext() context.Context {
 		return context.Background()
 	}
 	return lease.criticalCtx
-}
-
-func (locks *grokOAuthRefreshLocks) CriticalContext() context.Context {
-	if locks == nil || locks.family == nil {
-		return context.Background()
-	}
-	return locks.family.CriticalContext()
 }
 
 func (lease *oauthRefreshLease) Release() {

@@ -109,9 +109,7 @@ func newAcceptanceBenchmarkUpstream(t *testing.T, chunks []string) *httptest.Ser
 
 // newAcceptanceBenchmarkStore 构造只包含本次用例账号的真实 auth.Store。
 // 账号使用 Codex OAuth 身份，并通过 Resin 配置把出站平台 URL 指向 httptest，
-// 从而走生产原生 Responses 流式管线（含 OutputGuard 接线）。直连
-// UpstreamOpenAIResponses relay 会进入 relay-style 分支，该分支的流式回调
-// 不经过 ObserveEvent，无法用于验证 guard 性能与脱敏契约。
+// 从而走生产原生 Responses 流式管线（含 OutputGuard 接线）。
 func newAcceptanceBenchmarkStore(t *testing.T, upstreamURL string) *auth.Store {
 	t.Helper()
 	store := auth.NewStore(nil, nil, &database.SystemSettings{

@@ -2394,19 +2394,23 @@ func TestResponsesCompactCodexReadErrorRetryReturnsBadGatewayAndSyncsUsage(t *te
 	}
 }
 
-func newOpenAIResponsesRelayStore(upstreamURL string) *auth.Store {
+// newCodexResinStore builds a store with one Codex account whose upstream calls go to upstreamURL through the Resin platform URL.
+func newCodexResinStore(t *testing.T, upstreamURL string) *auth.Store {
+	t.Helper()
 	store := auth.NewStore(nil, nil, &database.SystemSettings{
 		MaxConcurrency:      2,
 		MaxRetries:          0,
 		MaxRateLimitRetries: 0,
 	})
+	codexRestoredUseResin(t, upstreamURL)
 	store.AddAccount(&auth.Account{
-		DBID:         1,
-		UpstreamType: auth.UpstreamOpenAIResponses,
-		BaseURL:      upstreamURL,
-		APIKey:       "sk-direct",
-		Models:       []string{"gpt-4.1-direct"},
-		PlanType:     "api",
+		DBID:        1,
+		Status:      auth.StatusReady,
+		HealthTier:  auth.HealthTierHealthy,
+		AccessToken: "at-direct",
+		AccountID:   "acct-direct",
+		Models:      []string{"gpt-4.1-direct"},
+		PlanType:    "plus",
 	})
 	return store
 }

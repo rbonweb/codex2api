@@ -23,14 +23,6 @@ func TestAccountLoadingIgnoresRetiredCredentialFlags(t *testing.T) {
 			},
 		},
 		{
-			name: "responses_relay",
-			credentials: map[string]any{
-				"upstream_type": UpstreamOpenAIResponses,
-				"base_url":      "https://relay.invalid/v1",
-				"api_key":       "legacy-relay-key",
-			},
-		},
-		{
 			name: "agent_identity",
 			credentials: map[string]any{
 				"auth_mode":         CodexAuthModeAgentIdentity,

@@ -143,24 +143,6 @@ func TestLiveCreateForwardsSDPAndLocation(t *testing.T) {
 	}
 }
 
-func TestLiveCreateRejectsRelayAccounts(t *testing.T) {
-	previousURL := liveCallsURLForTest
-	t.Cleanup(func() {
-		liveCallsURLForTest = previousURL
-	})
-	liveCallsURLForTest = "http://127.0.0.1:1/unused"
-	store := auth.NewStore(nil, nil, &database.SystemSettings{MaxConcurrency: 1})
-	store.AddAccount(&auth.Account{DBID: 2, UpstreamType: auth.UpstreamGrok, APIKey: "xai"})
-	handler := NewHandler(store, nil, &config.Config{AdminSecret: "secret"}, nil)
-	c, rec := liveTestContext(t, http.MethodPost, "/v1/live", []byte(`{"sdp":"v=0","session":{}}`), &database.APIKeyRow{
-		ID: 3, Limits: database.APIKeyLimits{AllowLive: true},
-	})
-	handler.LiveCreate(c)
-	if rec.Code != http.StatusServiceUnavailable {
-		t.Fatalf("status=%d body=%s", rec.Code, rec.Body.String())
-	}
-}
-
 func TestLiveFinalizeIdempotent(t *testing.T) {
 	var logs atomic.Int32
 	previous := liveUsageLogForTest

@@ -92,14 +92,4 @@ func TestShouldActivate5hWindow(t *testing.T) {
 			t.Fatal("auto-paused accounts must be skipped")
 		}
 	})
-
-	t.Run("relay account", func(t *testing.T) {
-		account := base()
-		account.UpstreamType = UpstreamOpenAIResponses
-		account.BaseURL = "https://relay.example"
-		account.APIKey = "sk-relay"
-		if account.ShouldActivate5hWindow(now) {
-			t.Fatal("relay accounts must be skipped")
-		}
-	})
 }
