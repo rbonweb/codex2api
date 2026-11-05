@@ -6194,11 +6194,6 @@ func (h *Handler) BatchRefreshAccounts(c *gin.Context) {
 }
 
 func (h *Handler) refreshAccountByID(ctx context.Context, id int64) error {
-	// Antigravity 没有 Codex 式的 AT 刷新：单号/批量刷新统一走控制面同步，
-	// 同时刷新凭据、项目、权限与配额快照。
-	if h.isAntigravityAccountID(ctx, id) {
-		return h.syncAntigravityAccountByID(ctx, id)
-	}
 	return h.refreshAccountByIDWithProbe(ctx, id, true)
 }
 
@@ -6690,7 +6685,7 @@ func (h *Handler) syncAccountPlanAfterReset(_ context.Context, acc *auth.Account
 }
 
 func (h *Handler) syncSingleAccountPlanOnReset(ctx context.Context, acc *auth.Account) error {
-	if h == nil || h.store == nil || acc == nil || acc.IsRelayStyle() || acc.GetAccessToken() == "" {
+	if h == nil || h.store == nil || acc == nil || acc.GetAccessToken() == "" {
 		return nil
 	}
 	model, err := h.connectionTestModelForAccount(ctx, acc, "")
@@ -8253,19 +8248,7 @@ func sanitizeImageGenerationPolicy(in database.APIKeyLimits) string {
 // Key 永远选不到账号。
 var knownAPIKeyPlanFilters = map[string]struct{}{
 	"free": {}, "plus": {}, "pro": {}, "prolite": {}, "promax": {}, "team": {}, "k12": {}, "go": {},
-	// Grok live /user.subscriptionTier values. These labels are authorization
-	// inputs only when auth.Store has a fresh live fact; JWT/archive labels never
-	// satisfy plan_allow. "api" is the explicit xAI API-key channel plan.
-	"api": {}, "supergrok": {}, "x_basic": {}, "x_premium": {},
-	"x_premium_plus": {}, "supergrok_heavy": {}, "supergrok_lite": {},
-	"supergrok_plus": {},
-	// Claude OAuth profile tiers. Keep these independent from Codex/Grok
-	// labels so a Claude-bound key's plan gate survives normalization.
-	"claude": {}, "max": {}, "max-5x": {}, "max-20x": {},
 	"enterprise": {}, "business": {},
-	// Antigravity keys derived from Google tier ids (g1-ultra-tier → ultra,
-	// standard-tier → standard); free/pro/api are shared with the lists above.
-	"ultra": {}, "standard": {},
 }
 
 // cleanPlanAllow 归一账号套餐白名单:小写去空白、丢弃未知值并去重。
@@ -8499,31 +8482,12 @@ type settingsResponse struct {
 
 	// CodexEffectiveCLIVersion 是当前实际用于出站 UA 的版本(内置常量与同步值取大),
 	// 供设置页"设为同步版本"按钮使用——同步值可能过期或为空,内置值才是下限。
-	CodexEffectiveCLIVersion       string `json:"codex_effective_cli_version"`
-	SchedulerMode                  string `json:"scheduler_mode"`
-	AffinityMode                   string `json:"affinity_mode"`
-	SessionAffinitySpread          bool   `json:"session_affinity_spread"`
-	SessionSlotBufferEnabled       bool   `json:"session_slot_buffer_enabled"`
-	SessionSlotBufferSeconds       int    `json:"session_slot_buffer_seconds"`
-	GrokAffinityMode               string `json:"grok_affinity_mode"`
-	GrokProbeEnabled               bool   `json:"grok_probe_enabled"`
-	GrokProbeIntervalMinutes       int    `json:"grok_probe_interval_minutes"`
-	GrokMaxRateLimitRetries        int    `json:"grok_max_rate_limit_retries"`
-	GrokFollowUpEffortEnabled      bool   `json:"grok_follow_up_effort_enabled"`
-	GrokFollowUpToolEffort         string `json:"grok_follow_up_tool_effort"`
-	GrokFollowUpSmallEffort        string `json:"grok_follow_up_small_effort"`
-	GrokQualityGuardEnabled        bool   `json:"grok_quality_guard_enabled"`
-	GrokQualityGuardMaxAttempts    int    `json:"grok_quality_guard_max_attempts"`
-	GrokQualityGuardHoldTimeoutSec int    `json:"grok_quality_guard_hold_timeout_sec"`
-	GrokQualityGuardOnExhausted    string `json:"grok_quality_guard_on_exhausted"`
-	GrokQualityGuardCooldownHours  int    `json:"grok_quality_guard_account_cooldown_hours"`
-	GrokOAuthClientID              string `json:"grok_oauth_client_id"`
-	// GrokOAuthClientIDEnvOverride 为 true 时，环境变量 GROK_OAUTH_CLIENT_ID 正压着上面这个设置，
-	// 前端据此提示「当前以环境变量为准」。GrokOAuthClientIDEffective 是实际生效值。
-	GrokOAuthClientIDEnvOverride bool   `json:"grok_oauth_client_id_env_override"`
-	GrokOAuthClientIDEffective   string `json:"grok_oauth_client_id_effective"`
-	// Antigravity OAuth client 配置视图（嵌入展平）。
-	antigravityOAuthSettingsView
+	CodexEffectiveCLIVersion          string   `json:"codex_effective_cli_version"`
+	SchedulerMode                     string   `json:"scheduler_mode"`
+	AffinityMode                      string   `json:"affinity_mode"`
+	SessionAffinitySpread             bool     `json:"session_affinity_spread"`
+	SessionSlotBufferEnabled          bool     `json:"session_slot_buffer_enabled"`
+	SessionSlotBufferSeconds          int      `json:"session_slot_buffer_seconds"`
 	MaxRetries                        int      `json:"max_retries"`
 	MaxRateLimitRetries               int      `json:"max_rate_limit_retries"`
 	RetryIntervalMS                   int      `json:"retry_interval_ms"`
@@ -8627,180 +8591,165 @@ type settingsResponse struct {
 type rawJSON = json.RawMessage
 
 type updateSettingsReq struct {
-	SiteName                            *string                          `json:"site_name"`
-	SiteLogo                            *string                          `json:"site_logo"`
-	BackgroundImage                     *string                          `json:"background_image"`
-	BackgroundOpacity                   *int                             `json:"background_opacity"`
-	BackgroundBlur                      *int                             `json:"background_blur"`
-	BackgroundGlassOpacity              *int                             `json:"background_glass_opacity"`
-	BackgroundGlassBlur                 *int                             `json:"background_glass_blur"`
-	MaxConcurrency                      *int                             `json:"max_concurrency"`
-	GlobalRPM                           *int                             `json:"global_rpm"`
-	TestModel                           *string                          `json:"test_model"`
-	CodexImagesMainModel                *string                          `json:"codex_images_main_model"`
-	TestContent                         *string                          `json:"test_content"`
-	TestConcurrency                     *int                             `json:"test_concurrency"`
-	BackgroundRefreshIntervalMinutes    *int                             `json:"background_refresh_interval_minutes"`
-	UsageProbeMaxAgeMinutes             *int                             `json:"usage_probe_max_age_minutes"`
-	UsageProbeConcurrency               *int                             `json:"usage_probe_concurrency"`
-	UsageProbeResponsesFallbackEnabled  *bool                            `json:"usage_probe_responses_fallback_enabled"`
-	RecoveryProbeIntervalMinutes        *int                             `json:"recovery_probe_interval_minutes"`
-	LazyMode                            *bool                            `json:"lazy_mode"`
-	CodexOAuthKeepaliveEnabled          *bool                            `json:"codex_oauth_keepalive_enabled"`
-	ProxyURL                            *string                          `json:"proxy_url"`
-	PgMaxConns                          *int                             `json:"pg_max_conns"`
-	RedisPoolSize                       *int                             `json:"redis_pool_size"`
-	AutoCleanUnauthorized               *bool                            `json:"auto_clean_unauthorized"`
-	AutoCleanRateLimited                *bool                            `json:"auto_clean_rate_limited"`
-	AdminSecret                         *string                          `json:"admin_secret"`
-	AutoCleanFullUsage                  *bool                            `json:"auto_clean_full_usage"`
-	AutoCleanError                      *bool                            `json:"auto_clean_error"`
-	AutoCleanExpired                    *bool                            `json:"auto_clean_expired"`
-	AutoResetCreditsEnabled             *bool                            `json:"auto_reset_credits_enabled"`
-	AutoResetCreditsOnExhaustionEnabled *bool                            `json:"auto_reset_credits_on_exhaustion_enabled"`
-	AutoResetCreditsBeforeExpiryMin     *int                             `json:"auto_reset_credits_before_expiry_min"`
-	AutoActivate5hWindowEnabled         *bool                            `json:"auto_activate_5h_window_enabled"`
-	ProxyPoolEnabled                    *bool                            `json:"proxy_pool_enabled"`
-	FastSchedulerEnabled                *bool                            `json:"fast_scheduler_enabled"`
-	SchedulerEngine                     *string                          `json:"scheduler_engine"`
-	CodexForceWebsocket                 *bool                            `json:"codex_force_websocket"`
-	CodexRequestCompression             *bool                            `json:"codex_request_compression"`
-	CodexWSWeakNetworkMode              *bool                            `json:"codex_ws_weak_network_mode"`
-	CodexWSKeepaliveEnabled             *bool                            `json:"codex_ws_keepalive_enabled"`
-	CodexWSKeepaliveIntervalSec         *int                             `json:"codex_ws_keepalive_interval_sec"`
-	CodexWSHideUpstreamErrors           *bool                            `json:"codex_ws_hide_upstream_errors"`
-	CodexWSSilentRetryEnabled           *bool                            `json:"codex_ws_silent_retry_enabled"`
-	CodexWSSilentMaxRetries             *int                             `json:"codex_ws_silent_max_retries"`
-	CodexWSSizeRouterEnabled            *bool                            `json:"codex_ws_size_router_enabled"`
-	CodexWSBusyAcquireMaxWaitSec        *int                             `json:"codex_ws_busy_acquire_max_wait_sec"`
-	CodexWSBusyOverflowEnabled          *bool                            `json:"codex_ws_busy_overflow_enabled"`
-	CodexWSBusyPatienceSec              *int                             `json:"codex_ws_busy_patience_sec"`
-	CodexWSStatelessSlots               *int                             `json:"codex_ws_stateless_slots"`
-	CodexWSDownstreamKeepaliveSlots     *int                             `json:"codex_ws_downstream_keepalive_slots"`
-	GithubToken                         *string                          `json:"github_token"`
-	GithubProxyURL                      *string                          `json:"github_proxy_url"`
-	CodexOverloadPauseEnabled           *bool                            `json:"codex_overload_pause_enabled"`
-	CodexOverloadThresholdPercent       *int                             `json:"codex_overload_threshold_percent"`
-	CodexOverloadPauseMinutes           *int                             `json:"codex_overload_pause_minutes"`
-	CodexOverloadWindowMinutes          *int                             `json:"codex_overload_window_minutes"`
-	OverflowAutoCompactEnabled          *bool                            `json:"overflow_auto_compact_enabled"`
-	CompactViaResponsesEnabled          *bool                            `json:"compact_via_responses_enabled"`
-	CodexPreflightSSEPassthroughEnabled *bool                            `json:"codex_preflight_sse_passthrough_enabled"`
-	FirstTokenExcludesWsAcquire         *bool                            `json:"first_token_excludes_ws_acquire"`
-	CodexContinueThinkingEnabled        *bool                            `json:"codex_continue_thinking_enabled"`
-	CodexContinueMaxRounds              *int                             `json:"codex_continue_max_rounds"`
-	UTLSShutdownTimeoutMinutes          *int                             `json:"utls_shutdown_timeout_minutes"`
-	CodexCLIVersionSyncEnabled          *bool                            `json:"codex_cli_version_sync_enabled"`
-	CodexCLIVersionSyncIntervalHours    *int                             `json:"codex_cli_version_sync_interval_hours"`
-	SchedulerMode                       *string                          `json:"scheduler_mode"`
-	AffinityMode                        *string                          `json:"affinity_mode"`
-	SessionAffinitySpread               *bool                            `json:"session_affinity_spread"`
-	SessionSlotBufferEnabled            *bool                            `json:"session_slot_buffer_enabled"`
-	SessionSlotBufferSeconds            *int                             `json:"session_slot_buffer_seconds"`
-	GrokAffinityMode                    *string                          `json:"grok_affinity_mode"`
-	GrokProbeEnabled                    *bool                            `json:"grok_probe_enabled"`
-	GrokProbeIntervalMinutes            *int                             `json:"grok_probe_interval_minutes"`
-	GrokMaxRateLimitRetries             *int                             `json:"grok_max_rate_limit_retries"`
-	GrokFollowUpEffortEnabled           *bool                            `json:"grok_follow_up_effort_enabled"`
-	GrokFollowUpToolEffort              *string                          `json:"grok_follow_up_tool_effort"`
-	GrokFollowUpSmallEffort             *string                          `json:"grok_follow_up_small_effort"`
-	GrokQualityGuardEnabled             *bool                            `json:"grok_quality_guard_enabled"`
-	GrokQualityGuardMaxAttempts         *int                             `json:"grok_quality_guard_max_attempts"`
-	GrokQualityGuardHoldTimeoutSec      *int                             `json:"grok_quality_guard_hold_timeout_sec"`
-	GrokQualityGuardOnExhausted         *string                          `json:"grok_quality_guard_on_exhausted"`
-	GrokQualityGuardCooldownHours       *int                             `json:"grok_quality_guard_account_cooldown_hours"`
-	GrokOAuthClientID                   *string                          `json:"grok_oauth_client_id"`
-	AntigravityOAuthClients             *[]antigravityOAuthClientPayload `json:"antigravity_oauth_clients"`
-	AntigravityOAuthClientKey           *string                          `json:"antigravity_oauth_client_key"`
-	MaxRetries                          *int                             `json:"max_retries"`
-	MaxRateLimitRetries                 *int                             `json:"max_rate_limit_retries"`
-	RetryIntervalMS                     *int                             `json:"retry_interval_ms"`
-	TransportRetryPolicy                *string                          `json:"transport_retry_policy"`
-	ContinuousRetryEnabled              *bool                            `json:"continuous_retry_enabled"`
-	ContinuousRetryCatchAll             *bool                            `json:"continuous_retry_catch_all"`
-	ContinuousRetryCategories           *[]string                        `json:"continuous_retry_categories"`
-	ContinuousRetryStatusCodes          *[]int                           `json:"continuous_retry_status_codes"`
-	ContinuousRetryErrorCodes           *[]string                        `json:"continuous_retry_error_codes"`
-	ContinuousRetryMaxDurationSeconds   *int                             `json:"continuous_retry_max_duration_seconds"`
-	CodexFingerprintDefaultMode         *string                          `json:"codex_fingerprint_default_mode"`
-	AllowRemoteMigration                *bool                            `json:"allow_remote_migration"`
-	ModelMapping                        *string                          `json:"model_mapping"`
-	CodexModelMapping                   *string                          `json:"codex_model_mapping"`
-	PayloadRules                        *string                          `json:"payload_rules"`
-	ReasoningEffortModels               *string                          `json:"reasoning_effort_models"`
-	ResinURL                            *string                          `json:"resin_url"`
-	ResinPlatformName                   *string                          `json:"resin_platform_name"`
-	PromptFilterEnabled                 *bool                            `json:"prompt_filter_enabled"`
-	PromptFilterMode                    *string                          `json:"prompt_filter_mode"`
-	PromptFilterThreshold               *int                             `json:"prompt_filter_threshold"`
-	PromptFilterStrictThreshold         *int                             `json:"prompt_filter_strict_threshold"`
-	PromptFilterStrictTerminalEnabled   *bool                            `json:"prompt_filter_strict_terminal_enabled"`
-	PromptFilterAdvancedConfig          *string                          `json:"prompt_filter_advanced_config"`
-	PromptFilterLogMatches              *bool                            `json:"prompt_filter_log_matches"`
-	PromptFilterMaxTextLength           *int                             `json:"prompt_filter_max_text_length"`
-	PromptFilterSensitiveWords          *string                          `json:"prompt_filter_sensitive_words"`
-	PromptFilterCustomPatterns          *string                          `json:"prompt_filter_custom_patterns"`
-	PromptFilterCustomPatternsExpected  *string                          `json:"prompt_filter_custom_patterns_expected"`
-	PromptFilterDisabledPatterns        *string                          `json:"prompt_filter_disabled_patterns"`
-	PromptFilterReviewEnabled           *bool                            `json:"prompt_filter_review_enabled"`
-	PromptFilterReviewAPIKey            *string                          `json:"prompt_filter_review_api_key"`
-	PromptFilterReviewBaseURL           *string                          `json:"prompt_filter_review_base_url"`
-	PromptFilterReviewModel             *string                          `json:"prompt_filter_review_model"`
-	PromptFilterReviewTimeoutSeconds    *int                             `json:"prompt_filter_review_timeout_seconds"`
-	PromptFilterReviewFailClosed        *bool                            `json:"prompt_filter_review_fail_closed"`
-	ClientCompatMode                    *string                          `json:"client_compat_mode"`
-	CodexMinCLIVersion                  *string                          `json:"codex_min_cli_version"`
-	CodexUserAgentConfig                *string                          `json:"codex_user_agent_config"`
-	CodexTelemetryEnabled               *bool                            `json:"codex_telemetry_enabled"`
-	CodexTelemetryTimingDebug           *bool                            `json:"codex_telemetry_timing_debug"`
-	UsageLogMode                        *string                          `json:"usage_log_mode"`
-	UsageLogBatchSize                   *int                             `json:"usage_log_batch_size"`
-	UsageLogFlushIntervalSeconds        *int                             `json:"usage_log_flush_interval_seconds"`
-	StreamFlushPolicy                   *string                          `json:"stream_flush_policy"`
-	StreamFlushIntervalMS               *int                             `json:"stream_flush_interval_ms"`
-	FirstTokenMode                      *string                          `json:"first_token_mode"`
-	FirstTokenTimeoutSeconds            *int                             `json:"first_token_timeout_seconds"`
-	BillingTierPolicy                   *string                          `json:"billing_tier_policy"`
-	ModelsListReadMaxBytes              *int64                           `json:"models_list_read_max_bytes"`
-	ShowFullUsageNumbers                *bool                            `json:"show_full_usage_numbers"`
-	ShowUpstreamModelMismatch           *bool                            `json:"show_upstream_model_mismatch"`
-	PublicKeyUsagePageEnabled           *bool                            `json:"public_key_usage_page_enabled"`
-	PublicImageStudioPageEnabled        *bool                            `json:"public_image_studio_page_enabled"`
-	PublicAccountPortalPageEnabled      *bool                            `json:"public_account_portal_page_enabled"`
-	ImageStorageBackend                 *string                          `json:"image_storage_backend"`
-	ImageS3Endpoint                     *string                          `json:"image_s3_endpoint"`
-	ImageS3Region                       *string                          `json:"image_s3_region"`
-	ImageS3Bucket                       *string                          `json:"image_s3_bucket"`
-	ImageS3AccessKey                    *string                          `json:"image_s3_access_key"`
-	ImageS3SecretKey                    *string                          `json:"image_s3_secret_key"`
-	ImageS3Prefix                       *string                          `json:"image_s3_prefix"`
-	ImageS3ForcePathStyle               *bool                            `json:"image_s3_force_path_style"`
-	AutoPause5hThreshold                *float64                         `json:"auto_pause_5h_threshold"`
-	AutoPause7dThreshold                *float64                         `json:"auto_pause_7d_threshold"`
-	AutoPause5hGuardBandPercent         *float64                         `json:"auto_pause_5h_guard_band_percent"`
-	AutoPause5hGuardConcurrency         *int                             `json:"auto_pause_5h_guard_concurrency"`
-	SmartPacingEnabled                  *bool                            `json:"smart_pacing_enabled"`
-	SmartPacingMinConcurrency           *int                             `json:"smart_pacing_min_concurrency"`
-	SmartPacingWindows                  *string                          `json:"smart_pacing_windows"`
-	IgnoreUsageLimitStatus              *bool                            `json:"ignore_usage_limit_status"`
-	ResponseCacheLocalMaxBytes          *int64                           `json:"response_cache_local_max_bytes"`
-	ResponseCacheLocalMaxEntryBytes     *int64                           `json:"response_cache_local_max_entry_bytes"`
-	ResponseCacheReconstructMaxBytes    *int64                           `json:"response_cache_reconstruct_max_bytes"`
-	ResponseCacheWritePolicy            *string                          `json:"response_cache_write_policy"`
-	ResponseCacheConfigGeneration       rawJSON                          `json:"response_cache_config_generation"`
-	RelayModelCooldownMode              *string                          `json:"relay_model_cooldown_mode"`
-	RelayModelCooldownSeconds           *int                             `json:"relay_model_cooldown_seconds"`
-	RelayModelCooldownBackoffEnabled    *bool                            `json:"relay_model_cooldown_backoff_enabled"`
-	OAuthModelCooldownMode              *string                          `json:"oauth_model_cooldown_mode"`
-	OAuthModelCooldownSeconds           *int                             `json:"oauth_model_cooldown_seconds"`
-	OAuthModelCooldownBackoffEnabled    *bool                            `json:"oauth_model_cooldown_backoff_enabled"`
-	OAuthUnsupportedCooldownSeconds     *int                             `json:"oauth_unsupported_model_cooldown_seconds"`
-	OutputGuardEnabled                  *bool                            `json:"output_guard_enabled"`
-	OutputGuardMaxToolArgumentBytes     *int64                           `json:"output_guard_max_tool_argument_bytes"`
-	OutputGuardMaxToolArgumentDeltas    *int                             `json:"output_guard_max_tool_argument_deltas"`
-	OutputGuardMaxChannelBytes          *int64                           `json:"output_guard_max_channel_bytes"`
-	OutputGuardMaxRequestBytes          *int64                           `json:"output_guard_max_request_bytes"`
-	OutputGuardConfigGeneration         rawJSON                          `json:"output_guard_config_generation"`
+	SiteName                            *string   `json:"site_name"`
+	SiteLogo                            *string   `json:"site_logo"`
+	BackgroundImage                     *string   `json:"background_image"`
+	BackgroundOpacity                   *int      `json:"background_opacity"`
+	BackgroundBlur                      *int      `json:"background_blur"`
+	BackgroundGlassOpacity              *int      `json:"background_glass_opacity"`
+	BackgroundGlassBlur                 *int      `json:"background_glass_blur"`
+	MaxConcurrency                      *int      `json:"max_concurrency"`
+	GlobalRPM                           *int      `json:"global_rpm"`
+	TestModel                           *string   `json:"test_model"`
+	CodexImagesMainModel                *string   `json:"codex_images_main_model"`
+	TestContent                         *string   `json:"test_content"`
+	TestConcurrency                     *int      `json:"test_concurrency"`
+	BackgroundRefreshIntervalMinutes    *int      `json:"background_refresh_interval_minutes"`
+	UsageProbeMaxAgeMinutes             *int      `json:"usage_probe_max_age_minutes"`
+	UsageProbeConcurrency               *int      `json:"usage_probe_concurrency"`
+	UsageProbeResponsesFallbackEnabled  *bool     `json:"usage_probe_responses_fallback_enabled"`
+	RecoveryProbeIntervalMinutes        *int      `json:"recovery_probe_interval_minutes"`
+	LazyMode                            *bool     `json:"lazy_mode"`
+	CodexOAuthKeepaliveEnabled          *bool     `json:"codex_oauth_keepalive_enabled"`
+	ProxyURL                            *string   `json:"proxy_url"`
+	PgMaxConns                          *int      `json:"pg_max_conns"`
+	RedisPoolSize                       *int      `json:"redis_pool_size"`
+	AutoCleanUnauthorized               *bool     `json:"auto_clean_unauthorized"`
+	AutoCleanRateLimited                *bool     `json:"auto_clean_rate_limited"`
+	AdminSecret                         *string   `json:"admin_secret"`
+	AutoCleanFullUsage                  *bool     `json:"auto_clean_full_usage"`
+	AutoCleanError                      *bool     `json:"auto_clean_error"`
+	AutoCleanExpired                    *bool     `json:"auto_clean_expired"`
+	AutoResetCreditsEnabled             *bool     `json:"auto_reset_credits_enabled"`
+	AutoResetCreditsOnExhaustionEnabled *bool     `json:"auto_reset_credits_on_exhaustion_enabled"`
+	AutoResetCreditsBeforeExpiryMin     *int      `json:"auto_reset_credits_before_expiry_min"`
+	AutoActivate5hWindowEnabled         *bool     `json:"auto_activate_5h_window_enabled"`
+	ProxyPoolEnabled                    *bool     `json:"proxy_pool_enabled"`
+	FastSchedulerEnabled                *bool     `json:"fast_scheduler_enabled"`
+	SchedulerEngine                     *string   `json:"scheduler_engine"`
+	CodexForceWebsocket                 *bool     `json:"codex_force_websocket"`
+	CodexRequestCompression             *bool     `json:"codex_request_compression"`
+	CodexWSWeakNetworkMode              *bool     `json:"codex_ws_weak_network_mode"`
+	CodexWSKeepaliveEnabled             *bool     `json:"codex_ws_keepalive_enabled"`
+	CodexWSKeepaliveIntervalSec         *int      `json:"codex_ws_keepalive_interval_sec"`
+	CodexWSHideUpstreamErrors           *bool     `json:"codex_ws_hide_upstream_errors"`
+	CodexWSSilentRetryEnabled           *bool     `json:"codex_ws_silent_retry_enabled"`
+	CodexWSSilentMaxRetries             *int      `json:"codex_ws_silent_max_retries"`
+	CodexWSSizeRouterEnabled            *bool     `json:"codex_ws_size_router_enabled"`
+	CodexWSBusyAcquireMaxWaitSec        *int      `json:"codex_ws_busy_acquire_max_wait_sec"`
+	CodexWSBusyOverflowEnabled          *bool     `json:"codex_ws_busy_overflow_enabled"`
+	CodexWSBusyPatienceSec              *int      `json:"codex_ws_busy_patience_sec"`
+	CodexWSStatelessSlots               *int      `json:"codex_ws_stateless_slots"`
+	CodexWSDownstreamKeepaliveSlots     *int      `json:"codex_ws_downstream_keepalive_slots"`
+	GithubToken                         *string   `json:"github_token"`
+	GithubProxyURL                      *string   `json:"github_proxy_url"`
+	CodexOverloadPauseEnabled           *bool     `json:"codex_overload_pause_enabled"`
+	CodexOverloadThresholdPercent       *int      `json:"codex_overload_threshold_percent"`
+	CodexOverloadPauseMinutes           *int      `json:"codex_overload_pause_minutes"`
+	CodexOverloadWindowMinutes          *int      `json:"codex_overload_window_minutes"`
+	OverflowAutoCompactEnabled          *bool     `json:"overflow_auto_compact_enabled"`
+	CompactViaResponsesEnabled          *bool     `json:"compact_via_responses_enabled"`
+	CodexPreflightSSEPassthroughEnabled *bool     `json:"codex_preflight_sse_passthrough_enabled"`
+	FirstTokenExcludesWsAcquire         *bool     `json:"first_token_excludes_ws_acquire"`
+	CodexContinueThinkingEnabled        *bool     `json:"codex_continue_thinking_enabled"`
+	CodexContinueMaxRounds              *int      `json:"codex_continue_max_rounds"`
+	UTLSShutdownTimeoutMinutes          *int      `json:"utls_shutdown_timeout_minutes"`
+	CodexCLIVersionSyncEnabled          *bool     `json:"codex_cli_version_sync_enabled"`
+	CodexCLIVersionSyncIntervalHours    *int      `json:"codex_cli_version_sync_interval_hours"`
+	SchedulerMode                       *string   `json:"scheduler_mode"`
+	AffinityMode                        *string   `json:"affinity_mode"`
+	SessionAffinitySpread               *bool     `json:"session_affinity_spread"`
+	SessionSlotBufferEnabled            *bool     `json:"session_slot_buffer_enabled"`
+	SessionSlotBufferSeconds            *int      `json:"session_slot_buffer_seconds"`
+	MaxRetries                          *int      `json:"max_retries"`
+	MaxRateLimitRetries                 *int      `json:"max_rate_limit_retries"`
+	RetryIntervalMS                     *int      `json:"retry_interval_ms"`
+	TransportRetryPolicy                *string   `json:"transport_retry_policy"`
+	ContinuousRetryEnabled              *bool     `json:"continuous_retry_enabled"`
+	ContinuousRetryCatchAll             *bool     `json:"continuous_retry_catch_all"`
+	ContinuousRetryCategories           *[]string `json:"continuous_retry_categories"`
+	ContinuousRetryStatusCodes          *[]int    `json:"continuous_retry_status_codes"`
+	ContinuousRetryErrorCodes           *[]string `json:"continuous_retry_error_codes"`
+	ContinuousRetryMaxDurationSeconds   *int      `json:"continuous_retry_max_duration_seconds"`
+	CodexFingerprintDefaultMode         *string   `json:"codex_fingerprint_default_mode"`
+	AllowRemoteMigration                *bool     `json:"allow_remote_migration"`
+	ModelMapping                        *string   `json:"model_mapping"`
+	CodexModelMapping                   *string   `json:"codex_model_mapping"`
+	PayloadRules                        *string   `json:"payload_rules"`
+	ReasoningEffortModels               *string   `json:"reasoning_effort_models"`
+	ResinURL                            *string   `json:"resin_url"`
+	ResinPlatformName                   *string   `json:"resin_platform_name"`
+	PromptFilterEnabled                 *bool     `json:"prompt_filter_enabled"`
+	PromptFilterMode                    *string   `json:"prompt_filter_mode"`
+	PromptFilterThreshold               *int      `json:"prompt_filter_threshold"`
+	PromptFilterStrictThreshold         *int      `json:"prompt_filter_strict_threshold"`
+	PromptFilterStrictTerminalEnabled   *bool     `json:"prompt_filter_strict_terminal_enabled"`
+	PromptFilterAdvancedConfig          *string   `json:"prompt_filter_advanced_config"`
+	PromptFilterLogMatches              *bool     `json:"prompt_filter_log_matches"`
+	PromptFilterMaxTextLength           *int      `json:"prompt_filter_max_text_length"`
+	PromptFilterSensitiveWords          *string   `json:"prompt_filter_sensitive_words"`
+	PromptFilterCustomPatterns          *string   `json:"prompt_filter_custom_patterns"`
+	PromptFilterCustomPatternsExpected  *string   `json:"prompt_filter_custom_patterns_expected"`
+	PromptFilterDisabledPatterns        *string   `json:"prompt_filter_disabled_patterns"`
+	PromptFilterReviewEnabled           *bool     `json:"prompt_filter_review_enabled"`
+	PromptFilterReviewAPIKey            *string   `json:"prompt_filter_review_api_key"`
+	PromptFilterReviewBaseURL           *string   `json:"prompt_filter_review_base_url"`
+	PromptFilterReviewModel             *string   `json:"prompt_filter_review_model"`
+	PromptFilterReviewTimeoutSeconds    *int      `json:"prompt_filter_review_timeout_seconds"`
+	PromptFilterReviewFailClosed        *bool     `json:"prompt_filter_review_fail_closed"`
+	ClientCompatMode                    *string   `json:"client_compat_mode"`
+	CodexMinCLIVersion                  *string   `json:"codex_min_cli_version"`
+	CodexUserAgentConfig                *string   `json:"codex_user_agent_config"`
+	CodexTelemetryEnabled               *bool     `json:"codex_telemetry_enabled"`
+	CodexTelemetryTimingDebug           *bool     `json:"codex_telemetry_timing_debug"`
+	UsageLogMode                        *string   `json:"usage_log_mode"`
+	UsageLogBatchSize                   *int      `json:"usage_log_batch_size"`
+	UsageLogFlushIntervalSeconds        *int      `json:"usage_log_flush_interval_seconds"`
+	StreamFlushPolicy                   *string   `json:"stream_flush_policy"`
+	StreamFlushIntervalMS               *int      `json:"stream_flush_interval_ms"`
+	FirstTokenMode                      *string   `json:"first_token_mode"`
+	FirstTokenTimeoutSeconds            *int      `json:"first_token_timeout_seconds"`
+	BillingTierPolicy                   *string   `json:"billing_tier_policy"`
+	ModelsListReadMaxBytes              *int64    `json:"models_list_read_max_bytes"`
+	ShowFullUsageNumbers                *bool     `json:"show_full_usage_numbers"`
+	ShowUpstreamModelMismatch           *bool     `json:"show_upstream_model_mismatch"`
+	PublicKeyUsagePageEnabled           *bool     `json:"public_key_usage_page_enabled"`
+	PublicImageStudioPageEnabled        *bool     `json:"public_image_studio_page_enabled"`
+	PublicAccountPortalPageEnabled      *bool     `json:"public_account_portal_page_enabled"`
+	ImageStorageBackend                 *string   `json:"image_storage_backend"`
+	ImageS3Endpoint                     *string   `json:"image_s3_endpoint"`
+	ImageS3Region                       *string   `json:"image_s3_region"`
+	ImageS3Bucket                       *string   `json:"image_s3_bucket"`
+	ImageS3AccessKey                    *string   `json:"image_s3_access_key"`
+	ImageS3SecretKey                    *string   `json:"image_s3_secret_key"`
+	ImageS3Prefix                       *string   `json:"image_s3_prefix"`
+	ImageS3ForcePathStyle               *bool     `json:"image_s3_force_path_style"`
+	AutoPause5hThreshold                *float64  `json:"auto_pause_5h_threshold"`
+	AutoPause7dThreshold                *float64  `json:"auto_pause_7d_threshold"`
+	AutoPause5hGuardBandPercent         *float64  `json:"auto_pause_5h_guard_band_percent"`
+	AutoPause5hGuardConcurrency         *int      `json:"auto_pause_5h_guard_concurrency"`
+	SmartPacingEnabled                  *bool     `json:"smart_pacing_enabled"`
+	SmartPacingMinConcurrency           *int      `json:"smart_pacing_min_concurrency"`
+	SmartPacingWindows                  *string   `json:"smart_pacing_windows"`
+	IgnoreUsageLimitStatus              *bool     `json:"ignore_usage_limit_status"`
+	ResponseCacheLocalMaxBytes          *int64    `json:"response_cache_local_max_bytes"`
+	ResponseCacheLocalMaxEntryBytes     *int64    `json:"response_cache_local_max_entry_bytes"`
+	ResponseCacheReconstructMaxBytes    *int64    `json:"response_cache_reconstruct_max_bytes"`
+	ResponseCacheWritePolicy            *string   `json:"response_cache_write_policy"`
+	ResponseCacheConfigGeneration       rawJSON   `json:"response_cache_config_generation"`
+	RelayModelCooldownMode              *string   `json:"relay_model_cooldown_mode"`
+	RelayModelCooldownSeconds           *int      `json:"relay_model_cooldown_seconds"`
+	RelayModelCooldownBackoffEnabled    *bool     `json:"relay_model_cooldown_backoff_enabled"`
+	OAuthModelCooldownMode              *string   `json:"oauth_model_cooldown_mode"`
+	OAuthModelCooldownSeconds           *int      `json:"oauth_model_cooldown_seconds"`
+	OAuthModelCooldownBackoffEnabled    *bool     `json:"oauth_model_cooldown_backoff_enabled"`
+	OAuthUnsupportedCooldownSeconds     *int      `json:"oauth_unsupported_model_cooldown_seconds"`
+	OutputGuardEnabled                  *bool     `json:"output_guard_enabled"`
+	OutputGuardMaxToolArgumentBytes     *int64    `json:"output_guard_max_tool_argument_bytes"`
+	OutputGuardMaxToolArgumentDeltas    *int      `json:"output_guard_max_tool_argument_deltas"`
+	OutputGuardMaxChannelBytes          *int64    `json:"output_guard_max_channel_bytes"`
+	OutputGuardMaxRequestBytes          *int64    `json:"output_guard_max_request_bytes"`
+	OutputGuardConfigGeneration         rawJSON   `json:"output_guard_config_generation"`
 }
 
 func updateSettingsHasFieldsOtherThanCustomPatterns(req updateSettingsReq) bool {
@@ -9246,103 +9195,6 @@ func decodeBackgroundConfig(raw string) brandingBackgroundConfig {
 	return normalizeBackgroundConfig(cfg)
 }
 
-// antigravityOAuthClientView 是设置接口返回的 Antigravity OAuth client 条目视图：
-// 不回显 client_secret，只用 has_secret 标记已保存。
-type antigravityOAuthClientView struct {
-	Key       string `json:"key"`
-	ClientID  string `json:"client_id"`
-	HasSecret bool   `json:"has_secret"`
-}
-
-// antigravityOAuthClientPayload 是设置更新提交的条目：client_secret 留空表示
-// 沿用系统设置里同 key 条目已保存的 secret（编辑不回显也不丢失）。
-type antigravityOAuthClientPayload struct {
-	Key          string `json:"key"`
-	ClientID     string `json:"client_id"`
-	ClientSecret string `json:"client_secret"`
-}
-
-// antigravityOAuthSettingsView 嵌入 settingsResponse，向前端展平输出 Antigravity
-// OAuth client 配置：系统设置条目可编辑，环境变量条目只读展示且同 key 冲突时生效。
-type antigravityOAuthSettingsView struct {
-	AntigravityOAuthClients              []antigravityOAuthClientView `json:"antigravity_oauth_clients"`
-	AntigravityOAuthClientKey            string                       `json:"antigravity_oauth_client_key"`
-	AntigravityOAuthEnvClients           []antigravityOAuthClientView `json:"antigravity_oauth_env_clients"`
-	AntigravityOAuthClientKeyEnvOverride bool                         `json:"antigravity_oauth_client_key_env_override"`
-	AntigravityOAuthActiveKeyEffective   string                       `json:"antigravity_oauth_active_key_effective"`
-	AntigravityOAuthUsingBuiltin         bool                         `json:"antigravity_oauth_using_builtin"`
-	AntigravityOAuthBuiltinClient        antigravityOAuthClientView   `json:"antigravity_oauth_builtin_client"`
-}
-
-func currentAntigravityOAuthSettingsView() antigravityOAuthSettingsView {
-	configured := auth.ConfiguredAntigravityOAuth()
-	clients := make([]antigravityOAuthClientView, 0, len(configured.Clients))
-	for _, client := range configured.Clients {
-		clients = append(clients, antigravityOAuthClientView{
-			Key: client.Key, ClientID: client.ClientID, HasSecret: client.ClientSecret != "",
-		})
-	}
-	envClients := make([]antigravityOAuthClientView, 0)
-	for _, client := range auth.AntigravityOAuthEnvClients() {
-		envClients = append(envClients, antigravityOAuthClientView{
-			Key: client.Key, ClientID: client.ClientID, HasSecret: true,
-		})
-	}
-	_, effectiveKey := auth.EffectiveAntigravityOAuthClients()
-	builtin := auth.BuiltinAntigravityOAuthClient()
-	return antigravityOAuthSettingsView{
-		AntigravityOAuthClients:              clients,
-		AntigravityOAuthClientKey:            configured.ActiveKey,
-		AntigravityOAuthEnvClients:           envClients,
-		AntigravityOAuthClientKeyEnvOverride: auth.AntigravityOAuthActiveKeyFromEnv() != "",
-		AntigravityOAuthActiveKeyEffective:   effectiveKey,
-		AntigravityOAuthUsingBuiltin:         auth.UsingBuiltinAntigravityOAuth(),
-		AntigravityOAuthBuiltinClient: antigravityOAuthClientView{
-			Key: builtin.Key, ClientID: builtin.ClientID, HasSecret: true,
-		},
-	}
-}
-
-// encodeGrokConfig 把 Grok 会话粘性模式 + 定期探测 + 限流重试 + 续轮思考 + 降智检测配置编码成 grok_config JSON 落库。
-func encodeGrokConfig(affinityMode string, probeEnabled bool, probeIntervalMinutes int, maxRateLimitRetries int, oauthClientID string, followUp auth.GrokFollowUpEffortConfig, qualityGuard auth.GrokQualityGuardConfig) string {
-	mode := strings.TrimSpace(affinityMode)
-	switch mode {
-	case auth.AffinityModeFollow, auth.AffinityModeBounded, auth.AffinityModeOff, auth.AffinityModeStrict:
-	default:
-		mode = auth.AffinityModeStrict
-	}
-	if probeIntervalMinutes <= 0 {
-		probeIntervalMinutes = auth.GrokProbeDefaultIntervalMinutes
-	}
-	if probeIntervalMinutes < auth.GrokProbeMinIntervalMinutes {
-		probeIntervalMinutes = auth.GrokProbeMinIntervalMinutes
-	}
-	if maxRateLimitRetries < 0 {
-		maxRateLimitRetries = 0
-	}
-	followUp = auth.NormalizeGrokFollowUpEffortConfig(followUp)
-	qualityGuard = auth.NormalizeGrokQualityGuardConfig(qualityGuard)
-	b, err := json.Marshal(map[string]any{
-		"affinity_mode":                        mode,
-		"probe_enabled":                        probeEnabled,
-		"probe_interval_minutes":               probeIntervalMinutes,
-		"max_rate_limit_retries":               maxRateLimitRetries,
-		"oauth_client_id":                      auth.NormalizeGrokOAuthClientID(oauthClientID),
-		"follow_up_effort_enabled":             followUp.Enabled,
-		"follow_up_tool_effort":                followUp.ToolEffort,
-		"follow_up_small_effort":               followUp.SmallEffort,
-		"quality_guard_enabled":                qualityGuard.Enabled,
-		"quality_guard_max_attempts":           qualityGuard.MaxAttempts,
-		"quality_guard_hold_timeout_sec":       qualityGuard.HoldTimeoutSec,
-		"quality_guard_on_exhausted":           qualityGuard.OnExhausted,
-		"quality_guard_account_cooldown_hours": qualityGuard.AccountCooldownHours,
-	})
-	if err != nil {
-		return `{"affinity_mode":"strict"}`
-	}
-	return string(b)
-}
-
 func encodeBackgroundConfig(cfg brandingBackgroundConfig) string {
 	cfg = normalizeBackgroundConfig(cfg)
 	data, err := json.Marshal(cfg)
@@ -9469,7 +9321,6 @@ func (h *Handler) GetSettings(c *gin.Context) {
 	modelCooldownSettings := h.store.GetModelCooldownSettings()
 	continuousRetryPolicy := h.store.GetContinuousRetryPolicy()
 	c.JSON(http.StatusOK, settingsResponse{
-		antigravityOAuthSettingsView:        currentAntigravityOAuthSettingsView(),
 		SiteName:                            branding.SiteName,
 		SiteLogo:                            branding.SiteLogo,
 		BackgroundImage:                     bgCfg.Image,
@@ -9560,21 +9411,6 @@ func (h *Handler) GetSettings(c *gin.Context) {
 		SessionAffinitySpread:               h.store.GetSessionAffinitySpread(),
 		SessionSlotBufferEnabled:            h.store.SessionSlotBufferEnabled(),
 		SessionSlotBufferSeconds:            int(h.store.GetSessionSlotBuffer() / time.Second),
-		GrokAffinityMode:                    h.store.GetGrokAffinityMode(),
-		GrokProbeEnabled:                    h.store.GrokProbeEnabled(),
-		GrokProbeIntervalMinutes:            h.store.GrokProbeIntervalMinutes(),
-		GrokMaxRateLimitRetries:             h.store.GrokMaxRateLimitRetries(),
-		GrokFollowUpEffortEnabled:           h.store.GrokFollowUpEffortConfig().Enabled,
-		GrokFollowUpToolEffort:              h.store.GrokFollowUpEffortConfig().ToolEffort,
-		GrokFollowUpSmallEffort:             h.store.GrokFollowUpEffortConfig().SmallEffort,
-		GrokQualityGuardEnabled:             h.store.GrokQualityGuardConfig().Enabled,
-		GrokQualityGuardMaxAttempts:         h.store.GrokQualityGuardConfig().MaxAttempts,
-		GrokQualityGuardHoldTimeoutSec:      h.store.GrokQualityGuardConfig().HoldTimeoutSec,
-		GrokQualityGuardOnExhausted:         h.store.GrokQualityGuardConfig().OnExhausted,
-		GrokQualityGuardCooldownHours:       h.store.GrokQualityGuardConfig().AccountCooldownHours,
-		GrokOAuthClientID:                   auth.ConfiguredGrokOAuthClientID(),
-		GrokOAuthClientIDEnvOverride:        auth.GrokOAuthClientIDFromEnv() != "",
-		GrokOAuthClientIDEffective:          auth.EffectiveGrokOAuthClientID(),
 		MaxRetries:                          h.store.GetMaxRetries(),
 		MaxRateLimitRetries:                 h.store.GetMaxRateLimitRetries(),
 		RetryIntervalMS:                     h.store.GetRetryIntervalMS(),
@@ -10501,145 +10337,6 @@ func (h *Handler) UpdateSettings(c *gin.Context) {
 		h.store.SetSessionAffinitySpread(*req.SessionAffinitySpread)
 		log.Printf("设置已更新: session_affinity_spread = %t", *req.SessionAffinitySpread)
 	}
-	if req.GrokAffinityMode != nil {
-		h.store.SetGrokAffinityMode(*req.GrokAffinityMode)
-		log.Printf("设置已更新: grok_affinity_mode = %s", *req.GrokAffinityMode)
-	}
-
-	// 定期探测:开关与间隔任一变更都重设运行时配置(SetGrokProbeConfig 会钳间隔下限)。
-	if req.GrokProbeEnabled != nil || req.GrokProbeIntervalMinutes != nil {
-		enabled := h.store.GrokProbeEnabled()
-		if req.GrokProbeEnabled != nil {
-			enabled = *req.GrokProbeEnabled
-		}
-		interval := h.store.GrokProbeIntervalMinutes()
-		if req.GrokProbeIntervalMinutes != nil {
-			interval = *req.GrokProbeIntervalMinutes
-		}
-		h.store.SetGrokProbeConfig(enabled, interval)
-		log.Printf("设置已更新: grok_probe_enabled=%v grok_probe_interval_minutes=%d", enabled, h.store.GrokProbeIntervalMinutes())
-	}
-
-	if req.GrokMaxRateLimitRetries != nil {
-		h.store.SetGrokMaxRateLimitRetries(*req.GrokMaxRateLimitRetries)
-		log.Printf("设置已更新: grok_max_rate_limit_retries = %d", h.store.GrokMaxRateLimitRetries())
-	}
-
-	if req.GrokFollowUpEffortEnabled != nil || req.GrokFollowUpToolEffort != nil || req.GrokFollowUpSmallEffort != nil {
-		cfg := h.store.GrokFollowUpEffortConfig()
-		if req.GrokFollowUpEffortEnabled != nil {
-			cfg.Enabled = *req.GrokFollowUpEffortEnabled
-		}
-		if req.GrokFollowUpToolEffort != nil {
-			cfg.ToolEffort = *req.GrokFollowUpToolEffort
-		}
-		if req.GrokFollowUpSmallEffort != nil {
-			cfg.SmallEffort = *req.GrokFollowUpSmallEffort
-		}
-		h.store.SetGrokFollowUpEffortConfig(cfg)
-		proxy.SetGrokFollowUpEffortConfig(h.store.GrokFollowUpEffortConfig())
-		log.Printf("设置已更新: grok_follow_up_effort enabled=%v tool=%s small=%s", cfg.Enabled, cfg.ToolEffort, cfg.SmallEffort)
-	}
-
-	if req.GrokQualityGuardEnabled != nil || req.GrokQualityGuardMaxAttempts != nil || req.GrokQualityGuardHoldTimeoutSec != nil || req.GrokQualityGuardOnExhausted != nil || req.GrokQualityGuardCooldownHours != nil {
-		cfg := h.store.GrokQualityGuardConfig()
-		if req.GrokQualityGuardEnabled != nil {
-			cfg.Enabled = *req.GrokQualityGuardEnabled
-		}
-		if req.GrokQualityGuardMaxAttempts != nil {
-			cfg.MaxAttempts = *req.GrokQualityGuardMaxAttempts
-		}
-		if req.GrokQualityGuardHoldTimeoutSec != nil {
-			cfg.HoldTimeoutSec = *req.GrokQualityGuardHoldTimeoutSec
-		}
-		if req.GrokQualityGuardOnExhausted != nil {
-			cfg.OnExhausted = *req.GrokQualityGuardOnExhausted
-		}
-		if req.GrokQualityGuardCooldownHours != nil {
-			cfg.AccountCooldownHours = *req.GrokQualityGuardCooldownHours
-		}
-		h.store.SetGrokQualityGuardConfig(cfg)
-		applied := h.store.GrokQualityGuardConfig()
-		log.Printf("设置已更新: grok_quality_guard enabled=%v max_attempts=%d hold_timeout=%ds on_exhausted=%s cooldown=%dh",
-			applied.Enabled, applied.MaxAttempts, applied.HoldTimeoutSec, applied.OnExhausted, applied.AccountCooldownHours)
-	}
-
-	// client_id 会拼进授权 URL 与 token 表单，含空白/控制字符或超长的直接拒绝，
-	// 而不是静默归一化成空——那样用户会以为存上了，实际仍在用默认值。
-	if req.GrokOAuthClientID != nil {
-		raw := strings.TrimSpace(*req.GrokOAuthClientID)
-		normalized := auth.NormalizeGrokOAuthClientID(raw)
-		if raw != "" && normalized == "" {
-			writeError(c, http.StatusBadRequest, fmt.Sprintf("grok_oauth_client_id 无效：不能含空白或控制字符，且长度不超过 %d", auth.GrokOAuthClientIDMaxLen))
-			return
-		}
-		auth.SetConfiguredGrokOAuthClientID(normalized)
-		if normalized == "" {
-			log.Printf("设置已更新: grok_oauth_client_id 已清空(回落到环境变量/内置默认)")
-		} else {
-			log.Printf("设置已更新: grok_oauth_client_id = %s", normalized)
-		}
-	}
-
-	if req.AntigravityOAuthClients != nil || req.AntigravityOAuthClientKey != nil {
-		current := auth.ConfiguredAntigravityOAuth()
-		next := current
-		if req.AntigravityOAuthClients != nil {
-			existingSecrets := make(map[string]string, len(current.Clients))
-			for _, client := range current.Clients {
-				existingSecrets[client.Key] = client.ClientSecret
-			}
-			clients := make([]auth.AntigravityOAuthClientConfig, 0, len(*req.AntigravityOAuthClients))
-			for _, payload := range *req.AntigravityOAuthClients {
-				key := strings.ToLower(strings.TrimSpace(payload.Key))
-				secret := strings.TrimSpace(payload.ClientSecret)
-				if secret == "" {
-					// 编辑态不回显 secret：留空沿用同 key 条目已保存的值。
-					secret = existingSecrets[key]
-				}
-				clients = append(clients, auth.AntigravityOAuthClientConfig{
-					Key: key, ClientID: strings.TrimSpace(payload.ClientID), ClientSecret: secret,
-				})
-			}
-			next.Clients = clients
-		}
-		if req.AntigravityOAuthClientKey != nil {
-			next.ActiveKey = strings.ToLower(strings.TrimSpace(*req.AntigravityOAuthClientKey))
-		} else if next.ActiveKey != "" {
-			// 未显式提交活跃 key 时，若原 key 已随条目删除则自动清空，避免整次保存被校验拒绝。
-			found := false
-			for _, client := range next.Clients {
-				if client.Key == next.ActiveKey {
-					found = true
-					break
-				}
-			}
-			if !found {
-				next.ActiveKey = ""
-			}
-		}
-		normalized, normalizeErr := auth.NormalizeAntigravityOAuthSettings(next)
-		if normalizeErr != nil {
-			writeError(c, http.StatusBadRequest, "antigravity_oauth_clients 无效："+normalizeErr.Error())
-			return
-		}
-		encoded, encodeErr := auth.EncodeAntigravityOAuthSettings(normalized)
-		if encodeErr != nil {
-			writeError(c, http.StatusInternalServerError, "antigravity_oauth_clients 编码失败："+encodeErr.Error())
-			return
-		}
-		if h.db == nil {
-			writeError(c, http.StatusInternalServerError, "Antigravity OAuth 设置存储不可用")
-			return
-		}
-		if saveErr := h.db.SaveAntigravityOAuthConfig(c.Request.Context(), encoded); saveErr != nil {
-			writeError(c, http.StatusInternalServerError, "保存 Antigravity OAuth 设置失败："+saveErr.Error())
-			return
-		}
-		auth.SetConfiguredAntigravityOAuth(normalized)
-		log.Printf("设置已更新: antigravity_oauth_clients = %d 个 client, active_key=%q", len(normalized.Clients), normalized.ActiveKey)
-	}
-
 	previousMaxRetries := h.store.GetMaxRetries()
 	maxRetriesToApply := previousMaxRetries
 	maxRetriesChanged := false
@@ -11214,7 +10911,6 @@ func (h *Handler) UpdateSettings(c *gin.Context) {
 		PublicAccountPortalPageEnabled:      publicAccountPortalPageEnabled,
 		ImageStorageConfig:                  imgConfigJSON,
 		BackgroundConfig:                    encodeBackgroundConfig(bgCfg),
-		GrokConfig:                          encodeGrokConfig(h.store.GetGrokAffinityMode(), h.store.GrokProbeEnabled(), h.store.GrokProbeIntervalMinutes(), h.store.GrokMaxRateLimitRetries(), auth.ConfiguredGrokOAuthClientID(), h.store.GrokFollowUpEffortConfig(), h.store.GrokQualityGuardConfig()),
 		AutoPause5hThreshold:                h.store.GetGlobalAutoPause5hThreshold(),
 		AutoPause7dThreshold:                h.store.GetGlobalAutoPause7dThreshold(),
 		AutoPause5hGuardBandPercent:         h.store.GetAutoPause5hGuardBandPercent(),
@@ -11468,7 +11164,6 @@ func (h *Handler) UpdateSettings(c *gin.Context) {
 	modelCooldownSettings := h.store.GetModelCooldownSettings()
 
 	c.JSON(http.StatusOK, settingsResponse{
-		antigravityOAuthSettingsView:        currentAntigravityOAuthSettingsView(),
 		SiteName:                            siteName,
 		SiteLogo:                            siteLogo,
 		BackgroundImage:                     bgCfg.Image,
@@ -11559,21 +11254,6 @@ func (h *Handler) UpdateSettings(c *gin.Context) {
 		SessionAffinitySpread:               h.store.GetSessionAffinitySpread(),
 		SessionSlotBufferEnabled:            h.store.SessionSlotBufferEnabled(),
 		SessionSlotBufferSeconds:            int(h.store.GetSessionSlotBuffer() / time.Second),
-		GrokAffinityMode:                    h.store.GetGrokAffinityMode(),
-		GrokProbeEnabled:                    h.store.GrokProbeEnabled(),
-		GrokProbeIntervalMinutes:            h.store.GrokProbeIntervalMinutes(),
-		GrokMaxRateLimitRetries:             h.store.GrokMaxRateLimitRetries(),
-		GrokFollowUpEffortEnabled:           h.store.GrokFollowUpEffortConfig().Enabled,
-		GrokFollowUpToolEffort:              h.store.GrokFollowUpEffortConfig().ToolEffort,
-		GrokFollowUpSmallEffort:             h.store.GrokFollowUpEffortConfig().SmallEffort,
-		GrokQualityGuardEnabled:             h.store.GrokQualityGuardConfig().Enabled,
-		GrokQualityGuardMaxAttempts:         h.store.GrokQualityGuardConfig().MaxAttempts,
-		GrokQualityGuardHoldTimeoutSec:      h.store.GrokQualityGuardConfig().HoldTimeoutSec,
-		GrokQualityGuardOnExhausted:         h.store.GrokQualityGuardConfig().OnExhausted,
-		GrokQualityGuardCooldownHours:       h.store.GrokQualityGuardConfig().AccountCooldownHours,
-		GrokOAuthClientID:                   auth.ConfiguredGrokOAuthClientID(),
-		GrokOAuthClientIDEnvOverride:        auth.GrokOAuthClientIDFromEnv() != "",
-		GrokOAuthClientIDEffective:          auth.EffectiveGrokOAuthClientID(),
 		MaxRetries:                          h.store.GetMaxRetries(),
 		MaxRateLimitRetries:                 h.store.GetMaxRateLimitRetries(),
 		RetryIntervalMS:                     h.store.GetRetryIntervalMS(),
@@ -11781,7 +11461,7 @@ func (r exportProxyResolver) resolve(rawURL string) (string, string, *bool) {
 
 // exportIncludeProxy 解析 include_proxy 查询参数；未显式传入时取渠道默认值。
 // 用 Query().Has 做存在性判断而不是空串比较：include_proxy=0 必须能压过
-// 默认开启的渠道（Antigravity）。
+// 默认开启的渠道。
 func exportIncludeProxy(c *gin.Context, defaultValue bool) bool {
 	if !c.Request.URL.Query().Has("include_proxy") {
 		return defaultValue
@@ -11928,8 +11608,7 @@ func (h *Handler) ExportAccounts(c *gin.Context) {
 	filter := c.DefaultQuery("filter", "healthy")
 	idsParam := c.Query("ids")
 	remote := c.Query("remote")
-	// channel=codex/grok 限定导出渠道:Codex 账号页导出传 codex,避免把 Grok
-	// 账号混进 codex 命名的导出文件(Grok 页有专属导出端点)。缺省仍导出全部,
+	// channel=codex 限定导出渠道:Codex 账号页导出传 codex。缺省导出全部,
 	// 远程迁移(remote=true)依赖全量语义。
 	channel := strings.ToLower(strings.TrimSpace(c.Query("channel")))
 
@@ -12124,13 +11803,6 @@ func (h *Handler) MigrateAccounts(c *gin.Context) {
 func (h *Handler) ListModels(c *gin.Context) {
 	catalog, _ := proxy.ListModelCatalog(c.Request.Context(), h.db)
 	h.addDaybreakCatalogModels(&catalog)
-	catalog.GrokModels = h.grokChannelModels()
-	catalog.AntigravityModels = h.antigravityChannelModels()
-	// The request-facing catalog must not advertise models contributed only by
-	// disabled/banned accounts or models currently marked credits_required.
-	// Keep claudeChannelModels for pricing/history, where those entries remain
-	// useful to operators.
-	catalog.ClaudeModels = h.claudeAvailableChannelModels()
 	c.JSON(http.StatusOK, catalog)
 }
 
@@ -12284,7 +11956,7 @@ func (h *Handler) PreviewCodexUserAgent(c *gin.Context) {
 	var sampleIDs []int64
 	if h.store != nil {
 		for _, acc := range h.store.Accounts() {
-			if acc == nil || acc.IsRelayStyle() || acc.IsOpenAIResponsesAPI() || acc.IsAntigravityAPI() {
+			if acc == nil {
 				continue
 			}
 			sampleIDs = append(sampleIDs, acc.ID())
@@ -12357,35 +12029,6 @@ func (h *Handler) CleanRateLimited(c *gin.Context) {
 // CleanError 清理错误（error）账号
 func (h *Handler) CleanError(c *gin.Context) {
 	h.cleanByStatus(c, "error")
-}
-
-// CleanGrokBanned 清理封禁（unauthorized）的 Grok 账号
-func (h *Handler) CleanGrokBanned(c *gin.Context) {
-	h.cleanGrokByStatus(c, "unauthorized")
-}
-
-// CleanGrokError 清理错误（error）的 Grok 账号
-func (h *Handler) CleanGrokError(c *gin.Context) {
-	h.cleanGrokByStatus(c, "error")
-}
-
-// cleanGrokByStatus 按运行时状态清理 Grok 账号，不影响其它平台
-func (h *Handler) cleanGrokByStatus(c *gin.Context, targetStatus string) {
-	h.cleanAccountTargets(c, h.store.CollectCleanTargets(targetStatus, (*auth.Account).IsGrokAPI), "auto_clean")
-}
-
-// CleanAntigravityBanned 清理封禁的 Antigravity 账号。
-func (h *Handler) CleanAntigravityBanned(c *gin.Context) {
-	h.cleanAntigravityByStatus(c, "unauthorized")
-}
-
-// CleanAntigravityError 清理错误状态的 Antigravity 账号。
-func (h *Handler) CleanAntigravityError(c *gin.Context) {
-	h.cleanAntigravityByStatus(c, "error")
-}
-
-func (h *Handler) cleanAntigravityByStatus(c *gin.Context, targetStatus string) {
-	h.cleanAccountTargets(c, h.store.CollectCleanTargets(targetStatus, (*auth.Account).IsAntigravityAPI), "auto_clean")
 }
 
 // cleanByStatus 按运行时状态清理账号
