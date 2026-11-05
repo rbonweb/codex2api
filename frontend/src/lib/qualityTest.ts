@@ -1,4 +1,3 @@
-import type { ClaudeTestEvent } from './claudeConnectionTest'
 import type { CodexTestDiagnostics } from './codexConnectionTest'
 
 export const PELICAN_PROMPT = '创建一个 HTML，内容是用 SVG 绘制一个鹈鹕骑自行车的 2D 动画。你不需要任何测试。'
@@ -116,8 +115,74 @@ export function qualityTestPlanTone(plan: string): string {
   return value === 'free' ? 'free' : 'other'
 }
 
-export interface QualityTestEvent extends ClaudeTestEvent {
+export interface QualityTestEvent {
+  type: 'test_start' | 'content' | 'diagnostics' | 'test_complete' | 'error'
+  model?: string
+  text?: string
+  error?: string
+  success?: boolean
   codex_diagnostics?: CodexTestDiagnostics
+}
+
+const QUALITY_TEST_EVENT_TYPES = new Set(['test_start', 'content', 'diagnostics', 'test_complete', 'error'])
+
+export function createQualityTestEventParser(onEvent: (event: QualityTestEvent) => void) {
+  let buffer = ''
+  const processFrame = (frame: string) => {
+    const data = frame.split(/\r?\n/)
+      .filter((line) => line.startsWith('data:'))
+      .map((line) => line.slice(5).replace(/^ /, ''))
+      .join('\n')
+    if (!data || data === '[DONE]') return
+    let event: QualityTestEvent
+    try {
+      event = JSON.parse(data) as QualityTestEvent
+    } catch {
+      return
+    }
+    if (event && QUALITY_TEST_EVENT_TYPES.has(event.type)) onEvent(event)
+  }
+  return {
+    feed(chunk: string) {
+      buffer += chunk
+      let boundary: RegExpExecArray | null
+      while ((boundary = /\r?\n\r?\n/.exec(buffer)) !== null) {
+        const frame = buffer.slice(0, boundary.index)
+        buffer = buffer.slice(boundary.index + boundary[0].length)
+        processFrame(frame)
+      }
+    },
+    finish() {
+      if (buffer.trim()) processFrame(buffer)
+      buffer = ''
+    },
+  }
+}
+
+// The terminal result may precede final diagnostics. Always drain the stream before resolving to the caller.
+export async function readQualityTestEvents(
+  body: ReadableStream<Uint8Array>,
+  onEvent: (event: QualityTestEvent) => void,
+): Promise<boolean> {
+  let receivedTerminalEvent = false
+  const parser = createQualityTestEventParser((event) => {
+    if (event.type === 'test_complete' || event.type === 'error') receivedTerminalEvent = true
+    onEvent(event)
+  })
+  const reader = body.getReader()
+  const decoder = new TextDecoder()
+  try {
+    while (true) {
+      const { done, value } = await reader.read()
+      if (done) break
+      parser.feed(decoder.decode(value, { stream: true }))
+    }
+    parser.feed(decoder.decode())
+    parser.finish()
+    return receivedTerminalEvent
+  } finally {
+    reader.releaseLock()
+  }
 }
 
 // Accept complete documents, Markdown-wrapped HTML, and standalone SVG/fragments.

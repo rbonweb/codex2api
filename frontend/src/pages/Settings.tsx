@@ -5648,7 +5648,6 @@ export default function Settings() {
                         {([
                           { method: 'POST', path: '/v1/chat/completions', desc: t('settings.openaiCompat'), tone: 'default' as const },
                           { method: 'POST', path: '/v1/responses', desc: t('settings.responsesApi'), tone: 'outline' as const },
-                          { method: 'POST', path: '/v1/messages', desc: t('settings2.messagesEndpoint'), tone: 'outline' as const },
                           { method: 'POST', path: '/v1/images/generations', desc: t('settings.imageGenerationApi'), tone: 'outline' as const },
                           { method: 'POST', path: '/v1/images/edits', desc: t('settings.imageEditApi'), tone: 'outline' as const },
                           { method: 'GET', path: '/v1/models', desc: t('settings.modelList'), tone: 'secondary' as const },
@@ -5690,11 +5689,6 @@ export default function Settings() {
                               <TableCell><Badge variant="outline" className="text-[12px]">POST</Badge></TableCell>
                               <TableCell className="font-mono text-[13px]">/v1/responses</TableCell>
                               <TableCell className="text-[13px] text-muted-foreground">{t('settings.responsesApi')}</TableCell>
-                            </TableRow>
-                            <TableRow>
-                              <TableCell><Badge variant="outline" className="text-[12px]">POST</Badge></TableCell>
-                              <TableCell className="font-mono text-[13px]">/v1/messages</TableCell>
-                              <TableCell className="text-[13px] text-muted-foreground">{t('settings2.messagesEndpoint')}</TableCell>
                             </TableRow>
                             <TableRow>
                               <TableCell><Badge variant="outline" className="text-[12px]">POST</Badge></TableCell>

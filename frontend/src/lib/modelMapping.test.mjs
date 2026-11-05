@@ -9,16 +9,16 @@ import {
 
 test('model mapping entries round-trip exact and wildcard aliases', () => {
   const parsed = parseModelMappingEntries(
-    '{"gpt-5.5":"grok-4.5","gpt-5.*":"grok-4.6"}',
+    '{"gpt-5.5":"gpt-5.5-codex","gpt-5.*":"gpt-5.6-codex"}',
   )
   assert.equal(parsed.ok, true)
   assert.deepEqual(parsed.entries, [
-    { from: 'gpt-5.5', to: 'grok-4.5' },
-    { from: 'gpt-5.*', to: 'grok-4.6' },
+    { from: 'gpt-5.5', to: 'gpt-5.5-codex' },
+    { from: 'gpt-5.*', to: 'gpt-5.6-codex' },
   ])
   assert.deepEqual(serializeModelMappingEntries(parsed.entries), {
     ok: true,
-    value: '{"gpt-5.5":"grok-4.5","gpt-5.*":"grok-4.6"}',
+    value: '{"gpt-5.5":"gpt-5.5-codex","gpt-5.*":"gpt-5.6-codex"}',
   })
 })
 
@@ -38,8 +38,8 @@ test('model mapping serializer ignores blank rows and rejects partial or duplica
   )
   assert.deepEqual(
     serializeModelMappingEntries([
-      { from: 'gpt-5.5', to: 'grok-4.5' },
-      { from: 'GPT-5.5', to: 'grok-4.6' },
+      { from: 'gpt-5.5', to: 'gpt-5.5-codex' },
+      { from: 'GPT-5.5', to: 'gpt-5.6-codex' },
     ]),
     { ok: false },
   )

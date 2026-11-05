@@ -26,10 +26,10 @@ test("input stays the stored total and cache buckets are reported separately", (
 });
 
 test("the channel and model name never change the displayed input", () => {
-  for (const channel of [undefined, "", " ", null, "codex", "claude"]) {
+  for (const channel of [undefined, "", " ", null, "codex"]) {
     const result = getUsageTokenBreakdown({
       channel,
-      model: "claude-sonnet-4-6",
+      model: "gpt-5.5",
       input_tokens: 1_000,
       output_tokens: 25,
       cached_tokens: 700,

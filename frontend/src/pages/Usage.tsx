@@ -8,7 +8,6 @@ import { api } from '../api'
 import { getTimeRangeISO, type TimeRangeKey } from '../lib/timeRange'
 import PageHeader from '../components/PageHeader'
 import Pagination from '../components/Pagination'
-import ChannelFilter, { useUsageChannel } from '../components/ChannelFilter'
 import ChannelLogo from '../components/ChannelLogo'
 import CompactionBadges from '../components/CompactionBadges'
 import UsageDaybreakBadge from '../components/UsageDaybreakBadge'
@@ -1461,7 +1460,6 @@ export default function Usage() {
     [t],
   )
   const [showAnalysis, setShowAnalysis] = useState(getInitialAnalysisVisibility)
-  const [channel, setChannel] = useUsageChannel()
 
   // 搜索防抖：输入停止 400ms 后触发查询
   const handleSearchChange = useCallback((value: string) => {
@@ -1506,11 +1504,10 @@ export default function Usage() {
       stream: filterType === 'stream' ? 'true' : filterType === 'sync' ? 'false' : undefined,
       compact: filterType === 'compact' ? 'true' : undefined,
       hasCompactionHistory: filterType === 'history' ? 'true' : undefined,
-      channel: channel || undefined,
       retry: filterRetry || undefined,
       viaWebsocket: filterTransport === 'ws' ? 'true' : filterTransport === 'http' ? 'false' : undefined,
     }
-  }, [timeRange, customRange, searchQuery, filterModel, filterEndpoint, filterApiKeyId, filterAccountId, filterFast, filterUltra, filterModelMismatch, filterType, channel, filterRetry, filterTransport])
+  }, [timeRange, customRange, searchQuery, filterModel, filterEndpoint, filterApiKeyId, filterAccountId, filterFast, filterUltra, filterModelMismatch, filterType, filterRetry, filterTransport])
 
   const buildLogFilterParams = useCallback(() => {
     return {
@@ -1689,17 +1686,16 @@ export default function Usage() {
   const modelStats = stats?.model_stats ?? []
   // 统计现在跟随模型/账号等筛选,选中某个模型后 model_stats 只剩它自己;
   // 下拉选项按渠道累积本会话见过的模型,避免筛选一次就把其它模型从下拉里挤掉。
-  const seenModelsRef = useRef<Record<string, string[]>>({})
+  const seenModelsRef = useRef<string[]>([])
   const seenModels = useMemo(() => {
-    const bucket = seenModelsRef.current[channel] ?? []
-    const merged = [...bucket]
+    const merged = [...seenModelsRef.current]
     for (const item of modelStats) {
       const key = (item.model || '').trim()
       if (key && key !== 'unknown' && !merged.includes(key)) merged.push(key)
     }
-    seenModelsRef.current[channel] = merged
+    seenModelsRef.current = merged
     return merged
-  }, [modelStats, channel])
+  }, [modelStats])
   // 下拉选项为 Codex manifest 目录，再并上当前范围实际用过的模型（统计已按渠道过滤），去重后目录顺序优先。
   const modelFilterOptions = useMemo(() => {
     const seen = new Set<string>()
@@ -1828,7 +1824,6 @@ export default function Usage() {
           title={t('usage.title')}
           description={t('usage.description')}
           onRefresh={() => { void reload(); void loadLogs(); void loadAPIKeys() }}
-          titleAdornment={<ChannelFilter value={channel} onChange={setChannel} />}
           actions={
             <Button
               variant="outline"
@@ -1841,7 +1836,7 @@ export default function Usage() {
           }
         />
 
-        <div key={channel || 'all'} className="space-y-6 animate-channel-switch-in">
+        <div className="space-y-6 animate-channel-switch-in">
         <div className="relative space-y-6">
         {statsOutdatedFailed && (
           <div role="alert" className="absolute inset-0 z-10 flex items-start justify-center rounded-xl bg-background/85 p-6 backdrop-blur-sm">
