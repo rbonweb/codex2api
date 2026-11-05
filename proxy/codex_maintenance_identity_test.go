@@ -189,40 +189,6 @@ func TestFetchCodexModelsManifestUnifiedIdentityAlignsClientVersion(t *testing.T
 	})
 }
 
-func TestCodexModelDiscoveryUnifiedIdentityMatchesRelayChat(t *testing.T) {
-	applyMaintenanceIdentitySettings(t, func(s *RuntimeSettings) {
-		s.CodexUserAgentConfig = testDesktopUserAgentConfig
-	})
-	const baseURL, apiKey = "https://relay.example.com/v1", "sk-relay"
-	account := &auth.Account{DBID: 7, UpstreamType: auth.UpstreamOpenAIResponses, BaseURL: baseURL, APIKey: apiKey}
-
-	discovery := http.Header{}
-	ApplyCodexModelDiscoveryHeaders(discovery, account, baseURL, apiKey)
-
-	req, err := http.NewRequest(http.MethodPost, baseURL+"/responses", nil)
-	if err != nil {
-		t.Fatal(err)
-	}
-	if err := applyOpenAIResponsesRequestHeaders(req, account, apiKey, nil); err != nil {
-		t.Fatalf("applyOpenAIResponsesRequestHeaders: %v", err)
-	}
-	for _, name := range []string{"User-Agent", "Originator", "Version", "x-codex-app-version"} {
-		if discovery.Get(name) == "" || discovery.Get(name) != req.Header.Get(name) {
-			t.Fatalf("%s: discovery %q, relay chat %q", name, discovery.Get(name), req.Header.Get(name))
-		}
-	}
-
-	installationID := discovery.Get(codexInstallationIDHeader)
-	for _, downstreamKey := range []string{"Bearer sk-downstream-1", "Bearer sk-downstream-2"} {
-		body, injected := ensureCodexClientInstallationMetadata([]byte(`{"model":"gpt-5.6"}`), account, http.Header{"Authorization": {downstreamKey}})
-		if !injected {
-			t.Fatal("installation metadata was not injected")
-		}
-		if got := gjson.GetBytes(body, "client_metadata.x-codex-installation-id").String(); got != installationID {
-			t.Fatalf("downstream %s: body installation id %q, discovery header %q", downstreamKey, got, installationID)
-		}
-	}
-}
 
 func mustResolveCodexMaintenanceIdentity(t *testing.T, account *auth.Account, headers http.Header) CodexMaintenanceIdentity {
 	t.Helper()

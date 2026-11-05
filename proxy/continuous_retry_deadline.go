@@ -271,7 +271,7 @@ func rememberContinuousRetryStreamFailure(ctx context.Context, outcome streamOut
 	if outcome.logStatusCode == http.StatusOK || continuousRetryDeadlineExceeded(ctx) {
 		return
 	}
-	status := safeGrokNativeHTTPStatus(outcome.logStatusCode)
+	status := safeUpstreamHTTPStatus(outcome.logStatusCode)
 	if len(body) == 0 || !json.Valid(body) {
 		body, _ = json.Marshal(gin.H{"error": gin.H{
 			"message": outcome.failureMessage,

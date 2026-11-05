@@ -48,9 +48,6 @@ func (g modelRateLimitGate) blocks(account *auth.Account, model string) bool {
 	return bool(g) && model != "" && account.IsModelRateLimited(model)
 }
 
-func (g modelRateLimitGate) blocksAntigravity(account *auth.Account, model, wireModel string) bool {
-	return bool(g) && antigravityAccountModelRateLimited(account, model, wireModel)
-}
 
 func modelRateLimitGateFor(pin *pinnedAccountDispatch) modelRateLimitGate {
 	if pin != nil {

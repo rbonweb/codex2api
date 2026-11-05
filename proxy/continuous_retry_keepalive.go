@@ -547,11 +547,6 @@ func readSSEStreamWithContinuousRetryKeepalive(ctx context.Context, body io.Read
 	})
 }
 
-func readRawGrokSSEFramesWithContinuousRetryKeepalive(ctx context.Context, body io.Reader, callback func(rawGrokSSEFrame) bool) error {
-	return readStreamWithContinuousRetryKeepalive(ctx, func(yield func(rawGrokSSEFrame) bool) error {
-		return readRawGrokSSEFrames(body, yield)
-	}, callback)
-}
 
 // waitWithContinuousRetryKeepalive waits in short chunks only after a request
 // has entered the unlimited retry path. It keeps the write on the handler

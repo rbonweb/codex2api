@@ -395,9 +395,6 @@ func (h *Handler) applyModelCapabilities(ctx context.Context, row *database.APIK
 				allWebsocketEligible = false
 			}
 			target := slug
-			if mapped, ok := resolveAccountModelMapping(account, slug); ok {
-				target = mapped
-			}
 			snapshot, observed := snapshots[account.ID()]
 			observed = observed && snapshot.CredentialGeneration == account.GetCredentialGeneration()
 			var fields map[string]json.RawMessage
