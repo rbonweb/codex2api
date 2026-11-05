@@ -86,75 +86,73 @@ func TestStrictResponsesCompatibilityHTTPDispatch(t *testing.T) {
 	t.Cleanup(func() { ApplyRuntimeSettings(previous) })
 	for _, endpoint := range []string{"responses", "compact"} {
 		for _, channel := range []string{database.UpstreamChannelAuto, database.UpstreamChannelCodex} {
-			{
-				for _, strict := range []bool{false, true} {
-					name := endpoint + "/" + channel + "/"
-					name += "native"
-					if strict {
-						name += "/strict"
-					} else {
-						name += "/default"
-					}
-					t.Run(name, func(t *testing.T) {
-						var calls atomic.Int32
-						var seen []byte
-						upstream := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-							calls.Add(1)
-							seen = readUpstreamRequestBody(r)
-							if strings.HasSuffix(r.URL.Path, "/compact") {
-								w.Header().Set("Content-Type", "application/json")
-								_, _ = io.WriteString(w, `{"id":"resp_compact","output":[],"usage":{"input_tokens":1,"output_tokens":1}}`)
-							} else {
-								w.Header().Set("Content-Type", "text/event-stream")
-								_, _ = io.WriteString(w, strictCompatibilitySSE)
-							}
-						}))
-						defer upstream.Close()
-						previousResin := resinCfg.Load()
-						SetResinConfig(&ResinConfig{BaseURL: upstream.URL, PlatformName: "test"})
-						defer resinCfg.Store(previousResin)
-						store := auth.NewStore(nil, nil, &database.SystemSettings{MaxConcurrency: 2, MaxRetries: 0, MaxRateLimitRetries: 0})
-						defer store.Stop()
-						account := &auth.Account{DBID: 1, AccessToken: "local-test", PlanType: "pro", Models: []string{"gpt-5.5"}}
-						store.AddAccount(account)
-						h := NewHandler(store, nil, nil, nil)
-						body := []byte(`{"model":"gpt-5.5","input":"hi","stream":true,"metadata":{"tenant":"demo"},"background":false}`)
-						handler := h.Responses
-						if endpoint == "compact" {
-							handler = h.ResponsesCompact
-						}
-						response := invokeResponsesHandlerWithContext(t, func(c *gin.Context) {
-							c.Set(contextAPIKeyRow, &database.APIKeyRow{ID: 7, Limits: database.APIKeyLimits{UpstreamChannel: channel}})
-							if strict {
-								c.Request.Header.Set(strictResponsesCompatibilityHeader, "true")
-							}
-						}, handler, body)
-						if strict {
-							if response.Code != http.StatusBadRequest || gjson.GetBytes(response.Body.Bytes(), "error.code").String() != string(api.ErrCodeUnsupportedFeature) || calls.Load() != 0 {
-								t.Fatalf("native strict response=%d %s calls=%d", response.Code, response.Body.String(), calls.Load())
-							}
-						} else {
-							if response.Code != http.StatusOK || calls.Load() != 1 {
-								t.Fatalf("response=%d %s calls=%d", response.Code, response.Body.String(), calls.Load())
-							}
-							if got := gjson.GetBytes(seen, "metadata.tenant"); got.Exists() {
-								t.Fatalf("native request kept discarded metadata: body=%s", seen)
-							}
-							if gjson.GetBytes(seen, "background").Exists() {
-								t.Fatalf("native synchronous background not normalized: %s", seen)
-							}
-							gjson.GetBytes(seen, "tools").ForEach(func(_, tool gjson.Result) bool {
-								if tool.Get("background").Exists() {
-									t.Errorf("boolean background misrouted into image tool: %s", tool.Raw)
-								}
-								return true
-							})
-						}
-						if account.ActiveRequests.Load() != 0 {
-							t.Fatalf("account lease leaked: %d", account.ActiveRequests.Load())
-						}
-					})
+			for _, strict := range []bool{false, true} {
+				name := endpoint + "/" + channel + "/"
+				name += "native"
+				if strict {
+					name += "/strict"
+				} else {
+					name += "/default"
 				}
+				t.Run(name, func(t *testing.T) {
+					var calls atomic.Int32
+					var seen []byte
+					upstream := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+						calls.Add(1)
+						seen = readUpstreamRequestBody(r)
+						if strings.HasSuffix(r.URL.Path, "/compact") {
+							w.Header().Set("Content-Type", "application/json")
+							_, _ = io.WriteString(w, `{"id":"resp_compact","output":[],"usage":{"input_tokens":1,"output_tokens":1}}`)
+						} else {
+							w.Header().Set("Content-Type", "text/event-stream")
+							_, _ = io.WriteString(w, strictCompatibilitySSE)
+						}
+					}))
+					defer upstream.Close()
+					previousResin := resinCfg.Load()
+					SetResinConfig(&ResinConfig{BaseURL: upstream.URL, PlatformName: "test"})
+					defer resinCfg.Store(previousResin)
+					store := auth.NewStore(nil, nil, &database.SystemSettings{MaxConcurrency: 2, MaxRetries: 0, MaxRateLimitRetries: 0})
+					defer store.Stop()
+					account := &auth.Account{DBID: 1, AccessToken: "local-test", PlanType: "pro", Models: []string{"gpt-5.5"}}
+					store.AddAccount(account)
+					h := NewHandler(store, nil, nil, nil)
+					body := []byte(`{"model":"gpt-5.5","input":"hi","stream":true,"metadata":{"tenant":"demo"},"background":false}`)
+					handler := h.Responses
+					if endpoint == "compact" {
+						handler = h.ResponsesCompact
+					}
+					response := invokeResponsesHandlerWithContext(t, func(c *gin.Context) {
+						c.Set(contextAPIKeyRow, &database.APIKeyRow{ID: 7, Limits: database.APIKeyLimits{UpstreamChannel: channel}})
+						if strict {
+							c.Request.Header.Set(strictResponsesCompatibilityHeader, "true")
+						}
+					}, handler, body)
+					if strict {
+						if response.Code != http.StatusBadRequest || gjson.GetBytes(response.Body.Bytes(), "error.code").String() != string(api.ErrCodeUnsupportedFeature) || calls.Load() != 0 {
+							t.Fatalf("native strict response=%d %s calls=%d", response.Code, response.Body.String(), calls.Load())
+						}
+					} else {
+						if response.Code != http.StatusOK || calls.Load() != 1 {
+							t.Fatalf("response=%d %s calls=%d", response.Code, response.Body.String(), calls.Load())
+						}
+						if got := gjson.GetBytes(seen, "metadata.tenant"); got.Exists() {
+							t.Fatalf("native request kept discarded metadata: body=%s", seen)
+						}
+						if gjson.GetBytes(seen, "background").Exists() {
+							t.Fatalf("native synchronous background not normalized: %s", seen)
+						}
+						gjson.GetBytes(seen, "tools").ForEach(func(_, tool gjson.Result) bool {
+							if tool.Get("background").Exists() {
+								t.Errorf("boolean background misrouted into image tool: %s", tool.Raw)
+							}
+							return true
+						})
+					}
+					if account.ActiveRequests.Load() != 0 {
+						t.Fatalf("account lease leaked: %d", account.ActiveRequests.Load())
+					}
+				})
 			}
 		}
 	}
