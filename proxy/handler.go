@@ -187,44 +187,12 @@ func (h *Handler) withModelCooldownFilter(ctx context.Context, model string, fil
 	return h.store.WithModelCooldownFilterContext(ctx, model, filter)
 }
 
-// antigravityRequestCooldownKeys 解析 public model 对应的 wireModel 与（Gemini 家族）
-// 共享 familyKey，供跨实例三键冷却检查使用。wireModel 取自模型目录
-// （AntigravityWireModelID），与 antigravityResolvePublicModelForAccount 对受支持账号返回
-// 的 wire 完全一致；账号是否具备该 wire 支撑已由 antigravityChannelAccountFilter 单独把关，
-// 这里只负责冷却键。非 Gemini 模型的 familyKey 为空串。
-func antigravityRequestCooldownKeys(model string) (wireModel string, familyKey string) {
-	wireModel, _ = AntigravityWireModelID(model)
-	if antigravityIsGeminiModel(model) || antigravityIsGeminiModel(wireModel) {
-		familyKey = antigravityGeminiFamilyCooldownKey
-	}
-	return wireModel, familyKey
-}
-
-// withRequestModelCooldownFilter 应用跨实例模型冷却过滤器，按下游 Key 的渠道限定分三档：
-//   - antigravity：额外解析 public model 对应的 wireModel 及（Gemini 家族）共享 familyKey，
-//     用 WithAntigravityCooldownFilterContext 对三个 key 一并做跨实例检查——任一 key 由其它
-//     实例写入的冷却都能在本实例选号时过滤掉该账号，闭合「本地内存已限流但跨实例缓存未拦截」
-//     的缺口；
-//   - auto（渠道未限定）：候选池里既可能有 Antigravity 账号（native Gemini 入口硬限定为
-//     Antigravity OAuth，Responses / Chat / Messages 也允许），也可能有其它渠道账号，改用
-//     WithAntigravityAwareCooldownFilterContext 按候选账号类型分别取三键 / 单键检查——
-//     Antigravity 账号同样能看到跨实例 wire / family 冷却，非 Antigravity 账号行为不变；
-//   - 其它显式渠道（codex / grok / claude）：候选池不含 Antigravity 账号，沿用单一
-//     publicModel 检查，行为不变。
+// withRequestModelCooldownFilter 应用跨实例模型冷却过滤器：对公开模型做单一 key 的共享缓存冷却检查。
 func (h *Handler) withRequestModelCooldownFilter(c *gin.Context, ctx context.Context, model string, filter auth.AccountFilter) auth.AccountFilter {
 	if h == nil || h.store == nil {
 		return filter
 	}
-	switch requestUpstreamChannel(c) {
-	case database.UpstreamChannelAntigravity:
-		wireModel, familyKey := antigravityRequestCooldownKeys(model)
-		return h.store.WithAntigravityCooldownFilterContext(ctx, model, wireModel, familyKey, filter)
-	case database.UpstreamChannelAuto:
-		wireModel, familyKey := antigravityRequestCooldownKeys(model)
-		return h.store.WithAntigravityAwareCooldownFilterContext(ctx, model, wireModel, familyKey, filter)
-	default:
-		return h.store.WithModelCooldownFilterContext(ctx, model, filter)
-	}
+	return h.store.WithModelCooldownFilterContext(ctx, model, filter)
 }
 
 func (h *Handler) shouldUseWebsocketForHTTP() bool {
@@ -442,20 +410,9 @@ func isSparkPlanCandidate(planType string) bool {
 	}
 }
 
-// accountFilterForResponsesWebSocket 在 Codex 选号之外，放行打开了上游 WebSocket
-// 的 OpenAI Responses 中转账号。Grok、Antigravity、Claude 以及仍走 HTTP 的中转账号继续排除。
+// accountFilterForResponsesWebSocket 返回 Responses WebSocket 入口的账号过滤器，即 Codex 选号过滤器。
 func accountFilterForResponsesWebSocket(model string) auth.AccountFilter {
-	model = strings.TrimSpace(model)
-	codex := accountFilterForModel(model)
-	return func(account *auth.Account) bool {
-		if account != nil && account.OpenAIResponsesUsesUpstreamWebsocket() {
-			if model == "" || account.IsModelRateLimited(model) {
-				return false
-			}
-			return relayAccountSupportsModel(account, model)
-		}
-		return codex(account)
-	}
+	return accountFilterForModel(strings.TrimSpace(model))
 }
 
 func accountFilterForModel(model string) auth.AccountFilter {
@@ -466,12 +423,6 @@ func accountFilterForModelWithGate(model string, gate modelRateLimitGate) auth.A
 	model = strings.TrimSpace(model)
 	return func(account *auth.Account) bool {
 		if account == nil {
-			return false
-		}
-		if account.IsAntigravityAPI() {
-			return false
-		}
-		if account.IsRelayStyle() {
 			return false
 		}
 		if gate.blocks(account, model) {
@@ -497,33 +448,12 @@ func requestUpstreamChannel(c *gin.Context) string {
 }
 
 // applyUpstreamChannelFilter 按下游 Key 的上游渠道限定收窄既有过滤器。
-// 保留既有端点能力约束很重要：compact / Messages / Chat 等路径可能显式排除
-// 某类账号，渠道选择不能把这些硬门覆盖掉。
 func (h *Handler) applyUpstreamChannelFilter(c *gin.Context, effectiveModel string, filter auth.AccountFilter) auth.AccountFilter {
 	return h.applyUpstreamChannelFilterWithGate(c, effectiveModel, filter, enforceModelRateLimits)
 }
 
 func (h *Handler) applyUpstreamChannelFilterWithGate(c *gin.Context, effectiveModel string, filter auth.AccountFilter, gate modelRateLimitGate) auth.AccountFilter {
-	combine := func(channelFilter auth.AccountFilter) auth.AccountFilter {
-		return func(account *auth.Account) bool {
-			return channelFilter(account) && (filter == nil || filter(account))
-		}
-	}
-	switch requestUpstreamChannel(c) {
-	case database.UpstreamChannelGrok:
-		return combine(grokChannelAccountFilterWithGate(effectiveModel, gate))
-	case database.UpstreamChannelAntigravity:
-		return combine(antigravityChannelAccountFilterWithGate(effectiveModel, gate))
-	case database.UpstreamChannelClaude:
-		return combine(claudeChannelAccountFilterWithGate(effectiveModel, gate))
-	case database.UpstreamChannelCodex:
-		return func(account *auth.Account) bool {
-			if account == nil || account.IsGrokAPI() || account.IsAntigravityAPI() || account.IsClaudeOAuth() {
-				return false
-			}
-			return filter == nil || filter(account)
-		}
-	}
+	// Every account is a Codex account, so no channel narrows the existing filter.
 	return filter
 }
 
@@ -607,9 +537,7 @@ func accountFilterForResponsesModelWithGate(originalModel string, effectiveModel
 func accountFilterForCompactResponsesModelWithOriginal(originalModel string, effectiveModel string, allowCodexAccounts bool) auth.AccountFilter {
 	inner := accountFilterForInlineCompactionModelWithOriginal(originalModel, effectiveModel, allowCodexAccounts)
 	return func(account *auth.Account) bool {
-		// The dedicated compact executor has no Grok adapter. Inline compaction
-		// on ordinary Responses has a separate provider capability boundary.
-		return account != nil && !account.IsGrokAPI() && inner(account)
+		return account != nil && inner(account)
 	}
 }
 
@@ -624,18 +552,7 @@ func accountFilterForInlineCompactionModelWithGate(originalModel string, effecti
 	}
 	inner := accountFilterForResponsesModelResolver(effectiveModel, allowCodexAccounts, resolveMapping, gate)
 	return func(account *auth.Account) bool {
-		if account == nil || account.IsAntigravityAPI() || account.IsClaudeOAuth() || !inner(account) {
-			return false
-		}
-		if account.IsGrokAPI() {
-			model := effectiveModel
-			if mapped, ok := resolveMapping(account); ok {
-				model = mapped
-			}
-			// Chat/Messages conversion cannot represent compaction_trigger.
-			return ResolveGrokUpstreamRoute(account, model, GrokProtocolResponses, time.Now()).Protocol == GrokProtocolResponses
-		}
-		return true
+		return account != nil && inner(account)
 	}
 }
 
@@ -651,21 +568,6 @@ func accountFilterForResponsesModelResolver(effectiveModel string, allowCodexAcc
 	return func(account *auth.Account) bool {
 		if account == nil {
 			return false
-		}
-		if account.IsAntigravityAPI() {
-			if !account.AntigravityDispatchEnabled() {
-				return false
-			}
-			wireModel, supported := antigravityResolvePublicModelForAccount(account, effectiveModel)
-			return supported && !gate.blocksAntigravity(account, effectiveModel, wireModel)
-		}
-		if account.IsRelayStyle() {
-			routedModel := effectiveModel
-			if mappedModel, ok := resolveMapping(account); ok && mappedModel != "" {
-				routedModel = mappedModel
-			}
-			supported := relayAccountSupportsModel(account, routedModel)
-			return supported && !gate.blocks(account, routedModel)
 		}
 		if !allowCodexAccounts {
 			return false
@@ -761,12 +663,6 @@ func (h *Handler) modelSupportedByAccountMapping(model string) bool {
 func (h *Handler) modelValidator(supportedModels []string) api.ValidationRule {
 	validModels := make(map[string]bool, len(supportedModels))
 	for _, model := range supportedModels {
-		// Native Claude model IDs belong exclusively to /v1/messages. A
-		// configured Claude->Codex mapping is applied before validation, so a
-		// successfully mapped request arrives here under its Codex target ID.
-		if strings.HasPrefix(strings.ToLower(strings.TrimSpace(model)), "claude-") {
-			continue
-		}
 		validModels[model] = true
 	}
 	return func(value gjson.Result, path string) *api.ValidationError {
@@ -774,7 +670,7 @@ func (h *Handler) modelValidator(supportedModels []string) api.ValidationRule {
 			return nil
 		}
 		model := value.String()
-		if validModels[model] || h.modelSupportedByAccountMapping(model) {
+		if validModels[model] {
 			return nil
 		}
 		return &api.ValidationError{
@@ -1678,31 +1574,12 @@ func (h *Handler) logUsage(input *database.UsageLogInput) {
 	if h.db == nil || input == nil {
 		return
 	}
-	// Grok usage belongs to the credential generation that actually dispatched
-	// this attempt. Resolve it from AccountID at the common sink so success,
-	// failure and transport-retry paths cannot accidentally omit it. A retry
-	// that switches accounts naturally resolves the replacement account here.
-	// Non-Grok and unresolved accounts deliberately remain legacy/unscoped (0).
 	input = database.SnapshotUsageLogBilling(input)
-	h.populateUsageCredentialGeneration(input)
 	// scope 维度预算（issue #439）在日志落库前先吃到这笔消耗，抵掉窗口聚合缓存的滞后。
 	h.recordAPIKeyScopeUsage(input)
-	// 渠道在写入时按调度账号固化（内存索引查询），供仪表盘分渠道聚合；
-	// 账号已不在池中（如刚被删除）时按 codex 兜底。
+	// 渠道在写入时固化为 codex，供仪表盘分渠道聚合。
 	if input.Channel == "" && h.store != nil {
 		input.Channel = database.UpstreamChannelCodex
-		if input.AccountID > 0 {
-			if acc := h.store.FindByID(input.AccountID); acc != nil {
-				switch {
-				case acc.IsGrokAPI():
-					input.Channel = database.UpstreamChannelGrok
-				case acc.IsAntigravityAPI():
-					input.Channel = database.UpstreamChannelAntigravity
-				case acc.IsClaudeOAuth():
-					input.Channel = database.UpstreamChannelClaude
-				}
-			}
-		}
 	}
 	// 过载熔断统计（仅 Codex 渠道，需在渠道固化之后）。
 	h.noteOverloadOutcome(input)
@@ -2113,9 +1990,6 @@ func (h *Handler) storeHasAvailableCodexAccount() bool {
 		return false
 	}
 	for _, account := range h.store.Accounts() {
-		if account.IsRelayStyle() {
-			continue
-		}
 		if account.IsAvailable() {
 			return true
 		}
@@ -2127,15 +2001,6 @@ func (h *Handler) storeHasAvailableCodexAccount() bool {
 func excludeRelayAccountsFilter(inner auth.AccountFilter) auth.AccountFilter {
 	return func(account *auth.Account) bool {
 		if account == nil || account.IsRelayStyle() {
-			return false
-		}
-		return inner == nil || inner(account)
-	}
-}
-
-func excludeAntigravityAccountsFilter(inner auth.AccountFilter) auth.AccountFilter {
-	return func(account *auth.Account) bool {
-		if account == nil || account.IsAntigravityAPI() {
 			return false
 		}
 		return inner == nil || inner(account)
@@ -2619,12 +2484,6 @@ func (h *Handler) reportStreamOutcomeFailure(account *auth.Account, outcome stre
 	if outcome.capacityShed || outcome.requestScoped || outcome.modelUnsupported {
 		return
 	}
-	// Cloud Code can report a model capacity shortage inside an HTTP 200
-	// stream. Like the HTTP 503, it describes Google's shared pool rather than
-	// this credential.
-	if antigravityNonPenalizingUpstreamFailure(account, outcome.logStatusCode, responseFailedErrorBody(outcome.failurePayload)) {
-		return
-	}
 	h.store.ReportRequestFailure(account, outcome.failureKind, d)
 }
 
@@ -2817,7 +2676,7 @@ func (h *Handler) applyResponseFailedCooldown(account *auth.Account, payload []b
 	}
 	body := responseFailedErrorBody(payload)
 	statusCode := classifyResponseFailedOutcome(payload).logStatusCode
-	if statusCode == http.StatusTooManyRequests && !account.IsRelayStyle() {
+	if statusCode == http.StatusTooManyRequests {
 		// 官方 Codex 的 response.failed/error 是已建立 HTTP/WS 流之后的
 		// 语义错误。此时 resp 描述的是外层成功响应或 WS 握手，普通模型不能拿它的 x-codex-*
 		// 快照推断本次 429 的账号窗口。Spark 有独立模型配额，保留 headers
@@ -3374,14 +3233,6 @@ func (h *Handler) RegisterRoutes(r *gin.Engine) {
 	v1.POST("/responses/compact", h.ResponsesCompact)
 	v1.POST("/images/generations", h.ImagesGenerations)
 	v1.POST("/images/edits", h.ImagesEdits)
-	// Grok 生视频:异步任务创建 + 客户端轮询 + 产物代理下载
-	v1.POST("/videos/generations", h.VideosGenerations)
-	v1.POST("/videos/edits", h.VideosEdits)
-	v1.POST("/videos/extensions", h.VideosExtensions)
-	v1.GET("/videos/:request_id", h.VideosStatus)
-	v1.GET("/videos/:request_id/content", h.VideosContent)
-	v1.POST("/messages", h.Messages)
-	v1.POST("/messages/count_tokens", h.CountTokens)
 	v1.POST("/responses/input_tokens", h.ResponsesInputTokens)
 	// Codex CLI / Codex App 从 /models?client_version=... 刷新模型选单，期望
 	// manifest 格式；client_version 是 Codex 客户端的天然指纹，普通 OpenAI
@@ -3400,13 +3251,6 @@ func (h *Handler) RegisterRoutes(r *gin.Engine) {
 	r.POST("/responses/compact", auth, h.ResponsesCompact)
 	r.POST("/images/generations", auth, h.ImagesGenerations)
 	r.POST("/images/edits", auth, h.ImagesEdits)
-	r.POST("/videos/generations", auth, h.VideosGenerations)
-	r.POST("/videos/edits", auth, h.VideosEdits)
-	r.POST("/videos/extensions", auth, h.VideosExtensions)
-	r.GET("/videos/:request_id", auth, h.VideosStatus)
-	r.GET("/videos/:request_id/content", auth, h.VideosContent)
-	r.POST("/messages", auth, h.Messages)
-	r.POST("/messages/count_tokens", auth, h.CountTokens)
 	r.POST("/responses/input_tokens", auth, h.ResponsesInputTokens)
 	r.GET("/models", auth, h.listModelsOrManifest)
 	r.POST("/alpha/search", auth, h.CodexAlphaSearchHandler)
@@ -3429,13 +3273,6 @@ func (h *Handler) RegisterRoutes(r *gin.Engine) {
 		h.Responses(c)
 	})
 	codexDirect.GET("/:call_id", h.LiveSideband)
-
-	// Native Gemini API (Antigravity OAuth accounts only).
-	v1beta := r.Group("/v1beta")
-	v1beta.Use(auth)
-	v1beta.GET("/models", h.GeminiListModels)
-	v1beta.GET("/models/*action", h.GeminiGetModel)
-	v1beta.POST("/models/*action", h.GeminiModelsAction)
 }
 
 // APIKeyAuthMiddleware exposes the standard /v1 API key authentication middleware
@@ -3583,15 +3420,8 @@ func (h *Handler) getMaxRateLimitRetries() int {
 	return h.store.GetMaxRateLimitRetries()
 }
 
-// effectiveMaxRateLimitRetries 返回当前账号适用的限流(429)换号重试上限：Grok 账号可在
-// grok 系统设置里配置专属次数(free 号限流频繁，换号重试更易成功)；未配置(0)或非 Grok
-// 账号回落到全局 max_rate_limit_retries。按当前 attempt 的账号动态取值。
+// effectiveMaxRateLimitRetries 返回当前账号适用的限流(429)换号重试上限，即全局 max_rate_limit_retries。
 func (h *Handler) effectiveMaxRateLimitRetries(account *auth.Account, fallback int) int {
-	if account != nil && account.IsGrokAPI() && h.store != nil {
-		if n := h.store.GrokMaxRateLimitRetries(); n > 0 {
-			return n
-		}
-	}
 	return fallback
 }
 
@@ -4151,37 +3981,9 @@ func (h *Handler) Responses(c *gin.Context) {
 	}
 
 	supportedModels := h.supportedModelIDs(c.Request.Context())
-	upstreamChannel := requestUpstreamChannel(c)
 	var requestModel, mappedModel string
 	var mappingApplied bool
-	nativeAntigravityModel := false
-	if upstreamChannel == database.UpstreamChannelAuto {
-		if logical, known := antigravityLogicalCompatibilityModel(gjson.GetBytes(rawBody, "model").String()); known {
-			for _, account := range h.store.Accounts() {
-				if !account.IsAntigravityAPI() || !account.AntigravityDispatchEnabled() {
-					continue
-				}
-				for _, variant := range logical.variants {
-					if antigravityAccountSupportsPublicModel(account, logical.id+"-"+variant.level) {
-						nativeAntigravityModel = true
-					}
-				}
-			}
-		}
-	}
-	if upstreamChannel == database.UpstreamChannelAntigravity || nativeAntigravityModel {
-		// Antigravity is a native, fixed public surface. Do not let global Codex
-		// aliases or synthesized reasoning aliases rewrite an Antigravity-only
-		// request before validation; the adapter performs the sole public->wire
-		// translation after an account proves it owns the required backing model.
-		requestModel = strings.TrimSpace(gjson.GetBytes(rawBody, "model").String())
-		var foldErr *api.APIError
-		rawBody, mappedModel, foldErr = antigravityFoldLogicalModel(rawBody, requestModel)
-		if foldErr != nil {
-			api.SendError(c, foldErr)
-			return
-		}
-	} else if nativeRemoteCompactionV2 {
+	if nativeRemoteCompactionV2 {
 		rawBody, requestModel, mappedModel, mappingApplied = h.applyConfiguredCompactModelMappingToBody(rawBody, supportedModels)
 	} else {
 		rememberDaybreakRequest(c, rawBody)
@@ -4193,16 +3995,7 @@ func (h *Handler) Responses(c *gin.Context) {
 	// Validate request
 	validator := api.NewValidator(rawBody)
 	rules := api.ResponsesAPIValidationRulesForModel(mappedModel)
-	switch upstreamChannel {
-	case database.UpstreamChannelGrok:
-		// grok 渠道 Key 的模型由 Grok 上游校验，跳过网关侧模型白名单。
-	case database.UpstreamChannelAntigravity:
-		// Antigravity 专用 Key 公开稳定的逻辑模型，同时继续接受旧的固定
-		// effort 别名；raw backing 与 account model_mapping 不是下游模型名。
-		rules["model"] = append(rules["model"], api.ModelValidator(h.antigravityAcceptedModels()))
-	default:
-		rules["model"] = append(rules["model"], h.modelValidator(supportedModels))
-	}
+	rules["model"] = append(rules["model"], h.modelValidator(supportedModels))
 	result := validator.ValidateRequest(rules)
 	if !result.Valid {
 		api.SendError(c, validator.ToAPIError())
@@ -4324,7 +4117,6 @@ func (h *Handler) Responses(c *gin.Context) {
 		accountFilter = responsesContinuationRelayFilter(accountFilter)
 	}
 	accountFilter = h.applyUpstreamChannelFilterWithGate(c, effectiveModel, accountFilter, rateLimitGate)
-	accountFilter = excludeClaudeAccountsFilter(accountFilter)
 	if pin != nil {
 		accountFilter = daybreakAccountFilter(c, accountFilter)
 	} else {
@@ -4534,9 +4326,7 @@ func (h *Handler) Responses(c *gin.Context) {
 		}
 		attemptEffectiveModel := effectiveModel
 		attemptLogEffectiveModel := logEffectiveModel
-		// relay/Grok 账号默认走 HTTP，这里排除全局强制 WS，避免日志把它们错标成 via_websocket。
-		// 打开了上游 WebSocket 的 OpenAI Responses 中转账号在体积判断之后单独改回 WS。
-		useWebsocket := h.shouldUseWebsocketForHTTP() && !wsHTTPFallback.ForceHTTP() && !account.IsRelayStyle()
+		useWebsocket := h.shouldUseWebsocketForHTTP() && !wsHTTPFallback.ForceHTTP()
 		// 生图请求强制走 HTTP：WebSocket 传输大体积图片数据会卡死（issue #220）；
 		// 自然语言生图意图也需保留 image_generation 工具（issue #288）。
 		if useWebsocket && rawResponsesBodyShouldForceHTTPForImageGeneration(rawBody) {
@@ -4548,11 +4338,6 @@ func (h *Handler) Responses(c *gin.Context) {
 			if attempt == 0 {
 				log.Printf("[WS] 请求体 %dKB 达到已学习的 1009 体积阈值，直接走 HTTP 上游 (endpoint=/v1/responses)", len(codexBody)/1024)
 			}
-		}
-		// OpenAI Responses 中转的上游 WebSocket 是账号自己的开关，不吃全局强制 WS，
-		// 也不吃 Codex 的 1009 体积学习。生图仍由上面的判断留在 HTTP。
-		if openAIResponsesRelayUsesUpstreamWebsocket(account, rawBody) {
-			useWebsocket = true
 		}
 
 		// 提取 API Key 用于设备指纹稳定化
