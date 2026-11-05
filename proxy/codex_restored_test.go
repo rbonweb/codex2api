@@ -30,9 +30,13 @@ const codexRestoredResinPlatform = "codex-restored"
 
 func codexRestoredUseResin(t *testing.T, upstreamURL string) {
 	t.Helper()
-	previous := resinCfg.Load()
+	previous := GetResinConfig()
+	previousEgress := auth.ResinEgressEnabled()
 	SetResinConfig(&ResinConfig{BaseURL: upstreamURL, PlatformName: codexRestoredResinPlatform})
-	t.Cleanup(func() { resinCfg.Store(previous) })
+	t.Cleanup(func() {
+		SetResinConfig(previous)
+		auth.SetResinEgressEnabled(previousEgress)
+	})
 }
 
 func codexRestoredCompactRequest(t *testing.T, handler *Handler, ctx context.Context, body string) (*httptest.ResponseRecorder, *gin.Context) {
@@ -135,7 +139,12 @@ func TestResponsesHTTPFallbackRetryKeepsCorrelationThroughSecondAccount_CodexUps
 	}
 
 	var httpCalls atomic.Int32
+	var tokensMu sync.Mutex
+	var bearerTokens []string
 	upstream := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		tokensMu.Lock()
+		bearerTokens = append(bearerTokens, r.Header.Get("Authorization"))
+		tokensMu.Unlock()
 		if httpCalls.Add(1) == 1 {
 			w.WriteHeader(http.StatusInternalServerError)
 			_, _ = w.Write([]byte(`{"error":{"message":"retry me"}}`))
@@ -172,6 +181,13 @@ func TestResponsesHTTPFallbackRetryKeepsCorrelationThroughSecondAccount_CodexUps
 	}
 	if got := httpCalls.Load(); got != 2 {
 		t.Fatalf("HTTP calls = %d, want failed fallback plus successful retry on the second Codex account", got)
+	}
+	tokensMu.Lock()
+	gotTokens := append([]string(nil), bearerTokens...)
+	tokensMu.Unlock()
+	// The scheduler picks the order; what matters is that the retry moved to the other Codex account.
+	if len(gotTokens) != 2 || gotTokens[0] == gotTokens[1] || !slices.Contains(gotTokens, "Bearer at-1") || !slices.Contains(gotTokens, "Bearer at-2") {
+		t.Fatalf("upstream bearer tokens = %v, want one call per Codex account (at-1 and at-2)", gotTokens)
 	}
 	completionLines := make([]string, 0, 2)
 	for _, line := range strings.Split(logs.String(), "\n") {
@@ -336,12 +352,16 @@ func TestResponsesCompactReadCancellationDoesNotPenalizeAccount_CodexUpstream(t 
 	}()
 	select {
 	case <-responseStarted:
-	case <-done:
+	case <-time.After(time.Second):
 		cancel()
-		t.Fatal("compact handler returned before the upstream response body started")
+		t.Fatal("timed out waiting for compact response body")
 	}
 	cancel()
-	<-done
+	select {
+	case <-done:
+	case <-time.After(2 * time.Second):
+		t.Fatal("compact handler did not stop after downstream cancellation")
+	}
 
 	if account.FailureStreak != 0 || account.LastFailureKind != "" {
 		t.Fatalf("downstream cancellation penalized account: streak=%d kind=%q", account.FailureStreak, account.LastFailureKind)
