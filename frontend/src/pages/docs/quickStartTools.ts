@@ -1,5 +1,5 @@
 // Quick-integration software definitions for the Docs page.
-// Inspired by NewAPI's BUILTIN_TEMPLATES — adapted for Codex/Anthropic proxy.
+// Inspired by NewAPI's BUILTIN_TEMPLATES — adapted for the Codex proxy.
 
 export type QuickToolKind = "protocol" | "config" | "env";
 
@@ -25,24 +25,6 @@ const toolBlurb = (locale: DocsLocale, zh: string, en: string) =>
 export function buildQuickTools(locale: DocsLocale): QuickTool[] {
   return [
     {
-      id: "claude-code",
-      name: "Claude Code",
-      badge: "CLI",
-      iconHue: "bg-orange-500/12 text-orange-600 dark:text-orange-400",
-      glyph: "CC",
-      blurb: toolBlurb(
-        locale,
-        "官方 Anthropic CLI，配置环境变量即可接入。",
-        "Official Anthropic CLI. Configure environment variables to connect.",
-      ),
-      kind: "env",
-      template: `export ANTHROPIC_BASE_URL="{address}"
-export ANTHROPIC_AUTH_TOKEN="{key}"
-export CLAUDE_CODE_DISABLE_NONESSENTIAL_TRAFFIC=1`,
-      templateLang: "bash",
-      templateLabel: "shell",
-    },
-    {
       id: "cc-switch",
       name: "CC Switch",
       badge: "Desktop",
@@ -50,8 +32,8 @@ export CLAUDE_CODE_DISABLE_NONESSENTIAL_TRAFFIC=1`,
       glyph: "CS",
       blurb: toolBlurb(
         locale,
-        "Claude Code 多账号切换器，一键唤起并写入配置。",
-        "Multi-account launcher for Claude Code. Import config with one click.",
+        "Codex 多账号切换器，一键唤起并写入配置。",
+        "Multi-account launcher for Codex. Import config with one click.",
       ),
       kind: "protocol",
       url: "ccswitch",
@@ -148,11 +130,11 @@ export function resolveTemplate(
   if (tool.id === "cc-switch") {
     const params = new URLSearchParams();
     params.set("resource", "provider");
-    params.set("app", "claude");
-    params.set("name", "Codex2API Claude");
-    params.set("endpoint", address);
+    params.set("app", "codex");
+    params.set("name", "Codex2API");
+    params.set("endpoint", `${address}/v1`);
     params.set("apiKey", key);
-    params.set("model", "claude-sonnet-4-5");
+    params.set("model", "gpt-5.5");
     params.set("homepage", address);
     params.set("enabled", "true");
     return `ccswitch://v1/import?${params.toString()}`;

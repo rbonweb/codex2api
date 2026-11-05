@@ -56,21 +56,16 @@ type Row = {
   pricing: ModelPricingOverride
   canonical_model?: string
   is_alias?: boolean
-  /** Grok Imagine media rows are priced per image / per generated second, not per token. */
+  /** Media rows are priced per image, not per token. */
   media_unit?: MediaBillingUnit
 }
 type SourceFilter = 'all' | 'custom' | 'synced' | 'default' | 'unsaved'
-type ChannelFilter = 'all' | 'codex' | 'grok' | 'antigravity' | 'claude'
-const CHANNEL_ORDER: Array<Exclude<ChannelFilter, 'all'>> = ['codex', 'grok', 'antigravity', 'claude']
+type ChannelFilter = 'all' | 'codex'
+const CHANNEL_ORDER: Array<Exclude<ChannelFilter, 'all'>> = ['codex']
 const CHANNEL_LABEL: Record<Exclude<ChannelFilter, 'all'>, string> = {
   codex: 'Codex',
-  grok: 'Grok',
-  antigravity: 'Antigravity',
-  claude: 'Claude',
 }
-function rowChannel(r: Row): Exclude<ChannelFilter, 'all'> {
-  const c = (r.channel || '').toLowerCase()
-  if (c === 'grok' || c === 'antigravity' || c === 'claude') return c
+function rowChannel(_r: Row): Exclude<ChannelFilter, 'all'> {
   return 'codex'
 }
 // 已见过的模型集(localStorage):用于给新出现的模型打"新"标。首次加载会播种、不标新。
@@ -193,15 +188,8 @@ function modelVersionParts(model: string): number[] {
   return matches.map((m) => Number(m)).filter((n) => Number.isFinite(n))
 }
 
-function modelFamilyRank(model: string): number {
-  return model.trim().toLowerCase().startsWith('grok') ? 1 : 0
-}
-
 function compareModelsNewestFirst(a: string, b: string): number {
   if (a === b) return 0
-  const fa = modelFamilyRank(a)
-  const fb = modelFamilyRank(b)
-  if (fa !== fb) return fa - fb
   const ra = modelPreferredRank(a)
   const rb = modelPreferredRank(b)
   if (ra >= 0 || rb >= 0) {
@@ -705,8 +693,6 @@ export default function ModelPricing() {
   const [modelsDevUrl, setModelsDevUrl] = useState('')
   const [litellmUrl, setLitellmUrl] = useState('')
   const [officialOpenAIUrl, setOfficialOpenAIUrl] = useState('')
-  const [officialXAIUrl, setOfficialXAIUrl] = useState('')
-  const [officialClaudeUrl, setOfficialClaudeUrl] = useState('')
   const [loading, setLoading] = useState(true)
   const [loadError, setLoadError] = useState<string | null>(null)
   const [syncing, setSyncing] = useState(false)
@@ -717,9 +703,7 @@ export default function ModelPricing() {
     enabled: false,
     interval_minutes: 1440,
     include_openai: true,
-    include_grok: true,
-    include_claude: true,
-  })
+  } as OfficialPricingSyncConfig)
   const [savingModel, setSavingModel] = useState('')
   const [query, setQuery] = useState('')
   const [sourceFilter, setSourceFilter] = useState<SourceFilter>('all')
@@ -745,8 +729,6 @@ export default function ModelPricing() {
       setModelsDevUrl(res.models_dev_url)
       setLitellmUrl(res.litellm_url)
       setOfficialOpenAIUrl(res.official_openai_url)
-      setOfficialXAIUrl(res.official_xai_url)
-      setOfficialClaudeUrl(res.official_claude_url)
       setSyncUrl(res.sync_url || '')
       setOfficialConfig(res.official_sync_config)
       const d: Record<string, ModelPricingOverride> = {}
@@ -870,9 +852,7 @@ export default function ModelPricing() {
     try {
       const result = await api.syncOfficialModelPricing({
         include_openai: officialConfig.include_openai,
-        include_grok: officialConfig.include_grok,
-        include_claude: officialConfig.include_claude,
-      })
+      } as Parameters<typeof api.syncOfficialModelPricing>[0])
       showToast([t('settings.pricing.officialSyncDone', { applied: result.applied, skipped: result.skipped }), ...(result.notices ?? [])].join('；'))
       await load()
     } catch (error) {
@@ -901,7 +881,7 @@ export default function ModelPricing() {
 
   // 各 provider(渠道)模型数量:仅当存在多于一个渠道时才显示渠道过滤条。
   const channelCounts = useMemo(() => {
-    const m: Record<string, number> = { codex: 0, grok: 0, antigravity: 0, claude: 0 }
+    const m: Record<string, number> = { codex: 0 }
     for (const r of rows) m[rowChannel(r)] += 1
     return m
   }, [rows])
@@ -1051,7 +1031,7 @@ export default function ModelPricing() {
         </>}
       />
       <ModelCatalogModal open={catalogOpen} onClose={() => setCatalogOpen(false)} rows={rows} newModels={newModels} query={catalogQuery} onQueryChange={setCatalogQuery} onJump={jumpToModel} onRefresh={() => void refreshCatalogModels()} refreshing={refreshingModels} refreshProgress={refreshProgress} onAcknowledge={acknowledgeNewModels} />
-      <PricingSyncPanel open={syncOpen} onClose={() => setSyncOpen(false)} syncUrl={syncUrl} onSyncUrlChange={setSyncUrl} urls={{ default: defaultUrl, litellm: litellmUrl, modelsDev: modelsDevUrl, openAI: officialOpenAIUrl, xAI: officialXAIUrl, claude: officialClaudeUrl }} config={officialConfig} onConfigChange={setOfficialConfig} syncing={syncing} officialSyncing={officialSyncing} officialSaving={officialSaving} onSync={() => void sync()} onSyncOfficial={() => void syncOfficial()} onSaveOfficial={() => void saveOfficialConfig()} />
+      <PricingSyncPanel open={syncOpen} onClose={() => setSyncOpen(false)} syncUrl={syncUrl} onSyncUrlChange={setSyncUrl} urls={{ default: defaultUrl, litellm: litellmUrl, modelsDev: modelsDevUrl, openAI: officialOpenAIUrl, xAI: '', claude: '' } as Record<'default' | 'litellm' | 'modelsDev' | 'openAI' | 'xAI' | 'claude', string>} config={officialConfig} onConfigChange={setOfficialConfig} syncing={syncing} officialSyncing={officialSyncing} officialSaving={officialSaving} onSync={() => void sync()} onSyncOfficial={() => void syncOfficial()} onSaveOfficial={() => void saveOfficialConfig()} />
       <StateShell variant="page" loading={loading && rows.length === 0} error={loadError && rows.length === 0 ? loadError : null} onRetry={() => void load()}>
         <div className="pricing-overview">
           <div className="pricing-metrics" role="group" aria-label={t('settings.pricing.sourceFilterLabel')}>

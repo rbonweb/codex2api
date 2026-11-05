@@ -16,18 +16,12 @@ export function resolveDocsTarget(hash: string, entries: DocEntry[]) {
   const aliases: Record<string, string> = {
     "client-config": "qs-tools",
     "client-codex": "qs-tools",
-    "client-claude": "qs-tools",
   };
   const entry = entries.find((entry) => entry.id === (aliases[id] || id));
   return {
     id: entry?.id || "quick-start",
     section: entry?.section || "quick-start",
-    client:
-      id === "client-claude"
-        ? "claude-code"
-        : id === "client-codex"
-          ? "codex-cli"
-          : undefined,
+    client: id === "client-codex" ? "codex-cli" : undefined,
   };
 }
 

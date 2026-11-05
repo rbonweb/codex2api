@@ -63,19 +63,11 @@ export function buildGuides(baseUrl: string, locale: DocsLocale): GuideSpec[] {
             ),
           ],
           [
-            "Claude Code",
-            base,
-            c(
-              "ANTHROPIC_BASE_URL；客户端会追加 /v1/messages。",
-              "ANTHROPIC_BASE_URL; the client appends /v1/messages.",
-            ),
-          ],
-          [
             c("公共 API", "Public API"),
             "Authorization: Bearer YOUR_API_KEY",
             c(
-              "Messages 也接受 x-api-key。",
-              "Messages also accepts x-api-key.",
+              "所有公共接口使用 Bearer 认证。",
+              "All public endpoints use Bearer authentication.",
             ),
           ],
           [
@@ -100,8 +92,8 @@ export function buildGuides(baseUrl: string, locale: DocsLocale): GuideSpec[] {
       section: "development",
       title: c("选择协议与模型", "Protocols & models"),
       summary: c(
-        "请求格式、模型名称和上游渠道共同决定实际调用路径。",
-        "Request format, model name and upstream channel determine the route.",
+        "请求格式和模型名称共同决定实际调用路径。",
+        "Request format and model name determine the route.",
       ),
       table: {
         headers: [
@@ -121,35 +113,20 @@ export function buildGuides(baseUrl: string, locale: DocsLocale): GuideSpec[] {
             "messages · reasoning_effort · response_format",
           ],
           [
-            "Messages",
-            c(
-              "Claude Code / Anthropic 客户端",
-              "Claude Code / Anthropic clients",
-            ),
-            "messages · max_tokens · tools",
-          ],
-          [
-            "Images / Videos",
-            c(
-              "图片生成、编辑及异步视频",
-              "Image generation, editing and async video",
-            ),
-            "prompt · model · size / duration",
+            "Images",
+            c("图片生成、编辑及异步任务", "Image generation, editing and async jobs"),
+            "prompt · model · size",
           ],
         ],
       },
       paragraphs: [
         c(
-          "模型以当前 /v1/models 返回及密钥授权为准；返回在列表中不代表所有账号都具有该模型能力。渠道限制、分组授权、模型映射和账号可用状态都会影响调度。",
-          "Use the current /v1/models catalog and your key's permissions. A listed model is not guaranteed to be available on every account. Channel restrictions, groups, mappings and account readiness affect scheduling.",
+          "模型以当前 /v1/models 返回及密钥授权为准；返回在列表中不代表所有账号都具有该模型能力。分组授权、模型映射和账号可用状态都会影响调度。",
+          "Use the current /v1/models catalog and your key's permissions. A listed model is not guaranteed to be available on every account. Groups, mappings and account readiness affect scheduling.",
         ),
         c(
           "Codex 路径会转换或清洗部分参数。reasoning.effort 与 Chat 的 reasoning_effort 按最终模型归一；max 仅对支持的较新模型放行，旧模型降为 xhigh。fast 映射为 priority，ultrafast 保留；auto/default 等不强制指定上游档位。具体速度和额度以账号及实际响应为准。",
           "The Codex path transforms or sanitizes some parameters. reasoning.effort and Chat's reasoning_effort are normalized for the final model; max is retained for supported newer models and becomes xhigh on older ones. fast maps to priority, ultrafast is retained, and auto/default do not force a tier. Actual latency and limits depend on the account and response.",
-        ),
-        c(
-          "Claude 原生 Messages 与 Codex 转换路径的能力不同。temperature、输出长度、内置工具和 JSON Schema 约束不要按所有渠道完全一致来使用；先用目标模型验证最小请求，再逐项增加参数。",
-          "Native Claude Messages and the Codex translation path have different capabilities. Sampling, output limits, built-in tools and JSON Schema constraints are not identical across channels. Validate a minimal request with your target model before adding parameters.",
         ),
       ],
       links: [
@@ -203,8 +180,8 @@ export function buildGuides(baseUrl: string, locale: DocsLocale): GuideSpec[] {
       ),
       paragraphs: [
         c(
-          "cURL 使用 -N 关闭输出缓冲。Responses 读取 response.output_text.delta，并处理 response.completed、response.incomplete、response.failed 或 error。连接中断不能当成成功完成。Chat 使用 choices[].delta 和 [DONE]；Messages 使用 content_block_delta、message_stop。",
-          "Use curl -N to disable output buffering. For Responses, read response.output_text.delta and handle response.completed, response.incomplete, response.failed or error. A disconnected stream is not a successful completion. Chat uses choices[].delta and [DONE]; Messages uses content_block_delta and message_stop.",
+          "cURL 使用 -N 关闭输出缓冲。Responses 读取 response.output_text.delta，并处理 response.completed、response.incomplete、response.failed 或 error。连接中断不能当成成功完成。Chat 使用 choices[].delta 和 [DONE]。",
+          "Use curl -N to disable output buffering. For Responses, read response.output_text.delta and handle response.completed, response.incomplete, response.failed or error. A disconnected stream is not a successful completion. Chat uses choices[].delta and [DONE].",
         ),
       ],
       examples: [
@@ -292,10 +269,10 @@ export function buildGuides(baseUrl: string, locale: DocsLocale): GuideSpec[] {
     {
       id: "media-guide",
       section: "model-api",
-      title: c("图片与视频接入说明", "Image & video guide"),
+      title: c("图片接入说明", "Image guide"),
       summary: c(
-        "同步图片、持久化图片任务和视频任务分别使用不同的返回结构。",
-        "Synchronous images, persistent image jobs and video jobs have different response shapes.",
+        "同步图片和持久化图片任务使用不同的返回结构。",
+        "Synchronous images and persistent image jobs have different response shapes.",
       ),
       table: {
         headers: [c("能力", "Capability"), c("如何使用", "How to use")],
@@ -326,13 +303,6 @@ export function buildGuides(baseUrl: string, locale: DocsLocale): GuideSpec[] {
             c(
               "POST /v1/images/jobs 返回 202 和 job；使用同一 API Key 查询 job.id，按 job.status 判断是否完成。",
               "POST /v1/images/jobs returns 202 and job. Query job.id with the same API key and inspect job.status.",
-            ),
-          ],
-          [
-            c("视频任务", "Video jobs"),
-            c(
-              "创建后拿 request_id，每隔 2–5 秒查询，done 后下载 /content。需要支持视频的付费 Grok 账号及允许该渠道的密钥。",
-              "Poll the returned request_id every 2–5 seconds and download /content after done. Requires a paid Grok account with video access and a key allowing that channel.",
             ),
           ],
         ],
@@ -372,8 +342,8 @@ export function buildGuides(baseUrl: string, locale: DocsLocale): GuideSpec[] {
           [
             "403",
             c(
-              "检查密钥的渠道、模型和分组授权，以及上游账号的实际能力。",
-              "Check key channel/model/group permissions and upstream account capability.",
+              "检查密钥的模型和分组授权，以及上游账号的实际能力。",
+              "Check key model/group permissions and upstream account capability.",
             ),
           ],
           [
@@ -449,8 +419,8 @@ export function buildGuides(baseUrl: string, locale: DocsLocale): GuideSpec[] {
           "1. GET /health only verifies service health. 2. Request /v1/models with the client key to check URL and authentication. 3. Send a minimal generation request to a model with eligible accounts. 4. Inspect the final model, status, duration and tokens in Usage.",
         ),
         c(
-          "出现 404 时先核对地址是否重复拼接 /v1、路径是否完整，以及服务器版本是否支持该端点。视频查询还需检查是否使用创建任务时的同一 API Key、任务绑定是否过期。",
-          "For 404, check duplicated /v1, the complete path and whether the server version supports the endpoint. Video queries also require the creating API key and an unexpired task binding.",
+          "出现 404 时先核对地址是否重复拼接 /v1、路径是否完整，以及服务器版本是否支持该端点。图片任务查询还需检查是否使用创建任务时的同一 API Key。",
+          "For 404, check duplicated /v1, the complete path and whether the server version supports the endpoint. Image job queries also require the creating API key.",
         ),
       ],
       examples: [
@@ -475,8 +445,8 @@ export function buildGuides(baseUrl: string, locale: DocsLocale): GuideSpec[] {
           "Monetary budgets limit a key's cumulative cost. Weekly rules match the final mapped model, and all models matching one rule share its count. Timezone, weekday and reset time are configured separately from upstream plan quotas.",
         ),
         c(
-          "账号可以加入多个分组，API Key 可限制允许使用的分组和渠道。排查“有账号但无法调用”时，同时检查密钥范围与账号分组。模型周预算耗尽会返回 429，并提供本次规则的重置时间。",
-          "Accounts can belong to multiple groups, while API keys can restrict groups and channels. If accounts exist but requests fail, check both key scope and account membership. Exhausted weekly model budgets return 429 with the rule's reset time.",
+          "账号可以加入多个分组，API Key 可限制允许使用的分组。排查“有账号但无法调用”时，同时检查密钥范围与账号分组。模型周预算耗尽会返回 429，并提供本次规则的重置时间。",
+          "Accounts can belong to multiple groups, while API keys can restrict groups. If accounts exist but requests fail, check both key scope and account membership. Exhausted weekly model budgets return 429 with the rule's reset time.",
         ),
       ],
       examples: [
@@ -511,50 +481,6 @@ export function buildGuides(baseUrl: string, locale: DocsLocale): GuideSpec[] {
       ],
     },
     {
-      id: "claude-credentials",
-      section: "admin-api",
-      title: c("Claude 凭据类型", "Claude credential types"),
-      summary: c(
-        "选择凭据方式后，再配置原生 Messages 的模型和账号范围。",
-        "Choose credentials, then configure native Messages models and account scope.",
-      ),
-      table: {
-        headers: [c("类型", "Type"), c("行为", "Behavior")],
-        rows: [
-          [
-            "OAuth",
-            c(
-              "Access Token + Refresh Token，可自动刷新并读取支持的订阅用量。",
-              "Access Token + Refresh Token; supports refresh and subscription usage where available.",
-            ),
-          ],
-          [
-            "Setup Token",
-            c(
-              "长效令牌，无 Refresh Token；到期需重新授权，用量能力与 OAuth 不同。",
-              "Long-lived token without refresh; reauthorize on expiry. Usage capabilities differ from OAuth.",
-            ),
-          ],
-          [
-            "API Key + Base URL",
-            c(
-              "连接 Anthropic 或 Messages 兼容服务；不走 OAuth 刷新或订阅用量采样。Base URL 可以带路径前缀或 /v1。",
-              "Connect to Anthropic or a Messages-compatible service without OAuth refresh or subscription usage sampling. Base URL can include a path prefix or /v1.",
-            ),
-          ],
-        ],
-      },
-      paragraphs: [
-        c(
-          "原生 Claude 路径与 Codex 模型映射回退取决于账号、密钥渠道和路由设置；指定 Claude 渠道并不保证能回退到 Codex。API Key 的 Base URL 是上游服务地址，出站 proxy_url 仍是单独设置。",
-          "Native Claude routing and Codex mapping fallback depend on accounts, key channel and routing settings. A Claude-scoped key does not guarantee Codex fallback. An API key's Base URL is its upstream service address; proxy_url is configured separately.",
-        ),
-      ],
-      links: [
-        { label: c("管理账号", "Manage accounts"), href: "/admin/accounts" },
-      ],
-    },
-    {
       id: "client-mapping",
       section: "admin-api",
       title: c("模型映射与运维入口", "Model mapping & operations"),
@@ -564,8 +490,8 @@ export function buildGuides(baseUrl: string, locale: DocsLocale): GuideSpec[] {
       ),
       paragraphs: [
         c(
-          "Claude 映射用于 Messages 转换到 Codex 时选择模型；Codex 模型重定向支持 gpt-*、*-mini、*codex* 等通配规则。在系统设置核对映射，在请求日志核对最终模型；不要仅凭客户端显示的名字判断实际调用。",
-          "Claude mappings select the Codex model during Messages translation. Codex redirects support wildcards such as gpt-*, *-mini and *codex*. Check mappings in Settings and the final model in request logs rather than relying only on the client's displayed name.",
+          "Codex 模型重定向支持 gpt-*、*-mini、*codex* 等通配规则。在系统设置核对映射，在请求日志核对最终模型；不要仅凭客户端显示的名字判断实际调用。",
+          "Codex redirects support wildcards such as gpt-*, *-mini and *codex*. Check mappings in Settings and the final model in request logs rather than relying only on the client's displayed name.",
         ),
         c(
           "账号刷新、批量测试、代理池、统计、设置和生图资产等完整管理接口见仓库 API 文档。下面保留最常用的账号、密钥和分组接口，按需展开。",

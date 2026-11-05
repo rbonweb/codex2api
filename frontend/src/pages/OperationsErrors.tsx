@@ -659,7 +659,7 @@ function formatAPIKeyLabel(log: UsageLog): string {
 }
 
 function formatAccountLabel(log: UsageLog): string {
-  // 邮箱优先：身份账号一律显示邮箱，账号名仅作为无邮箱账号（如 relay API-key 账号）的兜底。
+  // 邮箱优先：身份账号一律显示邮箱，账号名仅作为无邮箱账号的兜底。
   // 避免 AT 导入未命名时的占位名（at-account-N 等）盖过真实邮箱身份。
   const accountEmail = log.account_email?.trim()
   if (accountEmail) return formatCompactEmail(accountEmail)

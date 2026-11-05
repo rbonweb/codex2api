@@ -13,7 +13,6 @@ import { Dialog, DialogContent, DialogDescription, DialogFooter, DialogHeader, D
 import { useConfirmDialog } from '../hooks/useConfirmDialog'
 import { formatRelativeTime } from '../utils/time'
 import { useToast } from '../hooks/useToast'
-import { useVisibleChannels } from '../visibleChannels'
 import { formatAccountName } from '../lib/connectionTestModels'
 import { extractQualityTestHTML, PELICAN_PROMPT, isQualityTestActive, qualityTestPlanTone, qualityTestStatusKey, QUALITY_TEST_TIMEOUT_MINUTES, QUALITY_TEST_DEFAULT_TIMEOUT_MINUTES, clampQualityTestFrameHeight, QUALITY_TEST_BUILTIN_PRESETS, EMPTY_QUALITY_TEST_FACETS, type QualityTestJob, type QualityTestJobsFilter, type QualityTestPrompt } from '../lib/qualityTest'
 import { useQualityTestSVGExport, type QualityTestSVGExport } from '../hooks/useQualityTestSVGExport'
@@ -328,13 +327,11 @@ function PresetCard({ preset, onUse, onEdit, onDelete }: { preset: QualityTestPr
 }
 
 type TestOptions = { models: string[]; reasoning_efforts: string[] }
-const channelNames: Record<UpstreamChannel, string> = { codex: 'Codex / Responses', claude: 'Claude', grok: 'Grok', antigravity: 'Antigravity' }
 
 export default function QualityTest() {
   const { t } = useTranslation()
   const { showToast } = useToast()
-  const { channels } = useVisibleChannels()
-  const [channel, setChannel] = useState<UpstreamChannel>('codex')
+  const channel: UpstreamChannel = 'codex'
   const [search, setSearch] = useState('')
   const [accounts, setAccounts] = useState<AccountRow[]>([])
   const [account, setAccount] = useState<AccountRow | null>(null)
@@ -390,7 +387,6 @@ export default function QualityTest() {
   const html = useMemo(() => run && !isQualityTestActive(run) ? extractQualityTestHTML(run.output ?? '') : '', [run])
   const svgExport = useQualityTestSVGExport(html, `${selectedID}-${previewKey}`, pane === 'studio' && view === 'preview')
   const accountChoices = account && !accounts.some((row) => row.id === account.id) ? [account, ...accounts] : accounts
-  const shownChannels = [...new Set<UpstreamChannel>(['codex', ...channels])]
 
   useEffect(() => {
     mountedRef.current = true
@@ -623,8 +619,6 @@ export default function QualityTest() {
           <div className="quality-test-section-heading"><span className="quality-test-step">01</span><h3 id="quality-config-title">{t('qualityTest.configuration')}</h3></div>
           {loadError ? <div role="alert" className="quality-test-error">{loadError}<Button size="sm" variant="outline" onClick={() => setReload((value) => value + 1)}>{t('common.retry')}</Button></div> : null}
           <fieldset disabled={submitting} className="quality-test-fields">
-            <label htmlFor="quality-channel">{t('qualityTest.channel')}</label>
-            <Select id="quality-channel" value={channel} disabled={submitting} onValueChange={(value) => { setChannel(value as UpstreamChannel); setAccount(null); setAccounts([]); setSearch(''); setLoadError('') }} options={shownChannels.map((item) => ({ value: item, label: channelNames[item] }))} />
             <label htmlFor="quality-account-search">{t('qualityTest.account')}</label>
             <Input id="quality-account-search" value={search} onChange={(event) => setSearch(event.target.value)} placeholder={t('qualityTest.searchAccounts')} />
             <Select id="quality-account" aria-label={t('qualityTest.account')} value={String(account?.id ?? '')} disabled={accountLoading || submitting} placeholder={accountLoading ? t('qualityTest.loadingAccounts') : t('qualityTest.chooseAccount')} onValueChange={(value) => { setOptions(null); setModel(''); setAccount(accountChoices.find((row) => row.id === Number(value)) ?? null) }} options={accountChoices.map((row) => ({ value: String(row.id), label: `${formatAccountName(row)} · #${row.id} · ${row.plan_type || '—'}`, content: <AccountChoice account={row} />, triggerContent: <AccountChoice account={row} compact /> }))} />

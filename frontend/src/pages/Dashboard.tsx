@@ -9,8 +9,6 @@ import StatCard from '../components/StatCard'
 import UsageStatsSummary from '../components/UsageStatsSummary'
 import TimeRangeSelector from '../components/TimeRangeSelector'
 import ChannelFilter, { useUsageChannel, type UsageChannel } from '../components/ChannelFilter'
-import { useVisibleChannels } from '../visibleChannels'
-import ChannelLogo from '../components/ChannelLogo'
 import SystemHealthBar from '../components/SystemHealthBar'
 import type {
   AccountAnalysisResponse,
@@ -25,6 +23,7 @@ import { Card, CardContent } from '@/components/ui/card'
 import { Button } from '@/components/ui/button'
 import { BarChart3, Users, CheckCircle, Gauge, XCircle, Activity } from 'lucide-react'
 import PoolRunwayCard from '../components/PoolRunwayCard'
+import ChannelLogo from '../components/ChannelLogo'
 
 const DashboardUsageCharts = lazy(() => import('../components/DashboardUsageCharts'))
 
@@ -81,7 +80,6 @@ export default function Dashboard() {
   const { t } = useTranslation()
   const [timeRange, setTimeRange] = useState<TimeRangeKey>('1h')
   const [channel, setChannel] = useUsageChannel()
-  const { isChannelVisible } = useVisibleChannels()
   const channelRef = useRef<UsageChannel>(channel)
   const [showPoolRunway, setShowPoolRunway] = useState(getInitialPoolRunwayVisibility)
   const [chartData, setChartData] = useState<ChartAggregation | null>(null)
@@ -274,13 +272,6 @@ export default function Dashboard() {
   const rateLimited = effectiveCounts?.rate_limited ?? 0
   const errorCount = effectiveCounts?.error ?? 0
   const todayRequests = effectiveCounts?.today_requests ?? 0
-  const channelBreakdown = !channel && stats?.channels
-    ? (['codex', 'grok', 'antigravity', 'claude'] as const)
-        .filter((key) => isChannelVisible(key))
-        .map((key) => ({ key, counts: stats.channels?.[key] }))
-        .filter((item): item is { key: 'codex' | 'grok' | 'antigravity' | 'claude'; counts: StatsChannelCounts } =>
-          Boolean(item.counts && item.counts.total > 0))
-    : []
 
   const icons: Record<string, ReactNode> = {
     total: <Users className="size-[22px]" />,
@@ -377,26 +368,24 @@ export default function Dashboard() {
                   <Activity className="size-3 text-primary" />
                   {t('dashboard.heroTodayRequests', { count: todayRequests })}
                 </span>
-                {channelBreakdown.map(({ key, counts }) => (
+                {!channel && stats?.channels?.codex && stats.channels.codex.total > 0 ? (
                   <span
-                    key={key}
                     className="inline-flex items-center gap-1.5 rounded-full bg-muted/80 px-3 py-1 font-semibold text-foreground ring-1 ring-border/50"
                     title={t('dashboard.heroChannelTitle', {
-                      // Preserve the provider identity in the tooltip for every channel.
-                      channel: key === 'claude' ? 'Claude' : key === 'grok' ? 'Grok' : key === 'antigravity' ? 'Antigravity' : 'Codex',
-                      available: counts.available,
-                      total: counts.total,
-                      requests: counts.today_requests,
+                      channel: 'Codex',
+                      available: stats.channels.codex.available,
+                      total: stats.channels.codex.total,
+                      requests: stats.channels.codex.today_requests,
                     })}
                   >
-                    <ChannelLogo channel={key} size={13} />
+                    <ChannelLogo channel="codex" size={13} />
                     <span className="tabular-nums">
-                      {counts.available}/{counts.total}
+                      {stats.channels.codex.available}/{stats.channels.codex.total}
                     </span>
                     <span className="text-muted-foreground/60">·</span>
-                    <span className="tabular-nums">{counts.today_requests}</span>
+                    <span className="tabular-nums">{stats.channels.codex.today_requests}</span>
                   </span>
-                ))}
+                ) : null}
                 {errorCount > 0 ? (
                   <span className="inline-flex items-center rounded-full bg-destructive/12 px-3 py-1 font-bold text-destructive ring-1 ring-destructive/20">
                     {t('dashboard.heroErrors', { count: errorCount })}
