@@ -3,6 +3,8 @@ package proxy
 import (
 	"encoding/json"
 	"testing"
+
+	"github.com/tidwall/gjson"
 )
 
 func TestAudioNamesModelDetection(t *testing.T) {
@@ -132,6 +134,10 @@ func TestLiveAudioSessionJSON(t *testing.T) {
 			delegation, _ := got["delegation"].(map[string]any)
 			if delegation["type"] != "client" {
 				t.Errorf("delegation.type = %v, want client", delegation["type"])
+			}
+			parsed := gjson.ParseBytes(raw)
+			if parsed.Get("initial_items.#").Int() != 1 || parsed.Get("initial_items.0.type").String() != "message" || parsed.Get("initial_items.0.role").String() != "developer" || parsed.Get("initial_items.0.content.0.type").String() != "input_text" || parsed.Get("initial_items.0.content.0.text").String() != tt.wantInstr {
+				t.Errorf("initial_items = %s, want one developer message with %q", parsed.Get("initial_items").Raw, tt.wantInstr)
 			}
 		})
 	}

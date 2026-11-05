@@ -269,7 +269,7 @@ func parseLiveSessionObject(session gjson.Result, clientEventID string) (*liveSe
 
 	// input history
 	if v := session.Get("input"); !liveAbsent(v) {
-		items, e := liveConvertInput(v, clientEventID)
+		items, e := liveConvertInput(v, cfg.Instructions, clientEventID)
 		if e != nil {
 			return nil, e
 		}
@@ -328,7 +328,8 @@ func parseLiveSessionObject(session gjson.Result, clientEventID string) (*liveSe
 
 // liveConvertInput turns the public input history into internal initial_items.
 // Internal roles are user, assistant and developer (Codex sends all three); the public system role maps to developer.
-func liveConvertInput(input gjson.Result, clientEventID string) ([]json.RawMessage, *liveSessionError) {
+// With instructions set, the gateway prepends one developer message of its own, so the input may hold one item fewer than liveSessionMaxInputItems.
+func liveConvertInput(input gjson.Result, instructions string, clientEventID string) ([]json.RawMessage, *liveSessionError) {
 	fail := func(code, param, msg string) ([]json.RawMessage, *liveSessionError) {
 		return nil, newLiveSessionError(code, param, msg, clientEventID)
 	}
@@ -336,7 +337,14 @@ func liveConvertInput(input gjson.Result, clientEventID string) ([]json.RawMessa
 		return fail("invalid_value", "session.input", "session.input must be an array of messages.")
 	}
 	entries := input.Array()
-	if len(entries) > liveSessionMaxInputItems {
+	maxItems := liveSessionMaxInputItems
+	if instructions != "" {
+		maxItems--
+	}
+	if len(entries) > maxItems {
+		if instructions != "" {
+			return fail("invalid_value", "session.input", "session.input has more than 127 items when session.instructions is set, because the instructions are sent as one more item.")
+		}
 		return fail("invalid_value", "session.input", "session.input has more than 128 items.")
 	}
 	var items []json.RawMessage
@@ -441,7 +449,8 @@ func liveItoa(n int) string {
 }
 
 // UpstreamSession is the internal call-create session: {model:"gpt-live-1-codex", instructions, audio:{output:{voice}}, delegation:{type:"client", ack_filler:false only when disabled}, initial_items (when any)}.
-// Empty instructions are left out: a call without them is proven to work and stays silent until the user speaks.
+// Non-empty instructions are delivered twice: in the instructions field and as a developer message that leads initial_items, before the client's input, because ChatGPT Live does not apply the instructions field on its own (proven live on 2026-11-05).
+// Empty instructions are left out of both: a call without them is proven to work and stays silent until the user speaks.
 func (cfg *liveSessionConfig) UpstreamSession() json.RawMessage {
 	delegation := map[string]any{"type": "client"}
 	if !cfg.AckFiller {
@@ -455,8 +464,15 @@ func (cfg *liveSessionConfig) UpstreamSession() json.RawMessage {
 	if cfg.Instructions != "" {
 		session["instructions"] = cfg.Instructions
 	}
-	if len(cfg.InitialItems) > 0 {
-		session["initial_items"] = cfg.InitialItems
+	items := make([]any, 0, len(cfg.InitialItems)+1)
+	if cfg.Instructions != "" {
+		items = append(items, liveInstructionsItem(cfg.Instructions))
+	}
+	for _, item := range cfg.InitialItems {
+		items = append(items, item)
+	}
+	if len(items) > 0 {
+		session["initial_items"] = items
 	}
 	raw, _ := json.Marshal(session)
 	return raw

@@ -86,14 +86,28 @@ func mapRealtimeVoiceToLive(voice string) string {
 	return liveAudioDefaultVoice
 }
 
+// liveInstructionsItem is the developer message that carries the instructions text as an initial item.
+// ChatGPT Live ignores the call-create instructions field but honours the same text as a developer message (proven live on 2026-11-05), so every call sends the text both ways.
+func liveInstructionsItem(instructions string) map[string]any {
+	return map[string]any{
+		"type": "message",
+		"role": "developer",
+		"content": []map[string]any{
+			{"type": "input_text", "text": instructions},
+		},
+	}
+}
+
 // buildLiveAudioSession returns the session.update body sent to ChatGPT Live when a call is created.
+// The effective instructions (the default when the client gave none) go in the instructions field and as the only initial_items developer message.
 func buildLiveAudioSession(model, voice, instructions string) json.RawMessage {
 	if strings.TrimSpace(instructions) == "" {
 		instructions = liveAudioDefaultInstructions
 	}
 	raw, _ := json.Marshal(map[string]any{
-		"model":        mapRealtimeModelToLive(model),
-		"instructions": instructions,
+		"model":         mapRealtimeModelToLive(model),
+		"instructions":  instructions,
+		"initial_items": []any{liveInstructionsItem(instructions)},
 		"audio": map[string]any{
 			"output": map[string]any{"voice": mapRealtimeVoiceToLive(voice)},
 		},

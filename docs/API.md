@@ -583,8 +583,8 @@ The response is `201` with `{"session":{"id":"<call id>"},"transport":{"type":"w
 | Field | What it does |
 | --- | --- |
 | `model` | `gpt-live-1` (default), `gpt-live-1-codex`, or a realtime or live model name such as `gpt-realtime` or `gpt-live-*`. Other names return `unsupported_value`. Every name runs `gpt-live-1-codex` upstream. |
-| `instructions` | System instructions, at most 16,384 tokens (estimated as bytes / 4). Fixed after `session.start`. When empty, none are sent upstream. |
-| `input` | Conversation history as message items: `type`, `role` (`user`, `assistant`, `developer` or `system`) and `content` text parts. At most 128 items and 8,192 tokens, otherwise `invalid_value`. |
+| `instructions` | System instructions, at most 16,384 tokens (estimated as bytes / 4). Fixed after `session.start`. When empty, none are sent upstream. When set, the gateway also sends them upstream as a leading developer message, because ChatGPT Live does not apply the `instructions` field on its own. |
+| `input` | Conversation history as message items: `type`, `role` (`user`, `assistant`, `developer` or `system`) and `content` text parts. At most 128 items (127 when `instructions` is set, since the instructions take one item) and 8,192 tokens, otherwise `invalid_value`. |
 | `audio.format` | `{"type","rate"}`, WebSocket only. See [Audio formats](#audio-formats). WebRTC negotiates the format in the SDP, so this field returns `unsupported_value` there. |
 | `audio.output.voice` | A public voice name from the table below. Default `marin`. Unknown names return `unsupported_value`. |
 | `delegation` | `type` must be `client`. `acknowledgement` is `auto` (default) or `none`, a gateway extension. `acknowledgement_delay_ms` is an integer of 0 or more, echoed back and not acted on. `responses` returns `unsupported_value`. |
@@ -743,7 +743,7 @@ Only three session fields carry over, and the upstream session is built from the
 
 - `model` (or `?model=`, which wins): must be a realtime or live model name, otherwise 400. The upstream always runs `gpt-live-1-codex`.
 - `voice` or `audio.output.voice`: mapped to a ChatGPT Live voice (see the mapping tables below).
-- `instructions`: sent upstream. When empty, the default instruction is used.
+- `instructions`: sent upstream, both in the `instructions` field and as a leading developer message, because ChatGPT Live does not apply the `instructions` field on its own. When empty, the default instruction is used the same way.
 
 Every other session field is ignored, including `type`, `output_modalities`, `modalities`, the audio format fields, `turn_detection` and `tools`. The call is always audio output, so a call cannot be text-only.
 
@@ -871,7 +871,7 @@ Realtime voices map to ChatGPT Live voices:
 
 ChatGPT Live voice names (`arbor`, `breeze`, `cove`, `ember`, `juniper`, `maple`, `sol`, `spruce`, `vale`) pass through unchanged. An empty or unknown voice becomes `cove`.
 
-Every audio model name maps to `gpt-live-1-codex`. The default instruction, used when `instructions` is empty, is "You are a helpful, concise voice assistant."
+Every audio model name maps to `gpt-live-1-codex`. The default instruction, used when `instructions` is empty, is "You are a helpful, concise voice assistant." On every audio call the effective instructions (including this default) also go upstream as a leading developer message, because ChatGPT Live does not apply the `instructions` field on its own.
 
 #### Limits
 

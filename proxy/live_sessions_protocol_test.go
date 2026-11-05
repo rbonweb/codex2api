@@ -223,13 +223,44 @@ func TestLiveSessionDelegationVariants(t *testing.T) {
 func TestLiveSessionUpstreamSession(t *testing.T) {
 	cfg := liveTestConfig(t, `{"model":"gpt-live-1","instructions":"Be kind.","audio":{"output":{"voice":"quartz"}},"input":[{"role":"user","content":"hi"}]}`)
 	got := gjson.ParseBytes(cfg.UpstreamSession())
-	if got.Get("model").String() != "gpt-live-1-codex" || got.Get("instructions").String() != "Be kind." || got.Get("audio.output.voice").String() != "sol" || got.Get("delegation.type").String() != "client" || got.Get("delegation.ack_filler").Exists() || got.Get("initial_items.0.role").String() != "user" || got.Get("initial_items.0.content.0.type").String() != "input_text" {
+	if got.Get("model").String() != "gpt-live-1-codex" || got.Get("instructions").String() != "Be kind." || got.Get("audio.output.voice").String() != "sol" || got.Get("delegation.type").String() != "client" || got.Get("delegation.ack_filler").Exists() || got.Get("initial_items.#").Int() != 2 || got.Get("initial_items.0.type").String() != "message" || got.Get("initial_items.0.role").String() != "developer" || got.Get("initial_items.0.content.0.type").String() != "input_text" || got.Get("initial_items.0.content.0.text").String() != "Be kind." || got.Get("initial_items.1.role").String() != "user" || got.Get("initial_items.1.content.0.type").String() != "input_text" {
 		t.Fatalf("upstream = %s", cfg.UpstreamSession())
 	}
 	cfg = liveTestConfig(t, `{"delegation":{"acknowledgement":"none"}}`)
 	got = gjson.ParseBytes(cfg.UpstreamSession())
 	if !got.Get("delegation.ack_filler").Exists() || got.Get("delegation.ack_filler").Bool() || got.Get("initial_items").Exists() || got.Get("instructions").Exists() {
 		t.Fatalf("upstream = %s", cfg.UpstreamSession())
+	}
+}
+
+func TestLiveSessionUpstreamInstructionsItem(t *testing.T) {
+	cfg := liveTestConfig(t, `{"instructions":"Always reply in Spanish."}`)
+	got := gjson.ParseBytes(cfg.UpstreamSession())
+	if got.Get("instructions").String() != "Always reply in Spanish." || got.Get("initial_items.#").Int() != 1 || got.Get("initial_items.0.role").String() != "developer" || got.Get("initial_items.0.content.0.text").String() != "Always reply in Spanish." {
+		t.Fatalf("upstream = %s", cfg.UpstreamSession())
+	}
+	if len(cfg.InitialItems) != 0 {
+		t.Errorf("config items changed: %d", len(cfg.InitialItems))
+	}
+	cfg = liveTestConfig(t, `{"input":[{"role":"user","content":"hi"}]}`)
+	got = gjson.ParseBytes(cfg.UpstreamSession())
+	if got.Get("initial_items.#").Int() != 1 || got.Get("initial_items.0.role").String() != "user" {
+		t.Fatalf("no instructions must add no developer item: %s", cfg.UpstreamSession())
+	}
+}
+
+func TestLiveSessionInputCapCountsInstructionsItem(t *testing.T) {
+	var items []string
+	for i := 0; i < 128; i++ {
+		items = append(items, `{"role":"user","content":"x"}`)
+	}
+	_, e := parseLiveSessionObject(gjson.Parse(`{"instructions":"Hi","input":[`+strings.Join(items[:128], ",")+`]}`), "")
+	if e == nil || e.Code != "invalid_value" || e.Param != "session.input" || !strings.Contains(e.Message, "127") {
+		t.Errorf("128 items with instructions -> %+v", e)
+	}
+	cfg := liveTestConfig(t, `{"instructions":"Hi","input":[`+strings.Join(items[:127], ",")+`]}`)
+	if got := gjson.ParseBytes(cfg.UpstreamSession()).Get("initial_items.#").Int(); got != 128 {
+		t.Errorf("127 items with instructions -> %d upstream items, want 128", got)
 	}
 }
 
