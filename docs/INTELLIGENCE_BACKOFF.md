@@ -1,4 +1,4 @@
-# Adaptive intelligence-degradation detection
+# Adaptive intelligence check
 
 Adaptive detection is off by default; the upgrade does not change the existing automatic detection switch, recovery thresholds or fixed frequency. It can be enabled under "Intelligence check → Frequency and resources", and the configuration uses the existing settings API and JSON storage, with no new business table.
 

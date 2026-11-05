@@ -1,15 +1,13 @@
 # Prompt Filter validation guide
 
-Use this guide to validate Prompt Filter without relying on production data or
-provider-specific accounts.
+Use this guide to validate Prompt Filter without relying on production data or provider-specific accounts.
 
 ## Isolated environment
 
 - Bind the test server to a loopback address.
 - Use a temporary SQLite database or a dedicated PostgreSQL test database.
 - Use mock upstream servers for JSON, SSE, WebSocket, and multipart flows.
-- Never copy production credentials, account exports, or raw user prompts into
-  the repository or test output.
+- Never copy production credentials, account exports, or raw user prompts into the repository or test output.
 - Remove temporary databases and stop mock services after the run.
 
 ## Functional cases
@@ -30,22 +28,17 @@ provider-specific accounts.
 
 ## Streaming and WebSocket cases
 
-- Validate fragmented SSE events and ensure buffered enforcement content is not
-  leaked before a blocking decision.
-- Validate request extraction per WebSocket logical turn rather than once per
-  connection.
-- Confirm identity verification and prompt evaluation are not repeated more
-  often than required by the protocol.
-- Confirm audit queue work does not delay safe streaming output beyond the
-  configured synchronous checks.
+- Validate fragmented SSE events and ensure buffered enforcement content is not leaked before a blocking decision.
+- Validate request extraction per WebSocket logical turn rather than once per connection.
+- Confirm identity verification and prompt evaluation are not repeated more often than required by the protocol.
+- Confirm audit queue work does not delay safe streaming output beyond the configured synchronous checks.
 
 ## Storage cases
 
 - Run schema creation and incremental migrations on SQLite and PostgreSQL.
 - Verify incident, usage-log, candidate-evidence, and risk-profile relationships.
 - Verify transaction rollback when any part of a compound audit write fails.
-- Verify redaction, prompt fingerprints, preview limits, and error-field
-  isolation.
+- Verify redaction, prompt fingerprints, preview limits, and error-field isolation.
 
 ## Suggested commands
 
@@ -55,5 +48,4 @@ go test ./...
 cd frontend && npm test && npm run typecheck && npm run build
 ```
 
-Before publishing a change, also run the repository's code-impact and changed-
-flow checks required by `AGENTS.md`.
+Before publishing a change, also run the repository's code-impact and changed-flow checks required by `AGENTS.md`.

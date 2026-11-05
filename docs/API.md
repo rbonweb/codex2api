@@ -474,9 +474,9 @@ Run details include the config version, the question snapshot, the requested and
 
 ### Account Management
 
-#### HTML Animation Intelligence Check
+#### HTML Animation Quality Check
 
-In the admin panel sidebar, "Intelligence Check" is at `/admin/quality-test`; you can switch between "Check Workbench", "Prompt Presets" (`?view=presets`), and "Check Records" (`?view=history`). The default question is a 2D animation of a pelican riding a bicycle drawn in SVG; you can edit the prompt and choose the account, model, and reasoning effort. The account dropdown shows a color badge for each subscription type.
+In the admin panel sidebar, "Quality check" is at `/admin/quality-test`; you can switch between "Check Workbench", "Prompt Presets" (`?view=presets`), and "Check Records" (`?view=history`). The default question is a 2D animation of a pelican riding a bicycle drawn in SVG; you can edit the prompt and choose the account, model, and reasoning effort. The account dropdown shows a color badge for each subscription type.
 
 There are two kinds of prompt presets. Built-in presets ship with the frontend (7 sets in total: pelican riding a bicycle, analog clock, solar system orbits, bouncing-ball physics, gear drive, night-city parallax, and Chinese character stroke order); they are not stored in the database and cannot be edited, but you can "copy as custom preset" and then modify them. Custom presets are saved in the database table `quality_test_prompts`. The "Prompt Presets" dropdown in the workbench can select either kind; if no preset is selected or the default is restored, the built-in pelican question is used. When the current prompt exactly matches a preset, that preset counts as selected; after an edit it counts as "Custom", and it can be saved as a new preset or used to update the original preset with one click from the workbench.
 
@@ -513,7 +513,7 @@ Job statuses are `running`, `cancelling`, `completed`, `error`, `stopped`, and `
 
 Reasoning effort uses `reasoning.effort`; if a specific model does not support that level, an upstream error is returned. The test reuses the proxy, credential, usage, and cooldown handling of the account connection test. It consumes upstream quota and does not go through the API key scheduling, billing, or request-body rewrite rules of the public `/v1/*`.
 
-The background executor consumes the complete upstream stream, keeping the pure model text and the final statistics that arrive after the completion event; the frontend reads progress through the job API. Elapsed time, time to first output segment, and the token data provided by the upstream are used only as aids for comparison; no automatic "intelligence score" is returned. One animation result cannot prove that model quality has declined.
+The background executor consumes the complete upstream stream, keeping the pure model text and the final statistics that arrive after the completion event; the frontend reads progress through the job API. Elapsed time, time to first output segment, and the token data provided by the upstream are used only as aids for comparison; no automatic "degradation score" is returned. One animation result cannot prove that model quality has declined.
 
 #### GET /api/admin/accounts
 
@@ -2482,6 +2482,6 @@ Retry-After: 3600
 
 Setting `IMAGE_JOB_WORKERS=2` enables a database job queue with fixed concurrency. Once enabled, the create endpoint returns only `job.id` and `job.status`, and reference images are read when the job runs. For database incremental migrations, memory limits, restart recovery and compatibility, see [Image job queue](IMAGE_JOB_QUEUE.md).
 
-### Adaptive intelligence-degradation check configuration
+### Adaptive intelligence check configuration
 
-`PUT /api/admin/intelligence-check/settings` supports `adaptive_enabled`, `pause_initial_seconds`, `pause_max_seconds`, `recovery_initial_seconds` and `recovery_min_seconds`. You must still submit the current `revision` and the full settings. For field semantics, bounds and compatibility rules, see [Adaptive intelligence-degradation check](INTELLIGENCE_BACKOFF.md). The check bars add `probe_phase`, `next_interval_seconds`, `passed_streak` and `next_due_at`, which show backoff or recovery-confirmation progress.
+`PUT /api/admin/intelligence-check/settings` supports `adaptive_enabled`, `pause_initial_seconds`, `pause_max_seconds`, `recovery_initial_seconds` and `recovery_min_seconds`. You must still submit the current `revision` and the full settings. For field semantics, bounds and compatibility rules, see [Adaptive intelligence check](INTELLIGENCE_BACKOFF.md). The check bars add `probe_phase`, `next_interval_seconds`, `passed_streak` and `next_due_at`, which show backoff or recovery-confirmation progress.

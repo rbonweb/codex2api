@@ -692,6 +692,6 @@ The admin setting `codex_oauth_keepalive_enabled` (default `false`) allows lazy 
 
 Codex refresh adds the `codex_oauth_refresh_attempts` protection table, which is created automatically at startup and is compatible with PostgreSQL and SQLite. The table only stores the SHA-256 fingerprint of the old RT, the refresh operation ID, and the start time, and does not store plaintext tokens. A record is deleted after all related credentials are saved successfully; records with uncertain results are kept, to prevent the old RT from being consumed again across instances or after a restart. Existing credentials do not need to be re-imported; authorization that has already expired must be restored by signing in again.
 
-## Adaptive intelligence-downgrade detection
+## Adaptive intelligence check
 
-Intelligence-downgrade detection supports exponential backoff with a configurable cap, recovery acceleration, and recurrence memory. It is disabled by default; for the configuration and state transition rules, see [Adaptive intelligence-downgrade detection](INTELLIGENCE_BACKOFF.md).
+The adaptive intelligence check supports exponential backoff with a configurable cap, recovery acceleration, and recurrence memory. It is disabled by default; for the configuration and state transition rules, see [Adaptive intelligence check](INTELLIGENCE_BACKOFF.md).
