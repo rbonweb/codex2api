@@ -66,7 +66,7 @@ func TestAudioPacerOrderThenSilence(t *testing.T) {
 			t.Fatalf("duration = %v", o.d)
 		}
 	}
-	if o := recvFrame(t, out); !bytes.Equal(o.frame, audioPacerSilence) {
+	if o := recvFrame(t, out); !bytes.Equal(o.frame, opusSilenceFrame) {
 		t.Fatalf("expected silence, got %v", o.frame)
 	}
 }
@@ -81,7 +81,7 @@ func TestAudioPacerClearDropsPending(t *testing.T) {
 		t.Fatalf("buffered = %d", p.Buffered())
 	}
 	p.Start(context.Background())
-	if o := recvFrame(t, out); !bytes.Equal(o.frame, audioPacerSilence) {
+	if o := recvFrame(t, out); !bytes.Equal(o.frame, opusSilenceFrame) {
 		t.Fatalf("expected silence after Clear, got %v", o.frame)
 	}
 }

@@ -22,9 +22,6 @@ var (
 	errAudioPacerStopped = errors.New("audio pacer is stopped")
 )
 
-// audioPacerSilence is a 20 ms Opus silence frame sent while the queue is empty.
-var audioPacerSilence = []byte{0xf8, 0xff, 0xfe}
-
 // audioPacer writes one Opus frame per tick to a sink, using silence when nothing is queued.
 type audioPacer struct {
 	sink        audioFrameSink
@@ -106,7 +103,7 @@ func (p *audioPacer) next() []byte {
 	p.mu.Lock()
 	defer p.mu.Unlock()
 	if len(p.queue) == 0 {
-		return audioPacerSilence
+		return opusSilenceFrame
 	}
 	frame := p.queue[0]
 	p.queue[0] = nil
