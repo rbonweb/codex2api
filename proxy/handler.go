@@ -399,15 +399,6 @@ func accountFilterForModelWithGate(model string, gate modelRateLimitGate) auth.A
 	}
 }
 
-// requestUpstreamChannel 返回当前请求下游 Key 的上游渠道限定（空=不限）。
-func requestUpstreamChannel(c *gin.Context) string {
-	row := apiKeyRowFromContext(c)
-	if row == nil {
-		return ""
-	}
-	return row.Limits.ResolveUpstreamChannel()
-}
-
 func accountFilterForResponsesModel(model string, allowCodexAccounts bool) auth.AccountFilter {
 	return accountFilterForResponsesModelWithOriginal(model, model, allowCodexAccounts)
 }
