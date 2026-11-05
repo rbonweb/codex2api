@@ -329,7 +329,12 @@ func (s *Store) applySchedulerOutboxEvent(ctx context.Context, event database.Sc
 		// admin request. Cross-instance engine/settings pickup is handled by the
 		// persisted scheduler-engine setting when that field is present; unknown
 		// settings events are safe no-ops for older schemas.
-		return s.reloadSchedulerEngineSetting(ctx)
+		engineErr := s.reloadSchedulerEngineSetting(ctx)
+		// A settings change can alter dispatch rules, so wake local scheduler waiters to re-evaluate immediately.
+		if s != nil && s.db != nil {
+			s.notifySchedulerAvailability()
+		}
+		return engineErr
 	default:
 		return nil
 	}
@@ -487,12 +492,8 @@ func (s *Store) applyPersistentAccountSnapshot(dst, src *Account, enabled bool) 
 	dst.ProxyURL = src.ProxyURL
 	dst.CustomHeaders = cloneStringMap(src.CustomHeaders)
 	dst.UpstreamType = src.UpstreamType
-	dst.BaseURL = src.BaseURL
-	dst.APIKey = src.APIKey
 	dst.Models = cloneStringSlice(src.Models)
-	dst.ModelMapping = src.ModelMapping
 	dst.CodexClientMetadataMode = src.CodexClientMetadataMode
-	dst.CodexPassthroughMode = src.CodexPassthroughMode
 	dst.CodexFingerprintMode = src.CodexFingerprintMode
 	dst.Timezone = src.Timezone
 	dst.CodexAuthMode = src.CodexAuthMode
@@ -617,7 +618,7 @@ func (s *Store) reloadAPIKeyRoutingByID(ctx context.Context, apiKeyID int64) err
 			s.apiKeyAllowedPlans[apiKeyID] = append([]string(nil), plans...)
 			s.apiKeyAllowedPlanSets[apiKeyID] = stringSet(plans)
 		}
-		if channel := row.Limits.ResolveUpstreamChannel(); channel != "" {
+		if channel := row.Limits.ResolveUpstreamChannel(); channel == database.UpstreamChannelCodex {
 			s.apiKeyUpstreamChannels[apiKeyID] = channel
 		}
 	}

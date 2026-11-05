@@ -168,16 +168,15 @@ func TestCodexTestRecorderIgnoresNonObjectFrames(t *testing.T) {
 
 func TestCodexTestRecorderRedactsSecretsAndTruncates(t *testing.T) {
 	token := "eyJhbGciOiJSUzI1NiJ9.super-secret-access-token"
-	apiKey := "sk-secret-key"
-	body := `{"error":{"message":"token ` + token + ` key ` + apiKey + ` proxy http://user:pass@proxy.local:8080"}}`
+	body := `{"error":{"message":"token ` + token + ` proxy http://user:pass@proxy.local:8080"}}`
 	resp := &http.Response{StatusCode: 401, Header: make(http.Header), Body: io.NopCloser(strings.NewReader(body))}
 	resp.Header.Set("x-request-id", "req-"+token)
-	r := newCodexTestRecorder(resp, "gpt-5.4", &auth.Account{AccessToken: token, APIKey: apiKey}, time.Now())
+	r := newCodexTestRecorder(resp, "gpt-5.4", &auth.Account{AccessToken: token}, time.Now())
 	if _, err := io.ReadAll(resp.Body); err != nil {
 		t.Fatal(err)
 	}
 	d := r.finish()
-	if strings.Contains(d.ResponseBody, token) || strings.Contains(d.ResponseBody, apiKey) || strings.Contains(d.ResponseBody, "user:pass@") {
+	if strings.Contains(d.ResponseBody, token) || strings.Contains(d.ResponseBody, "user:pass@") {
 		t.Fatalf("secrets leaked into body preview: %s", d.ResponseBody)
 	}
 	if !strings.Contains(d.ResponseBody, "[REDACTED]") || !strings.Contains(d.ResponseBody, "http://[REDACTED]@proxy.local:8080") {
@@ -206,10 +205,10 @@ func TestCodexTestRecorderRedactsSecretsAndTruncates(t *testing.T) {
 	}
 }
 
-func TestCodexTestSecretsCollectsTokenAndAPIKey(t *testing.T) {
-	account := &auth.Account{AccessToken: " at-1 ", APIKey: "sk-2"}
+func TestCodexTestSecretsCollectsAccessToken(t *testing.T) {
+	account := &auth.Account{AccessToken: " at-1 "}
 	got := codexTestSecrets(account)
-	if len(got) != 2 || got[0] != "at-1" || got[1] != "sk-2" {
+	if len(got) != 1 || got[0] != "at-1" {
 		t.Fatalf("codexTestSecrets() = %v", got)
 	}
 	if got := codexTestSecrets(&auth.Account{}); len(got) != 0 {

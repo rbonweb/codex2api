@@ -143,33 +143,6 @@ func TestCodexAlphaSearchHandler_PassesThroughUpstreamError(t *testing.T) {
 	}
 }
 
-// 池中只有中转（OpenAI Responses API）账号时 fast-fail 503：搜索端点只存在于 ChatGPT 后端。
-func TestCodexAlphaSearchHandler_RelayOnlyPoolFastFails(t *testing.T) {
-	gin.SetMode(gin.TestMode)
-
-	store := auth.NewStore(nil, nil, &database.SystemSettings{MaxConcurrency: 2})
-	store.AddAccount(&auth.Account{
-		DBID:         1,
-		UpstreamType: auth.UpstreamOpenAIResponses,
-		BaseURL:      "http://example.invalid",
-		APIKey:       "sk-relay",
-		Models:       []string{"gpt-5.5"},
-		PlanType:     "api",
-	})
-	handler := NewHandler(store, nil, nil, nil)
-
-	req := httptest.NewRequest(http.MethodPost, "/v1/alpha/search", strings.NewReader(`{"id":"srch_3","model":"gpt-5.5"}`))
-	rec := httptest.NewRecorder()
-	ctx, _ := gin.CreateTestContext(rec)
-	ctx.Request = req
-
-	handler.CodexAlphaSearchHandler(ctx)
-
-	if rec.Code != http.StatusServiceUnavailable {
-		t.Fatalf("status = %d, want 503; body=%s", rec.Code, rec.Body.String())
-	}
-}
-
 // TestCodexAlphaSearchHandler_KeepsJSONResponseAliveWhileReadingBody 验证读取静默的
 // 非流式 JSON 响应体时会发送 HTTP 102，同时保留最终 JSON 响应。
 func TestCodexAlphaSearchHandler_KeepsJSONResponseAliveWhileReadingBody(t *testing.T) {

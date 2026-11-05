@@ -205,7 +205,7 @@ func registerAgentIdentityTask(ctx context.Context, key agentIdentityRuntimeKey,
 	if accountBound {
 		proxyURL = boundProxy
 	}
-	client, err := grokHTTPClient(proxyURL) // 复用带代理配置的通用客户端构造器
+	client, err := proxiedHTTPClient(proxyURL)
 	if err != nil {
 		return "", err
 	}

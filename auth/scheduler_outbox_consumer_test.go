@@ -42,14 +42,9 @@ func TestSchedulerOutboxConsumerLoadsUpdatesAndRemovesAccount(t *testing.T) {
 		t.Fatalf("Store.Init: %v", err)
 	}
 
-	accountID, err := db.InsertOpenAIResponsesAccount(ctx, "outbox-account", map[string]interface{}{
-		"upstream_type": UpstreamOpenAIResponses,
-		"base_url":      "https://outbox.example",
-		"api_key":       "sk-outbox",
-		"models":        []string{"gpt-5.6"},
-	}, "")
+	accountID, err := db.InsertATAccount(ctx, "outbox-account", "at-outbox-account", "")
 	if err != nil {
-		t.Fatalf("InsertOpenAIResponsesAccount: %v", err)
+		t.Fatalf("InsertATAccount: %v", err)
 	}
 	waitForSchedulerProjection(t, func() bool { return store.FindByID(accountID) != nil })
 
@@ -104,13 +99,9 @@ func TestIndexedAvailabilityWaitWakesOnOutboxAccountInsert(t *testing.T) {
 	}()
 	waitForSchedulerProjection(t, func() bool { return store.GetSchedulerMetrics().Waiters == 1 })
 
-	accountID, err := db.InsertOpenAIResponsesAccount(ctx, "wake-account", map[string]interface{}{
-		"upstream_type": UpstreamOpenAIResponses,
-		"base_url":      "https://wake.example",
-		"api_key":       "sk-wake",
-	}, "")
+	accountID, err := db.InsertATAccount(ctx, "wake-account", "at-wake-account", "")
 	if err != nil {
-		t.Fatalf("InsertOpenAIResponsesAccount: %v", err)
+		t.Fatalf("InsertATAccount: %v", err)
 	}
 	select {
 	case acc := <-result:
@@ -290,21 +281,13 @@ func TestReloadDispatchAccountsByIDsAppliesBatchProjection(t *testing.T) {
 	if err != nil {
 		t.Fatalf("CreateAccountGroup: %v", err)
 	}
-	firstID, err := db.InsertOpenAIResponsesAccount(ctx, "batch-first", map[string]interface{}{
-		"upstream_type": UpstreamOpenAIResponses,
-		"base_url":      "https://batch-first.example",
-		"api_key":       "sk-batch-first",
-	}, "")
+	firstID, err := db.InsertATAccount(ctx, "batch-first", "at-batch-first", "")
 	if err != nil {
-		t.Fatalf("InsertOpenAIResponsesAccount(first): %v", err)
+		t.Fatalf("InsertATAccount(first): %v", err)
 	}
-	secondID, err := db.InsertOpenAIResponsesAccount(ctx, "batch-second", map[string]interface{}{
-		"upstream_type": UpstreamOpenAIResponses,
-		"base_url":      "https://batch-second.example",
-		"api_key":       "sk-batch-second",
-	}, "")
+	secondID, err := db.InsertATAccount(ctx, "batch-second", "at-batch-second", "")
 	if err != nil {
-		t.Fatalf("InsertOpenAIResponsesAccount(second): %v", err)
+		t.Fatalf("InsertATAccount(second): %v", err)
 	}
 	if err := db.SetAccountGroups(ctx, firstID, []int64{groupID}); err != nil {
 		t.Fatalf("SetAccountGroups: %v", err)
@@ -342,5 +325,42 @@ func TestReloadDispatchAccountsByIDsAppliesBatchProjection(t *testing.T) {
 	}
 	if store.FindByID(secondID) != nil {
 		t.Fatal("deleted account remained in the runtime pool after batch reload")
+	}
+}
+
+func TestApplySchedulerOutboxSettingsEventWakesSchedulerWaiters(t *testing.T) {
+	ctx := context.Background()
+	// A pinned engine makes reloadSchedulerEngineSetting a no-op, so any availability signal below comes from the settings case itself.
+	t.Setenv("CODEX_SCHEDULER_ENGINE", "indexed")
+	db, err := database.New("sqlite", filepath.Join(t.TempDir(), "scheduler-settings-wake.db"))
+	if err != nil {
+		t.Fatalf("database.New: %v", err)
+	}
+	store := NewStore(db, nil, &database.SystemSettings{MaxConcurrency: 1, SchedulerEngine: "indexed"})
+	t.Cleanup(func() {
+		store.Stop()
+		_ = db.Close()
+	})
+
+	before := store.GetSchedulerMetrics().AvailabilitySignals
+	if err := store.applySchedulerOutboxEvent(ctx, database.SchedulerOutboxEvent{EntityType: database.SchedulerEntitySettings}); err != nil {
+		t.Fatalf("applySchedulerOutboxEvent(settings): %v", err)
+	}
+	if got := store.GetSchedulerMetrics().AvailabilitySignals; got != before+1 {
+		t.Fatalf("availability signals after a settings event = %d, want %d", got, before+1)
+	}
+}
+
+func TestApplySchedulerOutboxSettingsEventWithoutDatabaseDoesNotWake(t *testing.T) {
+	t.Setenv("CODEX_SCHEDULER_ENGINE", "indexed")
+	store := NewStore(nil, nil, &database.SystemSettings{MaxConcurrency: 1, SchedulerEngine: "indexed"})
+	t.Cleanup(store.Stop)
+
+	before := store.GetSchedulerMetrics().AvailabilitySignals
+	if err := store.applySchedulerOutboxEvent(context.Background(), database.SchedulerOutboxEvent{EntityType: database.SchedulerEntitySettings}); err != nil {
+		t.Fatalf("applySchedulerOutboxEvent(settings): %v", err)
+	}
+	if got := store.GetSchedulerMetrics().AvailabilitySignals; got != before {
+		t.Fatalf("availability signals without a database = %d, want %d", got, before)
 	}
 }

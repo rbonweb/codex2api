@@ -48,16 +48,6 @@ func listScopedModelsForTest(t *testing.T, handler *Handler, row *database.APIKe
 	return payload.Data
 }
 
-func TestScopedModelsPlanMissingFailsClosedAndEmptyIs200(t *testing.T) {
-	store := auth.NewStore(nil, nil, &database.SystemSettings{MaxConcurrency: 1})
-	store.AddAccount(&auth.Account{DBID: 1, UpstreamType: auth.UpstreamGrok, AccessToken: "at", RefreshToken: "rt", Models: []string{"grok-4.5"}, PlanType: "free", CredentialGeneration: 1})
-	handler := NewHandler(store, nil, nil, nil)
-	models := listScopedModelsForTest(t, handler, &database.APIKeyRow{ID: 1, Limits: database.APIKeyLimits{PlanAllow: []string{"free"}}})
-	if len(models) != 0 {
-		t.Fatalf("archive plan leaked through live plan gate: %+v", models)
-	}
-}
-
 func TestFilterCodexManifestRetainsUnknownFieldsAndStableETag(t *testing.T) {
 	body := []byte(`{"models":[{"slug":"gpt-a","display_name":"A"},{"slug":"gpt-b","new_field":{"x":1}}],"future":true}`)
 	filtered, etag, err := filterCodexManifest(body, `W/"upstream"`, func(slug string) bool { return slug == "gpt-b" })

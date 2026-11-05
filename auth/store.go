@@ -9,7 +9,6 @@ import (
 	"log"
 	"math"
 	"math/rand"
-	"net/url"
 	"os"
 	"reflect"
 	"sort"
@@ -44,8 +43,6 @@ const (
 	HealthTierBanned  AccountHealthTier = "banned"
 )
 
-const UpstreamOpenAIResponses = "openai_responses"
-
 const (
 	CodexClientMetadataModeAuto   = "auto"
 	CodexClientMetadataModeAlways = "always"
@@ -66,69 +63,6 @@ func NormalizeCodexClientMetadataMode(value string) string {
 func IsValidCodexClientMetadataMode(value string) bool {
 	switch strings.ToLower(strings.TrimSpace(value)) {
 	case CodexClientMetadataModeAuto, CodexClientMetadataModeAlways, CodexClientMetadataModeOff:
-		return true
-	default:
-		return false
-	}
-}
-
-// Codex 身份透传档位，仅对 OpenAI Responses 中转账号生效。
-// off    = 保持默认出站身份（生成/兜底 Codex 身份头，丢弃下游 x-codex-* 头）。
-// auto   = 仅当下游请求本身携带官方 Codex 客户端身份（UA/Originator）时，
-//
-//	把该身份原样透传给中转；其余请求维持 off 行为。
-//
-// always = 完全透传：无论下游是谁，原样转发其身份头（与 sub2api 透传模式对齐）。
-const (
-	CodexPassthroughModeOff    = "off"
-	CodexPassthroughModeAuto   = "auto"
-	CodexPassthroughModeAlways = "always"
-)
-
-func NormalizeCodexPassthroughMode(value string) string {
-	switch strings.ToLower(strings.TrimSpace(value)) {
-	case CodexPassthroughModeAuto:
-		return CodexPassthroughModeAuto
-	case CodexPassthroughModeAlways:
-		return CodexPassthroughModeAlways
-	default:
-		return CodexPassthroughModeOff
-	}
-}
-
-func IsValidCodexPassthroughMode(value string) bool {
-	switch strings.ToLower(strings.TrimSpace(value)) {
-	case CodexPassthroughModeOff, CodexPassthroughModeAuto, CodexPassthroughModeAlways:
-		return true
-	default:
-		return false
-	}
-}
-
-const (
-	OpenAIResponsesTransportHTTP      = "http"
-	OpenAIResponsesTransportWebsocket = "websocket"
-	// OpenAIResponsesUpstreamTransportCredentialKey 存在 OpenAI Responses 中转账号凭据里。
-	// 缺省和 http 保持原有 HTTP POST；websocket 才拨该账号自己的 Responses WebSocket。
-	OpenAIResponsesUpstreamTransportCredentialKey = "responses_upstream_transport"
-)
-
-// NormalizeOpenAIResponsesUpstreamTransport 把传输档位归一成 http 或 websocket。
-// 空值和无法识别的存量值都回落到 http，升级后行为不变。
-func NormalizeOpenAIResponsesUpstreamTransport(value string) string {
-	switch strings.ToLower(strings.TrimSpace(value)) {
-	case OpenAIResponsesTransportWebsocket:
-		return OpenAIResponsesTransportWebsocket
-	default:
-		return OpenAIResponsesTransportHTTP
-	}
-}
-
-// IsValidOpenAIResponsesUpstreamTransport 校验管理接口写入的传输档位。
-// 空串按 http 接受，由调用方归一。
-func IsValidOpenAIResponsesUpstreamTransport(value string) bool {
-	switch strings.ToLower(strings.TrimSpace(value)) {
-	case "", OpenAIResponsesTransportHTTP, OpenAIResponsesTransportWebsocket:
 		return true
 	default:
 		return false
@@ -163,88 +97,29 @@ type Account struct {
 	mu                        sync.RWMutex
 	usageSyncMu               sync.Mutex
 	// Snapshot writes serialize per account without blocking other accounts or frame ingestion.
-	usageSnapshotPersistMu sync.Mutex
-	modelCatalogMu         sync.Mutex
-	// grokRuntimeFactsMu serializes inference-response observations for this
-	// account. The sink performs generation-fenced database writes before it
-	// publishes any hard gate or routing invalidation back to memory.
-	grokRuntimeFactsMu   sync.Mutex
-	usageObservedAt      time.Time
-	DBID                 int64 // 数据库 ID
-	RefreshToken         string
-	SessionToken         string
-	AccessToken          string
-	ExpiresAt            time.Time
-	AccountID            string
-	Email                string
-	PlanType             string
-	ProxyURL             string
-	CustomHeaders        map[string]string
-	UpstreamType         string
-	AntigravityProjectID string
-	// AntigravityPlanKey is the plan_allow key derived from the persisted
-	// entitlement tier ids (free/pro/ultra/standard, "api" for API keys).
-	// PlanType keeps Google's display name ("Google AI Pro") for the UI.
-	AntigravityPlanKey string
-	// AntigravityHardBlocked is a durable runtime fence restored from Google's
-	// authoritative permission/quota snapshots or a permanent OAuth refresh
-	// failure. It is kept separate from administrative DispatchPaused so a
-	// successful, generation-fenced sync can safely clear the provider fence.
-	AntigravityHardBlocked     bool
-	AntigravityHardBlockReason string
-	// antigravityQuota* 是 antigravity_quota 凭据投影出的调度排序键（已用百分比），
-	// 见 scheduling_usage_key.go；随控制面同步快照更新。antigravityModelMaxOutput
-	// 是同一快照里各上游模型自报的最大输出 token(键为小写模型 ID)。
-	antigravityQuotaUsedPercent float64
-	antigravityQuotaObservedAt  time.Time
-	antigravityQuotaValid       bool
-	antigravityModelMaxOutput   map[string]int
-	// AntigravityQuota 是 credentials JSON 中 antigravity_quota 的内存 V2 投影，
-	// 受 a.mu 保护；由账号装载、client.Sync 落库后与 outbox consumer 投影共同更新。
-	AntigravityQuota AntigravityQuotaSnapshot
-	// antigravityQuotaEpoch 是上述内存配额事实所属的失效纪元基线（credentials JSON 的
-	// antigravity_quota_epoch 键）。跨实例投影按它做单调判定：纪元递增即序号空间重新
-	// 初始化，更旧纪元的一切观测一律丢弃（Spec §4.3）。受 a.mu 保护。
-	antigravityQuotaEpoch int64
-	// antigravityPenalty 是 Antigravity 首绑/Fresh 选号避险使用的近期限流惩罚：
-	// 进程内、指数衰减、不落库（见 antigravity_ratelimit.go）。它只影响「下一个
-	// 新会话优先选谁」，不参与冷却判定，也不改变任何既有绑定语义。
-	// antigravityPenaltyAt 是最近一次记录惩罚的时刻。两者均受 a.mu 保护。
-	antigravityPenalty      float64
-	antigravityPenaltyAt    time.Time
-	BaseURL                 string
-	APIKey                  string
+	usageSnapshotPersistMu  sync.Mutex
+	modelCatalogMu          sync.Mutex
+	usageObservedAt         time.Time
+	DBID                    int64 // 数据库 ID
+	RefreshToken            string
+	SessionToken            string
+	AccessToken             string
+	ExpiresAt               time.Time
+	AccountID               string
+	Email                   string
+	PlanType                string
+	ProxyURL                string
+	CustomHeaders           map[string]string
+	UpstreamType            string
 	Models                  []string
-	ModelMapping            string
 	CodexClientMetadataMode string
-	// CodexPassthroughMode 是 OpenAI Responses 中转账号的 Codex 身份透传档位
-	// （off / auto / always），见 codex passthrough 常量定义。
-	CodexPassthroughMode string
-	// ResponsesUpstreamTransport 是 OpenAI Responses 中转账号的上游传输
-	// （http / websocket）。空值和 http 都走 HTTP；websocket 只在该账号上拨
-	// Responses WebSocket，与全局 codex_force_websocket 无关。
-	ResponsesUpstreamTransport string
 	// CodexFingerprintMode 见 codex_fingerprint_mode.go：Codex 官方出站请求的
 	// 设备指纹收敛档位（off / device / session / full），默认 off。
 	CodexFingerprintMode string
 	// Timezone 是账号绑定的 IANA 时区（credentials.timezone）。Codex 官方出站路径据此
 	// 改写请求体 environment_context 里的时区与日期（见 proxy/codex_environment_context.go）；
-	// 空 = 不绑定、透传下游值。Claude 账号沿用同一凭据键做身份标签。
+	// 空 = 不绑定、透传下游值。
 	Timezone string
-	// ClaudeFingerprintMode 见 claude_fingerprint_mode.go:Claude Code 出站身份头
-	// 收敛模式(preserve/force;空=跟随全局默认)。
-	ClaudeFingerprintMode string
-	// ClaudeAuthKind 见 claude_auth_kind.go:Claude 凭据形态(oauth / setup_token / api_key)。
-	ClaudeAuthKind string
-	ClaudeBaseURL  string
-	// Claude Code platform/version policy overrides. Empty values inherit the
-	// corresponding global policy from Store.
-	ClaudeClientPlatformOverride string
-	ClaudeVersionPolicyOverride  string
-	ClaudeClientVersionOverride  string
-	// claudeSessionWindow 是 Claude 账号的全局默认并发会话窗口数(装载时从系统设置
-	// 快照,>0 时作为无账号级/分组覆盖时的基础并发回退)。
-	claudeSessionWindow int64
 	// Codex Agent Identity（auth_mode=agentIdentity）：不存 AT/RT，每次上游请求用
 	// agent_private_key(Ed25519, PKCS#8 base64) 动态签名。AgentTaskID 由 task 注册获得，
 	// 运行时缓存并落库(credentials.task_id)。
@@ -252,52 +127,9 @@ type Account struct {
 	AgentRuntimeID  string
 	AgentPrivateKey string
 	AgentTaskID     string
-	// Grok OAuth 刷新元数据（upstream_type=grok 且 OAuth 凭据时有效）
-	GrokClientID      string
-	GrokTokenEndpoint string
-	GrokOIDCIssuer    string
-	GrokPrincipalType string
-	GrokPrincipalID   string
-	// CredentialGeneration fences every asynchronous Grok observation and OAuth
-	// refresh result. CredentialFamilyID is stable across AT/RT rotation and is
-	// safe to use as a cross-instance lease key (it contains no credential).
-	CredentialGeneration int64
-	CredentialFamilyID   string
-	// Grok live account facts are deliberately separate from PlanType. PlanType
-	// remains a legacy/JWT/archive display hint; only a fresh live plan may pass
-	// an API key plan_allow gate for Grok OAuth.
-	GrokLivePlan           string
-	GrokLivePlanObservedAt time.Time
-	GrokLivePlanExpiresAt  time.Time
-	GrokLivePlanKnown      bool
-	// GrokDisplayPlan is settings.subscription_tier_display. Like the display
-	// column it is a hint only; it never passes an authorization gate.
-	GrokDisplayPlan          string
-	GrokDisplayPlanExpiresAt time.Time
-	GrokAccessAllowed        *bool
-	GrokAccessExpiresAt      time.Time
-	GrokBillingExhausted     bool
-	GrokBillingExpiresAt     time.Time
-	GrokFactsGeneration      int64
-	// grokRouting 是按账号、凭据 generation 隔离的模型目录与协议能力快照。
-	// 目录本身由控制面同步并持久化；执行路径只读取这份不可变副本，不现场访问上游。
-	grokRouting     *GrokRoutingState
-	grokRuntimeSink grokRuntimeFactSink
-	// Last successfully persisted inference hint. It suppresses a database write
-	// on every token request while preserving DB-first semantics on changes.
-	grokRuntimeModelsHint           string
-	grokRuntimeModelsHintOrigin     string
-	grokRuntimeModelsHintGeneration int64
-	// grokRateLimit 是上游逐请求返回的配额余量快照（x-ratelimit-* 头）。
-	// 内存实时更新;dirty 位驱动 store 后台循环按分钟批量落库(grok_rate_limit 凭据)。
-	grokRateLimit        *GrokRateLimitSnapshot
-	grokRateLimitDirty   bool
-	grokRateLimitVersion uint64
-	// grokContextWindow 是上游 x-grok-context-window 响应头的观测值，用于推导
-	// 客户端压缩阈值。仅内存保留：值只能在收到响应后才知道，落库也救不了首个请求。
-	grokContextWindow int64
-	// grokFreeQuota 是免费额度耗尽 429 解析出的权威用量快照，随 credentials 落库。
-	grokFreeQuota               *GrokFreeQuotaSnapshot
+	// CredentialGeneration fences asynchronous observations and refresh results against a credential change. CredentialFamilyID is stable across AT/RT rotation and is safe to use as a cross-instance lease key (it contains no credential).
+	CredentialGeneration        int64
+	CredentialFamilyID          string
 	Status                      AccountStatus
 	CooldownUtil                time.Time
 	CooldownReason              string // rate_limited / rate_limited_5h / responses_rate_limited / unauthorized / 空
@@ -594,15 +426,6 @@ func (a *Account) Mu() *sync.RWMutex {
 	return &a.mu
 }
 
-func (a *Account) isOpenAIResponsesAPILocked() bool {
-	if a == nil {
-		return false
-	}
-	return strings.EqualFold(strings.TrimSpace(a.UpstreamType), UpstreamOpenAIResponses) &&
-		strings.TrimSpace(a.BaseURL) != "" &&
-		strings.TrimSpace(a.APIKey) != ""
-}
-
 func (a *Account) hasDispatchCredentialLocked() bool {
 	if a == nil {
 		return false
@@ -612,36 +435,6 @@ func (a *Account) hasDispatchCredentialLocked() bool {
 		return true
 	}
 	return strings.TrimSpace(a.AccessToken) != ""
-}
-
-func (a *Account) IsOpenAIResponsesAPI() bool {
-	if a == nil {
-		return false
-	}
-	a.mu.RLock()
-	defer a.mu.RUnlock()
-	return a.isOpenAIResponsesAPILocked()
-}
-
-func (a *Account) SupportsOpenAIResponsesModel(model string) bool {
-	if a == nil {
-		return false
-	}
-	model = strings.TrimSpace(model)
-	if model == "" {
-		return false
-	}
-	a.mu.RLock()
-	defer a.mu.RUnlock()
-	if !a.isRelayStyleLocked() || len(a.Models) == 0 {
-		return false
-	}
-	for _, candidate := range a.Models {
-		if strings.EqualFold(strings.TrimSpace(candidate), model) {
-			return true
-		}
-	}
-	return false
 }
 
 // SupportsCodexModel 判断 Codex OAuth 账号能否服务指定模型。
@@ -675,78 +468,6 @@ func (a *Account) CodexModels() []string {
 	a.mu.RLock()
 	defer a.mu.RUnlock()
 	return cloneStringSlice(a.Models)
-}
-
-func (a *Account) OpenAIResponsesModels() []string {
-	if a == nil {
-		return []string{}
-	}
-	a.mu.RLock()
-	defer a.mu.RUnlock()
-	if !a.isRelayStyleLocked() {
-		return []string{}
-	}
-	return cloneStringSlice(a.Models)
-}
-
-func (a *Account) OpenAIResponsesModelMapping() string {
-	if a == nil {
-		return ""
-	}
-	a.mu.RLock()
-	defer a.mu.RUnlock()
-	if !a.isRelayStyleLocked() {
-		return ""
-	}
-	return strings.TrimSpace(a.ModelMapping)
-}
-
-func (a *Account) OpenAIResponsesCodexClientMetadataMode() string {
-	if a == nil {
-		return CodexClientMetadataModeAuto
-	}
-	a.mu.RLock()
-	defer a.mu.RUnlock()
-	return NormalizeCodexClientMetadataMode(a.CodexClientMetadataMode)
-}
-
-// OpenAIResponsesCodexPassthroughMode 返回 OpenAI Responses 中转账号生效的
-// Codex 身份透传档位；空值与非法的存量数据都回落到 off，升级后行为不变。
-func (a *Account) OpenAIResponsesCodexPassthroughMode() string {
-	if a == nil {
-		return CodexPassthroughModeOff
-	}
-	a.mu.RLock()
-	defer a.mu.RUnlock()
-	return NormalizeCodexPassthroughMode(a.CodexPassthroughMode)
-}
-
-// OpenAIResponsesUpstreamTransport 返回中转账号的上游传输档位。非此类账号返回空串。
-func (a *Account) OpenAIResponsesUpstreamTransport() string {
-	if a == nil || !a.IsOpenAIResponsesAPI() {
-		return ""
-	}
-	a.mu.RLock()
-	defer a.mu.RUnlock()
-	return NormalizeOpenAIResponsesUpstreamTransport(a.ResponsesUpstreamTransport)
-}
-
-// OpenAIResponsesUsesUpstreamWebsocket 判断该中转账号是否要拨 Responses WebSocket。
-// 只对 OpenAI Responses 中转账号为真，Grok / Antigravity / Claude 恒为假。
-func (a *Account) OpenAIResponsesUsesUpstreamWebsocket() bool {
-	return a.OpenAIResponsesUpstreamTransport() == OpenAIResponsesTransportWebsocket
-}
-
-func (a *Account) OpenAIResponsesCredentials() (baseURL, apiKey string) {
-	if a == nil {
-		return "", ""
-	}
-	a.mu.RLock()
-	defer a.mu.RUnlock()
-	if !a.isOpenAIResponsesAPILocked() {
-		return "", ""
-	}
-	return strings.TrimRight(strings.TrimSpace(a.BaseURL), "/"), strings.TrimSpace(a.APIKey)
 }
 
 func (a *Account) GetProxyURL() string {
@@ -886,45 +607,6 @@ func normalizeModelList(values []string) []string {
 		return strings.ToLower(result[i]) < strings.ToLower(result[j])
 	})
 	return result
-}
-
-func NormalizeOpenAIResponsesModels(values []string) []string {
-	return normalizeModelList(values)
-}
-
-func NormalizeOpenAIResponsesBaseURL(raw string) (string, error) {
-	raw = strings.TrimSpace(raw)
-	if raw == "" {
-		raw = "https://api.openai.com"
-	}
-	parsed, err := url.Parse(raw)
-	if err != nil || parsed.Scheme == "" || parsed.Host == "" {
-		return "", fmt.Errorf("base_url 必须是完整的 http/https URL")
-	}
-	switch strings.ToLower(parsed.Scheme) {
-	case "http", "https":
-	default:
-		return "", fmt.Errorf("base_url 仅支持 http/https")
-	}
-	parsed.RawQuery = ""
-	parsed.Fragment = ""
-	parsed.Path = strings.TrimRight(parsed.Path, "/")
-	return parsed.String(), nil
-}
-
-func OpenAIResponsesEndpoint(baseURL, suffix string) string {
-	baseURL = strings.TrimRight(strings.TrimSpace(baseURL), "/")
-	suffix = strings.TrimSpace(suffix)
-	if suffix == "" {
-		return baseURL
-	}
-	if !strings.HasPrefix(suffix, "/") {
-		suffix = "/" + suffix
-	}
-	if strings.HasSuffix(strings.ToLower(baseURL), "/v1") && strings.HasPrefix(strings.ToLower(suffix), "/v1/") {
-		return baseURL + strings.TrimPrefix(suffix, "/v1")
-	}
-	return baseURL + suffix
 }
 
 func normalizeAllowedAPIKeyIDs(values []int64) []int64 {
@@ -1457,39 +1139,6 @@ func (a *Account) IsAvailable() bool {
 	defer a.mu.RUnlock()
 
 	return a.isAvailableLocked(time.Now())
-}
-
-// antigravityQuotaBlockReasonQuotaExhausted 是配额硬门禁对外暴露的类型化阻断原因
-// （Spec §6.2 #2）。上层（proxy 边缘层）据此把「候选全被门禁阻断」映射为 429 +
-// reason，而不是与容量满、鉴权失败混为一谈的 503。
-const antigravityQuotaBlockReasonQuotaExhausted = "quota_exhausted"
-
-// ErrQuotaExhausted 是「候选账号全因 Antigravity 配额硬门禁被阻断」的哨兵错误：
-// 调用方用 errors.Is 识别后返回 429，而不是排队等待或 503。
-var ErrQuotaExhausted = errors.New("antigravity account quota exhausted")
-
-// antigravityQuotaBlockReasonLocked 返回账号级的类型化阻断原因，未阻断时为空串。
-//
-// Locked 语义：调用方必须已持有 a.mu（读锁或写锁）。谓词本身纯内存只读，不做 I/O、
-// 不起 goroutine（Spec §3.3）。阻断判定与选号决策落在同一次账号临界区内，两者之间
-// 没有可插入其他决策的时间窗（原子线性化）。
-func (a *Account) antigravityQuotaBlockReasonLocked(now time.Time) string {
-	exhausted, _, _ := a.IsAntigravityQuotaExhaustedLocked(now)
-	if exhausted {
-		return antigravityQuotaBlockReasonQuotaExhausted
-	}
-	return ""
-}
-
-// antigravityAccountQuotaBlocked 是自锁封装的阻断查询，供锁外的选号入口复检使用。
-// nil 账号与未命中的账号都返回 false。
-func antigravityAccountQuotaBlocked(acc *Account) bool {
-	if acc == nil {
-		return false
-	}
-	acc.mu.RLock()
-	defer acc.mu.RUnlock()
-	return acc.antigravityQuotaBlockReasonLocked(time.Now()) != ""
 }
 
 func (a *Account) isAvailableLocked(now time.Time) bool {
@@ -2366,17 +2015,6 @@ func (a *Account) SetUsageSnapshot(pct float64, updatedAt time.Time) {
 	a.UsageUpdatedAt = updatedAt
 }
 
-// MarkClaudeUsageObservation records a native Claude response (or a bounded
-// probe attempt) even when Anthropic omits unified quota headers. The timestamp
-// participates only in Claude probe freshness; it never fabricates a 5h/7d
-// percentage and therefore cannot make an unmeasured account look quota-safe.
-func (a *Account) MarkClaudeUsageObservation(observedAt time.Time) bool {
-	if a == nil || !a.IsClaudeOAuth() {
-		return false
-	}
-	return a.ApplyUsageObservation(observedAt, func() {})
-}
-
 // GetUsagePercent7d 获取 7d 用量百分比
 func (a *Account) GetUsagePercent7d() (float64, bool) {
 	a.mu.RLock()
@@ -3232,36 +2870,6 @@ func (a *Account) GetCredentialGeneration() int64 {
 	return a.CredentialGeneration
 }
 
-// GetFreshGrokLivePlan returns API-key accounts as plan "api" and OAuth live
-// subscriptionTier only while the matching fact is fresh. JWT/archive hints
-// never enter this method.
-func (a *Account) GetFreshGrokLivePlan(now time.Time) (string, bool) {
-	if a == nil {
-		return "", false
-	}
-	a.mu.RLock()
-	defer a.mu.RUnlock()
-	if !a.isGrokAPILocked() {
-		return "", false
-	}
-	if strings.TrimSpace(a.APIKey) != "" {
-		return "api", true
-	}
-	if !a.GrokLivePlanKnown || a.GrokFactsGeneration != a.CredentialGeneration ||
-		a.GrokLivePlanExpiresAt.IsZero() || !now.Before(a.GrokLivePlanExpiresAt) {
-		return "", false
-	}
-	plan := CanonicalGrokLivePlanFilter(a.GrokLivePlan)
-	return plan, plan != ""
-}
-
-// GrokModelCatalogHardAllowed applies only durable control-plane gates. It
-// intentionally ignores concurrency, local cooldowns, and transient 429s so
-// /v1/models does not flicker under load. Missing allow_access is fail-open.
-func (a *Account) GrokModelCatalogHardAllowed(now time.Time) bool {
-	return a.GrokDispatchHardAllowed(now)
-}
-
 // GroupIDSnapshot 返回账号当前所属组 ID 的副本。GroupIDs 写入受 a.mu 保护
 // （ApplyAccountGroups / ApplyAccountGroupMemberships），跨 goroutine 读取须走此快照。
 func (a *Account) GroupIDSnapshot() []int64 {
@@ -3910,7 +3518,6 @@ type Store struct {
 	usageProbe                         func(context.Context, *Account) error
 	usageProbeCompletion               func()
 	usageProbeBatch                    atomic.Bool
-	antigravityCatalogBatch            atomic.Bool
 	recoveryProbeBatch                 atomic.Bool
 	autoCleanUnauthorized              atomic.Bool
 	autoCleanRateLimited               atomic.Bool
@@ -3937,22 +3544,12 @@ type Store struct {
 	boundaryProbeWakeCh chan struct{}
 	armedBoundaryAt     atomic.Int64
 	lazyRefreshInFlight sync.Map
-	// antigravityCoordinator 是 Antigravity 控制面协调器（Spec §4.2）：每账号
-	// flight 单飞互斥 + 后台共享许可。NewStore 装配；经 antigravityFlightCoordinator
-	// 惰性兜底，保证任何构造路径下手动同步都落入单账号 flight，不允许空转绕过。
-	antigravityCoordinatorMu sync.Once
-	antigravityCoordinator   *AntigravityCoordinator
-	// antigravityQuotaScheduler 是 Antigravity groups summary 的周期调度器
-	// （Spec §5.3）。由 StartAntigravityQuotaScheduler 幂等装配；Store.Stop 在
-	// close(stopCh) 之前先停它，保证停机不再派发新的 summary 请求。
-	antigravityQuotaSchedulerMu sync.Mutex
-	antigravityQuotaScheduler   *antigravityQuotaScheduler
-	stopCh                      chan struct{}
-	usageFramePersist           *usageFramePersistQueue
-	stopOnce                    sync.Once
-	backgroundCtx               context.Context
-	backgroundCancel            context.CancelFunc
-	wg                          sync.WaitGroup
+	stopCh              chan struct{}
+	usageFramePersist   *usageFramePersistQueue
+	stopOnce            sync.Once
+	backgroundCtx       context.Context
+	backgroundCancel    context.CancelFunc
+	wg                  sync.WaitGroup
 
 	// 代理池
 	proxyPoolReloadMu    sync.Mutex
@@ -4024,38 +3621,22 @@ type Store struct {
 	// 智能刷新调度器
 	refreshScheduler atomic.Pointer[RefreshSchedulerIntegration]
 
-	allowRemoteMigration          atomic.Bool  // 是否允许远程迁移拉取账号
-	modelMapping                  atomic.Value // 模型映射 JSON 字符串
-	codexModelMapping             atomic.Value // Codex 模型映射 JSON 字符串
-	payloadRules                  atomic.Value // Payload 请求体重写规则 JSON 字符串
-	reasoningEffortModels         atomic.Value // 带思考强度的模型别名 JSON 数组
-	schedulerMode                 atomic.Value // string: "round_robin" / "remaining_quota" / "fill_first" / "reset_5h_first"
-	affinityMode                  atomic.Value // string: "bounded" / "off" / "strict"
-	affinitySpreadEnabled         atomic.Bool  // 新亲和键按 HRW 哈希散列选号(issue #484)
-	claudeFingerprintDefault      atomic.Value // string: Claude 指纹模式全局默认（preserve/force;空=preserve）
-	claudeDefaultTimezone         atomic.Value // string: 导入 Claude 账号时的默认 IANA 时区
-	claudeSecurityConfig          atomic.Value // ClaudeSecurityConfig: ClaudeCode 出站安全策略
-	claudeClientPolicy            atomic.Value // ClaudeClientPolicy: 全局 Claude Code 平台/版本策略快照
-	claudeSessionWindowLimit      atomic.Int64 // Claude 账号默认并发会话窗口数（0=用全局 maxConcurrency）
-	claudeCLIVersionSyncDisabled  atomic.Bool  // Claude CLI 版本自动同步是否关闭（零值=开启）
-	claudeCLIVersionSyncIntervalH atomic.Int64 // Claude CLI 版本同步间隔小时（0=默认 12）
-	claudeFirstTokenTimeoutSec    atomic.Int64 // Claude 路径首字超时秒（0=跟随全局）
-	claudeFirstTokenTimeoutSet    atomic.Bool  // 首字超时是否被显式设置过（否则取默认 120）
-	claudeStreamKeepaliveDisabled atomic.Bool  // Claude 流式首字前 SSE 保活是否关闭（零值=开启）
-	grokAffinityMode              atomic.Value // string: "follow" / "bounded" / "off" / "strict"（"follow"=跟随全局）
-	grokProbeEnabled              atomic.Bool  // 定期探测 Grok 账号状态是否开启（默认关）
-	grokProbeIntervalMin          atomic.Int64 // 定期探测间隔（分钟，默认 30，下限 grokProbeMinIntervalMinutes）
-	grokMaxRateLimitRetry         atomic.Int64 // Grok 请求限流(429)专属换号重试上限（0=跟随全局）
-	grokFollowUpEffort            atomic.Value // GrokFollowUpEffortConfig
-	grokQualityGuard              atomic.Value // GrokQualityGuardConfig（降智检测,issue #587）
-	modelCooldownSettings         atomic.Value // database.ModelCooldownSettings
-	promptFilterConfig            atomic.Value // promptFilterConfigState
-	sessionMu                     sync.RWMutex
-	sessionBindings               map[string]sessionAffinity
-	sessionSlotBufferEnabled      atomic.Bool
-	sessionSlotBufferNS           atomic.Int64
-	sessionSlotSequence           uint64
-	sessionSlotReservations       map[int64]map[string][]uint64
+	allowRemoteMigration     atomic.Bool  // 是否允许远程迁移拉取账号
+	modelMapping             atomic.Value // 模型映射 JSON 字符串
+	codexModelMapping        atomic.Value // Codex 模型映射 JSON 字符串
+	payloadRules             atomic.Value // Payload 请求体重写规则 JSON 字符串
+	reasoningEffortModels    atomic.Value // 带思考强度的模型别名 JSON 数组
+	schedulerMode            atomic.Value // string: "round_robin" / "remaining_quota" / "fill_first" / "reset_5h_first"
+	affinityMode             atomic.Value // string: "bounded" / "off" / "strict"
+	affinitySpreadEnabled    atomic.Bool  // 新亲和键按 HRW 哈希散列选号(issue #484)
+	modelCooldownSettings    atomic.Value // database.ModelCooldownSettings
+	promptFilterConfig       atomic.Value // promptFilterConfigState
+	sessionMu                sync.RWMutex
+	sessionBindings          map[string]sessionAffinity
+	sessionSlotBufferEnabled atomic.Bool
+	sessionSlotBufferNS      atomic.Int64
+	sessionSlotSequence      uint64
+	sessionSlotReservations  map[int64]map[string][]uint64
 
 	globalAutoPause5hThreshold    float64  // protected by mu
 	globalAutoPause7dThreshold    float64  // protected by mu
@@ -4536,120 +4117,6 @@ func (s *Store) WithModelCooldownFilterContext(ctx context.Context, model string
 	}
 }
 
-// WithAntigravityCooldownFilterContext 是 Antigravity 渠道的跨实例模型冷却过滤。
-//
-// Antigravity 的一个公开档位（gemini-3.8-flash-high）可能与另一个档位
-// （gemini-3.8-flash-low）共用同一个上游 wire 模型（gemini-3.8-flash-tiered），
-// 而 Gemini 配额又按整个 family 计量。多实例部署时，另一实例写入的 wireModel 或
-// family 冷却在本实例的内存里不可见，只按 publicModel 过滤就会把已被上游限流的
-// 账号再次选中。这里对候选账号依次检查 publicModel、wireModel 与 familyKey 三个
-// 键的共享缓存冷却，命中即过滤，并把读到的远端冷却同步进本地账号。
-//
-// familyKey 由调用方决定：非 Gemini 模型传空串即可。ctx 取消时按「拒绝候选」处理，
-// 与 WithModelCooldownFilterContext 保持同一 fail-closed 语义。
-func (s *Store) WithAntigravityCooldownFilterContext(ctx context.Context, publicModel, wireModel, familyKey string, filter AccountFilter) AccountFilter {
-	if ctx == nil {
-		ctx = context.Background()
-	}
-	keys := antigravityCooldownFilterKeys(publicModel, wireModel, familyKey)
-	return func(acc *Account) bool {
-		if acc == nil || ctx.Err() != nil {
-			return false
-		}
-		if filter != nil && !filter(acc) {
-			return false
-		}
-		if ctx.Err() != nil {
-			return false
-		}
-		if s == nil || len(keys) == 0 {
-			return true
-		}
-		for _, key := range keys {
-			if s.accountHasCachedModelCooldownContext(ctx, acc, key) {
-				return false
-			}
-			if ctx.Err() != nil {
-				return false
-			}
-		}
-		return true
-	}
-}
-
-// antigravityCooldownFilterKeys 把 publicModel / wireModel / familyKey 归一化成去重后
-// 的冷却键列表（保持该顺序），空键与重复键被丢弃。
-func antigravityCooldownFilterKeys(publicModel, wireModel, familyKey string) []string {
-	keys := make([]string, 0, 3)
-	seen := make(map[string]struct{}, 3)
-	for _, model := range []string{publicModel, wireModel, familyKey} {
-		key := normalizeModelCooldownKey(model)
-		if key == "" {
-			continue
-		}
-		if _, dup := seen[key]; dup {
-			continue
-		}
-		seen[key] = struct{}{}
-		keys = append(keys, key)
-	}
-	return keys
-}
-
-// WithAntigravityAwareCooldownFilterContext 是「渠道未限定（auto Key）」请求的冷却过滤。
-//
-// 下游 Key 没有指定上游渠道时，候选池里既可能有 Antigravity 账号（native Gemini
-// generateContent/countTokens 被 antigravityOAuthChannelAccountFilter 硬限定为
-// Antigravity OAuth，Responses / Chat / Messages 也允许 Antigravity 账号），也可能有
-// 其它渠道的账号，而请求侧无法预先知道最终会落到哪一类。这里按候选账号自身的类型选择
-// 检查范围：
-//   - IsAntigravityAPI() 的候选：与 WithAntigravityCooldownFilterContext 完全一致的
-//     publicModel / wireModel / familyKey 三键检查（去重），闭合「另一实例写入的 wire
-//     或 family 冷却在本实例选号时看不见」的缺口；
-//   - 其它候选：与 WithModelCooldownFilterContext 完全一致的单一 publicModel 检查，
-//     行为不变。
-//
-// 下游 filter 对每个候选只调用一次（两个分支共用同一次求值）；ctx 取消时按「拒绝候选」
-// 处理，与上面两个过滤器保持同一 fail-closed 语义。
-func (s *Store) WithAntigravityAwareCooldownFilterContext(ctx context.Context, publicModel, wireModel, familyKey string, filter AccountFilter) AccountFilter {
-	if ctx == nil {
-		ctx = context.Background()
-	}
-	antigravityKeys := antigravityCooldownFilterKeys(publicModel, wireModel, familyKey)
-	publicKey := normalizeModelCooldownKey(publicModel)
-	return func(acc *Account) bool {
-		if acc == nil || ctx.Err() != nil {
-			return false
-		}
-		if filter != nil && !filter(acc) {
-			return false
-		}
-		if ctx.Err() != nil {
-			return false
-		}
-		if s == nil {
-			return true
-		}
-		keys := antigravityKeys
-		if !acc.IsAntigravityAPI() {
-			// 非 Antigravity 候选只看 publicModel，与既有单键语义完全一致。
-			if publicKey == "" {
-				return true
-			}
-			keys = []string{publicKey}
-		}
-		for _, key := range keys {
-			if s.accountHasCachedModelCooldownContext(ctx, acc, key) {
-				return false
-			}
-			if ctx.Err() != nil {
-				return false
-			}
-		}
-		return true
-	}
-}
-
 func fastSchedulerEnabledFromEnv() bool {
 	for _, key := range []string{"FAST_SCHEDULER_ENABLED", "CODEX_FAST_SCHEDULER"} {
 		if truthyEnv(os.Getenv(key)) {
@@ -4719,7 +4186,6 @@ func NewStore(db *database.DB, tc cache.TokenCache, settings *database.SystemSet
 		sessionSlotReservations:    make(map[int64]map[string][]uint64),
 		promptFilterNewAPIBindings: make(map[int64]database.PromptFilterNewAPIBinding),
 		oauthRefreshLocks:          make(map[string]*oauthRefreshLocalLock),
-		antigravityCoordinator:     NewAntigravityCoordinator(4),
 	}
 	s.maxConcurrency.Store(int64(settings.MaxConcurrency))
 	s.usageFramePersist.start(s)
@@ -6000,77 +5466,6 @@ func (s *Store) loadFromDB(ctx context.Context) error {
 	return nil
 }
 
-// antigravityAccessFenceReasonFromRow 报告持久化事实是否仍呈访问拒绝类硬围栏
-// （quota forbidden 或 entitlements 明确 Allowed=false），否则返回空串。
-// 与 antigravityPersistedHardFence 前两个分支同构，供手动同步的行级状态投影
-// 与管理端结果映射复用。
-func antigravityAccessFenceReasonFromRow(row *database.AccountRow) string {
-	if row == nil || !strings.EqualFold(strings.TrimSpace(row.GetCredential("upstream_type")), UpstreamAntigravity) {
-		return ""
-	}
-	if raw := strings.TrimSpace(row.GetCredential("antigravity_quota")); raw != "" {
-		var quota AntigravityQuotaSnapshot
-		if json.Unmarshal([]byte(raw), &quota) == nil && quota.Forbidden {
-			return "Google quota API denied access"
-		}
-	}
-	permissionsRaw := strings.TrimSpace(row.GetCredential("antigravity_permissions"))
-	if permissionsRaw == "" {
-		permissionsRaw = strings.TrimSpace(row.GetCredential("antigravity_entitlements"))
-	}
-	if permissionsRaw != "" {
-		var permissions AntigravityEntitlements
-		if json.Unmarshal([]byte(permissionsRaw), &permissions) == nil && !permissions.Allowed &&
-			(strings.TrimSpace(permissions.Reason) != "" || !permissions.UpdatedAt.IsZero()) {
-			reason := strings.TrimSpace(permissions.Reason)
-			if reason == "" {
-				reason = "Google account is not allowed to use Antigravity"
-			}
-			return reason
-		}
-	}
-	return ""
-}
-
-// antigravityPersistedHardFence projects only authoritative, durable provider
-// facts into runtime availability. Missing or malformed snapshots remain
-// fail-open; an explicit forbidden quota, observed Allowed=false permission,
-// or permanent OAuth failure is a hard fence until a later successful sync
-// replaces the persisted fact.
-func antigravityPersistedHardFence(row *database.AccountRow) (reason string, permanentRefresh bool) {
-	if row == nil || !strings.EqualFold(strings.TrimSpace(row.GetCredential("upstream_type")), UpstreamAntigravity) {
-		return "", false
-	}
-	if accessReason := antigravityAccessFenceReasonFromRow(row); accessReason != "" {
-		return accessReason, false
-	}
-	if syncErr := strings.TrimSpace(row.GetCredential("antigravity_sync_error")); syncErr != "" {
-		if permanentErr := strings.TrimSpace(row.GetCredential(antigravityPermanentRefreshErrorCredentialKey)); permanentErr != "" && permanentErr == syncErr {
-			return syncErr, true
-		}
-		if strings.Contains(strings.ToLower(syncErr), "changed google principal") {
-			return syncErr, false
-		}
-		if strings.HasPrefix(syncErr, antigravityIdentityRevalidationErrorPrefix) {
-			return syncErr, false
-		}
-	}
-	return "", false
-}
-
-// antigravityQuotaEpochFromRow 读取 credentials JSON 的 antigravity_quota_epoch 失效
-// 纪元基线，缺失或非法一律 0（Spec §4.1 失效纪元）。
-func antigravityQuotaEpochFromRow(row *database.AccountRow) int64 {
-	if row == nil {
-		return 0
-	}
-	epoch, ok := row.GetCredentialInt64("antigravity_quota_epoch")
-	if !ok || epoch < 0 {
-		return 0
-	}
-	return epoch
-}
-
 // isRemovedProviderUpstreamType reports whether upstream_type names a provider this gateway no longer serves.
 // An empty or unknown value is a Codex account and is never treated as removed.
 func isRemovedProviderUpstreamType(upstreamType string) bool {
@@ -6091,12 +5486,8 @@ func (s *Store) buildAccountFromRow(ctx context.Context, row *database.AccountRo
 		log.Printf("[账号 %d] 上游类型 %q 已不再支持（仅支持 ChatGPT/Codex 账号），跳过", row.ID, strings.ToLower(strings.TrimSpace(upstreamType)))
 		return nil
 	}
-	baseURL := row.GetCredential("base_url")
-	apiKey := row.GetCredential("api_key")
 	models := normalizeModelList(row.GetCredentialStringSlice("models"))
-	modelMapping := strings.TrimSpace(row.GetCredential("model_mapping"))
 	codexClientMetadataMode := NormalizeCodexClientMetadataMode(row.GetCredential("codex_client_metadata_mode"))
-	codexPassthroughMode := NormalizeCodexPassthroughMode(row.GetCredential("codex_passthrough_mode"))
 	codexFingerprintMode := NormalizeCodexFingerprintMode(row.GetCredential(CodexFingerprintModeCredentialKey))
 	accountTimezone := NormalizeAccountTimezone(row.GetCredential(AccountTimezoneCredentialKey))
 	// Agent Identity：无 AT/RT，凭 agent_private_key 动态签名，不能被下面的空凭据 guard 拒绝。
@@ -6119,12 +5510,8 @@ func (s *Store) buildAccountFromRow(ctx context.Context, row *database.AccountRo
 		UpstreamRequestIDHeader: row.GetCredential(UpstreamRequestIDHeaderCredentialKey),
 		HealthTier:              HealthTierWarm,
 		UpstreamType:            upstreamType,
-		BaseURL:                 strings.TrimRight(strings.TrimSpace(baseURL), "/"),
-		APIKey:                  strings.TrimSpace(apiKey),
 		Models:                  models,
-		ModelMapping:            modelMapping,
 		CodexClientMetadataMode: codexClientMetadataMode,
-		CodexPassthroughMode:    codexPassthroughMode,
 		CodexFingerprintMode:    codexFingerprintMode,
 		Timezone:                accountTimezone,
 	}
@@ -6366,25 +5753,6 @@ const (
 	// a scan that always times out would starve cross-process pickup forever.
 	dispatchStateReconcileTimeout = 30 * time.Second
 )
-
-func openAIResponsesRuntimeConfigDiffers(acc *Account, row *database.AccountRow) bool {
-	if acc == nil || row == nil ||
-		!strings.EqualFold(strings.TrimSpace(row.GetCredential("upstream_type")), UpstreamOpenAIResponses) {
-		return false
-	}
-	acc.mu.RLock()
-	defer acc.mu.RUnlock()
-	return acc.CredentialGeneration != row.CredentialGeneration ||
-		!strings.EqualFold(strings.TrimSpace(acc.UpstreamType), UpstreamOpenAIResponses) ||
-		strings.TrimRight(strings.TrimSpace(acc.BaseURL), "/") != strings.TrimRight(strings.TrimSpace(row.GetCredential("base_url")), "/") ||
-		strings.TrimSpace(acc.APIKey) != strings.TrimSpace(row.GetCredential("api_key")) ||
-		!stringSliceEqual(acc.Models, normalizeModelList(row.GetCredentialStringSlice("models"))) ||
-		strings.TrimSpace(acc.ModelMapping) != strings.TrimSpace(row.GetCredential("model_mapping")) ||
-		NormalizeCodexClientMetadataMode(acc.CodexClientMetadataMode) != NormalizeCodexClientMetadataMode(row.GetCredential("codex_client_metadata_mode")) ||
-		NormalizeOpenAIResponsesUpstreamTransport(acc.ResponsesUpstreamTransport) != NormalizeOpenAIResponsesUpstreamTransport(row.GetCredential(OpenAIResponsesUpstreamTransportCredentialKey)) ||
-		strings.TrimSpace(acc.ProxyURL) != strings.TrimSpace(row.ProxyURL) ||
-		!stringMapEqual(acc.CustomHeaders, row.GetCredentialStringMap("custom_headers"))
-}
 
 // ReconcileDispatchState repairs the small runtime projection that can become
 // stale when another process updates the shared database. It is intentionally
@@ -6709,11 +6077,6 @@ func (s *Store) startDBBackgroundTask(task func(context.Context)) bool {
 // 手动一键清理请改用 CleanRateLimitedManual——它会清掉所有限流账号。
 func (s *Store) CleanByRuntimeStatus(ctx context.Context, targetStatus string) int {
 	return s.cleanByRuntimeStatusMatch(ctx, targetStatus, nil)
-}
-
-// CleanGrokByRuntimeStatus 按运行时状态清理 Grok 上游账号（Grok 账号页专用，不触碰其它平台账号）。
-func (s *Store) CleanGrokByRuntimeStatus(ctx context.Context, targetStatus string) int {
-	return s.cleanByRuntimeStatusMatch(ctx, targetStatus, (*Account).IsGrokAPI)
 }
 
 // CollectCleanTargets 收集按运行时状态可清理的账号，不执行删除。
@@ -8869,196 +8232,6 @@ func (s *Store) SetSessionAffinitySpread(enabled bool) {
 	s.affinitySpreadEnabled.Store(enabled)
 }
 
-// AffinityModeFollow 表示 Grok 会话粘性跟随全局 affinity_mode（不做 Grok 专属覆盖）。
-const AffinityModeFollow = "follow"
-
-// GetGrokAffinityMode 返回 Grok 专属会话粘性模式（follow/bounded/off/strict）。
-// Grok 的 prompt cache 按账号+前缀,粘性越强缓存复用越好；默认 strict 以减少中途换号导致的缓存失效。
-func (s *Store) GetGrokAffinityMode() string {
-	if v, ok := s.grokAffinityMode.Load().(string); ok && v != "" {
-		return v
-	}
-	return AffinityModeStrict
-}
-
-// grokAffinityModeFromConfig 从 grok_config JSON 解析出 affinity_mode，空/非法回落到 strict。
-func grokAffinityModeFromConfig(raw string) string {
-	raw = strings.TrimSpace(raw)
-	if raw == "" {
-		return AffinityModeStrict
-	}
-	var cfg struct {
-		AffinityMode string `json:"affinity_mode"`
-	}
-	if err := json.Unmarshal([]byte(raw), &cfg); err != nil {
-		return AffinityModeStrict
-	}
-	mode := strings.TrimSpace(cfg.AffinityMode)
-	if mode == "" {
-		return AffinityModeStrict
-	}
-	return mode
-}
-
-// 定期探测 Grok 账号状态的默认/边界。间隔太短会持续消耗 free 额度并压上游，故设下限。
-const (
-	GrokProbeDefaultIntervalMinutes = 30
-	GrokProbeMinIntervalMinutes     = 5
-)
-
-// grokProbeConfigFromConfig 从 grok_config JSON 解析出定期探测开关与间隔（分钟）。
-// 缺省/非法回落到 关闭 + 30 分钟。
-func grokProbeConfigFromConfig(raw string) (enabled bool, intervalMin int) {
-	intervalMin = GrokProbeDefaultIntervalMinutes
-	raw = strings.TrimSpace(raw)
-	if raw == "" {
-		return false, intervalMin
-	}
-	var cfg struct {
-		ProbeEnabled         bool `json:"probe_enabled"`
-		ProbeIntervalMinutes int  `json:"probe_interval_minutes"`
-	}
-	if err := json.Unmarshal([]byte(raw), &cfg); err != nil {
-		return false, intervalMin
-	}
-	if cfg.ProbeIntervalMinutes > 0 {
-		intervalMin = cfg.ProbeIntervalMinutes
-	}
-	if intervalMin < GrokProbeMinIntervalMinutes {
-		intervalMin = GrokProbeMinIntervalMinutes
-	}
-	return cfg.ProbeEnabled, intervalMin
-}
-
-// GrokMaxRateLimitRetriesUnset 表示 Grok 未配置专属限流重试次数，跟随全局。
-const GrokMaxRateLimitRetriesUnset = 0
-
-// grokMaxRateLimitRetriesFromConfig 从 grok_config JSON 解析 Grok 专属限流重试上限。
-// 缺省/非法/<0 回落到 0（=跟随全局 max_rate_limit_retries）。
-func grokMaxRateLimitRetriesFromConfig(raw string) int {
-	raw = strings.TrimSpace(raw)
-	if raw == "" {
-		return GrokMaxRateLimitRetriesUnset
-	}
-	var cfg struct {
-		MaxRateLimitRetries int `json:"max_rate_limit_retries"`
-	}
-	if err := json.Unmarshal([]byte(raw), &cfg); err != nil || cfg.MaxRateLimitRetries < 0 {
-		return GrokMaxRateLimitRetriesUnset
-	}
-	return cfg.MaxRateLimitRetries
-}
-
-// GrokOAuthClientIDUnset 表示系统设置未配 client_id（回落到环境变量/内置默认）。
-const GrokOAuthClientIDUnset = ""
-
-// grokOAuthClientIDFromConfig 从 grok_config JSON 解析出 OAuth client_id。
-// 缺省/非法/含空白一律视为未配置，由 EffectiveGrokOAuthClientID 继续回落。
-func grokOAuthClientIDFromConfig(raw string) string {
-	raw = strings.TrimSpace(raw)
-	if raw == "" {
-		return GrokOAuthClientIDUnset
-	}
-	var cfg struct {
-		OAuthClientID string `json:"oauth_client_id"`
-	}
-	if err := json.Unmarshal([]byte(raw), &cfg); err != nil {
-		return GrokOAuthClientIDUnset
-	}
-	return NormalizeGrokOAuthClientID(cfg.OAuthClientID)
-}
-
-func (s *Store) SetGrokFollowUpEffortConfig(cfg GrokFollowUpEffortConfig) {
-	s.grokFollowUpEffort.Store(NormalizeGrokFollowUpEffortConfig(cfg))
-}
-
-func (s *Store) GrokFollowUpEffortConfig() GrokFollowUpEffortConfig {
-	if v, ok := s.grokFollowUpEffort.Load().(GrokFollowUpEffortConfig); ok {
-		return v
-	}
-	return DefaultGrokFollowUpEffortConfig()
-}
-
-// SetGrokQualityGuardConfig 热更新 Grok 降智检测配置（归一化后存储）。
-func (s *Store) SetGrokQualityGuardConfig(cfg GrokQualityGuardConfig) {
-	s.grokQualityGuard.Store(NormalizeGrokQualityGuardConfig(cfg))
-}
-
-// GrokQualityGuardConfig 返回 Grok 降智检测配置（默认关闭）。
-func (s *Store) GrokQualityGuardConfig() GrokQualityGuardConfig {
-	if v, ok := s.grokQualityGuard.Load().(GrokQualityGuardConfig); ok {
-		return v
-	}
-	return DefaultGrokQualityGuardConfig()
-}
-
-// SetGrokMaxRateLimitRetries 热更新 Grok 专属限流重试上限（<0 视为 0=跟随全局）。
-func (s *Store) SetGrokMaxRateLimitRetries(n int) {
-	if n < 0 {
-		n = GrokMaxRateLimitRetriesUnset
-	}
-	s.grokMaxRateLimitRetry.Store(int64(n))
-}
-
-// GrokMaxRateLimitRetries 返回 Grok 专属限流重试上限（0=跟随全局）。
-func (s *Store) GrokMaxRateLimitRetries() int {
-	return int(s.grokMaxRateLimitRetry.Load())
-}
-
-// SetGrokProbeConfig 热更新定期探测开关与间隔（分钟，钳到下限）。
-func (s *Store) SetGrokProbeConfig(enabled bool, intervalMin int) {
-	if intervalMin <= 0 {
-		intervalMin = GrokProbeDefaultIntervalMinutes
-	}
-	if intervalMin < GrokProbeMinIntervalMinutes {
-		intervalMin = GrokProbeMinIntervalMinutes
-	}
-	s.grokProbeEnabled.Store(enabled)
-	s.grokProbeIntervalMin.Store(int64(intervalMin))
-}
-
-// GrokProbeEnabled 返回定期探测是否开启。
-func (s *Store) GrokProbeEnabled() bool {
-	return s.grokProbeEnabled.Load()
-}
-
-// GrokProbeIntervalMinutes 返回定期探测间隔（分钟，最少 GrokProbeMinIntervalMinutes）。
-func (s *Store) GrokProbeIntervalMinutes() int {
-	v := int(s.grokProbeIntervalMin.Load())
-	if v < GrokProbeMinIntervalMinutes {
-		return GrokProbeDefaultIntervalMinutes
-	}
-	return v
-}
-
-// EnabledGrokAccounts 返回参与调度（未被手动停用）的 Grok 账号，供定期探测遍历。
-func (s *Store) EnabledGrokAccounts() []*Account {
-	s.mu.RLock()
-	defer s.mu.RUnlock()
-	out := make([]*Account, 0, len(s.accounts))
-	for _, a := range s.accounts {
-		if a == nil || !a.IsGrokAPI() {
-			continue
-		}
-		if atomic.LoadInt32(&a.DispatchPaused) != 0 || atomic.LoadInt32(&a.IntelligencePaused) != 0 {
-			continue
-		}
-		out = append(out, a)
-	}
-	return out
-}
-
-// SetGrokAffinityMode 设置 Grok 专属会话粘性模式。
-func (s *Store) SetGrokAffinityMode(mode string) {
-	switch mode {
-	case AffinityModeFollow, AffinityModeBounded, AffinityModeOff, AffinityModeStrict:
-		// ok
-	default:
-		mode = AffinityModeStrict
-	}
-	s.grokAffinityMode.Store(mode)
-}
-
 type promptFilterConfigState struct {
 	Config      promptfilter.Config
 	AdvancedRaw string
@@ -10061,105 +9234,6 @@ func (s *Store) accountAllowedForAPIKey(acc *Account, apiKeyID int64) bool {
 	return acc.AllowsAPIKey(apiKeyID) && s.APIKeyAllowsAccount(apiKeyID, acc)
 }
 
-func (s *Store) ApplyOpenAIResponsesConfig(dbID int64, baseURL, apiKey string, models []string, modelMapping, codexClientMetadataMode, codexPassthroughMode, proxyURL string) bool {
-	if s != nil && s.db != nil {
-		ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
-		defer cancel()
-		if row, err := s.db.GetAccountByID(ctx, dbID); err == nil &&
-			strings.EqualFold(strings.TrimSpace(row.GetCredential("upstream_type")), UpstreamOpenAIResponses) {
-			return s.applyOpenAIResponsesConfig(ctx, row, dbID, baseURL, apiKey, models, modelMapping, codexClientMetadataMode, codexPassthroughMode, proxyURL)
-		}
-	}
-	return s.applyOpenAIResponsesConfig(context.Background(), nil, dbID, baseURL, apiKey, models, modelMapping, codexClientMetadataMode, codexPassthroughMode, proxyURL)
-}
-
-func (s *Store) applyOpenAIResponsesConfig(ctx context.Context, row *database.AccountRow, dbID int64, baseURL, apiKey string, models []string, modelMapping, codexClientMetadataMode, codexPassthroughMode, proxyURL string) bool {
-	acc := s.FindByID(dbID)
-	if acc == nil {
-		return false
-	}
-
-	normalizedBaseURL := strings.TrimRight(strings.TrimSpace(baseURL), "/")
-	effectiveAPIKey := strings.TrimSpace(apiKey)
-	credentialGeneration := int64(0)
-	loadedPersistedConfig := row != nil &&
-		strings.EqualFold(strings.TrimSpace(row.GetCredential("upstream_type")), UpstreamOpenAIResponses)
-	if loadedPersistedConfig {
-		normalizedBaseURL = strings.TrimRight(strings.TrimSpace(row.GetCredential("base_url")), "/")
-		effectiveAPIKey = strings.TrimSpace(row.GetCredential("api_key"))
-		models = row.GetCredentialStringSlice("models")
-		modelMapping = row.GetCredential("model_mapping")
-		codexClientMetadataMode = row.GetCredential("codex_client_metadata_mode")
-		codexPassthroughMode = row.GetCredential("codex_passthrough_mode")
-		proxyURL = row.ProxyURL
-		credentialGeneration = row.CredentialGeneration
-	}
-
-	acc.mu.Lock()
-	identityChanged := normalizedBaseURL != strings.TrimRight(strings.TrimSpace(acc.BaseURL), "/") ||
-		((loadedPersistedConfig || effectiveAPIKey != "") && effectiveAPIKey != strings.TrimSpace(acc.APIKey)) ||
-		(credentialGeneration > 0 && credentialGeneration != acc.CredentialGeneration)
-	acc.UpstreamType = UpstreamOpenAIResponses
-	acc.BaseURL = normalizedBaseURL
-	if loadedPersistedConfig || effectiveAPIKey != "" {
-		acc.APIKey = effectiveAPIKey
-	}
-	if credentialGeneration > 0 {
-		acc.CredentialGeneration = credentialGeneration
-	} else if identityChanged {
-		acc.CredentialGeneration++
-	}
-	acc.Models = normalizeModelList(models)
-	acc.ModelMapping = strings.TrimSpace(modelMapping)
-	acc.CodexClientMetadataMode = NormalizeCodexClientMetadataMode(codexClientMetadataMode)
-	acc.CodexPassthroughMode = NormalizeCodexPassthroughMode(codexPassthroughMode)
-	if loadedPersistedConfig {
-		acc.ResponsesUpstreamTransport = NormalizeOpenAIResponsesUpstreamTransport(row.GetCredential(OpenAIResponsesUpstreamTransportCredentialKey))
-	}
-	acc.ProxyURL = strings.TrimSpace(proxyURL)
-	acc.Email = acc.BaseURL
-	acc.PlanType = "api"
-	if identityChanged {
-		acc.Status = StatusReady
-		acc.ErrorMsg = ""
-		acc.CooldownUtil = time.Time{}
-		acc.CooldownReason = ""
-		acc.HealthTier = HealthTierHealthy
-		acc.LatencyEWMA = 0
-		acc.SuccessStreak = 0
-		acc.FailureStreak = 0
-		acc.LastFailureKind = ""
-		acc.LastSuccessAt = time.Time{}
-		acc.LastFailureAt = time.Time{}
-		acc.LastUnauthorizedAt = time.Time{}
-		acc.LastRateLimitedAt = time.Time{}
-		acc.LastTimeoutAt = time.Time{}
-		acc.LastServerErrorAt = time.Time{}
-		acc.RecentResults = [20]uint8{}
-		acc.RecentResultsIdx = 0
-		acc.RecentResultsCnt = 0
-	} else if acc.Status != StatusError {
-		acc.HealthTier = HealthTierHealthy
-	}
-	acc.recomputeSchedulerLocked(s.maxConcurrency.Load())
-	acc.mu.Unlock()
-	if identityChanged {
-		atomic.StoreInt32(&acc.Disabled, 0)
-		s.deleteCachedAccountCooldown(acc.DBID)
-		s.ClearAllModelCooldowns(acc)
-		if s.db != nil {
-			clearCtx, cancel := context.WithTimeout(ctx, 2*time.Second)
-			if err := s.db.ClearError(clearCtx, acc.DBID); err != nil {
-				log.Printf("[账号 %d] Responses API 身份变更后清理账号状态失败: %v", acc.DBID, err)
-			}
-			cancel()
-		}
-	}
-	s.invalidateRoutingSchedulers()
-	s.fastSchedulerUpdate(acc)
-	return true
-}
-
 // NormalizeAccountModels 归一化账号支持模型列表（去重、去空白、按字典序排序）。
 func NormalizeAccountModels(values []string) []string {
 	return normalizeModelList(values)
@@ -10531,7 +9605,7 @@ func (s *Store) MarkModelCooldownUntil(acc *Account, model, reason string, reset
 // 有效的既有冷却：该 model 现有 ResetAt 晚于传入 resetAt 时保留既有冷却并直接返回，
 // 不写内存、不刷健康度、不落库。
 //
-// 用于多个公开档位共享同一上游 backing（wire 模型）或同一配额家族（Gemini family）
+// 用于多个公开档位共享同一上游 backing（wire 模型）或同一配额家族
 // 的冷却键：这类键会被同账号上的多个事件写入，若按最后写入者胜出，一个 5s 的裸
 // RESOURCE_EXHAUSTED 就能把同账号刚写入的 290s 共享冷却改短，短 deadline 之后兄弟
 // 档位又能选中刚被限流的凭据。比较与写入在 Account 侧同一次写锁内完成。
@@ -11314,29 +10388,6 @@ func (s *Store) updateAccountPlanType(acc *Account, planType string, persist boo
 	return changed
 }
 
-// SaveGrokFreeQuotaSnapshot 写入免费额度耗尽快照并落库（grok_free_quota 凭据），
-// 429 错误体里的 tokens (actual/limit) 是该窗口的权威用量观测。
-func (s *Store) SaveGrokFreeQuotaSnapshot(acc *Account, snap GrokFreeQuotaSnapshot) {
-	if s == nil || acc == nil || snap.LimitTokens <= 0 {
-		return
-	}
-	acc.SetGrokFreeQuotaSnapshot(snap)
-	// 权威用量变了，调度模式的排序键随之变化。
-	s.fastSchedulerUpdate(acc)
-	if s.db == nil {
-		return
-	}
-	raw, err := json.Marshal(snap)
-	if err != nil {
-		return
-	}
-	ctx, cancel := context.WithTimeout(context.Background(), 2*time.Second)
-	defer cancel()
-	if err := s.db.UpdateCredentials(ctx, acc.DBID, map[string]interface{}{"grok_free_quota": string(raw)}); err != nil {
-		log.Printf("[账号 %d] 持久化 grok_free_quota 失败: %v", acc.DBID, err)
-	}
-}
-
 // UpdateAccountIdentity persists account identity observed from upstream usage APIs.
 func (s *Store) UpdateAccountIdentity(acc *Account, email, accountID string) bool {
 	if s == nil || acc == nil {
@@ -11989,54 +11040,6 @@ func (s *Store) RefreshSingle(ctx context.Context, dbID int64) error {
 	return s.refreshAccountForced(ctx, target)
 }
 
-// RefreshGrokAccountByID refreshes an explicitly addressed Grok account even
-// when it is dispatch-paused. Administrative synchronization and isolated
-// acceptance need this path so an archived disabled account can rotate an
-// expired refresh token without first entering the scheduler pool.
-func (s *Store) RefreshGrokAccountByID(ctx context.Context, dbID int64) error {
-	if s == nil || s.db == nil || dbID <= 0 {
-		return fmt.Errorf("账号 %d 不存在", dbID)
-	}
-	if account := s.FindByID(dbID); account != nil {
-		if !account.IsGrokAPI() {
-			return fmt.Errorf("账号 %d 不是 Grok 账号", dbID)
-		}
-		return s.refreshGrokAccount(ctx, account, true)
-	}
-	account, err := s.BuildTransientAccountByID(ctx, dbID)
-	if err != nil {
-		return err
-	}
-	if !account.IsGrokAPI() {
-		return fmt.Errorf("账号 %d 不是 Grok 账号", dbID)
-	}
-	account.mu.Lock()
-	account.grokRuntimeSink = s
-	account.mu.Unlock()
-	return s.refreshGrokAccount(ctx, account, true)
-}
-
-// BuildGrokAdministrativeAccountByID returns a database-backed, non-scheduled
-// account view. It is used when a disabled archive entry must be synchronized
-// or capability-probed explicitly. Runtime observations still use the normal
-// generation-fenced Store sink, but the account is never added to dispatch.
-func (s *Store) BuildGrokAdministrativeAccountByID(ctx context.Context, dbID int64) (*Account, error) {
-	if s == nil || s.db == nil || dbID <= 0 {
-		return nil, fmt.Errorf("账号 %d 不存在", dbID)
-	}
-	account, err := s.BuildTransientAccountByID(ctx, dbID)
-	if err != nil {
-		return nil, err
-	}
-	if !account.IsGrokAPI() {
-		return nil, fmt.Errorf("账号 %d 不是 Grok 账号", dbID)
-	}
-	account.mu.Lock()
-	account.grokRuntimeSink = s
-	account.mu.Unlock()
-	return account, nil
-}
-
 // RefreshSingleAsync performs a forced refresh under the database lifecycle.
 // It is intended for detached recovery paths such as an upstream 401 handler.
 func (s *Store) RefreshSingleAsync(dbID int64) {
@@ -12156,561 +11159,6 @@ func (s *Store) refreshAccountForced(ctx context.Context, acc *Account) error {
 // refreshAccountWithOptions 刷新单个账号的 AT（带缓存锁与 token 缓存）
 func (s *Store) refreshAccountWithOptions(ctx context.Context, acc *Account, forceRefresh bool) error {
 	return s.refreshCodexAccount(ctx, acc, forceRefresh)
-}
-
-func antigravityCredentialFromStoreRow(row *database.AccountRow) AntigravityCredential {
-	if row == nil {
-		return AntigravityCredential{}
-	}
-	credential := AntigravityCredential{
-		AccessToken: row.GetCredential("access_token"), RefreshToken: row.GetCredential("refresh_token"),
-		IDToken: row.GetCredential("id_token"), Email: row.GetCredential("email"),
-		Name: row.GetCredential("name"), AvatarURL: row.GetCredential("avatar_url"),
-		ProjectID: row.GetCredential("project_id"), OAuthClientKey: row.GetCredential("oauth_client_key"),
-		ClientID: row.GetCredential("antigravity_client_id"), ClientSecret: row.GetCredential("antigravity_client_secret"),
-		Scope: row.GetCredential("oauth_scope"), UserProjectID: row.GetCredential(AntigravityUserProjectIDCredentialKey),
-	}
-	credential.ExpiresAt = parseOAuthCredentialExpiry(row.GetCredential("expires_at"))
-	return credential
-}
-
-func antigravityRefreshModels(result AntigravitySyncResult) []string {
-	return AntigravityDiscoveredModels(result.Quota)
-}
-
-// Keep the complete raw catalog in the quota snapshot, but never publish IDs
-// explicitly marked internal by the provider into the dispatch model list.
-func AntigravityDiscoveredModels(quota AntigravityQuotaSnapshot) []string {
-	internal := make(map[string]bool)
-	for _, id := range quota.InternalModelIDs {
-		internal[strings.ToLower(id)] = true
-	}
-	models := append([]string(nil), quota.CatalogModelIDs...)
-	for _, model := range quota.Models {
-		if id := strings.TrimSpace(model.ModelID); id != "" {
-			models = append(models, id)
-		}
-	}
-	visible := models[:0]
-	for _, id := range models {
-		if !internal[strings.ToLower(id)] {
-			visible = append(visible, id)
-		}
-	}
-	return normalizeModelList(visible)
-}
-
-func antigravityCredentialRotated(row *database.AccountRow, credential AntigravityCredential) bool {
-	if row == nil || strings.TrimSpace(credential.AccessToken) == "" {
-		return false
-	}
-	return strings.TrimSpace(credential.AccessToken) != strings.TrimSpace(row.GetCredential("access_token")) ||
-		(strings.TrimSpace(credential.RefreshToken) != "" && strings.TrimSpace(credential.RefreshToken) != strings.TrimSpace(row.GetCredential("refresh_token"))) ||
-		strings.TrimSpace(credential.IDToken) != strings.TrimSpace(row.GetCredential("id_token"))
-}
-
-const (
-	antigravityIdentityRevalidationErrorPrefix    = "Antigravity credential rotated before Google identity could be reverified"
-	antigravityPermanentRefreshErrorCredentialKey = "antigravity_permanent_refresh_error"
-)
-
-func antigravityRefreshCredentialUpdates(row *database.AccountRow, result AntigravitySyncResult, syncErr error) (map[string]any, error) {
-	credential := result.Credential
-	updates := map[string]any{
-		"upstream_type": UpstreamAntigravity,
-		"access_token":  strings.TrimSpace(credential.AccessToken), "refresh_token": strings.TrimSpace(credential.RefreshToken),
-		"id_token": strings.TrimSpace(credential.IDToken), "oauth_client_key": strings.TrimSpace(credential.OAuthClientKey),
-		"antigravity_client_id": strings.TrimSpace(credential.ClientID), "antigravity_client_secret": strings.TrimSpace(credential.ClientSecret),
-		"oauth_scope": strings.TrimSpace(credential.Scope),
-		antigravityPermanentRefreshErrorCredentialKey: "",
-		"antigravity_last_sync_attempt_at":            time.Now().UTC().Format(time.RFC3339),
-	}
-	if credential.ExpiresAt.IsZero() {
-		updates["expires_at"] = ""
-	} else {
-		updates["expires_at"] = credential.ExpiresAt.UTC().Format(time.RFC3339)
-	}
-	previousID := strings.TrimSpace(row.GetCredential("account_id"))
-	nextID := strings.TrimSpace(result.Profile.ID)
-	if previousID != "" && nextID != "" && previousID != nextID {
-		// A rotated RT must not be lost, but it is equally unsafe to publish the
-		// new principal under the old project/catalog. Persist the new token
-		// generation in a quarantined shape; the administrative identity sync can
-		// then establish the replacement family and authoritative snapshots.
-		transitionErr := fmt.Sprintf("Antigravity refresh changed Google principal from %s to %s; administrative identity sync required", previousID, nextID)
-		updates["account_id"] = nextID
-		updates["email"] = strings.TrimSpace(result.Profile.Email)
-		updates["name"] = strings.TrimSpace(result.Profile.Name)
-		updates["avatar_url"] = strings.TrimSpace(result.Profile.Picture)
-		updates["verified_email"] = result.Profile.VerifiedEmail
-		updates["project_id"] = ""
-		updates["plan_type"] = ""
-		updates["models"] = []string{}
-		updates["antigravity_quota"] = ""
-		updates["antigravity_permissions"] = ""
-		updates["antigravity_entitlements"] = ""
-		updates["antigravity_last_synced_at"] = ""
-		updates["antigravity_sync_error"] = transitionErr
-		updates["antigravity_sync_warning"] = result.Warning
-		return updates, nil
-	}
-	if syncErr != nil {
-		profileVerified := result.Profile.VerifiedEmail && strings.TrimSpace(result.Profile.ID) != "" && strings.TrimSpace(result.Profile.Email) != ""
-		if antigravityCredentialRotated(row, credential) && !profileVerified {
-			// A rotating refresh token may belong to a different Google principal.
-			// Keep the newly issued token durable, but never publish it with the
-			// prior subject's project, catalog, quota, or capability proof.
-			quarantineErr := antigravityIdentityRevalidationErrorPrefix + ": " + syncErr.Error()
-			updates["account_id"] = ""
-			updates["email"] = ""
-			updates["name"] = ""
-			updates["avatar_url"] = ""
-			updates["verified_email"] = false
-			updates["project_id"] = ""
-			updates["plan_type"] = ""
-			updates["models"] = []string{}
-			updates["antigravity_quota"] = ""
-			updates["antigravity_permissions"] = ""
-			updates["antigravity_entitlements"] = ""
-			updates["antigravity_capabilities"] = ""
-			updates["antigravity_capability_last_probe_at"] = ""
-			updates["antigravity_catalog_source"] = ""
-			updates["antigravity_catalog_verified"] = false
-			updates["antigravity_last_synced_at"] = ""
-			updates["antigravity_sync_error"] = quarantineErr
-			updates["antigravity_sync_warning"] = result.Warning
-			return updates, nil
-		}
-		updates["antigravity_sync_error"] = syncErr.Error()
-		updates["antigravity_sync_warning"] = result.Warning
-		return updates, nil
-	}
-	if strings.TrimSpace(credential.AccessToken) == "" {
-		return nil, fmt.Errorf("Antigravity refresh returned no access token")
-	}
-	quota, err := json.Marshal(result.Quota)
-	if err != nil {
-		return nil, err
-	}
-	updates["account_id"] = strings.TrimSpace(result.Profile.ID)
-	updates["email"] = strings.TrimSpace(result.Profile.Email)
-	updates["name"] = strings.TrimSpace(result.Profile.Name)
-	updates["avatar_url"] = strings.TrimSpace(result.Profile.Picture)
-	updates["verified_email"] = result.Profile.VerifiedEmail
-	updates["models"] = antigravityRefreshModels(result)
-	updates["antigravity_quota"] = string(quota)
-	updates["antigravity_sync_error"] = ""
-	updates["antigravity_sync_warning"] = result.Warning
-	lastSyncedAt := result.Quota.UpdatedAt
-	if lastSyncedAt.IsZero() {
-		lastSyncedAt = time.Now().UTC()
-	}
-	updates["antigravity_last_synced_at"] = lastSyncedAt.UTC().Format(time.RFC3339)
-	if result.EntitlementsObserved {
-		permissions, marshalErr := json.Marshal(result.Entitlements)
-		if marshalErr != nil {
-			return nil, marshalErr
-		}
-		updates["project_id"] = strings.TrimSpace(result.Entitlements.ProjectID)
-		updates["plan_type"] = strings.TrimSpace(result.Entitlements.EffectiveTier)
-		updates["antigravity_permissions"] = string(permissions)
-		updates["antigravity_entitlements"] = string(permissions)
-	}
-	return updates, nil
-}
-
-func antigravityRowHasFreshAccess(row *database.AccountRow, previousAccessToken string) bool {
-	if row == nil {
-		return false
-	}
-	accessToken := strings.TrimSpace(row.GetCredential("access_token"))
-	if accessToken == "" || accessToken == strings.TrimSpace(previousAccessToken) || strings.TrimSpace(row.GetCredential("project_id")) == "" {
-		return false
-	}
-	expiresAt := parseOAuthCredentialExpiry(row.GetCredential("expires_at"))
-	return expiresAt.IsZero() || expiresAt.After(time.Now().Add(30*time.Second))
-}
-
-func (s *Store) publishAntigravityRuntimeRow(acc *Account, row *database.AccountRow) {
-	if s == nil || acc == nil || row == nil {
-		return
-	}
-	credential := antigravityCredentialFromStoreRow(row)
-	models := normalizeModelList(row.GetCredentialStringSlice("models"))
-	hardReason, permanentRefresh := antigravityPersistedHardFence(row)
-	now := time.Now()
-
-	acc.mu.Lock()
-	acc.CredentialGeneration = row.CredentialGeneration
-	acc.CredentialFamilyID = strings.TrimSpace(row.CredentialFamilyID)
-	acc.UpstreamType = strings.TrimSpace(row.GetCredential("upstream_type"))
-	acc.APIKey = strings.TrimSpace(row.GetCredential("api_key"))
-	acc.AccessToken = strings.TrimSpace(credential.AccessToken)
-	acc.RefreshToken = strings.TrimSpace(credential.RefreshToken)
-	acc.SessionToken = strings.TrimSpace(credential.IDToken)
-	acc.ExpiresAt = credential.ExpiresAt
-	acc.AccountID = strings.TrimSpace(row.GetCredential("account_id"))
-	acc.Email = strings.TrimSpace(row.GetCredential("email"))
-	acc.PlanType = strings.TrimSpace(row.GetCredential("plan_type"))
-	planKey := antigravityPlanKeyFromRow(row)
-	planKeyChanged := acc.AntigravityPlanKey != planKey
-	acc.AntigravityPlanKey = planKey
-	acc.AntigravityProjectID = strings.TrimSpace(row.GetCredential("project_id"))
-	acc.Models = models
-	acc.ProxyURL = strings.TrimSpace(row.ProxyURL)
-	acc.AntigravityHardBlocked = hardReason != ""
-	acc.AntigravityHardBlockReason = hardReason
-	acc.applyAntigravityQuotaSchedulingLocked(row.GetCredential("antigravity_quota"))
-	acc.antigravityQuotaEpoch = antigravityQuotaEpochFromRow(row)
-	if permanentRefresh {
-		acc.PermanentRefreshFailures = permanentRefreshFailureTerminalLimit
-	} else if hardReason == "" {
-		acc.PermanentRefreshFailures = 0
-	}
-	switch {
-	case hardReason != "":
-		acc.Status = StatusError
-		acc.ErrorMsg = hardReason
-		acc.CooldownUtil = time.Time{}
-		acc.CooldownReason = ""
-		acc.HealthTier = HealthTierRisky
-	case strings.EqualFold(strings.TrimSpace(row.Status), "error"):
-		acc.Status = StatusError
-		acc.ErrorMsg = strings.TrimSpace(row.ErrorMessage)
-		acc.CooldownUtil = time.Time{}
-		acc.CooldownReason = ""
-		if acc.HealthTier == HealthTierBanned {
-			acc.HealthTier = HealthTierRisky
-		}
-	case row.CooldownUntil.Valid && now.Before(row.CooldownUntil.Time):
-		acc.Status = StatusCooldown
-		acc.CooldownUtil = row.CooldownUntil.Time
-		acc.CooldownReason = strings.TrimSpace(row.CooldownReason)
-		acc.ErrorMsg = strings.TrimSpace(row.ErrorMessage)
-	default:
-		acc.Status = StatusReady
-		acc.ErrorMsg = ""
-		acc.CooldownUtil = time.Time{}
-		acc.CooldownReason = ""
-		if acc.HealthTier == HealthTierBanned {
-			acc.HealthTier = HealthTierWarm
-		}
-	}
-	acc.recomputeSchedulerLocked(s.maxConcurrency.Load())
-	acc.mu.Unlock()
-	atomic.StoreInt32(&acc.Disabled, 0)
-	if row.Enabled {
-		atomic.StoreInt32(&acc.DispatchPaused, 0)
-	} else {
-		atomic.StoreInt32(&acc.DispatchPaused, 1)
-	}
-	s.fastSchedulerUpdate(acc)
-	if planKeyChanged {
-		// plan_allow 受限 Key 的路由子池按成员缓存,套餐变化须重建。
-		s.invalidateRoutingSchedulers()
-	}
-	// 配额快照与硬围栏随本行一起刷新：门禁可能刚刚转为阻断或解除阻断（reset 到期、
-	// clear 动作、止血开关翻转），必须唤醒排队中的等待者立即重新求值，否则它们会
-	// 空等到超时（Spec §6.2 #2）。
-	s.notifySchedulerAvailability()
-}
-
-// reloadAntigravityRuntimeOrRemove reconciles a runtime account with the
-// durable row after a credential mutation. If the authoritative row cannot be
-// read, keeping the older in-memory credential dispatchable would be unsafe, so
-// the account is removed from the runtime pool until a later reload succeeds.
-func (s *Store) reloadAntigravityRuntimeOrRemove(ctx context.Context, acc *Account, accountID int64) (*database.AccountRow, error) {
-	current, err := s.db.GetAccountByID(ctx, accountID)
-	if err != nil {
-		s.RemoveAccount(accountID)
-		return nil, err
-	}
-	s.publishAntigravityRuntimeRow(acc, current)
-	return current, nil
-}
-
-func (s *Store) persistAntigravityPermanentRefreshFailure(ctx context.Context, acc *Account, row *database.AccountRow, refreshErr error) error {
-	if s == nil || s.db == nil || row == nil || refreshErr == nil {
-		return refreshErr
-	}
-	applied, err := s.db.MergeAccountCredentialsForGeneration(ctx, row.ID, row.CredentialGeneration, map[string]any{
-		"antigravity_sync_error":                      refreshErr.Error(),
-		antigravityPermanentRefreshErrorCredentialKey: refreshErr.Error(),
-		"antigravity_last_sync_attempt_at":            time.Now().UTC().Format(time.RFC3339),
-	})
-	if err != nil {
-		s.RemoveAccount(row.ID)
-		return fmt.Errorf("persist permanent Antigravity refresh failure: %w", err)
-	}
-	_, reloadErr := s.reloadAntigravityRuntimeOrRemove(ctx, acc, row.ID)
-	if reloadErr != nil {
-		return fmt.Errorf("reload Antigravity account after refresh failure: %w", reloadErr)
-	}
-	if !applied {
-		return fmt.Errorf("Antigravity credential generation changed while recording permanent refresh failure")
-	}
-	return refreshErr
-}
-
-// antigravityFlightCoordinator 返回 Store 挂载的 Antigravity 控制面协调器
-// （Spec §4.2）。NewStore 已装配默认实例；对绕过 NewStore 的构造路径经
-// sync.Once 惰性兜底为 NewAntigravityCoordinator(4)，保证手动同步始终落入
-// 单账号 flight 单飞，不允许空转绕过协调器。
-func (s *Store) antigravityFlightCoordinator() *AntigravityCoordinator {
-	if s == nil {
-		return nil
-	}
-	s.antigravityCoordinatorMu.Do(func() {
-		if s.antigravityCoordinator == nil {
-			s.antigravityCoordinator = NewAntigravityCoordinator(4)
-		}
-	})
-	return s.antigravityCoordinator
-}
-
-// SyncAntigravityAccountForAdmin 是管理端手动同步的 Store 侧统一入口（Spec §9）：
-//   - 先取单账号 flight 互斥（opType manual_refresh，交互通道，不占后台许可）；
-//     同账号已有在途 flight 时在传入 ctx 范围内有界等待，ctx 取消即返回 ctx.Err()；
-//   - 再复用既有安全换票链路：稳定 credential family lease + DB-first
-//     generation CAS + 运行时投影（publishAntigravityRuntimeRow 内部随
-//     notifySchedulerAvailability 唤醒调度等待者）。
-//
-// 管理端因此不再直接 client.Sync，也不再绕过单飞与 family lease；账号不在运行时
-// 池时按持久化行先载入（与管理端 reload 的 LoadAccountByID 语义一致）。
-func (s *Store) SyncAntigravityAccountForAdmin(ctx context.Context, accountID int64) error {
-	if s == nil {
-		return fmt.Errorf("store is not initialized")
-	}
-	if s.db == nil {
-		return fmt.Errorf("Antigravity manual sync requires a database-backed store")
-	}
-	if accountID <= 0 {
-		return fmt.Errorf("invalid Antigravity account ID")
-	}
-	if ctx == nil {
-		ctx = context.Background()
-	}
-	coordinator := s.antigravityFlightCoordinator()
-	lease, err := coordinator.AcquireFlight(ctx, accountID, "manual_refresh")
-	if err != nil {
-		return fmt.Errorf("acquire Antigravity manual sync flight: %w", err)
-	}
-	defer lease.Release()
-
-	acc := s.FindByID(accountID)
-	if acc == nil {
-		if err := s.LoadAccountByID(ctx, accountID); err != nil {
-			return fmt.Errorf("load Antigravity account %d into runtime: %w", accountID, err)
-		}
-		acc = s.FindByID(accountID)
-	}
-	if acc == nil {
-		return fmt.Errorf("Antigravity account %d is unavailable in runtime", accountID)
-	}
-	return s.refreshAntigravityAccountDurable(ctx, acc, false)
-}
-
-// ErrAntigravityNoUsableProxy 表示代理池已启用但没有可用出口，控制面调用必须
-// fail-closed。哨兵错误供管理端 errors.Is 映射为对外统一文案。
-var ErrAntigravityNoUsableProxy = errors.New("Antigravity proxy pool is enabled but no usable proxy is available")
-
-// AntigravityAccessDeniedTag 是访问拒绝类硬围栏写入 accounts.error_message 的
-// 归属前缀；SetOwned/ClearOwned 只作用于带该前缀的行状态。
-const AntigravityAccessDeniedTag = "Antigravity access denied by Google"
-
-// ErrAntigravityAccessDenied 表示同步已把访问拒绝事实落库并投影为硬围栏。
-// 它是"已持久化的 Provider 拒绝"而非操作故障：管理端据此回显为成功+警告，
-// 与旧直连路径的 applyAntigravityAccessFence 契约保持一致。
-var ErrAntigravityAccessDenied = errors.New(AntigravityAccessDeniedTag)
-
-// ErrAntigravityCredentialGenerationChanged 表示本次同步结果因凭据代际被并发
-// 推进而作废（结果已丢弃，运行时已对齐 durable winner）。管理端映射为中文
-// 冲突文案，保持手动刷新的对外错误契约不变。
-var ErrAntigravityCredentialGenerationChanged = errors.New("Antigravity credential generation changed during refresh")
-
-// projectAntigravityManualAccessFence 把手动同步后的访问拒绝硬围栏投影到账号行
-// status/error_message（与管理端直连路径 SetOwnedAccountError 契约一致）；持久化
-// 事实恢复正常时按归属前缀回收行状态。401 恢复通道不改行状态，行为保持原样。
-func (s *Store) projectAntigravityManualAccessFence(ctx context.Context, row *database.AccountRow) {
-	if s == nil || s.db == nil || row == nil {
-		return
-	}
-	if reason := antigravityAccessFenceReasonFromRow(row); reason != "" {
-		_, _ = s.db.SetOwnedAccountError(ctx, row.ID, AntigravityAccessDeniedTag, AntigravityAccessDeniedTag+": "+reason)
-		return
-	}
-	_, _ = s.db.ClearOwnedAccountError(ctx, row.ID, AntigravityAccessDeniedTag)
-}
-
-// RefreshAntigravityAccount refreshes a Google OAuth credential after a
-// v1internal 401. Refreshes are serialized by the stable credential family,
-// re-read from the database after acquiring the lease, and published to
-// runtime only after a generation-fenced durable write succeeds.
-func (s *Store) RefreshAntigravityAccount(ctx context.Context, acc *Account) error {
-	return s.refreshAntigravityAccountDurable(ctx, acc, true)
-}
-
-// refreshAntigravityAccountDurable 是 401 恢复与手动同步共用的安全换票/同步链路：
-// 稳定 family lease + 租约内重读 + DB-first generation CAS + 运行时投影。
-// forceRotate=true（401 恢复通道）：调用方已被上游 401，即便存量 AT 名义未过期
-// 也强制换票；forceRotate=false（手动同步通道）：保留存量 AT，交给 client.Sync
-// 仅在临近过期/被拒时换票——手动刷新的价值在刷新 quota/项目事实，不应无条件
-// 消耗 RT 轮换。
-func (s *Store) refreshAntigravityAccountDurable(ctx context.Context, acc *Account, forceRotate bool) error {
-	if s == nil || acc == nil || !acc.IsAntigravityAPI() {
-		return fmt.Errorf("account is not an Antigravity account")
-	}
-	if s.db == nil || acc.DBID <= 0 {
-		return fmt.Errorf("Antigravity refresh requires a database-backed account")
-	}
-	acc.mu.RLock()
-	initialAccessToken := strings.TrimSpace(acc.AccessToken)
-	acc.mu.RUnlock()
-
-	for familyAttempt := 0; familyAttempt < 3; familyAttempt++ {
-		before, err := s.db.GetAccountByID(ctx, acc.DBID)
-		if err != nil {
-			return err
-		}
-		if !strings.EqualFold(strings.TrimSpace(before.GetCredential("upstream_type")), UpstreamAntigravity) ||
-			strings.TrimSpace(before.GetCredential("api_key")) != "" {
-			return fmt.Errorf("account is not an Antigravity OAuth account")
-		}
-		familyID := strings.TrimSpace(before.CredentialFamilyID)
-		if familyID == "" {
-			familyID, err = s.db.EnsureAccountCredentialFamilyID(ctx, before.ID, "")
-			if err != nil {
-				return fmt.Errorf("ensure Antigravity credential family: %w", err)
-			}
-		}
-		lease, err := s.acquireOAuthRefreshFamilyLease(ctx, familyID)
-		if err != nil {
-			return fmt.Errorf("acquire Antigravity OAuth refresh lease: %w", err)
-		}
-
-		familyChanged := false
-		refreshErr := func() error {
-			defer lease.Release()
-			lockedRow, reloadErr := s.db.GetAccountByID(lease.Context(), before.ID)
-			if reloadErr != nil {
-				return reloadErr
-			}
-			if strings.TrimSpace(lockedRow.CredentialFamilyID) != familyID {
-				familyChanged = true
-				return nil
-			}
-			if antigravityRowHasFreshAccess(lockedRow, initialAccessToken) {
-				criticalCtx := lease.CriticalContext()
-				cleared, clearErr := s.db.ClearCooldownIfReason(criticalCtx, lockedRow.ID, "unauthorized")
-				if cleared {
-					s.deleteCachedAccountCooldown(lockedRow.ID)
-				}
-				_, currentErr := s.reloadAntigravityRuntimeOrRemove(criticalCtx, acc, lockedRow.ID)
-				if currentErr != nil {
-					if clearErr != nil {
-						return fmt.Errorf("clear Antigravity unauthorized cooldown: %v; reload durable credential: %w", clearErr, currentErr)
-					}
-					return currentErr
-				}
-				if clearErr != nil {
-					return clearErr
-				}
-				return nil
-			}
-
-			credential := antigravityCredentialFromStoreRow(lockedRow)
-			if strings.TrimSpace(credential.RefreshToken) == "" {
-				return fmt.Errorf("Antigravity account has no refresh token")
-			}
-			groupIDs, groupErr := s.db.GetAccountGroupIDs(lease.Context(), lockedRow.ID)
-			if groupErr != nil {
-				return fmt.Errorf("load Antigravity account groups for proxy resolution: %w", groupErr)
-			}
-			routeAccount := &Account{DBID: lockedRow.ID, ProxyURL: strings.TrimSpace(lockedRow.ProxyURL), GroupIDs: groupIDs}
-			proxyURL, usableEgress := s.ResolveUsableProxyForAccount(routeAccount)
-			if !usableEgress {
-				return ErrAntigravityNoUsableProxy
-			}
-			client, clientErr := NewAntigravityClient(proxyURL)
-			if clientErr != nil {
-				return clientErr
-			}
-			if err := lease.Context().Err(); err != nil {
-				return err
-			}
-			// The caller reached this path after an upstream 401. Force the token
-			// exchange even when the stored expiry still claims the bearer is fresh.
-			// 手动同步不强制：保留存量 AT，由 client.Sync 在临近过期时才换票。
-			if forceRotate {
-				credential.AccessToken = ""
-			}
-			criticalCtx := lease.CriticalContext()
-			result, syncErr := client.Sync(criticalCtx, credential)
-			if syncErr != nil && !antigravityCredentialRotated(lockedRow, result.Credential) {
-				if isNonRetryable(syncErr) {
-					return s.persistAntigravityPermanentRefreshFailure(criticalCtx, acc, lockedRow, syncErr)
-				}
-				return syncErr
-			}
-			updates, updateErr := antigravityRefreshCredentialUpdates(lockedRow, result, syncErr)
-			if updateErr != nil {
-				if antigravityCredentialRotated(lockedRow, result.Credential) {
-					s.RemoveAccount(lockedRow.ID)
-				}
-				return updateErr
-			}
-			_, applied, casErr := s.db.UpdateAccountCredentialsCAS(criticalCtx, lockedRow.ID, lockedRow.CredentialGeneration, updates)
-			if casErr != nil {
-				// The provider may already have consumed and rotated the refresh
-				// token. A failed/ambiguous durable write cannot safely leave the
-				// old credential dispatchable in memory.
-				s.RemoveAccount(lockedRow.ID)
-				return fmt.Errorf("persist Antigravity refreshed credential: %w", casErr)
-			}
-			if !applied {
-				current, currentErr := s.reloadAntigravityRuntimeOrRemove(criticalCtx, acc, lockedRow.ID)
-				if currentErr != nil {
-					return currentErr
-				}
-				if antigravityRowHasFreshAccess(current, lockedRow.GetCredential("access_token")) {
-					return nil
-				}
-				return fmt.Errorf("%w; discarded stale provider result", ErrAntigravityCredentialGenerationChanged)
-			}
-			cleared, clearErr := s.db.ClearCooldownIfReason(criticalCtx, lockedRow.ID, "unauthorized")
-			if cleared {
-				s.deleteCachedAccountCooldown(lockedRow.ID)
-			}
-			current, currentErr := s.reloadAntigravityRuntimeOrRemove(criticalCtx, acc, lockedRow.ID)
-			if currentErr != nil {
-				if clearErr != nil {
-					return fmt.Errorf("clear Antigravity unauthorized cooldown: %v; reload durable credential: %w", clearErr, currentErr)
-				}
-				return currentErr
-			}
-			if clearErr != nil {
-				return clearErr
-			}
-			if !forceRotate {
-				s.projectAntigravityManualAccessFence(criticalCtx, current)
-			}
-			if syncErr != nil {
-				return syncErr
-			}
-			if reason, _ := antigravityPersistedHardFence(current); reason != "" {
-				if accessReason := antigravityAccessFenceReasonFromRow(current); accessReason != "" {
-					return fmt.Errorf("%w: %s", ErrAntigravityAccessDenied, accessReason)
-				}
-				return errors.New(reason)
-			}
-			return nil
-		}()
-		if familyChanged {
-			continue
-		}
-		return refreshErr
-	}
-	return fmt.Errorf("Antigravity credential family changed repeatedly during refresh")
 }
 
 // propagateSharedOAuthCredentials 将一次成功刷新得到的新凭据同步给使用同一旧 RT
