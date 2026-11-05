@@ -11,6 +11,11 @@ const (
 	UserBillingModePerImage = "per_image"
 )
 
+// isRemovedMediaBillingMode matches the per_video and per_second modes that older databases may still hold in stored pricing overrides.
+func isRemovedMediaBillingMode(mode string) bool {
+	return mode == "per_video" || mode == "per_second"
+}
+
 // IsUnitUserBillingMode reports whether the user billing mode settles per delivered output unit (an image).
 func IsUnitUserBillingMode(mode string) bool {
 	return mode == UserBillingModePerImage

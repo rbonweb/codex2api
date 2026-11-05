@@ -352,6 +352,10 @@ func ParseModelPricingOverridesJSON(s string) (map[string]ModelPricingOverride, 
 	out := make(map[string]ModelPricingOverride, len(raw))
 	for k, v := range raw {
 		key := strings.ToLower(strings.TrimSpace(k))
+		if isRemovedMediaBillingMode(v.UserBillingMode) {
+			// Entries saved for the removed video billing modes are dropped so they cannot fail the whole blob.
+			continue
+		}
 		if err := ValidateModelUserBilling(key, v); err != nil {
 			return nil, fmt.Errorf("%s: %w", key, err)
 		}

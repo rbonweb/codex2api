@@ -1428,7 +1428,6 @@
     "apiBalanceLoading": "正在查询 API 平台余额",
     "apiBalanceFailed": "余额查询失败：{{error}}。点击重试，或在账号设置中填写余额查询接口。",
     "apiBalanceTooltip": "来源：{{source}} · 更新于 {{time}}。点击刷新。",
-    "codexClientMetadataMode": "Codex 安装标识",
     "codexClientMetadataAuto": "自动检测",
     "codexClientMetadataAlways": "始终发送",
     "codexClientMetadataOff": "不注入",

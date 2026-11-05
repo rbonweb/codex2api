@@ -1428,7 +1428,6 @@
     "apiBalanceLoading": "Querying the API platform balance",
     "apiBalanceFailed": "Balance query failed: {{error}}. Click to retry or configure an endpoint in account settings.",
     "apiBalanceTooltip": "Source: {{source}} · updated {{time}}. Click to refresh.",
-    "codexClientMetadataMode": "Codex installation ID",
     "codexClientMetadataAuto": "Auto detect",
     "codexClientMetadataAlways": "Always send",
     "codexClientMetadataOff": "Do not inject",
