@@ -11,6 +11,7 @@
   - [Responses](#2-responses)
   - [Images](#3-images)
   - [Videos (Grok 生视频)](#4-videos-grok-生视频)
+  - [Real-time audio (ChatGPT Live)](#real-time-audio-chatgpt-live)
   - [List Models](#5-list-models)
   - [Health Check](#6-health-check)
 - [管理 API](#管理-api)
@@ -541,6 +542,182 @@ curl 'https://your-host/v1/images/jobs/42/result' \
 
 - 网关不做后台轮询与产物落盘；重启后（内存缓存模式）或超过 24 小时，任务绑定丢失，状态查询返回 404。Redis 部署的绑定跨实例、跨重启有效。
 - `upstream_channel=codex` 的 API Key 无法调用视频端点（403）。
+
+### Real-time audio (ChatGPT Live)
+
+Real-time voice is served by the ChatGPT Live backend and exposed with OpenAI Realtime names. A WebRTC client creates a call with `POST /v1/realtime/calls`. A WebSocket client connects to `GET /v1/realtime` with an audio model. Uploaded audio is transcribed with `POST /v1/audio/transcriptions`.
+
+**Requirements:**
+
+- The API key needs `limits.allow_live` (default `true`). Without it the audio endpoints answer 403.
+- Every audio session and transcription uses the account's ChatGPT voice minutes.
+- The binary must be built with the `opus` build tag and CGO. The Docker image is built this way. Release binaries built without it answer 501 with code `audio_bridge_unavailable`.
+
+#### WebRTC calls: `POST /v1/realtime/calls`
+
+`POST /realtime/calls` is the same endpoint without the `/v1` prefix. The body is read by its `Content-Type`:
+
+- `multipart/form-data`: `sdp` and `session` form fields.
+- `application/json`: an object with `sdp` and `session`. Any other type is also parsed as JSON.
+- `application/sdp`: the raw SDP offer, with no session.
+- `text/plain` or no content type: raw SDP when the body starts with `v=0`, otherwise JSON.
+
+Multipart form:
+
+```bash
+curl https://your-gateway/v1/realtime/calls \
+  -H "Authorization: Bearer $API_KEY" \
+  --form-string "sdp=$(cat offer.sdp)" \
+  -F 'session={"model":"gpt-realtime","voice":"alloy","instructions":"Be brief."}'
+```
+
+JSON:
+
+```bash
+curl https://your-gateway/v1/realtime/calls \
+  -H "Authorization: Bearer $API_KEY" \
+  -H "Content-Type: application/json" \
+  -d '{"sdp":"<offer SDP as one JSON string>","session":{"model":"gpt-realtime","voice":"cove"}}'
+```
+
+Raw SDP (no session, so the defaults apply; `?model=` selects the model):
+
+```bash
+curl "https://your-gateway/v1/realtime/calls?model=gpt-realtime" \
+  -H "Authorization: Bearer $API_KEY" \
+  -H "Content-Type: application/sdp" \
+  --data-binary @offer.sdp
+```
+
+Only three session fields carry over, and the upstream session is built from them:
+
+- `model` (or `?model=`, which wins): must be a realtime or live model name, otherwise 400. The upstream always runs `gpt-live-1-codex`.
+- `voice` or `audio.output.voice`: mapped to a ChatGPT Live voice (see the mapping tables below).
+- `instructions`: sent upstream. When empty, the default instruction is used.
+
+Every other session field is ignored, including `type`, `output_modalities`, `modalities`, the audio format fields, `turn_detection` and `tools`. The call is always audio output, so a call cannot be text-only.
+
+The response is `200` with `Content-Type: application/sdp` and a `Location: /v1/live/<call_id>` header. Connect the client with that answer SDP.
+
+The sideband is the WebSocket at `GET /v1/live/<call_id>`. Authenticate with the gateway API key as a Bearer token. It carries the ChatGPT Live events for the call, which the table in the WebSocket section maps to OpenAI event names.
+
+#### WebSocket: `GET /v1/realtime`
+
+Audio is selected in one of two ways:
+
+- The URL names an audio model, for example `/v1/realtime?model=gpt-realtime`. The connection starts as an audio session.
+- The first `session.update` sent before any turn has run sets `output_modalities` (or `modalities`) to include `audio`. The connection then switches to an audio session and receives `session.updated`. A `session.update` that asks for audio after a text turn has run does not switch the connection, so open a new one.
+
+Audio model names (case-insensitive, trimmed):
+
+- `gpt-realtime` and `gpt-realtime-*`
+- `gpt-4o-realtime-preview*` and `gpt-4o-mini-realtime-preview*`
+- `gpt-live` and `gpt-live-*`
+
+Audio format is pcm16, 24 kHz, mono, little-endian, base64 in `input_audio_buffer.append`. Input and output use the same format. Other formats are rejected with a 400 `invalid_request` error. The accepted values are `"pcm16"` or `{"type":"audio/pcm","rate":24000}`, in `input_audio_format`, `output_audio_format`, `audio.input.format` or `audio.output.format`.
+
+Client events:
+
+| Client event | Behaviour |
+| --- | --- |
+| `session.update` | Applies `instructions`, `voice` or `audio.output.voice`, `model` and `output_modalities`. Instructions and voice are sent upstream. `model` is recorded but the upstream always runs `gpt-live-1-codex`. Replies `session.updated`. |
+| `input_audio_buffer.append` | Queues base64 pcm16 audio. It is resampled to 48 kHz, encoded as Opus in 20 ms frames and sent at real-time pace. |
+| `input_audio_buffer.commit` | Flushes the partial 20 ms frame only. The upstream runs its own turn detection (server-side VAD), so a commit does not start a response. Replies `input_audio_buffer.committed`. |
+| `input_audio_buffer.clear` | Drops audio that is queued but not yet sent. Replies `input_audio_buffer.cleared`. |
+| `conversation.item.create` | A message with `input_text` or `text` parts becomes conversation context and is acknowledged with `conversation.item.created`. It does not generate a reply. Audio items are rejected. |
+| `response.create` | Forwarded upstream as a bare `response.create`. Per-response parameters are not supported. |
+| `response.cancel` | No-op. The upstream interrupts on its own turn detection. |
+| `ping` | Replies `pong`. |
+
+Any other client event type returns an `invalid_request` error.
+
+Server events, mapped from the ChatGPT Live sideband:
+
+| ChatGPT Live event | OpenAI Realtime server events |
+| --- | --- |
+| connection start | `session.created` (or `session.updated` after a handoff) |
+| `turn.created` (assistant) | `response.created`, `response.output_item.added`, `response.content_part.added` |
+| `session.output_audio.delta` | `response.output_audio.delta` (base64 pcm16, 24 kHz) |
+| `output_transcript.added` | `response.output_audio_transcript.delta` |
+| `turn.done` (assistant) | `response.output_audio.done`, `response.output_audio_transcript.done`, `response.content_part.done`, `response.output_item.done`, `response.done` |
+| `turn.created` (user) | `conversation.item.created`, `input_audio_buffer.speech_started` |
+| `input_transcript.added` | `conversation.item.input_audio_transcription.delta` |
+| `turn.done` (user) | `input_audio_buffer.speech_stopped`, `conversation.item.input_audio_transcription.completed` |
+| `error` | `error` |
+
+Text-only output: `output_modalities: ["text"]` drops `response.output_audio.delta` and `response.output_audio.done`. Transcript events become `response.output_text.delta` and `response.output_text.done` (the done event carries `text`). The input stays audio.
+
+Each call ends after one hour. When the call ends, the gateway closes the WebSocket with a normal close and the reason `live call ended`.
+
+When the client disconnects, the gateway sends `session.close` upstream, closes the WebRTC peer, releases the account lease and the API key concurrency slot, and logs usage once.
+
+#### Transcriptions: `POST /v1/audio/transcriptions`
+
+`POST /audio/transcriptions` is the same endpoint without the `/v1` prefix.
+
+```bash
+curl https://your-gateway/v1/audio/transcriptions \
+  -H "Authorization: Bearer $API_KEY" \
+  -F "file=@sentence.wav" \
+  -F "model=gpt-4o-transcribe" \
+  -F "response_format=json"
+```
+
+The response is `{"text": "..."}` for `response_format=json`, the default. With `response_format=text` it is the transcript as `text/plain; charset=utf-8`. Successful responses carry `X-Codex2api-Live-Setup-Ms`, the time in milliseconds to set up the Live call.
+
+Form fields:
+
+| Field | Required | Notes |
+| --- | --- | --- |
+| `file` | yes | WAV or raw PCM. At most 25 MiB and 120 seconds. |
+| `model` | no | `gpt-4o-transcribe` (default), `gpt-4o-mini-transcribe` or `whisper-1`. All three use the same upstream, so they return the same kind of transcript. `gpt-4o-transcribe-diarize` returns 400. |
+| `language` | no | An ISO language code with an optional region, such as `en`, `fr` or `pt-BR`. Added to the instructions as a hint. Other values return 400. |
+| `prompt` | no | Added to the instructions as context. At most 1000 characters, otherwise 400. |
+| `response_format` | no | `json` (default) or `text`. Other values return 400. |
+| `stream` | no | `true` returns 400. |
+
+Accepted formats:
+
+- WAV with 16-bit PCM. Other WAV encodings (8-bit, float, non-PCM) return 400. Sample rates from 8 kHz to 96 kHz are resampled to 24 kHz, and stereo is mixed down to mono.
+- Streamed WAV files whose `data` chunk declares a size of 0 or more bytes than the file holds are read to the end of the file, as ffmpeg pipes write them.
+- Raw PCM, when the filename ends in `.pcm` or `.raw`, or the content type is `audio/pcm`, `audio/l16` or `audio/x-pcm`. The data must be 16-bit little-endian, 24 kHz, mono.
+- Anything else, such as MP3 or M4A, returns 400 and lists the supported formats.
+
+Limits and errors:
+
+- A file over 25 MiB returns 413.
+- Audio over 120 seconds returns 400.
+- Audio is fed at real time (1x), so a 30-second file takes about 30 seconds plus call setup. A 1.5-second trailing silence follows the audio so the turn ends.
+- If the transcript does not arrive within the audio duration plus 20 seconds, the request returns 504.
+- Upstream failures return 502.
+- Builds without the `opus` tag answer 501 `audio_bridge_unavailable` before the upload is read.
+
+#### Voice and model mapping
+
+Realtime voices map to ChatGPT Live voices:
+
+| OpenAI voice | ChatGPT Live voice |
+| --- | --- |
+| `alloy` | `cove` |
+| `ash` | `arbor` |
+| `ballad` | `vale` |
+| `coral` | `ember` |
+| `echo` | `spruce` |
+| `sage` | `sol` |
+| `shimmer` | `juniper` |
+| `verse` | `breeze` |
+| `marin` | `maple` |
+| `cedar` | `arbor` |
+
+ChatGPT Live voice names (`arbor`, `breeze`, `cove`, `ember`, `juniper`, `maple`, `sol`, `spruce`, `vale`) pass through unchanged. An empty or unknown voice becomes `cove`.
+
+Every audio model name maps to `gpt-live-1-codex`. The default instruction, used when `instructions` is empty, is "You are a helpful, concise voice assistant."
+
+#### Limits
+
+- `POST /v1/audio/speech` is not available. ChatGPT Live answers each turn in its own words, and `session.context.append` adds context rather than a verbatim "say this" command, so no verbatim text-to-speech primitive is known.
+- The plain WebSocket voice endpoint `wss://…/v1/live` refuses voice for ChatGPT accounts ("Voice session access denied"), so the gateway always runs the upstream session over WebRTC.
+- Audio on the WebSocket path is pcm16 at 24 kHz only. WebRTC clients send and receive Opus on their own peer connection.
 
 ### 5. List Models
 
