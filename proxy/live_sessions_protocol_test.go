@@ -393,7 +393,13 @@ func TestLiveSessionClientErrors(t *testing.T) {
 		{`{"type":"session.thinking.append","event_id":"c","content":5}`, "invalid_value", "content", "c"},
 		{`{"type":"session.commentary.append","event_id":"c","delegation_id":7,"content":"x"}`, "invalid_value", "delegation_id", "c"},
 		{`{"type":"session.update","event_id":"u1","session":{"delegation":{"responses":{"x":1}}}}`, "unsupported_value", "session.delegation.responses", "u1"},
-		{`{"type":"session.update","event_id":"u2","session":{"instructions":"x"}}`, "immutable_field_update", "session.instructions", "u2"},
+		{`{"type":"session.update","event_id":"u2","session":{"model":"gpt-live-1"}}`, "immutable_field_update", "session.model", "u2"},
+		{`{"type":"session.update","event_id":"u2a","session":{"audio":{"format":{"type":"audio/pcm"}}}}`, "immutable_field_update", "session.audio.format", "u2a"},
+		{`{"type":"session.update","event_id":"u2b","session":{"audio":{"input":{"transcription":{"language":"hi"}}}}}`, "immutable_field_update", "session.audio.input", "u2b"},
+		{`{"type":"session.update","event_id":"u2c","session":{"audio":{"output":{"voice":"cove"}}}}`, "immutable_field_update", "session.audio.output.voice", "u2c"},
+		{`{"type":"session.update","event_id":"u2d","session":{"audio":{"output":{"voice":"nope"}}}}`, "unsupported_value", "session.audio.output.voice", "u2d"},
+		{`{"type":"session.update","event_id":"u2e","session":{"audio":{"output":{"speed":2}}}}`, "unknown_parameter", "session.audio.output.speed", "u2e"},
+		{`{"type":"session.update","event_id":"u2f","session":{"instructions":5}}`, "invalid_value", "session.instructions", "u2f"},
 		{`{"type":"session.update","event_id":"u3","session":{"delegation":{"type":"client"}}}`, "immutable_field_update", "session.delegation", "u3"},
 		{`{"type":"session.update","event_id":"u4","session":{"foo":1}}`, "unknown_parameter", "session.foo", "u4"},
 		{`{"type":"session.update","event_id":"u5"}`, "missing_required_parameter", "session", "u5"},
@@ -658,7 +664,7 @@ func TestLiveSessionTranscriptLanguage(t *testing.T) {
 		{"Bonjour, pouvez-vous me dire quel temps il fait aujourd'hui à Paris", "fr"},
 		{"今日は東京の天気を教えてください", "ja"},
 		{"The capital", ""},
-		{"नमस्ते आज", ""},
+		{"नमस्ते आज", "hi"}, // short text: the script names the language
 		{"", ""},
 		{"  123 ... 45?", ""},
 	}
@@ -686,7 +692,8 @@ func TestLiveSessionTranscriptLanguageAccumulates(t *testing.T) {
 		t.Fatalf("accumulated delta = %s", last.Raw)
 	}
 	// The assistant direction has its own accumulator and starts empty.
-	if d := delta("output_transcript.added", " अभी"); d.Get("language").Exists() {
+	// Short Devanagari text is named by its script, not by the English the user side heard.
+	if d := delta("output_transcript.added", " अभी"); d.Get("language").String() != "hi" {
 		t.Fatalf("assistant delta inherited the user text: %s", d.Raw)
 	}
 	for _, word := range []string{" नमस्ते,", " आज", " मुंबई", " में", " मौसम", " कैसा", " है"} {
@@ -704,7 +711,8 @@ func TestLiveSessionTranscriptLanguageAccumulates(t *testing.T) {
 		t.Fatalf("assistant accumulator was reset by the user turn: %s", d.Raw)
 	}
 	tr.Upstream([]byte(`{"turn":{"role":"assistant","transcript":"x"},"type":"turn.done"}`))
-	if d := delta("output_transcript.added", " है"); d.Get("language").Exists() {
+	// A fresh accumulator holding only a short Latin word names no language; the old Hindi text would still read as Hindi.
+	if d := delta("output_transcript.added", " Hello"); d.Get("language").Exists() {
 		t.Fatalf("assistant accumulator not reset: %s", d.Raw)
 	}
 }

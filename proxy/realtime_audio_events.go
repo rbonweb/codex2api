@@ -304,6 +304,9 @@ func (m *realtimeAudioMapper) MapUpstream(raw []byte) [][]byte {
 		// Gateway extension: language is the one the client named, or the detector's guess on the transcript so far.
 		if lang := m.transcriptLanguage(m.user.transcript); lang != "" {
 			event["language"] = lang
+			if script := m.transcriptScript(lang, m.user.transcript); script != "" {
+				event["script"] = script
+			}
 		}
 		emit(event)
 
@@ -319,6 +322,14 @@ func (m *realtimeAudioMapper) transcriptLanguage(transcript string) string {
 		return m.language
 	}
 	return liveTranscriptLanguage(liveTrimTail(transcript, liveLanguageWindow))
+}
+
+// transcriptScript reports script "arab" when the client pinned a language that is not written in Arabic script and the transcript came back in it (Gujarati speech recognised as Urdu); empty otherwise and for detected languages.
+func (m *realtimeAudioMapper) transcriptScript(lang, transcript string) string {
+	if m.language == "" {
+		return ""
+	}
+	return transcriptScript(lang, liveTrimTail(transcript, liveLanguageWindow))
 }
 
 // realtimeAudioTurnRole reads the speaker of a turn from turn.role, falling back to the top-level role.
@@ -500,6 +511,9 @@ func (m *realtimeAudioMapper) closeUserItem(emit func(map[string]any), turn gjso
 	}
 	if lang := m.transcriptLanguage(transcript); lang != "" {
 		completed["language"] = lang
+		if script := m.transcriptScript(lang, transcript); script != "" {
+			completed["script"] = script
+		}
 	}
 	emit(completed)
 

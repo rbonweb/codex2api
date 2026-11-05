@@ -49,21 +49,25 @@ func newSpeechTestEnv(t *testing.T) *speechTestEnv {
 	t.Helper()
 	env := &speechTestEnv{call: &fakeSpeechCall{fakeTranscriptionCall: newFakeTranscriptionCall()}, handler: &Handler{}}
 	prevOpen, prevSupported, prevEnc := openSpeechCall, speechBridgeSupported, newRealtimeAudioEncoder
-	prevStart, prevBase, prevPer, prevQuote := speechStartDeadline, speechDeadlineBase, speechDeadlinePerRune, speechQuoteQuestions
+	prevStart, prevBase, prevPer, prevWait := speechStartDeadline, speechDeadlineBase, speechDeadlinePerRune, speechSessionWait
 	openSpeechCall = func(h *Handler, c *gin.Context, session json.RawMessage) (speechCall, *liveGatewayError) {
 		env.opened++
 		env.session = session
 		if env.openErr != nil {
 			return nil, env.openErr
 		}
+		if env.opened > 1 {
+			// A retry gets a fresh call; the first one is closed and cannot take events.
+			env.call = &fakeSpeechCall{fakeTranscriptionCall: newFakeTranscriptionCall(), onSend: env.call.onSend}
+		}
 		return env.call, nil
 	}
 	speechBridgeSupported = func() bool { return true }
 	newRealtimeAudioEncoder = func() (opusEncoder, error) { return &fakeAudioEncoder{}, nil }
-	speechStartDeadline, speechDeadlineBase, speechDeadlinePerRune = 300*time.Millisecond, 2*time.Second, 0
+	speechStartDeadline, speechDeadlineBase, speechDeadlinePerRune, speechSessionWait = 300*time.Millisecond, 2*time.Second, 0, 0
 	t.Cleanup(func() {
 		openSpeechCall, speechBridgeSupported, newRealtimeAudioEncoder = prevOpen, prevSupported, prevEnc
-		speechStartDeadline, speechDeadlineBase, speechDeadlinePerRune, speechQuoteQuestions = prevStart, prevBase, prevPer, prevQuote
+		speechStartDeadline, speechDeadlineBase, speechDeadlinePerRune, speechSessionWait = prevStart, prevBase, prevPer, prevWait
 	})
 	return env
 }
@@ -140,13 +144,15 @@ func TestAudioSpeechWAVTrimsSilenceAndAppendsSpeakable(t *testing.T) {
 			t.Fatalf("session %s lacks %q", session, want)
 		}
 	}
-	if strings.Contains(session, "quotation") {
-		t.Fatalf("a plain statement must not get the quote addendum: %s", session)
+	for _, want := range []string{`"ack_filler":false`, `"type":"client"`, "never acted on"} {
+		if !strings.Contains(session, want) {
+			t.Fatalf("session %s lacks %q", session, want)
+		}
 	}
 	if len(env.call.sent) != 1 {
 		t.Fatalf("sent %d events, want 1", len(env.call.sent))
 	}
-	for _, want := range []string{`"type":"session.context.append"`, `"channel":"speakable"`, `"type":"input_text"`, `"text":"The quick brown fox."`} {
+	for _, want := range []string{`"type":"session.context.append"`, `"channel":"speakable"`, `"type":"input_text"`, `"text":"\"The quick brown fox.\""`} {
 		if !strings.Contains(env.call.sent[0], want) {
 			t.Fatalf("append %s lacks %q", env.call.sent[0], want)
 		}
@@ -189,18 +195,76 @@ func TestAudioSpeechQuestionIsQuotedAndExplained(t *testing.T) {
 }
 
 func TestAudioSpeechSpeakableText(t *testing.T) {
-	text, dev := speechSpeakableText("It is 3:45 PM.", speechInstructions)
-	if text != "It is 3:45 PM." || dev != speechInstructions {
-		t.Fatalf("statement changed: %q %q", text, dev)
+	if got := speechSpeakableText("It is 3:45 PM."); got != `"It is 3:45 PM."` {
+		t.Fatalf("statement not quoted: %q", got)
 	}
-	text, dev = speechSpeakableText(`Is "this" it?`, speechInstructions)
-	if text != `"Is 'this' it?"` || !strings.HasSuffix(dev, speechQuoteAddendum) {
-		t.Fatalf("question not wrapped: %q %q", text, dev)
+	if got := speechSpeakableText(`Is "this" it?`); got != `"Is 'this' it?"` {
+		t.Fatalf("inner quotes kept: %q", got)
 	}
-	speechQuoteQuestions = false
-	defer func() { speechQuoteQuestions = true }()
-	if text, dev = speechSpeakableText("Why?", speechInstructions); text != "Why?" || dev != speechInstructions {
-		t.Fatalf("switch off ignored: %q %q", text, dev)
+}
+
+func TestSpeechSentences(t *testing.T) {
+	cases := []struct {
+		name, in string
+		want     []string
+	}{
+		{"one", "Call me back tomorrow.", []string{"Call me back tomorrow."}},
+		{"short trailing joins previous", "Call me back tomorrow, please. Open it.", []string{"Call me back tomorrow, please. Open it."}},
+		{"two", "Call me back tomorrow at noon. Open the report for the meeting!", []string{"Call me back tomorrow at noon.", "Open the report for the meeting!"}},
+		{"decimal and time stay", "It costs 3.5 dollars at 3:45 today. Thanks a lot for waiting.", []string{"It costs 3.5 dollars at 3:45 today.", "Thanks a lot for waiting."}},
+		{"question and quote", `He said "stop it right now." Are you sure about that?`, []string{`He said "stop it right now."`, "Are you sure about that?"}},
+		{"newline", "First line of the text here\nSecond line of the text here", []string{"First line of the text here", "Second line of the text here"}},
+		{"devanagari", "आज मौसम बहुत अच्छा है और हवा ठंडी है। कल हम बाहर घूमने जाएंगे और खाना खाएंगे।", []string{"आज मौसम बहुत अच्छा है और हवा ठंडी है।", "कल हम बाहर घूमने जाएंगे और खाना खाएंगे।"}},
+		{"blank", "   ", nil},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			got := speechSentences(tc.in)
+			if strings.Join(got, "|") != strings.Join(tc.want, "|") {
+				t.Fatalf("speechSentences(%q) = %q, want %q", tc.in, got, tc.want)
+			}
+		})
+	}
+	long := strings.Repeat("word ", 150)
+	for _, chunk := range speechSentences(long) {
+		if n := len([]rune(chunk)); n > speechMaxChunkRunes+speechMinChunkRunes {
+			t.Fatalf("chunk of %d runes", n)
+		}
+	}
+}
+
+func TestAudioSpeechReadsEverySentenceInOrder(t *testing.T) {
+	env := newSpeechTestEnv(t)
+	env.call.onSend = speakOnSend(speechTone(300))
+	rec := runSpeech(t, env, `{"input":"Call me back tomorrow at noon. Open the report for the meeting."}`, true)
+	if rec.Code != http.StatusOK {
+		t.Fatalf("status=%d body=%s", rec.Code, rec.Body.String())
+	}
+	if len(env.call.sent) != 2 || !strings.Contains(env.call.sent[0], `\"Call me back tomorrow at noon.\"`) || !strings.Contains(env.call.sent[1], `\"Open the report for the meeting.\"`) {
+		t.Fatalf("appends = %v", env.call.sent)
+	}
+	// Two 300 ms sentences, each trimmed and kept with 100 ms padding on both sides.
+	if gotMs := (rec.Body.Len() - 44) / 2 / 24; gotMs < 1000-60 || gotMs > 1000+60 {
+		t.Fatalf("audio = %d ms, want about 1000", gotMs)
+	}
+}
+
+func TestAudioSpeechRetriesNoAudioOnceOnAFreshCall(t *testing.T) {
+	env := newSpeechTestEnv(t)
+	var calls []*fakeSpeechCall
+	openSpeechCall = func(h *Handler, c *gin.Context, session json.RawMessage) (speechCall, *liveGatewayError) {
+		call := &fakeSpeechCall{fakeTranscriptionCall: newFakeTranscriptionCall()}
+		if len(calls) == 0 {
+			call.onSend = func(f *fakeSpeechCall) { f.send(map[string]any{"type": "session.context.appended"}) }
+		} else {
+			call.onSend = speakOnSend(speechTone(300))
+		}
+		calls = append(calls, call)
+		return call, nil
+	}
+	rec := runSpeech(t, env, `{"input":"Call me back tomorrow."}`, true)
+	if rec.Code != http.StatusOK || len(calls) != 2 || calls[0].closes.Load() != 1 || calls[1].closes.Load() != 1 {
+		t.Fatalf("status=%d calls=%d body=%s", rec.Code, len(calls), rec.Body.String())
 	}
 }
 
@@ -214,8 +278,8 @@ func TestAudioSpeechNoAudioIs504(t *testing.T) {
 	if rec.Code != http.StatusGatewayTimeout || !strings.Contains(rec.Body.String(), "upstream_timeout") || !strings.Contains(rec.Body.String(), "the voice model did not read the text") {
 		t.Fatalf("status=%d body=%s", rec.Code, rec.Body.String())
 	}
-	if env.call.closes.Load() != 1 {
-		t.Fatalf("call closed %d times", env.call.closes.Load())
+	if env.opened != 2 || env.call.closes.Load() != 1 {
+		t.Fatalf("opened %d calls, last closed %d times", env.opened, env.call.closes.Load())
 	}
 }
 
@@ -300,8 +364,25 @@ func TestAudioSpeechOpenErrorPassesThrough(t *testing.T) {
 	env := newSpeechTestEnv(t)
 	env.openErr = newLiveGatewayError(http.StatusServiceUnavailable, "service_unavailable", "server_error", "no account")
 	rec := runSpeech(t, env, `{"input":"Hi"}`, true)
-	if rec.Code != http.StatusServiceUnavailable {
-		t.Fatalf("status=%d body=%s", rec.Code, rec.Body.String())
+	if rec.Code != http.StatusServiceUnavailable || rec.Header().Get("Retry-After") != "5" {
+		t.Fatalf("status=%d retry-after=%q body=%s", rec.Code, rec.Header().Get("Retry-After"), rec.Body.String())
+	}
+}
+
+func TestAudioSpeechFullConcurrencyOnRetryIs503NotTimeout(t *testing.T) {
+	env := newSpeechTestEnv(t)
+	env.call.onSend = func(f *fakeSpeechCall) { f.send(map[string]any{"type": "session.context.appended"}) }
+	prev := openSpeechCall
+	openSpeechCall = func(h *Handler, c *gin.Context, session json.RawMessage) (speechCall, *liveGatewayError) {
+		if env.opened >= 1 {
+			env.opened++
+			return nil, newLiveGatewayError(http.StatusServiceUnavailable, "service_unavailable", "server_error", "Service temporarily unavailable")
+		}
+		return prev(h, c, session)
+	}
+	rec := runSpeech(t, env, `{"input":"Hello there friend."}`, true)
+	if rec.Code != http.StatusServiceUnavailable || rec.Header().Get("Retry-After") == "" || env.opened != 2 {
+		t.Fatalf("status=%d retry-after=%q opened=%d", rec.Code, rec.Header().Get("Retry-After"), env.opened)
 	}
 }
 
