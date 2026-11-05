@@ -60,7 +60,7 @@ func (h *Handler) GetAPIKeyModelRequestUsage(c *gin.Context) {
 	defer cancel()
 	row, err := h.db.GetAPIKeyByID(ctx, id)
 	if errors.Is(err, sql.ErrNoRows) || (err == nil && row == nil) {
-		writeError(c, http.StatusNotFound, "API Key 不存在")
+		writeError(c, http.StatusNotFound, "API key not found")
 		return
 	}
 	if err != nil {

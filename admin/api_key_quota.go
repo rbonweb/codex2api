@@ -40,7 +40,7 @@ func (h *Handler) ResetAPIKeyQuota(c *gin.Context) {
 
 	target, err := h.db.ResetAPIKeyQuota(ctx, id)
 	if errors.Is(err, sql.ErrNoRows) {
-		writeError(c, http.StatusNotFound, "API Key 不存在")
+		writeError(c, http.StatusNotFound, "API key not found")
 		return
 	}
 	if err != nil {

@@ -217,7 +217,7 @@ func (h *Handler) CreateAccountGroup(c *gin.Context) {
 	if h.store != nil {
 		h.store.SetGroupName(id, name)
 	}
-	c.JSON(http.StatusOK, gin.H{"id": id, "message": "分组已创建"})
+	c.JSON(http.StatusOK, gin.H{"id": id, "message": "Group created"})
 }
 
 type updateAccountGroupReq struct {
@@ -326,7 +326,7 @@ func (h *Handler) UpdateAccountGroup(c *gin.Context) {
 	}
 	if err := h.db.UpdateAccountGroup(ctx, id, req.Name, req.Description, req.Color, opts, req.SortOrder); err != nil {
 		if errors.Is(err, sql.ErrNoRows) {
-			writeError(c, http.StatusNotFound, "分组不存在")
+			writeError(c, http.StatusNotFound, "Group not found")
 			return
 		}
 		if errors.Is(err, database.ErrDuplicateAccountGroupName) {
@@ -355,7 +355,7 @@ func (h *Handler) UpdateAccountGroup(c *gin.Context) {
 	if req.Name != nil && h.store != nil {
 		h.store.SetGroupName(id, *req.Name)
 	}
-	writeMessage(c, http.StatusOK, "分组已更新")
+	writeMessage(c, http.StatusOK, "Group updated")
 }
 
 func (h *Handler) DeleteAccountGroup(c *gin.Context) {
@@ -369,7 +369,7 @@ func (h *Handler) DeleteAccountGroup(c *gin.Context) {
 	defer cancel()
 	if err := h.db.DeleteAccountGroup(ctx, id, force); err != nil {
 		if errors.Is(err, sql.ErrNoRows) {
-			writeError(c, http.StatusNotFound, "分组不存在")
+			writeError(c, http.StatusNotFound, "Group not found")
 			return
 		}
 		if errors.Is(err, database.ErrAccountGroupNotEmpty) {
@@ -392,7 +392,7 @@ func (h *Handler) DeleteAccountGroup(c *gin.Context) {
 		}
 	}
 	h.refreshAPIKeyAllowedGroupsAfterGroupDelete(ctx, id)
-	writeMessage(c, http.StatusOK, "分组已删除")
+	writeMessage(c, http.StatusOK, "Group deleted")
 }
 
 func (h *Handler) refreshAPIKeyAllowedGroupsAfterGroupDelete(ctx context.Context, groupID int64) {
@@ -417,7 +417,7 @@ func (h *Handler) refreshAPIKeyAllowedGroupsAfterGroupDelete(ctx context.Context
 func sanitizeAccountGroupName(raw string) (string, error) {
 	name := strings.TrimSpace(raw)
 	if name == "" {
-		return "", errors.New("分组名称不能为空")
+		return "", errors.New("Group name cannot be empty")
 	}
 	if utf8.RuneCountInString(name) > maxAccountGroupNameRuneSize {
 		return "", errors.New("group name exceeds 80 characters")

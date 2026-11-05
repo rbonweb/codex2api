@@ -155,7 +155,7 @@ func (h *Handler) RevokePromptRiskTrustPolicy(c *gin.Context) {
 	}
 	ctx, cancel := context.WithTimeout(c.Request.Context(), 5*time.Second)
 	defer cancel()
-	policy, err := h.db.RevokePromptRiskTrustPolicy(ctx, subjectType, subjectKey, "管理员撤销自适应可信策略")
+	policy, err := h.db.RevokePromptRiskTrustPolicy(ctx, subjectType, subjectKey, "adaptive trust policy revoked by administrator")
 	if errors.Is(err, sql.ErrNoRows) {
 		writeError(c, http.StatusNotFound, "Adaptive trust policy not found")
 		return

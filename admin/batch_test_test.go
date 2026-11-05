@@ -240,7 +240,7 @@ func TestRunSingleBatchTestSkipsDeactivatedWorkspaceHandshake(t *testing.T) {
 	if status != "failed" {
 		t.Fatalf("status = %q, message = %q, want failed", status, msg)
 	}
-	if !strings.Contains(msg, "工作区联动") {
+	if !strings.Contains(msg, "workspace-linked") {
 		t.Fatalf("message = %q, want linked workspace skip", msg)
 	}
 	if hits.Load() != 0 {

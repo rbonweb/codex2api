@@ -1918,7 +1918,7 @@ func (h *Handler) GetAccount(c *gin.Context) {
 	row, err := h.db.GetAccountByID(ctx, id)
 	if err != nil {
 		if errors.Is(err, sql.ErrNoRows) {
-			writeError(c, http.StatusNotFound, "账号不存在")
+			writeError(c, http.StatusNotFound, "Account not found")
 			return
 		}
 		writeInternalError(c, err)
@@ -2312,7 +2312,7 @@ func (h *Handler) UpdateAccountCredit(c *gin.Context) {
 
 	acc := h.store.FindByID(id)
 	if acc == nil {
-		writeError(c, http.StatusNotFound, "账号不存在")
+		writeError(c, http.StatusNotFound, "Account not found")
 		return
 	}
 
@@ -2396,7 +2396,7 @@ func (h *Handler) UpdateAccountScheduler(c *gin.Context) {
 			row, err := h.db.GetAccountByID(ctx, id)
 			if err != nil {
 				if errors.Is(err, sql.ErrNoRows) {
-					writeError(c, http.StatusNotFound, "账号不存在")
+					writeError(c, http.StatusNotFound, "Account not found")
 					return
 				}
 				writeError(c, http.StatusInternalServerError, "Failed to query account: "+err.Error())
@@ -2415,7 +2415,7 @@ func (h *Handler) UpdateAccountScheduler(c *gin.Context) {
 		_, err := h.db.GetAccountByID(ctx, id)
 		if err != nil {
 			if errors.Is(err, sql.ErrNoRows) {
-				writeError(c, http.StatusNotFound, "账号不存在")
+				writeError(c, http.StatusNotFound, "Account not found")
 				return
 			}
 			writeError(c, http.StatusInternalServerError, "Failed to query account: "+err.Error())
@@ -2430,7 +2430,7 @@ func (h *Handler) UpdateAccountScheduler(c *gin.Context) {
 		row, err := h.db.GetAccountByID(ctx, id)
 		if err != nil {
 			if errors.Is(err, sql.ErrNoRows) {
-				writeError(c, http.StatusNotFound, "账号不存在")
+				writeError(c, http.StatusNotFound, "Account not found")
 				return
 			}
 			writeError(c, http.StatusInternalServerError, "Failed to query account: "+err.Error())
@@ -2468,7 +2468,7 @@ func (h *Handler) UpdateAccountScheduler(c *gin.Context) {
 
 	if err := h.db.UpdateAccountSchedulerMetadata(ctx, id, update.ScoreBiasOverride, update.BaseConcurrencyOverride, update.SkipWarmTier, update.AllowedAPIKeyIDs, database.OptionalStringSlice{Set: update.Tags.Set, Values: update.Tags.Values}, update.GroupIDs, update.ProxyURL, update.CredentialUpdates); err != nil {
 		if errors.Is(err, sql.ErrNoRows) {
-			writeError(c, http.StatusNotFound, "账号不存在")
+			writeError(c, http.StatusNotFound, "Account not found")
 			return
 		}
 		writeError(c, http.StatusInternalServerError, "Failed to update account scheduling configuration: "+err.Error())
@@ -2476,7 +2476,7 @@ func (h *Handler) UpdateAccountScheduler(c *gin.Context) {
 	}
 	h.applyAccountSchedulerRuntimeUpdate(id, update)
 
-	writeMessage(c, http.StatusOK, "账号调度配置已更新")
+	writeMessage(c, http.StatusOK, "Account scheduling settings updated")
 }
 
 func (h *Handler) applyAccountSchedulerRuntimeUpdate(id int64, update accountSchedulerUpdate) {
@@ -3501,7 +3501,7 @@ func (h *Handler) AddATAccount(c *gin.Context) {
 	req.ProxyURL = security.SanitizeInput(req.ProxyURL)
 
 	if req.AccessToken == "" {
-		writeError(c, http.StatusBadRequest, "access_token 是必填字段")
+		writeError(c, http.StatusBadRequest, "access_token is required")
 		return
 	}
 
@@ -4612,7 +4612,7 @@ func readUploadedImportFiles(c *gin.Context) ([]uploadedImportFile, error) {
 
 	files := c.Request.MultipartForm.File["file"]
 	if len(files) == 0 {
-		return nil, fmt.Errorf("请上传文件（字段名: file）")
+		return nil, fmt.Errorf("please upload a file (field name: file)")
 	}
 
 	result := make([]uploadedImportFile, 0, len(files))
@@ -5506,7 +5506,7 @@ func (h *Handler) DeleteAccount(c *gin.Context) {
 	// Soft delete: account data and event records are kept, but the account is removed from the runtime pool and the active list.
 	if err := h.deleteAccountByID(ctx, id); err != nil {
 		if errors.Is(err, sql.ErrNoRows) {
-			writeError(c, http.StatusNotFound, "账号不存在")
+			writeError(c, http.StatusNotFound, "Account not found")
 			return
 		}
 		writeError(c, http.StatusInternalServerError, "delete failed: "+err.Error())
@@ -5514,7 +5514,7 @@ func (h *Handler) DeleteAccount(c *gin.Context) {
 	}
 	h.pruneAccountsFromSnapshotCaches([]int64{id})
 
-	writeMessage(c, http.StatusOK, "账号已删除")
+	writeMessage(c, http.StatusOK, "Account deleted")
 }
 
 func (h *Handler) deleteAccountByID(ctx context.Context, id int64) error {
@@ -5842,13 +5842,13 @@ func (h *Handler) runBatchDeleteAccounts(ctx context.Context, ids []int64, onPro
 			fail++
 			event.Error = err.Error()
 			if errors.Is(err, sql.ErrNoRows) {
-				event.Error = "账号不存在"
+				event.Error = "Account not found"
 			}
 		} else {
 			success++
 			deleted = append(deleted, id)
 			event.Deleted = success
-			event.Message = "账号已删除"
+			event.Message = "Account deleted"
 		}
 		event.Success = success
 		event.Failed = fail
@@ -6020,7 +6020,7 @@ func (h *Handler) RefreshAccount(c *gin.Context) {
 	}
 
 	if err := h.refreshAccountByID(c.Request.Context(), id); err != nil {
-		if strings.Contains(err.Error(), "不存在") {
+		if strings.Contains(err.Error(), "does not exist") {
 			writeError(c, http.StatusNotFound, err.Error())
 			return
 		}
@@ -6248,7 +6248,7 @@ func (h *Handler) ToggleAccountEnabled(c *gin.Context) {
 
 	if err := h.db.SetAccountEnabled(ctx, id, *req.Enabled); err != nil {
 		if errors.Is(err, sql.ErrNoRows) {
-			writeError(c, http.StatusNotFound, "账号不存在")
+			writeError(c, http.StatusNotFound, "Account not found")
 			return
 		}
 		writeError(c, http.StatusInternalServerError, "Failed to update enabled status: "+err.Error())
@@ -6293,7 +6293,7 @@ func (h *Handler) UpdateAccountNote(c *gin.Context) {
 	defer cancel()
 	if err := h.db.UpdateAccountNote(ctx, id, note); err != nil {
 		if errors.Is(err, sql.ErrNoRows) {
-			writeError(c, http.StatusNotFound, "账号不存在")
+			writeError(c, http.StatusNotFound, "Account not found")
 			return
 		}
 		writeError(c, http.StatusInternalServerError, "Failed to update note: "+err.Error())
@@ -6421,7 +6421,7 @@ func (h *Handler) UpdateAccountModelCooldownPolicy(c *gin.Context) {
 	}
 	acc := h.store.FindByID(id)
 	if acc == nil {
-		writeError(c, http.StatusNotFound, "账号不存在")
+		writeError(c, http.StatusNotFound, "Account not found")
 		return
 	}
 
@@ -6497,7 +6497,7 @@ func (h *Handler) UpdateAccountModelCooldownPolicy(c *gin.Context) {
 	defer cancel()
 	if err := h.db.UpdateCredentials(ctx, id, updates); err != nil {
 		if errors.Is(err, sql.ErrNoRows) {
-			writeError(c, http.StatusNotFound, "账号不存在")
+			writeError(c, http.StatusNotFound, "Account not found")
 			return
 		}
 		writeError(c, http.StatusInternalServerError, "Failed to save model cooldown policy: "+err.Error())
@@ -6524,7 +6524,7 @@ func (h *Handler) ClearAccountModelCooldown(c *gin.Context) {
 	}
 	acc := h.store.FindByID(id)
 	if acc == nil {
-		writeError(c, http.StatusNotFound, "账号不存在")
+		writeError(c, http.StatusNotFound, "Account not found")
 		return
 	}
 	model := strings.TrimSpace(c.Param("model"))
@@ -6544,7 +6544,7 @@ func (h *Handler) ClearAllAccountModelCooldowns(c *gin.Context) {
 	}
 	acc := h.store.FindByID(id)
 	if acc == nil {
-		writeError(c, http.StatusNotFound, "账号不存在")
+		writeError(c, http.StatusNotFound, "Account not found")
 		return
 	}
 	c.JSON(http.StatusOK, gin.H{
@@ -7728,7 +7728,7 @@ func (h *Handler) CreateAPIKey(c *gin.Context) {
 		quotaLimit = *req.QuotaLimit
 	}
 	if quotaLimit < 0 {
-		writeError(c, http.StatusBadRequest, "额度限制不能小于 0")
+		writeError(c, http.StatusBadRequest, "Quota limit cannot be less than 0")
 		return
 	}
 	if quotaLimit > 1000000000 {
@@ -7889,7 +7889,7 @@ func (h *Handler) UpdateAPIKey(c *gin.Context) {
 	row, err := h.db.GetAPIKeyByID(ctx, id)
 	if err != nil {
 		if errors.Is(err, sql.ErrNoRows) {
-			writeError(c, http.StatusNotFound, "API Key 不存在")
+			writeError(c, http.StatusNotFound, "API key not found")
 			return
 		}
 		writeInternalError(c, err)
@@ -7987,7 +7987,7 @@ func (h *Handler) UpdateAPIKey(c *gin.Context) {
 	if update.LimitsSet {
 		savedLimits = update.Limits
 	}
-	c.JSON(http.StatusOK, gin.H{"message": "API Key 已更新", "limits": savedLimits})
+	c.JSON(http.StatusOK, gin.H{"message": "API key updated", "limits": savedLimits})
 }
 
 // sanitizeAPIKeyLimits normalizes the limits from the request body: negative values are set to 0, blank model names are filtered out, and strings are lowercased.
@@ -8194,7 +8194,7 @@ func parseOptionalAPIKeyQuota(quotaLimitRaw, quotaRaw json.RawMessage) (float64,
 		return 0, true, fmt.Errorf("quota limit must be a number")
 	}
 	if value < 0 {
-		return 0, true, fmt.Errorf("额度限制不能小于 0")
+		return 0, true, fmt.Errorf("Quota limit cannot be less than 0")
 	}
 	return value, true, nil
 }
@@ -8282,7 +8282,7 @@ func (h *Handler) DeleteAPIKey(c *gin.Context) {
 		h.store.RemovePromptFilterNewAPIBinding(id)
 	}
 	h.invalidateAPIKeyRuntimeCaches(ctx, keyToInvalidate)
-	writeMessage(c, http.StatusOK, "已删除")
+	writeMessage(c, http.StatusOK, "Deleted")
 }
 
 // ==================== Settings ====================
@@ -11379,7 +11379,7 @@ func (h *Handler) GetAccountAuthJSON(c *gin.Context) {
 	row, err := h.db.GetAccountByID(ctx, id)
 	if err != nil {
 		if errors.Is(err, sql.ErrNoRows) {
-			writeError(c, http.StatusNotFound, "账号不存在")
+			writeError(c, http.StatusNotFound, "Account not found")
 			return
 		}
 		writeError(c, http.StatusInternalServerError, "Failed to query account: "+err.Error())
@@ -11910,7 +11910,7 @@ func (h *Handler) runCleanAccounts(ctx context.Context, targets []*auth.Account,
 					Total:   total,
 					Success: success,
 					Failed:  fail,
-					Error:   "账号不存在",
+					Error:   "Account not found",
 				})
 			}
 			continue

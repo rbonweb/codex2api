@@ -138,5 +138,5 @@ func (h *Handler) DeleteQualityTestPrompt(c *gin.Context) {
 		c.JSON(http.StatusInternalServerError, gin.H{"error": "Failed to delete the prompt preset"})
 		return
 	}
-	c.JSON(http.StatusOK, gin.H{"message": "已删除"})
+	c.JSON(http.StatusOK, gin.H{"message": "Deleted"})
 }
