@@ -7,7 +7,7 @@ import (
 	"github.com/codex2api/api"
 )
 
-// ResponsesContinuationLostError 表示连接内续链状态已失效；不能携带旧 ID 重拨。
+// ResponsesContinuationLostError indicates that the in-connection continuation state has become invalid; it must not redial carrying the old ID.
 type ResponsesContinuationLostError struct {
 	Reason string
 }

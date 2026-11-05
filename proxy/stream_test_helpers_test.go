@@ -16,8 +16,8 @@ func writeCodexSSE(w http.ResponseWriter, events ...string) {
 	}
 }
 
-// shortenDownstreamSSEKeepalive 把下游保活间隔压到毫秒级，让处理器级测试
-// 能在上游几十毫秒的静默里观察到心跳；测试结束恢复默认值。
+// shortenDownstreamSSEKeepalive shortens the downstream keepalive interval to the millisecond range, so handler-level tests
+// can observe heartbeats during upstream silences of tens of milliseconds; the default is restored when the test ends.
 func shortenDownstreamSSEKeepalive(t *testing.T) {
 	t.Helper()
 	previousSSEInterval := downstreamSSEKeepaliveInterval

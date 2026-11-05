@@ -21,10 +21,10 @@ func TestDetectUltraModeFromBody(t *testing.T) {
 		{"no marker", `{"model":"gpt-6-astra","input":[` + ultraTestUserMsg + `]}`, ultraModeUnknown},
 		{"active", `{"input":[` + ultraTestUserMsg + `,` + ultraTestActiveMsg + `,` + ultraTestUserMsg + `]}`, ultraModeOn},
 		{"off only", `{"input":[` + ultraTestOffMsg + `,` + ultraTestUserMsg + `]}`, ultraModeOff},
-		// 历史里先开后关:以最后一条为准(实测 Max 回合会带 OFF→ACTIVE→OFF 三条)。
+		// Within history, on then off: the last one wins (measured: a Max turn carries three entries OFF→ACTIVE→OFF).
 		{"last wins off", `{"input":[` + ultraTestOffMsg + `,` + ultraTestActiveMsg + `,` + ultraTestOffMsg + `]}`, ultraModeOff},
 		{"last wins on", `{"input":[` + ultraTestOffMsg + `,` + ultraTestActiveMsg + `]}`, ultraModeOn},
-		// 用户消息里出现同样文字不算:只认 developer 角色。
+		// The same text in a user message does not count: only the developer role is recognized.
 		{"user quoting marker", `{"input":[{"type":"message","role":"user","content":[{"type":"input_text","text":"<multi_agent_mode>Proactive multi-agent delegation is active</multi_agent_mode>"}]}]}`, ultraModeUnknown},
 		{"string content", `{"input":[{"role":"developer","content":"<multi_agent_mode>Proactive multi-agent delegation is active</multi_agent_mode>"}]}`, ultraModeOn},
 		{"input not array", `{"input":"<multi_agent_mode>Proactive multi-agent delegation is active</multi_agent_mode>"}`, ultraModeUnknown},
@@ -47,17 +47,17 @@ func TestResolveRequestUltraModeInheritsWithinTurn(t *testing.T) {
 	if !resolveRequestUltraMode(nil, []byte(first)) {
 		t.Fatal("first frame with active marker should be ultra")
 	}
-	// 续接帧:只有工具输出、没有历史,靠 turn_id 继承。
+	// Continuation frame: only tool output and no history, so it inherits via turn_id.
 	continuation := `{"input":[{"type":"custom_tool_call_output","call_id":"c1","output":"ok"}],"previous_response_id":"resp_1","client_metadata":{"turn_id":"turn-ultra"}}`
 	if !resolveRequestUltraMode(nil, []byte(continuation)) {
 		t.Fatal("continuation frame in the same turn should inherit ultra")
 	}
-	// 另一个回合的续接帧不能串。
+	// A continuation frame from another turn must not leak across.
 	other := `{"input":[{"type":"custom_tool_call_output","call_id":"c2","output":"ok"}],"previous_response_id":"resp_2","client_metadata":{"turn_id":"turn-other"}}`
 	if resolveRequestUltraMode(nil, []byte(other)) {
 		t.Fatal("unknown turn without marker must not be ultra")
 	}
-	// 同回合后来明确关闭 → 覆盖缓存。
+	// Explicitly turned off later in the same turn → overwrites the cache.
 	off := `{"input":[` + ultraTestActiveMsg + `,` + ultraTestOffMsg + `],"client_metadata":{"turn_id":"turn-ultra"}}`
 	if resolveRequestUltraMode(nil, []byte(off)) {
 		t.Fatal("explicit off marker should win")
@@ -65,7 +65,7 @@ func TestResolveRequestUltraModeInheritsWithinTurn(t *testing.T) {
 	if resolveRequestUltraMode(nil, []byte(continuation)) {
 		t.Fatal("continuation after explicit off should not be ultra")
 	}
-	// 没有 turn_id 的续接帧不做任何继承。
+	// A continuation frame without turn_id does no inheritance at all.
 	noTurn := `{"input":[{"type":"custom_tool_call_output","call_id":"c3","output":"ok"}],"previous_response_id":"resp_3"}`
 	if resolveRequestUltraMode(nil, []byte(noTurn)) {
 		t.Fatal("frame without turn id must not inherit")

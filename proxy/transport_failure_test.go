@@ -13,7 +13,7 @@ func TestClassifyTransportFailureWsBusyAcquire(t *testing.T) {
 	}
 }
 
-// "timed out" 文案（如容量等待超时）应归为 timeout 而不是笼统的 transport。
+// The "timed out" message (such as a capacity wait timeout) should be classified as timeout, not the generic transport.
 func TestClassifyTransportFailureTimedOutPhrase(t *testing.T) {
 	err := errors.New("acquire websocket connection timed out after 30s waiting for account connection capacity")
 	if got := classifyTransportFailure(err); got != "timeout" {
@@ -57,7 +57,7 @@ func TestClassifyTransportFailureKeepsStructuredTransportCauses(t *testing.T) {
 }
 
 func TestClassifyTransportFailureUnwrapsStatuslessUpstreamDoFailure(t *testing.T) {
-	err := ErrUpstream(0, "请求 OpenAI Responses API 失败", errors.New("EOF"))
+	err := ErrUpstream(0, "request to OpenAI Responses API failed", errors.New("EOF"))
 	if got := classifyTransportFailure(err); got != "transport" {
 		t.Fatalf("classifyTransportFailure = %q, want transport for status-less Do failure", got)
 	}

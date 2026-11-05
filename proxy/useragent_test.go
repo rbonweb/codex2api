@@ -120,7 +120,7 @@ func TestCodexUserAgentConfigRawOverrideWithoutVersionDoesNotSynthesizeVersion(t
 	}
 }
 
-// raw UA 原样覆盖，不改写版本段。
+// A raw UA overrides as is and does not rewrite the version segment.
 func TestCodexUserAgentConfigRawOverridePreservesVersionSegments(t *testing.T) {
 	prev := CurrentRuntimeSettings()
 	t.Cleanup(func() { ApplyRuntimeSettings(prev) })
@@ -145,7 +145,7 @@ func TestCodexUserAgentConfigRawOverridePreservesVersionSegments(t *testing.T) {
 	}
 }
 
-// 同步版本不覆盖手填的 raw UA。
+// A synced version does not override a hand-entered raw UA.
 func TestCodexUserAgentConfigRawOverrideIgnoresSyncedVersion(t *testing.T) {
 	prev := CurrentRuntimeSettings()
 	t.Cleanup(func() { ApplyRuntimeSettings(prev) })
@@ -169,7 +169,7 @@ func TestCodexUserAgentConfigRawOverrideIgnoresSyncedVersion(t *testing.T) {
 	}
 }
 
-// raw UA 钉了高于生效版本的版本号时保留(版本抬升绝不降级)。
+// A raw UA that pins a version number above the effective version is kept (version bumps never downgrade).
 func TestCodexUserAgentConfigRawOverrideKeepsAheadPin(t *testing.T) {
 	prev := CurrentRuntimeSettings()
 	t.Cleanup(func() { ApplyRuntimeSettings(prev) })
@@ -193,7 +193,7 @@ func TestCodexUserAgentConfigRawOverrideKeepsAheadPin(t *testing.T) {
 	}
 }
 
-// raw UA 不受自动版本门槛约束。
+// A raw UA is not subject to the automatic version threshold.
 func TestCodexUserAgentConfigRawOverrideIgnoresVersionFloor(t *testing.T) {
 	prev := CurrentRuntimeSettings()
 	t.Cleanup(func() { ApplyRuntimeSettings(prev) })
@@ -276,9 +276,9 @@ func TestIsCodexStrictOfficialClientByHeaders(t *testing.T) {
 }
 
 func TestCodexUserAgentConfigAllowsSpacedClientName(t *testing.T) {
-	// issue #653：ChatGPT 桌面端的 originator 是 "Codex Desktop"，客户端名必须允许空格；
-	// 首尾空白与内部连续空白折叠成单个空格。手填的名字会推断为桌面端形态，
-	// 末尾标记取目录里最新的桌面端构建号 26.930.51102，CLI 版本沿用手填值。
+	// issue #653: the ChatGPT desktop app's originator is "Codex Desktop", so the client name must allow spaces;
+	// leading and trailing whitespace and internal runs of whitespace collapse into a single space. A hand-entered name is inferred to be the desktop kind,
+	// the trailing marker takes the latest desktop build number 26.930.51102 from the catalog, and the CLI version keeps the hand-entered value.
 	raw := `{"client_name":"  Codex \t  Desktop ","client_version":"0.153.3","os_name":"Windows","os_version":"10.0.26100","arch":"x86_64","terminal":"unknown"}`
 	normalized, err := NormalizeCodexUserAgentConfigJSON(raw)
 	if err != nil {
@@ -314,7 +314,7 @@ func TestCodexUserAgentConfigRejectsStructuralCharacters(t *testing.T) {
 		{"client_name paren", `{"client_name":"Codex (Desktop)"}`},
 		{"client_name semicolon", `{"client_name":"Codex;Desktop"}`},
 		{"client_name control", `{"client_name":"Codex\u0001Desktop"}`},
-		// arch/terminal 仍是单 token：真实值（x86_64、WindowsTerminal、vscode/1.100.0）从不含空格。
+		// arch/terminal are still single tokens: real values (x86_64, WindowsTerminal, vscode/1.100.0) never contain spaces.
 		{"arch space", `{"arch":"x86 64"}`},
 		{"terminal space", `{"terminal":"Windows Terminal"}`},
 	}
@@ -337,7 +337,7 @@ func TestCodexOriginatorForGeneratedUserAgent(t *testing.T) {
 		{"codex-tui/0.153.3 (Mac OS 15.5.0; arm64) xterm-256color (codex-tui; 0.153.3)", "codex-tui"},
 		{"codex_cli_rs/0.150.0 (Mac OS 15.5.0; arm64) Apple_Terminal/464", "codex_cli_rs"},
 		{"opencode/1.2.3 (Linux Unknown; x86_64) xterm-256color", "opencode"},
-		// 非官方前缀 / 无法识别的形状回退到默认 Originator。
+		// Non-official prefixes and unrecognized shapes fall back to the default Originator.
 		{"my-router", Originator},
 		{"my-router/1.0 (custom)", Originator},
 		{"Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36", Originator},
@@ -351,7 +351,7 @@ func TestCodexOriginatorForGeneratedUserAgent(t *testing.T) {
 	}
 }
 
-// codexUserAgentFromConfig 是测试辅助：忽略版本不可用错误，只断言生成结果。
+// codexUserAgentFromConfig is a test helper: it ignores version-unavailable errors and only asserts the generated result.
 func codexUserAgentFromConfig(raw string, accountID int64, versionFloor string) (string, string, bool) {
 	ua, version, ok, _ := codexUserAgentFromConfigChecked(raw, accountID, versionFloor)
 	return ua, version, ok

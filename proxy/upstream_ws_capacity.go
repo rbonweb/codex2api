@@ -7,7 +7,7 @@ import (
 
 const ErrorCodeUpstreamWSConnectionCapacity = "upstream_ws_connection_capacity_exceeded"
 
-// UpstreamWSConnectionCapacityError 是本地连接容量拒绝，不是上游账号故障。
+// UpstreamWSConnectionCapacityError is a local connection capacity rejection, not an upstream account failure.
 type UpstreamWSConnectionCapacityError struct {
 	Limit int
 }

@@ -162,12 +162,12 @@ func validateCodexRelayResponsesCompatibility(rawBody []byte) *api.APIError {
 	}
 	return api.NewAPIErrorWithDetails(
 		api.ErrCodeUnsupportedFeature,
-		"请求包含当前 Codex relay 无法原样保留的 Responses 字段",
+		"the request contains Responses fields that the current Codex relay cannot preserve as-is",
 		api.ErrorTypeInvalidRequest,
 		map[string]any{
 			"transport": "codex-relay",
 			"fields":    issues,
-			"hint":      "移除这些字段，或使用支持原生 Responses 的上游配置",
+			"hint":      "remove these fields, or use an upstream configuration that supports native Responses",
 		},
 	)
 }

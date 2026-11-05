@@ -80,7 +80,7 @@ func TestRateLimiterTracksTrafficWhenLimitDisabled(t *testing.T) {
 func TestTokenBucket_BasicAllow(t *testing.T) {
 	tb := newTokenBucket(60) // 60 RPM = 1 RPS
 
-	// 初始应该允许
+	// should be allowed initially
 	if !tb.allow() {
 		t.Error("Expected first allow to succeed")
 	}
@@ -89,7 +89,7 @@ func TestTokenBucket_BasicAllow(t *testing.T) {
 func TestTokenBucket_RateLimiting(t *testing.T) {
 	tb := newTokenBucket(60) // 60 RPM = 1 RPS
 
-	// 快速消耗所有令牌
+	// quickly consume all tokens
 	allowed := 0
 	for i := 0; i < 70; i++ {
 		if tb.allow() {
@@ -97,7 +97,7 @@ func TestTokenBucket_RateLimiting(t *testing.T) {
 		}
 	}
 
-	// 应该只允许约60个（初始桶大小）
+	// should only allow about 60 (the initial bucket size)
 	if allowed < 50 || allowed > 65 {
 		t.Errorf("Expected ~60 allowed, got %d", allowed)
 	}
@@ -106,15 +106,15 @@ func TestTokenBucket_RateLimiting(t *testing.T) {
 func TestTokenBucket_Refill(t *testing.T) {
 	tb := newTokenBucket(60) // 60 RPM = 1 RPS
 
-	// 消耗一些令牌
+	// consume some tokens
 	for i := 0; i < 10; i++ {
 		tb.allow()
 	}
 
-	// 等待补充
+	// wait for a refill
 	time.Sleep(2 * time.Second)
 
-	// 应该能获取新令牌
+	// should be able to get new tokens
 	if !tb.allow() {
 		t.Error("Expected token refill after wait")
 	}
@@ -123,14 +123,14 @@ func TestTokenBucket_Refill(t *testing.T) {
 func TestTokenBucket_UpdateRPM(t *testing.T) {
 	tb := newTokenBucket(60)
 
-	// 更新到更高的RPM
+	// update to a higher RPM
 	tb.updateRPM(120)
 
 	if tb.maxTokens != 120 {
 		t.Errorf("Expected maxTokens=120, got %f", tb.maxTokens)
 	}
 
-	// 更新到0（禁用）
+	// update to 0 (disabled)
 	tb.updateRPM(0)
 	if tb.maxTokens != 0 {
 		t.Errorf("Expected maxTokens=0, got %f", tb.maxTokens)
@@ -140,12 +140,12 @@ func TestTokenBucket_UpdateRPM(t *testing.T) {
 func TestTokenBucket_AllowN(t *testing.T) {
 	tb := newTokenBucket(60)
 
-	// 请求5个令牌
+	// request 5 tokens
 	if !tb.allowN(5) {
 		t.Error("Expected allowN(5) to succeed")
 	}
 
-	// 请求超过剩余令牌数
+	// request more than the remaining tokens
 	if tb.allowN(100) {
 		t.Error("Expected allowN(100) to fail after consuming 5")
 	}
@@ -163,7 +163,7 @@ func TestTokenBucket_Concurrent(t *testing.T) {
 			defer wg.Done()
 			for j := 0; j < 10; j++ {
 				if tb.allow() {
-					// 使用原子操作
+					// use atomic operations
 					atomic.AddInt64(&allowed, 1)
 				}
 			}
@@ -171,7 +171,7 @@ func TestTokenBucket_Concurrent(t *testing.T) {
 	}
 
 	wg.Wait()
-	// 主要验证无竞态条件
+	// mainly verifies there are no race conditions
 }
 
 // ============ Cooldown Manager Tests ============
@@ -183,7 +183,7 @@ func TestCooldownManager_Basic(t *testing.T) {
 		t.Error("Expected no cooldown initially")
 	}
 
-	// 进入冷却
+	// enter cooldown
 	duration := cm.enterCooldown()
 	if duration <= 0 {
 		t.Error("Expected positive cooldown duration")
@@ -193,7 +193,7 @@ func TestCooldownManager_Basic(t *testing.T) {
 		t.Error("Expected to be in cooldown after entering")
 	}
 
-	// 验证等级增加
+	// verify the level increases
 	level, _, _ := cm.getState()
 	if level != 0 {
 		t.Errorf("Expected level=0, got %d", level)
@@ -212,9 +212,9 @@ func TestCooldownManager_ExponentialBackoff(t *testing.T) {
 
 	for i, expected := range expectedDurations {
 		cm.reset()
-		// 模拟多次进入冷却以达到第i级
-		// 每次 enterCooldown 会先调用 computeCooldown，level 会增加
-		// 所以为了达到 level i，我们需要调用 i 次
+		// simulate entering cooldown several times to reach level i
+		// each enterCooldown first calls computeCooldown, which increases the level
+		// so to reach level i we need to call it i times
 		for j := 0; j < i; j++ {
 			cm.enterCooldown()
 		}
@@ -232,7 +232,7 @@ func TestCooldownManager_ExponentialBackoff(t *testing.T) {
 func TestCooldownManager_MaxLevel(t *testing.T) {
 	cm := newCooldownManager()
 
-	// 尝试超过最大等级
+	// try to exceed the maximum level
 	for i := 0; i < len(cooldownDurations)+10; i++ {
 		cm.enterCooldown()
 	}
@@ -247,13 +247,13 @@ func TestCooldownManager_MaxLevel(t *testing.T) {
 func TestCooldownManager_Reset(t *testing.T) {
 	cm := newCooldownManager()
 
-	// 进入冷却
+	// enter cooldown
 	cm.enterCooldown()
 	if !cm.isInCooldown() {
 		t.Fatal("Expected to be in cooldown")
 	}
 
-	// 重置
+	// reset
 	cm.reset()
 	if cm.isInCooldown() {
 		t.Error("Expected no cooldown after reset")
@@ -268,14 +268,14 @@ func TestCooldownManager_Reset(t *testing.T) {
 func TestCooldownManager_Remaining(t *testing.T) {
 	cm := newCooldownManager()
 
-	// 进入短冷却
+	// enter a short cooldown
 	cm.enterCooldown()
 	remaining := cm.getRemainingCooldown()
 	if remaining <= 0 {
 		t.Error("Expected positive remaining cooldown")
 	}
 
-	// 重置后应该为0
+	// should be 0 after reset
 	cm.reset()
 	remaining = cm.getRemainingCooldown()
 	if remaining != 0 {
@@ -288,12 +288,12 @@ func TestCooldownManager_Remaining(t *testing.T) {
 func TestLevelLimiter_Basic(t *testing.T) {
 	ll := newLevelLimiter("test", LevelGlobal, 60)
 
-	// 应该允许请求
+	// should allow the request
 	if !ll.allow() {
 		t.Error("Expected allow to succeed")
 	}
 
-	// 检查指标
+	// check the metrics
 	metrics := ll.getMetrics()
 	if metrics.TotalRequests != 1 {
 		t.Errorf("Expected TotalRequests=1, got %d", metrics.TotalRequests)
@@ -304,24 +304,24 @@ func TestLevelLimiter_Basic(t *testing.T) {
 }
 
 func TestLevelLimiter_Cooldown(t *testing.T) {
-	ll := newLevelLimiter("test", LevelGlobal, 1) // 1 RPM，容易触发限流
+	ll := newLevelLimiter("test", LevelGlobal, 1) // 1 RPM, easy to trigger the rate limit
 
-	// 第一个请求应该通过
+	// the first request should pass
 	if !ll.allow() {
 		t.Error("Expected first allow to succeed")
 	}
 
-	// 第二个请求应该触发冷却
+	// the second request should trigger cooldown
 	if ll.allow() {
 		t.Error("Expected second allow to fail due to rate limit")
 	}
 
-	// 检查是否在冷却中
+	// check whether it is cooling down
 	if !ll.cooldown.isInCooldown() {
 		t.Error("Expected to be in cooldown")
 	}
 
-	// 冷却期间应该持续拒绝
+	// should keep rejecting during cooldown
 	if ll.allow() {
 		t.Error("Expected allow to fail during cooldown")
 	}
@@ -330,7 +330,7 @@ func TestLevelLimiter_Cooldown(t *testing.T) {
 func TestLevelLimiter_UpdateRPM(t *testing.T) {
 	ll := newLevelLimiter("test", LevelGlobal, 60)
 
-	// 更新RPM
+	// update RPM
 	ll.updateRPM(120)
 
 	metrics := ll.getMetrics()
@@ -338,7 +338,7 @@ func TestLevelLimiter_UpdateRPM(t *testing.T) {
 		t.Errorf("Expected LimitRPM=120, got %d", metrics.LimitRPM)
 	}
 
-	// 禁用
+	// disable
 	ll.updateRPM(0)
 	if !ll.allow() {
 		t.Error("Expected allow to succeed when disabled")
@@ -348,15 +348,15 @@ func TestLevelLimiter_UpdateRPM(t *testing.T) {
 func TestLevelLimiter_ResetCooldown(t *testing.T) {
 	ll := newLevelLimiter("test", LevelGlobal, 1)
 
-	// 触发冷却
+	// trigger cooldown
 	ll.allow()
-	ll.allow() // 触发限流
+	ll.allow() // trigger the rate limit
 
 	if !ll.cooldown.isInCooldown() {
 		t.Fatal("Expected to be in cooldown")
 	}
 
-	// 重置冷却
+	// reset cooldown
 	ll.resetCooldown()
 	if ll.cooldown.isInCooldown() {
 		t.Error("Expected cooldown to be reset")
@@ -366,7 +366,7 @@ func TestLevelLimiter_ResetCooldown(t *testing.T) {
 func TestLevelLimiter_Snapshot(t *testing.T) {
 	ll := newLevelLimiter("test-key", LevelAccount, 60)
 
-	// 触发一些请求
+	// trigger some requests
 	ll.allow()
 	ll.allow()
 
@@ -385,7 +385,7 @@ func TestLevelLimiter_Snapshot(t *testing.T) {
 func TestLevelLimiter_Metrics(t *testing.T) {
 	ll := newLevelLimiter("test", LevelGlobal, 60)
 
-	// 触发限流
+	// trigger the rate limit
 	for i := 0; i < 100; i++ {
 		ll.allow()
 	}
@@ -398,7 +398,7 @@ func TestLevelLimiter_Metrics(t *testing.T) {
 		t.Error("Expected positive BlockedRequests after triggering limit")
 	}
 
-	// 验证更新时间
+	// verify the update time
 	if metrics.LastUpdatedAt.IsZero() {
 		t.Error("Expected LastUpdatedAt to be set")
 	}
@@ -410,7 +410,7 @@ func TestEnhancedRateLimiter_Basic(t *testing.T) {
 	erl := NewEnhancedRateLimiter(nil, 100, 50, 30)
 	defer erl.Stop()
 
-	// 全局应该允许
+	// global should allow
 	if !erl.Allow() {
 		t.Error("Expected global allow to succeed")
 	}
@@ -420,7 +420,7 @@ func TestEnhancedRateLimiter_AllowWithContext(t *testing.T) {
 	erl := NewEnhancedRateLimiter(nil, 1000, 100, 50)
 	defer erl.Stop()
 
-	// 带上下文的请求
+	// request with context
 	if !erl.AllowWithContext("account1", "gpt-5.4") {
 		t.Error("Expected allow with context to succeed")
 	}
@@ -430,7 +430,7 @@ func TestEnhancedRateLimiter_MultiLevel(t *testing.T) {
 	erl := NewEnhancedRateLimiter(nil, 100, 10, 5)
 	defer erl.Stop()
 
-	// 快速触发账号级限流
+	// quickly trigger the account-level rate limit
 	account := "test-account"
 	allowed := 0
 	for i := 0; i < 20; i++ {
@@ -439,12 +439,12 @@ func TestEnhancedRateLimiter_MultiLevel(t *testing.T) {
 		}
 	}
 
-	// 应该有一些被限流
+	// some should be rate limited
 	if allowed >= 20 {
 		t.Error("Expected some requests to be rate limited")
 	}
 
-	// 检查账号级指标
+	// check account-level metrics
 	metrics := erl.GetAccountMetrics(account)
 	if metrics.TotalRequests == 0 {
 		t.Error("Expected non-zero TotalRequests for account")
@@ -455,19 +455,19 @@ func TestEnhancedRateLimiter_UpdateRPM(t *testing.T) {
 	erl := NewEnhancedRateLimiter(nil, 60, 30, 15)
 	defer erl.Stop()
 
-	// 更新全局RPM
+	// update global RPM
 	erl.UpdateGlobalRPM(120)
 	if erl.globalRPM != 120 {
 		t.Errorf("Expected globalRPM=120, got %d", erl.globalRPM)
 	}
 
-	// 更新账号RPM
+	// update account RPM
 	erl.UpdateAccountRPM(60)
 	if erl.accountRPM != 60 {
 		t.Errorf("Expected accountRPM=60, got %d", erl.accountRPM)
 	}
 
-	// 更新模型RPM
+	// update model RPM
 	erl.UpdateModelRPM(30)
 	if erl.modelRPM != 30 {
 		t.Errorf("Expected modelRPM=30, got %d", erl.modelRPM)
@@ -478,7 +478,7 @@ func TestEnhancedRateLimiter_UpdateAllRPM(t *testing.T) {
 	erl := NewEnhancedRateLimiter(nil, 60, 30, 15)
 	defer erl.Stop()
 
-	// 一次性更新所有
+	// update all at once
 	erl.UpdateAllRPM(120, 60, 30)
 
 	if erl.globalRPM != 120 {
@@ -496,30 +496,30 @@ func TestEnhancedRateLimiter_Metrics(t *testing.T) {
 	erl := NewEnhancedRateLimiter(nil, 100, 50, 25)
 	defer erl.Stop()
 
-	// 触发一些请求
+	// trigger some requests
 	for i := 0; i < 10; i++ {
 		erl.AllowWithContext("acc1", "model1")
 	}
 
-	// 获取全局指标
+	// get global metrics
 	globalMetrics := erl.GetGlobalMetrics()
 	if globalMetrics.TotalRequests == 0 {
 		t.Error("Expected non-zero global TotalRequests")
 	}
 
-	// 获取账号指标
+	// get account metrics
 	accMetrics := erl.GetAccountMetrics("acc1")
 	if accMetrics.TotalRequests == 0 {
 		t.Error("Expected non-zero account TotalRequests")
 	}
 
-	// 获取模型指标
+	// get model metrics
 	modelMetrics := erl.GetModelMetrics("model1")
 	if modelMetrics.TotalRequests == 0 {
 		t.Error("Expected non-zero model TotalRequests")
 	}
 
-	// 获取所有指标
+	// get all metrics
 	allMetrics := erl.GetAllMetrics()
 	if _, ok := allMetrics["global"]; !ok {
 		t.Error("Expected 'global' in all metrics")
@@ -536,7 +536,7 @@ func TestEnhancedRateLimiter_Snapshots(t *testing.T) {
 	erl := NewEnhancedRateLimiter(nil, 100, 50, 25)
 	defer erl.Stop()
 
-	// 创建一些限流器
+	// create some rate limiters
 	erl.AllowWithContext("acc1", "model1")
 	erl.AllowWithContext("acc2", "model2")
 
@@ -545,7 +545,7 @@ func TestEnhancedRateLimiter_Snapshots(t *testing.T) {
 		t.Error("Expected non-empty snapshots")
 	}
 
-	// 应该包含全局
+	// should include global
 	foundGlobal := false
 	for _, s := range snapshots {
 		if s.Level == "global" {
@@ -562,7 +562,7 @@ func TestEnhancedRateLimiter_Disabled(t *testing.T) {
 	erl := NewEnhancedRateLimiter(nil, 0, 0, 0)
 	defer erl.Stop()
 
-	// 禁用状态下应该总是允许
+	// should always allow when disabled
 	if !erl.Allow() {
 		t.Error("Expected allow to succeed when disabled")
 	}
@@ -577,7 +577,7 @@ func TestEnhancedRateLimiter_Concurrent(t *testing.T) {
 
 	var wg sync.WaitGroup
 
-	// 并发请求
+	// concurrent requests
 	for i := 0; i < 100; i++ {
 		wg.Add(1)
 		go func(idx int) {
@@ -592,7 +592,7 @@ func TestEnhancedRateLimiter_Concurrent(t *testing.T) {
 
 	wg.Wait()
 
-	// 验证指标
+	// verify metrics
 	metrics := erl.GetAllMetrics()
 	globalMetrics := metrics["global"].(LimitMetrics)
 	if globalMetrics.TotalRequests == 0 {
@@ -605,18 +605,18 @@ func TestEnhancedRateLimiter_Concurrent(t *testing.T) {
 func TestRateLimiter_BackwardCompatible(t *testing.T) {
 	rl := NewRateLimiter(60)
 
-	// 基本功能测试
+	// basic functionality test
 	if rl.GetRPM() != 60 {
 		t.Errorf("Expected RPM=60, got %d", rl.GetRPM())
 	}
 
-	// 更新RPM
+	// update RPM
 	rl.UpdateRPM(120)
 	if rl.GetRPM() != 120 {
 		t.Errorf("Expected RPM=120 after update, got %d", rl.GetRPM())
 	}
 
-	// 检查增强型限流器
+	// check the enhanced rate limiter
 	enhanced := rl.GetEnhancedLimiter()
 	if enhanced == nil {
 		t.Error("Expected non-nil enhanced limiter")
@@ -624,11 +624,11 @@ func TestRateLimiter_BackwardCompatible(t *testing.T) {
 }
 
 func TestRateLimiter_Middleware(t *testing.T) {
-	// 这里我们只测试中间件存在且不panic
-	// 完整测试需要Gin框架
+	// here we only test that the middleware exists and does not panic
+	// a full test needs the Gin framework
 	rl := NewRateLimiter(1000)
 	_ = rl.Middleware()
-	// 如果到这里没有panic，测试通过
+	// if it gets here without a panic, the test passes
 }
 
 // ============ ComputeCooldown Tests ============
@@ -643,7 +643,7 @@ func TestComputeCooldown(t *testing.T) {
 		{0, 2 * time.Second, 1},
 		{1, 4 * time.Second, 2},
 		{5, 64 * time.Second, 6},
-		{100, 1800 * time.Second, 11}, // 超过最大等级
+		{100, 1800 * time.Second, 11}, // exceeds the maximum level
 	}
 
 	for _, tt := range tests {

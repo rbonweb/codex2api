@@ -15,10 +15,10 @@ import (
 	"github.com/tidwall/sjson"
 )
 
-// ErrResponsesWSInterruptFinished 表示目标轮次已经终止，禁止把控制帧送入后续租约。
+// ErrResponsesWSInterruptFinished means the target turn has already ended; control frames must not be sent into later leases.
 var ErrResponsesWSInterruptFinished = errors.New("responses websocket interrupt target has finished")
 
-// ResponsesWSInterruptAckTimeout 限制控制帧确认等待时间，避免长期占用上游租约。
+// ResponsesWSInterruptAckTimeout limits how long a control frame acknowledgement may wait, so the upstream lease is not held for long.
 const ResponsesWSInterruptAckTimeout = 30 * time.Second
 
 type responsesWSInterruptContextKey struct{}
@@ -144,7 +144,7 @@ func validateResponsesWSEnvelopeFields(root gjson.Result) *api.APIError {
 	return apiErr
 }
 
-// RegisterResponsesWSInterrupt 仅绑定当前上游租约，不允许中断触发重连或请求重放。
+// RegisterResponsesWSInterrupt binds only the current upstream lease; an interrupt must not trigger a reconnect or a request replay.
 func RegisterResponsesWSInterrupt(ctx context.Context, send func([]byte) error) func() {
 	state := responsesWSInterruptFromContext(ctx)
 	if state == nil {
@@ -212,7 +212,7 @@ func (state *responsesWSInterruptState) interrupt(conn *websocket.Conn, raw []by
 	if state.send == nil {
 		return state.writeAck(conn, "interrupt_not_supported")
 	}
-	// stream_id 由网关路由，不能泄漏到上游单轮租约。
+	// stream_id is routed by the gateway and must not leak into the upstream single-turn lease.
 	payload, err := sjson.DeleteBytes(raw, "stream_id")
 	if err == nil {
 		payload, err = sjson.SetBytes(payload, "type", "response.interrupt")

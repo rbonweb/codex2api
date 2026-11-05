@@ -317,7 +317,7 @@ func TestResponsesWSReplaySourceIsLazyAndMemoized(t *testing.T) {
 	}
 }
 
-// 逃生阀：默认 fail-closed；显式打开后剥 id 硬发，input 原样保留。
+// Escape valve: fail-closed by default; when explicitly enabled, strip the id and send anyway, keeping input as is.
 func TestResponsesWSContinuationFailOpenEscapeHatch(t *testing.T) {
 	resetResponseCacheForTest()
 	t.Cleanup(resetResponseCacheForTest)
@@ -335,8 +335,8 @@ func TestResponsesWSContinuationFailOpenEscapeHatch(t *testing.T) {
 	}
 }
 
-// on_demand 下 WS 根轮凭 store 信号取得写入资格：store:false（Codex CLI 全量
-// 上下文）不写，未声明或 true 的会话从根轮起入缓存，后续降级才有祖先可用。
+// Under on_demand, a WS root turn gets write eligibility from the store signal: store:false (Codex CLI full
+// context) does not write; sessions that leave it undeclared or set it to true enter the cache from the root turn, so a later degrade has an ancestor to use.
 func TestResponsesWSContextOnDemandBootstrapsFromStoreSignal(t *testing.T) {
 	gin.SetMode(gin.TestMode)
 	cacheConfig := defaultResponseCacheConfig()
@@ -376,8 +376,8 @@ func TestResponsesWSContextOnDemandBootstrapsFromStoreSignal(t *testing.T) {
 			t.Fatalf("unexpected terminal: %s", terminal)
 		}
 	}
-	// 缓存写入发生在终态帧写给客户端之后；帧循环是串行的，所以上一轮的写入
-	// 决定在下一轮终态到达时必然已经落定，断言按这个顺序排。
+	// Cache writes happen after the terminal frame is written to the client; the frame loop is serial, so the previous turn's write
+	// is always settled by the time the next turn's terminal frame arrives, so the assertions are ordered this way.
 	send(`{"type":"response.create","model":"gpt-5.5","store":false,"input":[{"type":"message","role":"user","content":"full context every turn"}]}`)
 	send(`{"type":"response.create","model":"gpt-5.5","input":[{"type":"message","role":"user","content":"incremental root"}]}`)
 	if getResponseCache("anon", "resp_1") != nil {

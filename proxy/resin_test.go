@@ -5,7 +5,7 @@ import (
 )
 
 func TestBuildReverseProxyURL(t *testing.T) {
-	// 保存并恢复原始配置
+	// save and restore the original config
 	old := resinCfg.Load()
 	defer func() { resinCfg.Store(old) }()
 
@@ -91,19 +91,19 @@ func TestIsResinEnabled(t *testing.T) {
 	old := resinCfg.Load()
 	defer func() { resinCfg.Store(old) }()
 
-	// 禁用状态
+	// disabled state
 	SetResinConfig(nil)
 	if IsResinEnabled() {
 		t.Fatal("expected Resin disabled when config is nil")
 	}
 
-	// 空 URL
+	// empty URL
 	SetResinConfig(&ResinConfig{BaseURL: "", PlatformName: "test"})
 	if IsResinEnabled() {
 		t.Fatal("expected Resin disabled when BaseURL is empty")
 	}
 
-	// 启用状态
+	// enabled state
 	SetResinConfig(&ResinConfig{BaseURL: "http://localhost:2260/tk", PlatformName: "test"})
 	if !IsResinEnabled() {
 		t.Fatal("expected Resin enabled")

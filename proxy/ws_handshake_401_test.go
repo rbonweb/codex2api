@@ -18,10 +18,10 @@ import (
 	"github.com/codex2api/database"
 )
 
-// WS 上游握手 401 经 wsrelay 还原成真实状态码响应后，Responses 主链路必须
-// 走既有非 2xx 分支：usage log 记 401、账号按 unauthorized 冷却、对下游按
-// issue #323 约定改写为 503 account_pool_unauthorized（而不是把 401 埋进
-// transport/598）。
+// After a WS upstream handshake 401 is converted by wsrelay back into a real status-code response, the Responses main path must
+// take the existing non-2xx branch: the usage log records 401, the account is put in cooldown as unauthorized, and downstream is
+// rewritten to 503 account_pool_unauthorized per the issue #323 convention (instead of hiding the 401 under
+// transport/598).
 func TestResponsesWebsocketHandshake401CoolsAccountAndLogs401(t *testing.T) {
 	gin.SetMode(gin.TestMode)
 
@@ -35,7 +35,7 @@ func TestResponsesWebsocketHandshake401CoolsAccountAndLogs401(t *testing.T) {
 	t.Cleanup(func() { WebsocketExecuteFunc = previousWS })
 	upstreamBody := `{"error":{"message":"Provided authentication token is expired. Please try signing in again.","type":"invalid_request_error","code":"token_expired"}}`
 	WebsocketExecuteFunc = func(ctx context.Context, account *auth.Account, requestBody []byte, sessionID string, proxyOverride string, apiKey string, deviceCfg *DeviceProfileConfig, headers http.Header, poolRouteKey string) (*http.Response, error) {
-		// 模拟 wsrelay.ExecuteRequestWebsocket 对握手 401 的转换产物。
+		// Simulates the result of wsrelay.ExecuteRequestWebsocket converting a handshake 401.
 		return &http.Response{
 			StatusCode: http.StatusUnauthorized,
 			Status:     "401 Unauthorized",
@@ -70,9 +70,9 @@ func TestResponsesWebsocketHandshake401CoolsAccountAndLogs401(t *testing.T) {
 
 	handler.Responses(ctx)
 
-	// 下游收到 503 池级错误，而不是裸 401（issue #323 语义：上游账号 401 是
-	// 账号侧问题，不能让下游误判自己的 key 失效）。具体 code 取决于收尾路径
-	// （重试耗尽 vs 无可用账号），两者都可接受。
+	// Downstream receives a 503 pool-level error, not a bare 401 (issue #323 semantics: an upstream account 401 is
+	// an account-side problem and must not make downstream think its own key is invalid). The exact code depends on the wrap-up path
+	// (retries exhausted vs no account available); both are acceptable.
 	if recorder.Code != http.StatusServiceUnavailable {
 		t.Fatalf("downstream status = %d, want 503; body=%s", recorder.Code, recorder.Body.String())
 	}
@@ -80,12 +80,12 @@ func TestResponsesWebsocketHandshake401CoolsAccountAndLogs401(t *testing.T) {
 		t.Fatalf("downstream error.code = %q, want pool-level error; body=%s", code, recorder.Body.String())
 	}
 
-	// 账号必须按 unauthorized 处置（禁用/冷却），不能留在调度池里被反复拨号。
+	// The account must be handled as unauthorized (disabled or cooling down) and must not stay in the scheduling pool where it keeps being dialed.
 	if account.IsAvailable() {
 		t.Fatal("account should be disabled/cooled down after handshake 401")
 	}
 
-	// usage log 必须出现真实的 401 行（原缺陷：只会记成 598/transport 或被静默吞掉）。
+	// The usage log must contain a real 401 row (the original defect: it was only recorded as 598/transport or silently dropped).
 	deadline := time.Now().Add(5 * time.Second)
 	for {
 		logs, err := db.ListUsageLogsByTimeRange(context.Background(), time.Now().Add(-time.Hour), time.Now().Add(time.Hour))

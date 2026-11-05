@@ -9,28 +9,28 @@ func TestWebsocketSizeRouterLearnsAndRoutes(t *testing.T) {
 	var r websocketSizeRouter
 
 	if r.PreferHTTP(10 * 1024 * 1024) {
-		t.Fatal("未学习任何样本时不应改路 HTTP")
+		t.Fatal("without any learned sample, requests should not be rerouted to HTTP")
 	}
 
 	r.RecordMessageTooBig(400 * 1024)
 	if !r.PreferHTTP(400 * 1024) {
-		t.Fatal("达到已知失败体积的请求应改路 HTTP")
+		t.Fatal("a request reaching the known failing size should be rerouted to HTTP")
 	}
 	if !r.PreferHTTP(390 * 1024) {
-		t.Fatal("余量内(95%)的请求应改路 HTTP")
+		t.Fatal("a request within the margin (95%) should be rerouted to HTTP")
 	}
 	if r.PreferHTTP(300 * 1024) {
-		t.Fatal("明显小于阈值的请求应继续走 WS")
+		t.Fatal("a request clearly below the threshold should keep using WS")
 	}
 
-	// 更小的失败样本收紧阈值;更大的不放宽
+	// A smaller failing sample tightens the threshold; a larger one does not loosen it
 	r.RecordMessageTooBig(350 * 1024)
 	if !r.PreferHTTP(340 * 1024) {
-		t.Fatal("更小的失败样本应收紧阈值")
+		t.Fatal("a smaller failing sample should tighten the threshold")
 	}
 	r.RecordMessageTooBig(900 * 1024)
 	if r.minTooBig != 350*1024 {
-		t.Fatalf("更大的失败样本不应放宽阈值, minTooBig=%d", r.minTooBig)
+		t.Fatalf("a larger failing sample should not loosen the threshold, minTooBig=%d", r.minTooBig)
 	}
 }
 
@@ -38,7 +38,7 @@ func TestWebsocketSizeRouterIgnoresTinySamples(t *testing.T) {
 	var r websocketSizeRouter
 	r.RecordMessageTooBig(wsSizeRouterMinSample - 1)
 	if r.PreferHTTP(10 * 1024 * 1024) {
-		t.Fatal("低于样本下限的 1009 不应参与学习")
+		t.Fatal("a 1009 below the sample floor should not take part in learning")
 	}
 }
 
@@ -47,10 +47,10 @@ func TestWebsocketSizeRouterExpiresLearnedThreshold(t *testing.T) {
 	r.RecordMessageTooBig(400 * 1024)
 	r.learnedAt = time.Now().Add(-wsSizeRouterTTL - time.Minute)
 	if r.PreferHTTP(500 * 1024) {
-		t.Fatal("过期的学习结果不应继续生效")
+		t.Fatal("an expired learned result should no longer apply")
 	}
 	if r.minTooBig != 0 {
-		t.Fatal("过期后应清空学习状态")
+		t.Fatal("learned state should be cleared after expiry")
 	}
 }
 
@@ -59,6 +59,6 @@ func TestWebsocketSizeRouterEnvEscapeHatch(t *testing.T) {
 	var r websocketSizeRouter
 	r.RecordMessageTooBig(400 * 1024)
 	if r.PreferHTTP(500 * 1024) {
-		t.Fatal("CODEX_WS_SIZE_ROUTER=off 时应保持旧行为")
+		t.Fatal("with CODEX_WS_SIZE_ROUTER=off the old behavior should be kept")
 	}
 }

@@ -202,7 +202,7 @@ func TestResponsesWSSessionPreemptKeySeparatesMemoryRequestKind(t *testing.T) {
 		t.Fatal("memory request kind did not keep a stable preemption key")
 	}
 
-	// 头里没有 turn 元数据时按请求体 client_metadata 内嵌的 request_kind 分道。
+	// When the header has no turn metadata, route by the request_kind embedded in the body's client_metadata.
 	bodyMemory := []byte(`{"model":"gpt-5.5","input":"hello","client_metadata":{"x-codex-turn-metadata":"{\"thread_id\":\"shared-session\",\"request_kind\":\"memory\"}"}}`)
 	if keyFor(newKindContext(""), bodyMemory).sessionHash == legacy.sessionHash {
 		t.Fatal("body-embedded request_kind=memory shares the user turn preemption key")

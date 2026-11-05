@@ -131,7 +131,6 @@ func TestTranslateRequestDropsMalformedToolCallHistoryAsPair(t *testing.T) {
 	}
 }
 
-
 func TestTranslateRequestRemainsCodexSafeWhenChatControlsPresent(t *testing.T) {
 	raw := []byte(`{"model":"gpt-5.4","messages":[{"role":"user","content":"hello"}],"temperature":0.25,"max_tokens":10,"stop":"END","tool_choice":"none"}`)
 	got, err := TranslateRequest(raw)
@@ -155,7 +154,7 @@ func TestResolveServiceTier(t *testing.T) {
 	if got := resolveServiceTier("default", "fast"); got != "default" {
 		t.Fatalf("expected actual default to win for logging, got %q", got)
 	}
-	// priority 是 fast 的同义词，入库归一化为 fast，便于 UI 徽章/筛选统一识别
+	// priority is a synonym of fast; it is normalized to fast on storage so the UI badge and filter recognize it uniformly
 	if got := resolveServiceTier("priority", ""); got != "fast" {
 		t.Fatalf("expected priority to normalize to fast, got %q", got)
 	}
@@ -168,7 +167,7 @@ func TestResolveServiceTier(t *testing.T) {
 	if got := resolveServiceTier("default", "priority"); got != "default" {
 		t.Fatalf("expected requested priority + upstream default to log actual default, got %q", got)
 	}
-	// flex / default 等其它 tier 保持原值
+	// Other tiers such as flex / default keep their original value
 	if got := resolveServiceTier("flex", ""); got != "flex" {
 		t.Fatalf("expected flex tier to be preserved, got %q", got)
 	}
@@ -365,7 +364,7 @@ func TestTranslateRequest_BridgesToolMessageImage(t *testing.T) {
 	if strings.Contains(out, "data:image") {
 		t.Fatalf("function_call_output leaked image: %q", out)
 	}
-	// 定位带 input_image 的合成 user 消息（可能不是第一条 user 消息）。
+	// Find the synthetic user message that carries input_image (it may not be the first user message).
 	var found bool
 	for _, item := range gjson.GetBytes(got, "input").Array() {
 		if item.Get("role").String() != "user" {
@@ -402,7 +401,7 @@ func TestTranslateRequest_ToolMessageWithoutImageUnchanged(t *testing.T) {
 	if out != "plain string result" {
 		t.Fatalf("function_call_output.output = %q, want unchanged string", out)
 	}
-	// tool 消息无图片时不产生合成 user 消息（只有原始的 assistant/function_call）。
+	// A tool message without images produces no synthetic user message (only the original assistant/function_call).
 	if gjson.GetBytes(got, `input.#(type=="message")#|#(role=="user")`).Exists() {
 		t.Fatalf("unexpected synthesized user message; body=%s", got)
 	}
@@ -496,8 +495,8 @@ func TestTranslateRequest_DropsInvalidRequiredInToolSchema(t *testing.T) {
 	}
 }
 
-// 显式为 null 的 parameters.type 上游必拒。function 工具补成 object，
-// 非 function 工具至少要把 null 摘掉（坏 schema 沉进多轮历史会每轮必 400）。
+// Upstream always rejects an explicit null parameters.type. Function tools get it filled in as object,
+// Non-function tools must at least have null removed (a bad schema sunk into multi-turn history would fail with 400 on every turn).
 func TestPrepareResponsesBodyFixesNullParametersType(t *testing.T) {
 	raw := []byte(`{
 		"model":"gpt-5.4",
@@ -520,7 +519,7 @@ func TestPrepareResponsesBodyFixesNullParametersType(t *testing.T) {
 	}
 }
 
-// 嵌套在 properties/items 里的 null type 同样要清掉。
+// A null type nested inside properties/items must be cleared as well.
 func TestPrepareResponsesBodyFixesNestedNullSchemaType(t *testing.T) {
 	raw := []byte(`{
 		"model":"gpt-5.4",
@@ -537,8 +536,8 @@ func TestPrepareResponsesBodyFixesNestedNullSchemaType(t *testing.T) {
 	}
 }
 
-// Responses Lite 把工具搬进 input[].additional_tools.tools[]，那里的坏 schema
-// 过去完全绕过顶层 tools[] 的全部修正直达上游。
+// Responses Lite moves tools into input[].additional_tools.tools[], and bad schemas there
+// used to bypass all fixes for the top-level tools[] and go straight upstream.
 func TestPrepareResponsesBodyNormalizesAdditionalToolsSchemas(t *testing.T) {
 	raw := []byte(`{
 		"model":"gpt-5.4",
@@ -568,7 +567,7 @@ func TestPrepareResponsesBodyNormalizesAdditionalToolsSchemas(t *testing.T) {
 	}
 }
 
-// 保留工具（collaboration.*）必须逐字透传，清洗不得碰它（issue #342）。
+// Reserved tools (collaboration.*) must pass through verbatim; sanitizing must not touch them (issue #342).
 func TestPrepareResponsesBodyLeavesReservedToolsUntouched(t *testing.T) {
 	raw := []byte(`{
 		"model":"gpt-5.4",
@@ -586,9 +585,9 @@ func TestPrepareResponsesBodyLeavesReservedToolsUntouched(t *testing.T) {
 	}
 }
 
-// additional_tools 里的工具常按 OpenAI SDK 惯例省掉顶层 type。补 type 的前置处理
-// 过去只跑在顶层 tools[]，于是这里的工具被判成非 function，parameters 只被摘掉
-// null 而拿不到 object 兜底，上游照旧回 `got 'type: "None"'`。
+// Tools in additional_tools often omit the top-level type, following the OpenAI SDK convention. The preprocessing that fills in type
+// used to run only on the top-level tools[], so tools here were judged non-function and parameters were only stripped
+// null and never got the object fallback, so upstream still returned `got 'type: "None"'`.
 func TestPrepareResponsesBodyNormalizesAdditionalToolsMissingType(t *testing.T) {
 	raw := []byte(`{
 		"model":"gpt-5.4",
@@ -620,8 +619,8 @@ func TestPrepareResponsesBodyNormalizesAdditionalToolsMissingType(t *testing.T) 
 	}
 }
 
-// additional_tools 里的 Chat 形态嵌套 function 子对象过去完全不摊平，坏 schema
-// 连同 function 子对象一起原样送到上游。
+// The nested function sub-object in Chat-shaped entries in additional_tools used to never be flattened, so the bad schema
+// was sent upstream as-is together with the function sub-object.
 func TestPrepareResponsesBodyFlattensAdditionalToolsNestedFunction(t *testing.T) {
 	raw := []byte(`{
 		"model":"gpt-5.4",
@@ -642,8 +641,8 @@ func TestPrepareResponsesBodyFlattensAdditionalToolsNestedFunction(t *testing.T)
 	}
 }
 
-// definitions 是 draft-07 的定义容器（pydantic v1、旧版 zod-to-json-schema 都生成
-// 它而不是 $defs）。递归下钻过去只认 $defs，藏在这里的坏 schema 全部放行。
+// definitions is the draft-07 definitions container (pydantic v1 and older zod-to-json-schema both generate
+// it rather than $defs). The recursive descent only recognized $defs, so bad schemas hidden here all passed through.
 func TestSanitizeSchemaRecursesIntoDefinitions(t *testing.T) {
 	raw := []byte(`{
 		"model":"gpt-5.4",
@@ -664,7 +663,7 @@ func TestSanitizeSchemaRecursesIntoDefinitions(t *testing.T) {
 	}
 }
 
-// Chat Completions 路径共用同一套 sanitizer，definitions 缺口在那里同样存在。
+// The Chat Completions path shares the same sanitizer, so the definitions gap exists there too.
 func TestTranslateRequestRecursesIntoDefinitions(t *testing.T) {
 	raw := []byte(`{
 		"model":"gpt-5.4",
@@ -688,7 +687,7 @@ func TestTranslateRequestRecursesIntoDefinitions(t *testing.T) {
 	}
 }
 
-// draft-07 的 tuple 校验把 items 写成数组，旧的下钻只对 map 形态生效。
+// draft-07 tuple validation writes items as an array, but the old descent only worked for the map form.
 func TestSanitizeSchemaRecursesIntoTupleItems(t *testing.T) {
 	raw := []byte(`{
 		"model":"gpt-5.4",
@@ -708,7 +707,7 @@ func TestSanitizeSchemaRecursesIntoTupleItems(t *testing.T) {
 	}
 }
 
-// 组合类关键字下的子 schema 同样要清洗，否则坏 schema 换个位置就能绕过。
+// Sub-schemas under combinator keywords must be sanitized too, or a bad schema could bypass it by moving to another position.
 func TestSanitizeSchemaRecursesIntoCompositionKeywords(t *testing.T) {
 	raw := []byte(`{
 		"model":"gpt-5.4",
@@ -996,8 +995,8 @@ func TestPrepareResponsesBody_NormalizesUserOutputTextToInputText(t *testing.T) 
 	}
 }
 
-// 上游 Codex 不接受 role=system（"System messages are not allowed"），原生
-// Responses 直通路径须与 chat/Anthropic 链路一致改写为 developer（issue #409）。
+// Upstream Codex does not accept role=system ("System messages are not allowed"), so the native
+// Responses pass-through path must rewrite it to developer, matching the chat/Anthropic path (issue #409).
 func TestPrepareResponsesBody_RewritesSystemRoleToDeveloper(t *testing.T) {
 	raw := []byte(`{
 		"model":"gpt-5.5",
@@ -1239,8 +1238,8 @@ func TestPrepareResponsesBody_SanitizesTextFormatJSONSchema(t *testing.T) {
 }
 
 func TestPrepareResponsesBody_AlignsRequiredWithProperties(t *testing.T) {
-	// 复现上游报错：In context=('properties','candidates','items'),
-	// required 里出现了 properties 中不存在的 'title'，同时漏掉了已声明的 key。
+	// Reproduces the upstream error: In context=('properties','candidates','items'),
+	// required contains 'title', which does not exist in properties, and misses a declared key.
 	raw := []byte(`{
 		"model":"gpt-5.4",
 		"input":"test",
@@ -1286,14 +1285,14 @@ func TestPrepareResponsesBody_AlignsRequiredWithProperties(t *testing.T) {
 }
 
 func TestPrepareResponsesBody_PrunesRequiredOnNodesWithoutProperties(t *testing.T) {
-	// 生产实测：上游报 `Extra required key 'target' supplied`，而 alignRequiredWithProperties
-	// 原先只处理自带 properties 的节点，于是「required 有、properties 不在同一层」的三种
-	// 形态都把多余项原样发了出去。
+	// Measured in production: upstream reports `Extra required key 'target' supplied`, but alignRequiredWithProperties
+	// used to handle only nodes that carry their own properties, so the three shapes where "required" is present but "properties" is not on the same level
+	// all sent the extra entries through unchanged.
 	cases := []struct {
 		name   string
 		schema string
 		path   string
-		want   []string // nil 表示 required 应被整个删除
+		want   []string // nil means required should be removed entirely
 	}{
 		{
 			name:   "composition branch supplies the field names",
@@ -1535,7 +1534,6 @@ func TestPrepareResponsesBody_JSONObjectInjectsJSONHintWhenInputOmitsJSON(t *tes
 		t.Fatalf("expected original user input to be preserved, got %q; body=%s", userText, got)
 	}
 }
-
 
 func TestPrepareResponsesBody_DefaultsIncludeForResponses(t *testing.T) {
 	raw := []byte(`{
@@ -2060,7 +2058,6 @@ func TestPrepareCompactResponsesBody_RemovesUnsupportedInjectedFields(t *testing
 	}
 }
 
-
 func TestPrepareCompactResponsesBody_RemovesClientSuppliedInclude(t *testing.T) {
 	raw := []byte(`{
 		"model":"gpt-5.4",
@@ -2153,7 +2150,6 @@ func TestPrepareResponsesBody_MovesCompactionTriggerToFinalInputItem(t *testing.
 	}
 }
 
-
 func TestPrepareResponsesBody_CachedHistoryStillKeepsCompactionTriggerFinal(t *testing.T) {
 	raw := []byte(`{
 		"model":"gpt-5.6-sol",
@@ -2223,8 +2219,8 @@ func TestPrepareResponsesBody_DefaultsMissingMessageContent(t *testing.T) {
 
 	got, expandedInputRaw := PrepareResponsesBody(raw)
 
-	// 孤儿 function_call 会被配对修复在其后补一条占位 output，
-	// 缺省 content 的 message 顺移到下标 3。
+	// An orphan function_call gets a placeholder output appended after it by pairing repair,
+	// the message without content shifts to index 3.
 	if content := gjson.GetBytes(got, "input.3.content"); !content.Exists() || content.String() != "" {
 		t.Fatalf("missing message content should be defaulted to empty string, got %s; body=%s", content.Raw, got)
 	}
@@ -2307,7 +2303,7 @@ func TestValidateResponsesFunctionNamesIgnoresInvalidJSON(t *testing.T) {
 	}
 }
 
-// buildManyTurnResponsesBody 模拟 issue #417 的长会话形态：大量小文本轮次。
+// buildManyTurnResponsesBody simulates the long-session shape from issue #417: many small text turns.
 func buildManyTurnResponsesBody(turns int) []byte {
 	var b strings.Builder
 	b.WriteString(`{"model":"gpt-5.5","input":[`)
@@ -2324,8 +2320,8 @@ func buildManyTurnResponsesBody(turns int) []byte {
 	return []byte(b.String())
 }
 
-// BenchmarkValidateResponsesFunctionNamesManyTurns 守护 issue #417 的优化：校验器
-// 只做惰性 gjson 遍历，不再对大请求体做全量 map[string]any 反序列化。
+// BenchmarkValidateResponsesFunctionNamesManyTurns guards the issue #417 optimization: the validator
+// only does a lazy gjson traversal and no longer fully deserializes large request bodies into map[string]any.
 func BenchmarkValidateResponsesFunctionNamesManyTurns(b *testing.B) {
 	body := buildManyTurnResponsesBody(4000)
 	b.ReportAllocs()
@@ -2466,7 +2462,6 @@ func TestPrepareResponsesBodyInfersFunctionToolChoiceTypeWhenMissing(t *testing.
 		t.Fatalf("tool_choice nested function object should be removed, got %s", got)
 	}
 }
-
 
 func TestPrepareResponsesBody_DefaultsNullMessageContent(t *testing.T) {
 	raw := []byte(`{
@@ -2669,9 +2664,9 @@ func TestStripInvalidEncryptedContentFromResponsesBody(t *testing.T) {
 	}
 }
 
-// 压缩项的 encrypted_content 是必填字段：只摘字段会留下 {"type":"compaction"}
-// 空壳，上游转而以 missing_required_parameter 再拒一次，而重试闸已经用掉。
-// 带密文的压缩项必须整项丢弃，与 reasoning 分支对称。
+// encrypted_content is a required field of a compaction item: stripping only the field leaves {"type":"compaction"}
+// as an empty shell, upstream then rejects it again with missing_required_parameter, and the retry gate has already been used up.
+// Compaction items with encrypted content must be dropped as a whole, symmetric with the reasoning branch.
 func TestStripInvalidEncryptedContentDropsEncryptedCompactionItems(t *testing.T) {
 	for _, itemType := range []string{"compaction", "context_compaction", "compaction_summary"} {
 		t.Run(itemType, func(t *testing.T) {
@@ -2692,7 +2687,7 @@ func TestStripInvalidEncryptedContentDropsEncryptedCompactionItems(t *testing.T)
 			if len(items) != 2 {
 				t.Fatalf("expected encrypted %s item to be dropped whole, got %d items: %s", itemType, len(items), got)
 			}
-			// 不能留下空壳：改写后不应再出现该 type。
+			// No empty shell may be left: the type must not appear after the rewrite.
 			if strings.Contains(string(got), itemType) {
 				t.Fatalf("%s shell survived the strip: %s", itemType, got)
 			}
@@ -2706,7 +2701,7 @@ func TestStripInvalidEncryptedContentDropsEncryptedCompactionItems(t *testing.T)
 	}
 }
 
-// 不带密文的压缩项没有账号绑定，原样保留（避免误伤正常压缩历史）。
+// Compaction items without encrypted content have no account binding, so they are kept as-is (to avoid harming normal compaction history).
 func TestStripInvalidEncryptedContentKeepsPlainCompactionItems(t *testing.T) {
 	raw := []byte(`{
 		"model":"gpt-5.4",
@@ -2732,7 +2727,7 @@ func TestStripInvalidEncryptedContentKeepsPlainCompactionItems(t *testing.T) {
 	}
 }
 
-// ==================== Function Calling 测试 ====================
+// ==================== Function Calling tests ====================
 
 func TestStripInvalidEncryptedContentFromResponsesBodyDropsBareReasoning(t *testing.T) {
 	raw := []byte(`{
@@ -2775,8 +2770,8 @@ func TestPrepareResponsesBodyDropsBareReasoningItems(t *testing.T) {
 
 	got, expandedInputRaw := PrepareResponsesBody(raw)
 
-	// 无 output 的 function_call 会被配对修复补一条占位 output，
-	// 因此裸 reasoning 清理后剩 3 条原始项 + 1 条合成 output。
+	// A function_call without output gets a placeholder output added by pairing repair,
+	// so after cleaning up the bare reasoning, 3 original items and 1 synthetic output remain.
 	items := gjson.GetBytes(got, "input").Array()
 	if len(items) != 4 {
 		t.Fatalf("expected bare reasoning items to be dropped before upstream, got %d items: %s", len(items), got)
@@ -2799,10 +2794,10 @@ func TestPrepareResponsesBodyDropsBareReasoningItems(t *testing.T) {
 }
 
 func TestPrepareResponsesBodyDropsForeignReasoningAndStripsStatus(t *testing.T) {
-	// 跨渠道会话（issue #565）：Grok 轮输出的 reasoning 项带外渠道密文
-	// （裸 base64，非 Fernet gAAAA 前缀）与 status 字段，裸回灌给 Codex 上游
-	// 会依次触发 400 unknown_parameter(input[N].status) 与
-	// invalid_encrypted_content。前者须剥离、后者须整项丢弃。
+	// Cross-channel session (issue #565): the reasoning item output by a Grok turn carries an out-of-channel encrypted payload
+	// (raw base64, not the Fernet gAAAA prefix) and a status field, which when fed back raw to the Codex upstream
+	// triggers, in turn, a 400 unknown_parameter(input[N].status) and
+	// invalid_encrypted_content. The former must be stripped and the latter must be dropped as a whole.
 	raw := []byte(`{
 		"model":"gpt-5.6",
 		"input":[
@@ -2831,7 +2826,7 @@ func TestPrepareResponsesBodyDropsForeignReasoningAndStripsStatus(t *testing.T) 
 	if encrypted := gjson.GetBytes(got, "input.2.encrypted_content").String(); encrypted != "gAAAABnative" {
 		t.Fatalf("codex-native reasoning should be preserved, got %q; body=%s", encrypted, got)
 	}
-	// 非 reasoning 项的 status 上游可接受，保持原样不做多余改写。
+	// Upstream accepts status on non-reasoning items, so it is left as-is without extra rewriting.
 	if status := gjson.GetBytes(got, "input.1.status").String(); status != "completed" {
 		t.Fatalf("assistant message status should be untouched, got %q; body=%s", status, got)
 	}
@@ -2960,7 +2955,7 @@ func TestConvertMessagesToInput_FullMultiTurn(t *testing.T) {
 		t.Fatalf("expected 4 input items, got %d", len(items))
 	}
 
-	// 用户消息
+	// User message
 	if items[0].Get("type").String() != "message" || items[0].Get("role").String() != "user" {
 		t.Fatal("first item should be user message")
 	}
@@ -2972,7 +2967,7 @@ func TestConvertMessagesToInput_FullMultiTurn(t *testing.T) {
 	if items[2].Get("type").String() != "function_call_output" {
 		t.Fatalf("third item should be function_call_output, got %q", items[2].Get("type").String())
 	}
-	// 用户消息
+	// User message
 	if items[3].Get("type").String() != "message" || items[3].Get("role").String() != "user" {
 		t.Fatal("fourth item should be user message")
 	}
@@ -2994,7 +2989,7 @@ func TestStreamTranslator_FunctionCall(t *testing.T) {
 	if chunk == nil {
 		t.Fatal("should emit chunk for function_call added")
 	}
-	// 验证首块包含 tool_calls
+	// Verify the first chunk contains tool_calls
 	tc := gjson.GetBytes(chunk, "choices.0.delta.tool_calls.0")
 	if tc.Get("id").String() != "call_abc" {
 		t.Fatalf("expected call_id call_abc, got %q", tc.Get("id").String())
@@ -3132,8 +3127,8 @@ func TestStreamTranslator_CustomToolCallInputDelta(t *testing.T) {
 	}
 }
 
-// 终结块必须带 "delta":{}(OpenAI 官方形状)。缺失会让 Rust/serde 系客户端
-// 报 "missing field `delta`" 并整轮失败。
+// The final chunk must carry "delta":{} (the official OpenAI shape). Without it, Rust/serde clients
+// fail with "missing field `delta`" and the whole turn fails.
 func TestFinalChunk_AlwaysCarriesEmptyDeltaObject(t *testing.T) {
 	assertDelta := func(t *testing.T, label string, chunk []byte) {
 		t.Helper()
@@ -3146,7 +3141,7 @@ func TestFinalChunk_AlwaysCarriesEmptyDeltaObject(t *testing.T) {
 		}
 	}
 
-	// 无状态翻译:文本轮结束
+	// Stateless translation: text turn ends
 	statelessChunk, done := TranslateStreamChunk(
 		[]byte(`{"type":"response.completed","response":{"usage":{"input_tokens":5,"output_tokens":3}}}`),
 		"grok-4.5", "chatcmpl-test", 0,
@@ -3156,7 +3151,7 @@ func TestFinalChunk_AlwaysCarriesEmptyDeltaObject(t *testing.T) {
 	}
 	assertDelta(t, "stateless", statelessChunk)
 
-	// 有状态翻译:纯文本轮(finish_reason=stop)
+	// Stateful translation: plain text turn (finish_reason=stop)
 	stText := NewStreamTranslator("chatcmpl-test", "grok-4.5", 0)
 	stText.Translate([]byte(`{"type":"response.output_text.delta","delta":"Hello"}`))
 	textChunk, done := stText.Translate([]byte(`{"type":"response.completed","response":{"usage":{"input_tokens":5,"output_tokens":3}}}`))
@@ -3165,7 +3160,7 @@ func TestFinalChunk_AlwaysCarriesEmptyDeltaObject(t *testing.T) {
 	}
 	assertDelta(t, "stateful text", textChunk)
 
-	// 有状态翻译:工具调用轮(finish_reason=tool_calls)
+	// Stateful translation: tool call turn (finish_reason=tool_calls)
 	stTool := NewStreamTranslator("chatcmpl-test", "grok-4.5", 0)
 	stTool.Translate([]byte(`{
 		"type":"response.output_item.added",
@@ -3261,7 +3256,7 @@ func TestStreamTranslatorEmitsCanonicalArgumentsMissingFromDeltas(t *testing.T) 
 func TestStreamTranslator_TextOnly(t *testing.T) {
 	st := NewStreamTranslator("chatcmpl-test", "gpt-5.4", 0)
 
-	// 文本 delta
+	// Text delta
 	textEvent := []byte(`{"type":"response.output_text.delta","delta":"Hello"}`)
 	chunk, done := st.Translate(textEvent)
 	if done {
@@ -3322,7 +3317,7 @@ func TestStreamTranslator_CachedTokenDetails(t *testing.T) {
 func TestStreamTranslator_MultipleFunctionCalls(t *testing.T) {
 	st := NewStreamTranslator("chatcmpl-test", "gpt-5.4", 0)
 
-	// 第一个 function call
+	// First function call
 	event1 := []byte(`{
 		"type":"response.output_item.added",
 		"output_index":0,
@@ -3333,7 +3328,7 @@ func TestStreamTranslator_MultipleFunctionCalls(t *testing.T) {
 		t.Fatal("first tool call should have index 0")
 	}
 
-	// 第二个 function call
+	// Second function call
 	event2 := []byte(`{
 		"type":"response.output_item.added",
 		"output_index":1,
@@ -3414,8 +3409,8 @@ func TestExtractToolCallsFromOutputValidatedNormalizesBlankAndKeepsCustom(t *tes
 	}
 }
 
-// issue #330：上游要求 tool_search_call.arguments 为 object、function_call.arguments
-// 为 string；回放历史时类型不符会被上游 400 拒绝，需在发送前修正。
+// issue #330: upstream requires tool_search_call.arguments to be an object and function_call.arguments
+// to be a string; when history is replayed with a mismatched type, upstream rejects it with 400, so it must be corrected before sending.
 func TestNormalizeResponsesToolCallArgumentTypes(t *testing.T) {
 	raw := []byte(`{
 		"model":"gpt-5.5",
@@ -3510,8 +3505,8 @@ func TestNormalizeResponsesCompactionItemsConvertsToDeveloperMessage(t *testing.
 		"model":"gpt-5.4",
 		"input":[
 			{"type":"message","role":"user","content":"hello from earlier"},
-			{"type":"compaction","summary":"用户问候并讨论了 X 主题"},
-			{"type":"message","role":"user","content":"继续上面的话题"}
+			{"type":"compaction","summary":"User greeted and discussed topic X"},
+			{"type":"message","role":"user","content":"Continue the topic above"}
 		]
 	}`)
 
@@ -3559,7 +3554,7 @@ func TestNormalizeResponsesCompactionItemsConvertsToDeveloperMessage(t *testing.
 	if !strings.HasPrefix(text, "[Conversation summary from earlier turns]") {
 		t.Fatalf("text should carry summary prefix, got %q", text)
 	}
-	if !strings.Contains(text, "用户问候并讨论了 X 主题") {
+	if !strings.Contains(text, "User greeted and discussed topic X") {
 		t.Fatalf("text should contain original summary, got %q", text)
 	}
 }
@@ -3728,8 +3723,8 @@ func TestPrepareResponsesBody_PreservesWebSearchAllowedConfigFields(t *testing.T
 }
 
 func TestPrepareResponsesBody_DropsUnknownWebSearchFields(t *testing.T) {
-	// Codex 上游对未知字段严格校验，会回 400 unknown_parameter。
-	// 归一时必须丢弃白名单以外的字段。
+	// The Codex upstream strictly validates unknown fields and returns 400 unknown_parameter.
+	// Normalization must drop fields outside the allowlist.
 	raw := []byte(`{
 		"model":"gpt-5.5",
 		"input":"hi",
@@ -3791,8 +3786,8 @@ func TestTranslateRequest_NormalizesWebSearchPreviewToolType(t *testing.T) {
 	}
 }
 
-// compact 端点不接受 client_metadata(Unknown parameter),两条 compact 准备
-// 路径都必须剥除;普通 /responses 路径不剥(引擎指纹与中转链依赖透传)。
+// The compact endpoint does not accept client_metadata (Unknown parameter), so both compact preparation
+// paths must strip it; the normal /responses path does not strip it (the engine fingerprint and relay chain depend on pass-through).
 func TestPrepareCompactBodiesStripClientMetadata(t *testing.T) {
 	raw := []byte(`{
 		"model":"gpt-5.4",
@@ -3807,7 +3802,7 @@ func TestPrepareCompactBodiesStripClientMetadata(t *testing.T) {
 	}
 }
 
-// max 档位按模型放行:gpt-5.6 起上游接受并回显,旧模型上游 400,须钳到 xhigh。
+// The max tier is allowed per model: upstream accepts and echoes it from gpt-5.6 on, while older models get 400 upstream, so it must be clamped to xhigh.
 func TestNormalizeReasoningEffortForModel_MaxGatedByModel(t *testing.T) {
 	cases := []struct {
 		effort, model, want string
@@ -3842,8 +3837,8 @@ func TestPrepareResponsesBody_MaxEffortPassthroughByModel(t *testing.T) {
 	}
 }
 
-// issue #342: gpt-5.6 multi-agent 保留工具 collaboration.* 必须原样透传，
-// 通用 schema 清洗(剥 format/minItems/pattern 等)会破坏上游要求的逐字匹配。
+// issue #342: gpt-5.6 multi-agent reserved tools collaboration.* must pass through verbatim,
+// generic schema sanitizing (stripping format/minItems/pattern etc.) would break the verbatim match upstream requires.
 func TestPrepareResponsesBody_ReservedCollaborationToolPassthrough(t *testing.T) {
 	raw := []byte(`{
 		"model":"gpt-5.6-sol",
@@ -3868,7 +3863,7 @@ func TestPrepareResponsesBody_ReservedCollaborationToolPassthrough(t *testing.T)
 	got, _ := PrepareResponsesBody(raw)
 	tools := gjson.GetBytes(got, "tools").Array()
 
-	// 定位两个工具（顺序可能变，按 name 找）。
+	// Find the two tools (their order may change, so look them up by name).
 	var reserved, normal gjson.Result
 	for _, tl := range tools {
 		switch tl.Get("name").String() {
@@ -3879,7 +3874,7 @@ func TestPrepareResponsesBody_ReservedCollaborationToolPassthrough(t *testing.T)
 		}
 	}
 
-	// 保留工具：受限 schema 关键字必须全部保留。
+	// Reserved tools: all restricted schema keywords must be kept.
 	if !reserved.Exists() {
 		t.Fatalf("reserved tool missing; body=%s", got)
 	}
@@ -3897,7 +3892,7 @@ func TestPrepareResponsesBody_ReservedCollaborationToolPassthrough(t *testing.T)
 		t.Fatalf("reserved tool additionalProperties changed; body=%s", got)
 	}
 
-	// 对照：普通工具仍被清洗（受限关键字被剥离）。
+	// Control: normal tools are still sanitized (restricted keywords are stripped).
 	if !normal.Exists() {
 		t.Fatalf("normal tool missing; body=%s", got)
 	}
@@ -3926,8 +3921,8 @@ func TestIsReservedCodexTool(t *testing.T) {
 	}
 }
 
-// 顶层 type 是 Responses WS 事件信封字段，HTTP /responses 上游不接受
-// (400 Unsupported parameter: type)；prepare 阶段必须剥离顶层、保留嵌套 (issue #548)。
+// The top-level type is a Responses WS event envelope field, which the HTTP /responses upstream does not accept
+// (400 Unsupported parameter: type); the prepare stage must strip the top level and keep nested ones (issue #548).
 func TestPrepareResponsesBodyStripsTopLevelWebSocketEnvelopeType(t *testing.T) {
 	raw := []byte(`{"type":"response.create","model":"gpt-5.4","input":[{"type":"message","role":"user","content":[{"type":"input_text","text":"hi"}]}]}`)
 	for name, prepare := range map[string]func([]byte) ([]byte, string){

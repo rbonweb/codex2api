@@ -10,22 +10,22 @@ import (
 
 func TestUpstreamResponseModelObserverFirstAndTerminal(t *testing.T) {
 	o := &upstreamResponseModelObserver{}
-	// 流中段声明
+	// Declaration in the middle of the stream
 	observeUpstreamResponseModelFrame(o, gjson.Parse(`{"type":"response.created","response":{"model":"gpt-5.2"}}`), "response.created")
 	if got := o.Model(); got != "gpt-5.2" {
 		t.Fatalf("first declaration model = %q, want gpt-5.2", got)
 	}
-	// 终态声明优先
+	// Terminal declaration takes precedence
 	observeUpstreamResponseModelFrame(o, gjson.Parse(`{"type":"response.completed","response":{"model":"gpt-5.2-codex"}}`), "response.completed")
 	if got := o.Model(); got != "gpt-5.2-codex" {
 		t.Fatalf("terminal declaration model = %q, want gpt-5.2-codex", got)
 	}
-	// 两个不同的自报值 = conflict（中途换模型的信号），即使同属一个模型家族。
+	// Two different self-reported values = conflict (a signal of switching models midway), even when they belong to the same model family.
 	if !o.Conflict() {
 		t.Fatal("differing declarations should set conflict even within one model family")
 	}
 
-	// 全程一致的声明不应 conflict
+	// Declarations that are consistent throughout must not conflict
 	o = &upstreamResponseModelObserver{}
 	observeUpstreamResponseModelFrame(o, gjson.Parse(`{"type":"response.created","response":{"model":"gpt-5.2"}}`), "response.created")
 	observeUpstreamResponseModelFrame(o, gjson.Parse(`{"type":"response.in_progress","response":{"model":"gpt-5.2"}}`), "response.in_progress")
@@ -45,7 +45,7 @@ func TestUpstreamResponseModelObserverConflict(t *testing.T) {
 	if !o.Conflict() {
 		t.Fatal("contradictory declarations should set conflict")
 	}
-	// 终态声明仍优先
+	// Terminal declaration still takes precedence
 	if got := o.Model(); got != "gpt-5.6-luna" {
 		t.Fatalf("model = %q, want gpt-5.6-luna", got)
 	}
@@ -67,7 +67,7 @@ func TestUpstreamModelMismatchTriState(t *testing.T) {
 }
 
 func TestApplyUpstreamResponseModelObservation(t *testing.T) {
-	// 未自报：字段保持零值，不写日志输入
+	// Not self-reported: fields stay at zero value, no log input is written
 	o := &upstreamResponseModelObserver{}
 	input := &database.UsageLogInput{Endpoint: "/v1/responses", Model: "gpt-5.2"}
 	applyUpstreamResponseModelObservation(input, o, "gpt-5.2", 1)
@@ -75,7 +75,7 @@ func TestApplyUpstreamResponseModelObservation(t *testing.T) {
 		t.Fatal("no declaration should leave input untouched")
 	}
 
-	// 一致自报：mismatch=false
+	// Consistent self-report: mismatch=false
 	o = &upstreamResponseModelObserver{}
 	observeUpstreamResponseModelFrame(o, gjson.Parse(`{"type":"response.completed","response":{"model":"gpt-5.2"}}`), "response.completed")
 	input = &database.UsageLogInput{Endpoint: "/v1/responses", Model: "gpt-5.2"}
@@ -84,7 +84,7 @@ func TestApplyUpstreamResponseModelObservation(t *testing.T) {
 		t.Fatalf("matching declaration: model=%q mismatch=%v", input.UpstreamResponseModel, input.UpstreamModelMismatch)
 	}
 
-	// 不一致自报：mismatch=true
+	// Inconsistent self-report: mismatch=true
 	o = &upstreamResponseModelObserver{}
 	observeUpstreamResponseModelFrame(o, gjson.Parse(`{"type":"response.completed","response":{"model":"gpt-5.6-luna"}}`), "response.completed")
 	input = &database.UsageLogInput{Endpoint: "/v1/responses", Model: "gpt-5.2"}
@@ -93,7 +93,7 @@ func TestApplyUpstreamResponseModelObservation(t *testing.T) {
 		t.Fatal("mismatching declaration should record true")
 	}
 
-	// sentModel 为空（无映射、logModel 也有值时不会为空，但兜底空串仍要正确判 true）
+	// sentModel is empty (it is not empty when there is no mapping and logModel has a value, but the empty-string fallback must still correctly yield true)
 	input = &database.UsageLogInput{Endpoint: "/v1/responses", Model: ""}
 	applyUpstreamResponseModelObservation(input, o, "", 1)
 	if input.UpstreamModelMismatch == nil || !*input.UpstreamModelMismatch {
@@ -107,7 +107,7 @@ func TestObserveUpstreamResponseModelBody(t *testing.T) {
 	if got := o.Model(); got != "gpt-5.2" {
 		t.Fatalf("body model = %q, want gpt-5.2", got)
 	}
-	// 非 JSON / 空体安全
+	// Safe for non-JSON / empty bodies
 	observeUpstreamResponseModelBody(o, nil)
 	if got := o.Model(); got != "gpt-5.2" {
 		t.Fatalf("model changed after empty body: %q", got)

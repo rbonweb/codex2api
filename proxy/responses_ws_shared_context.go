@@ -220,7 +220,7 @@ func beginNativeWSSharedCommit(key string) func() {
 	_, err := owners.ClaimRuntimeOwner(ctx, nativeWSPendingNamespace, key, owner, nativeWSCommitWait+responseCacheBackendWaitTimeout+responseCacheBackendWriteTimeout)
 	cancel()
 	if err != nil {
-		log.Printf("登记 Redis 原生 WS 提交屏障失败: %v", err)
+		log.Printf("failed to register the Redis native WS commit barrier: %v", err)
 		return func() {}
 	}
 	return func() {

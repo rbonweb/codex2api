@@ -117,7 +117,7 @@ func TestResponseCacheDetailedLookupCounters(t *testing.T) {
 				t.Fatalf("lookup = %+v, want kind %v", got, tt.wantKind)
 			}
 			stats := GetResponseCacheStats()
-			// 聚合是端到端口径：远端命中最终拿到上下文，计 Hit 不计 Miss。
+			// The aggregate is an end-to-end count: a remote hit finally gets the context, counting as a Hit, not a Miss.
 			wantMisses, wantHits := uint64(1), uint64(0)
 			if tt.wantKind == responseCacheLookupHit {
 				wantMisses, wantHits = 0, 1

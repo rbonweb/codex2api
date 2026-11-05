@@ -349,7 +349,7 @@ func TestResponseCacheRuntimeWriterCannotMutateRetainedCopy(t *testing.T) {
 	if runtimeCache.calls.Load() != 1 {
 		t.Fatal("mutating runtime writer was not invoked")
 	}
-	// 后台写入拿的是私有克隆：写入方的改动既到不了调用方切片，也到不了 L1。
+	// The background write takes a private clone: the writer's changes reach neither the caller's slice nor L1.
 	if original[0] == 'X' {
 		t.Fatal("runtime writer mutated the caller's slice")
 	}

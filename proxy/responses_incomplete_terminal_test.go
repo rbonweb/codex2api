@@ -6,16 +6,16 @@ import (
 	"github.com/tidwall/gjson"
 )
 
-// response.incomplete 是 max_output_tokens 截断的正常终态。漏认它会让收尾逻辑
-// 把正常截断当断流：合成假的 response.failed / overloaded_error、丢弃真实
-// usage 改用估算、并按断流惩罚账号。以下用例锁住各协议出口的处理。
+// response.incomplete is the normal terminal state for truncation by max_output_tokens. Missing it would make the finalize logic
+// treat the normal truncation as a broken stream: it would synthesize a fake response.failed / overloaded_error, discard the real
+// usage and switch to estimation, and penalise the account as a broken stream. The cases below lock in the handling at each protocol egress.
 
 const incompleteTerminalEvent = `{
 	"type":"response.incomplete",
 	"response":{
 		"status":"incomplete",
 		"incomplete_details":{"reason":"max_output_tokens"},
-		"output":[{"type":"message","role":"assistant","content":[{"type":"output_text","text":"半截"}]}],
+		"output":[{"type":"message","role":"assistant","content":[{"type":"output_text","text":"partial"}]}],
 		"usage":{"input_tokens":232,"output_tokens":6631,"input_tokens_details":{"cached_tokens":0}}
 	}
 }`
@@ -57,9 +57,8 @@ func TestResponsesIncompleteFinishReason(t *testing.T) {
 	}
 }
 
-
-// 下游 /v1/chat/completions：截断对应 finish_reason=length，且必须是终态事件，
-// 否则收尾逻辑会再补一个 error 对象。
+// Downstream /v1/chat/completions: truncation maps to finish_reason=length, and it must be a terminal event,
+// otherwise the finalize logic would append another error object.
 func TestChatStreamTranslatorMapsIncompleteToLength(t *testing.T) {
 	chunk, terminal := TranslateStreamChunk([]byte(incompleteTerminalEvent), "gpt-5", "chatcmpl-x", 1)
 	if !terminal {
@@ -84,8 +83,8 @@ func TestStatefulChatStreamTranslatorMapsIncompleteToLength(t *testing.T) {
 	}
 }
 
-// 工具调用截断时 finish_reason 不能停留在 tool_calls：那会让下游把半截参数
-// 当成可执行的完整调用。
+// When a tool call is truncated, finish_reason must not stay at tool_calls: that would make downstream treat the half-finished arguments
+// as an executable complete call.
 func TestStatefulChatStreamTranslatorIncompleteBeatsToolCalls(t *testing.T) {
 	st := &StreamTranslator{ChunkID: "chatcmpl-x", Model: "gpt-5", Created: 1, HasToolCalls: true}
 	chunk, _ := st.TranslateParsed(gjson.Parse(incompleteTerminalEvent))
@@ -95,14 +94,13 @@ func TestStatefulChatStreamTranslatorIncompleteBeatsToolCalls(t *testing.T) {
 }
 
 func TestBuildCompactResponseFinishReasonOverride(t *testing.T) {
-	body := BuildCompactResponseWithFinishReason("chatcmpl-x", "gpt-5", 1, "半截", "", nil, nil, "length")
+	body := BuildCompactResponseWithFinishReason("chatcmpl-x", "gpt-5", 1, "partial", "", nil, nil, "length")
 	if got := gjson.GetBytes(body, "choices.0.finish_reason").String(); got != "length" {
 		t.Errorf("finish_reason = %q, want length", got)
 	}
-	// 空覆盖保持原推导值，兼容既有调用方。
-	body = BuildCompactResponseWithFinishReason("chatcmpl-x", "gpt-5", 1, "完整", "", nil, nil, "")
+	// An empty override keeps the originally derived value, for compatibility with existing callers.
+	body = BuildCompactResponseWithFinishReason("chatcmpl-x", "gpt-5", 1, "complete", "", nil, nil, "")
 	if got := gjson.GetBytes(body, "choices.0.finish_reason").String(); got != "stop" {
 		t.Errorf("finish_reason = %q, want stop", got)
 	}
 }
-

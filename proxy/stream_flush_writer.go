@@ -21,12 +21,12 @@ var (
 	sseDataSuffix = []byte("\n\n")
 )
 
-// streamFlushWriter 负责 SSE 流的缓冲合并与冲刷传输。
+// streamFlushWriter handles SSE stream buffer merging and flush transport.
 //
-// 并发契约：同一实例的 Flush/WriteBytes/WriteString/WriteSSEData/Finalize 等写入方法
-// 不得跨 goroutine 并发调用，调用方必须通过外部互斥（例如 handler 中的 downstreamMu）
-// 进行串行化保护。内部 mu 与 atomic aborted 仅用于协调输出失控丢弃（DiscardBuffered）
-// 与写入/冲刷之间的并发状态清理，避免 DiscardBuffered 等待慢速下游 I/O。
+// Concurrency contract: the write methods of one instance (Flush / WriteBytes / WriteString / WriteSSEData / Finalize, etc.)
+// must not be called concurrently across goroutines; the caller must serialize them with an external mutex (for example downstreamMu in the handler).
+// serialization protects them. Internal mu and atomic aborted are used only to coordinate the state cleanup of output-runaway discard (DiscardBuffered)
+// against concurrent writes and flushes, so that DiscardBuffered does not wait on slow downstream I/O.
 type streamFlushWriter struct {
 	writer        io.Writer
 	flusher       http.Flusher
@@ -35,36 +35,36 @@ type streamFlushWriter struct {
 	lastFlush     time.Time
 	buffer        bytes.Buffer
 	outputScanner *promptfilter.OutputScanner
-	// scanCarry 暂存扫描器已放行但尚未凑满一个完整 SSE 事件的尾巴。扫描器按
-	// 字节数扣安全窗,切点会落在事件正中间;若把半个事件写到底层,任何绕过本
-	// 写入器直写 ResponseWriter 的字节(请求级保活注释、续想心跳)都会插进
-	// JSON 里(issue #696)。这里把底层写入对齐到事件边界,保证底层流永远停在
-	// 两个事件之间。
+	// scanCarry holds the tail that the scanner has released but that does not yet fill a complete SSE event. The scanner, by byte count minus the safety window,
+	// means the cut point can fall in the middle of an event; if half an event were written to the underlying writer, any bytes written straight to the ResponseWriter that bypass this
+	// writer (request-level keepalive comments, the thinking heartbeat) would be inserted into the
+	// JSON (issue #696). Here the underlying writes are aligned to event boundaries, ensuring the underlying stream always stops
+	// between two events.
 	scanCarry    []byte
 	writtenBytes atomic.Int64
 	diag         *streamPhaseDiagnostics
-	// aborted 标记缓冲已被输出失控防护强制丢弃。置位后 Flush/Finalize 必须
-	// 静默短路，绝不能再把残留字节写回下游或释放扫描器安全窗。
-	// 用 atomic.Bool 而不是普通字段：DiscardBuffered 必须把置位放在所有锁竞争
-	// 之前（先让新进入的写入短路，再清理缓冲），并且与 Flush/WriteBytes/
-	// Finalize 的读取天然无数据竞争。CAS 保证并发触发时只有第一个调用真正执行
-	// 清理。
+	// aborted marks that the buffer has been forcibly discarded by the output runaway guard. Once set, Flush/Finalize must
+	// silently short-circuit, and must never write leftover bytes back to the downstream or release the scanner safety window.
+	// Use atomic.Bool rather than a plain field: DiscardBuffered must set it before any lock contention
+	// (first make new incoming writes short-circuit, then clean the buffer), and reads in Flush/WriteBytes/
+	// Finalize are naturally free of data races. CAS guarantees that under concurrent triggering only the first call actually performs
+	// the cleanup.
 	aborted atomic.Bool
-	// mu 保护 buffer / scanCarry / outputScanner / lastFlush 的读写与清理。
-	// 保活 goroutine（issue #458）与 forward goroutine 会并发共享同一个 writer
-	// 调 Flush/WriteBytes，guard 的 discard 回调又在 HandleTripped 的 once 里
-	// 锁外执行；没有这把锁时 bytes.Buffer 会被并发读写（数据竞争、输出错乱，
-	// 最坏 panic）。
+	// mu protects the reads, writes and cleanup of buffer / scanCarry / outputScanner / lastFlush.
+	// The keepalive goroutine (issue #458) and the forward goroutine concurrently share the same writer and call Flush/WriteBytes;
+	// the guard's discard callback runs inside HandleTripped's once,
+	// outside the lock; without this lock the bytes.Buffer would be read and written concurrently (data race, corrupted output,
+	// and at worst a panic).
 	//
-	// 下游写（w.writer.Write / flusher.Flush）一律在锁外做：慢速客户端可能让
-	// 写入长期阻塞，若在锁内调用就等于让 DiscardBuffered 等待下游 I/O，会破坏
-	// guard 终止编排“不被下游写锁延迟”的约束，也可能与用户回调互相重入。
+	// Downstream writes (w.writer.Write / flusher.Flush) are always done outside the lock: a slow client may keep the
+	// write blocked for a long time; calling it under the lock would make DiscardBuffered wait on downstream I/O, breaking the
+	// guard termination orchestration's constraint of not being delayed by the downstream write lock, and could also re-enter user callbacks.
 	mu sync.Mutex
 }
 
 // Small buffers are reused across token events; an exceptional large event
 // must not keep its allocation alive for the rest of a long stream.
-// 调用方必须持有 w.mu。
+// Caller must hold w.mu.
 func (w *streamFlushWriter) resetBuffer() {
 	if w.buffer.Cap() > 256<<10 {
 		w.buffer = bytes.Buffer{}
@@ -73,9 +73,9 @@ func (w *streamFlushWriter) resetBuffer() {
 	}
 }
 
-// takeBufferedLocked 取走合并缓冲当前内容的快照并重置缓冲。返回的切片在解锁
-// 后仍可安全写下游：resetBuffer 只复用 w.buffer 自己的底层数组，快照独立。
-// 调用方必须持有 w.mu。
+// takeBufferedLocked takes a snapshot of the current content of the merged buffer and resets the buffer. The returned slice, after unlocking,
+// can still be safely written downstream: resetBuffer only reuses w.buffer's own backing array, so the snapshot is independent.
+// Caller must hold w.mu.
 func (w *streamFlushWriter) takeBufferedLocked() []byte {
 	if w.buffer.Len() == 0 {
 		return nil
@@ -85,22 +85,22 @@ func (w *streamFlushWriter) takeBufferedLocked() []byte {
 	return data
 }
 
-// flushDueLocked 报告合并缓冲是否已到冲刷时间点。调用方必须持有 w.mu。
+// flushDueLocked reports whether the merged buffer has reached its flush time point. Caller must hold w.mu.
 func (w *streamFlushWriter) flushDueLocked() bool {
 	return w.lastFlush.IsZero() || time.Since(w.lastFlush) >= w.interval
 }
 
-// streamPhaseDiagnostics 采集流阶段的断流现场判据。
+// streamPhaseDiagnostics collects the break-scene evidence for the stream phase.
 //
-// 上游 RST_STREAM（如 "INTERNAL_ERROR; received from peer"）有两类互斥成因，
-// 事后只看错误文本无法区分（issue #491）：
-//   - 下游背压：SSE 是在读上游的回调里同步写回下游的，客户端读得慢会让
-//     body.Read 停摆，HTTP/2 流控窗口不再补充，上游边缘可能因此重置该流。
-//     此时 writeBlockedNanos 会显著偏大。
-//   - 上游自身：后端被回收/长推理期间安静，边缘直接重置。此时下游写阻塞
-//     接近 0，而距上游末帧的间隔偏大。
+// An upstream RST_STREAM (such as "INTERNAL_ERROR; received from peer") has two mutually exclusive causes,
+// which cannot be told apart from the error text alone afterwards (issue #491):
+//   - downstream backpressure: SSE is written back to the downstream synchronously inside the callback that reads upstream, so if the client reads slowly it stalls
+//     body.Read, the HTTP/2 flow-control window is no longer replenished, and the upstream edge may reset the stream because of it.
+//     then writeBlockedNanos is noticeably large.
+//   - upstream itself: the backend was reclaimed or stayed quiet during long inference, and the edge resets directly. Then downstream write blocking
+//     is close to 0, while the gap since the upstream's last frame is large.
 //
-// 两个计数器随断流信息一并落到用量日志，运维在错误明细页即可判读，无需加库表。
+// Both counters are written to the usage log along with the break information, so operators can read them on the error detail page without a new table.
 type streamPhaseDiagnostics struct {
 	writeBlockedNanos   atomic.Int64
 	lastUpstreamFrameAt atomic.Int64 // UnixNano
@@ -111,8 +111,8 @@ func newStreamPhaseDiagnostics() *streamPhaseDiagnostics {
 	return &streamPhaseDiagnostics{}
 }
 
-// annotateStreamBreakDiagnostics 只给断流类失败追加现场判据。客户端主动断开
-// （499）与上游显式 response.failed 有各自明确的成因，不需要这两个数字。
+// annotateStreamBreakDiagnostics adds break-scene evidence only to stream-break failures. A client-initiated disconnect
+// (499) and an explicit upstream response.failed each have their own clear cause, so these two numbers are not needed.
 func annotateStreamBreakDiagnostics(outcome streamOutcome, diag *streamPhaseDiagnostics) streamOutcome {
 	if outcome.logStatusCode != logStatusUpstreamStreamBreak {
 		return outcome
@@ -125,7 +125,7 @@ func annotateStreamBreakDiagnostics(outcome streamOutcome, diag *streamPhaseDiag
 	return outcome
 }
 
-// markUpstreamFrame 在每个上游 SSE 事件到达时打点。
+// markUpstreamFrame records a mark each time an upstream SSE event arrives.
 func (d *streamPhaseDiagnostics) markUpstreamFrame() {
 	if d == nil {
 		return
@@ -141,8 +141,8 @@ func (d *streamPhaseDiagnostics) addWriteBlocked(start time.Time) {
 	d.writeBlockedNanos.Add(int64(time.Since(start)))
 }
 
-// summary 生成人类可读的现场判据；无任何上游帧时返回空串（连响应头都没读到，
-// 与背压无关，加了反而噪声）。
+// summary produces the human-readable evidence; it returns an empty string when there are no upstream frames at all (not even the response headers were read,
+// unrelated to backpressure, and adding it would only be noise).
 func (d *streamPhaseDiagnostics) summary() string {
 	if d == nil {
 		return ""
@@ -157,9 +157,9 @@ func (d *streamPhaseDiagnostics) summary() string {
 		sinceLastMs = time.Since(time.Unix(0, last)).Milliseconds()
 	}
 	if sinceLastMs < 0 {
-		return fmt.Sprintf("[上游帧 %d, 下游写阻塞 %dms]", frames, blockedMs)
+		return fmt.Sprintf("[upstream frames %d, downstream write blocked %dms]", frames, blockedMs)
 	}
-	return fmt.Sprintf("[上游帧 %d, 下游写阻塞 %dms, 距上游末帧 %dms]", frames, blockedMs, sinceLastMs)
+	return fmt.Sprintf("[upstream frames %d, downstream write blocked %dms, %dms since the last upstream frame]", frames, blockedMs, sinceLastMs)
 }
 
 func (h *Handler) newStreamFlushWriter(c *gin.Context, writer io.Writer, flusher http.Flusher) *streamFlushWriter {
@@ -215,25 +215,25 @@ func (h *Handler) commitStreamAttempt(c *gin.Context, attempt *continuousRetrySt
 	return filtered.Finalize()
 }
 
-// scanOutput 把待输出字节送进输出扫描器并只返回可立刻落地的部分。
-// 它会读写 outputScanner 与 scanCarry，调用方必须持有 w.mu。
+// scanOutput feeds the bytes to be output into the output scanner and returns only the part that can be landed immediately.
+// It reads and writes outputScanner and scanCarry, so the caller must hold w.mu.
 func (w *streamFlushWriter) scanOutput(data []byte) ([]byte, error) {
 	if w == nil || w.outputScanner == nil {
 		return data, nil
 	}
 	released, err := w.outputScanner.Push(data)
 	if err != nil {
-		// 扫描器判定拦截时会丢弃自己的安全窗;尚未落地的尾巴同样不能再出去。
+		// When the scanner decides to block, it discards its own safety window; a tail not yet landed also cannot go out.
 		w.scanCarry = nil
 		return nil, err
 	}
 	return w.alignToEventBoundary(released), nil
 }
 
-// alignToEventBoundary 把扫描器放行的字节与之前暂存的尾巴拼接后,只返回到最后
-// 一个事件分隔符(空行)为止的部分,余下的半个事件继续暂存。没有完整事件时返回
-// nil,调用方视同扫描器仍在扣留。多扣一点只会让输出晚到,绝不会放出扫描器还没
-// 看过的字节,所以安全窗语义不变。
+// alignToEventBoundary concatenates the bytes released by the scanner with the previously staged tail, and returns only the part up to the last
+// event delimiter (blank line); the remaining half event stays staged. If there is no complete event, it returns
+// nil, and the caller treats it as if the scanner is still holding back. Holding back a bit more only delays output; it never releases bytes
+// the scanner has not yet seen, so the safety window semantics are unchanged.
 func (w *streamFlushWriter) alignToEventBoundary(released []byte) []byte {
 	if len(released) == 0 && len(w.scanCarry) == 0 {
 		return nil
@@ -337,7 +337,7 @@ func (w *streamFlushWriter) writeUnderlyingString(data string) error {
 	return err
 }
 
-// diagnosticsClock 仅在挂了诊断器时取时间戳，未开启时零开销。
+// diagnosticsClock takes a timestamp only when a diagnostic probe is attached; with none attached it has zero overhead.
 func (w *streamFlushWriter) diagnosticsClock() time.Time {
 	if w == nil || w.diag == nil {
 		return time.Time{}
@@ -345,8 +345,8 @@ func (w *streamFlushWriter) diagnosticsClock() time.Time {
 	return time.Now()
 }
 
-// WriteString 向流中写入字符串。
-// 契约：同一实例的 Flush/WriteBytes/WriteString 等方法不得跨 goroutine 并发调用。
+// WriteString writes a string into the stream.
+// Contract: the methods of one instance such as Flush/WriteBytes/WriteString must not be called concurrently across goroutines.
 func (w *streamFlushWriter) WriteString(data string) error {
 	if w == nil || w.writer == nil {
 		return nil
@@ -356,8 +356,8 @@ func (w *streamFlushWriter) WriteString(data string) error {
 	}
 	w.mu.Lock()
 	if w.aborted.Load() {
-		// 入口检查后 DiscardBuffered 已置位：绝不能再把字节写回缓冲，否则
-		// 清理后的缓冲会被重新填满，“缓冲彻底丢弃”不成立。
+		// After the entry check, DiscardBuffered has already been set: bytes must never be written back into the buffer, otherwise
+		// the buffer after cleanup would be refilled, and "the buffer is fully discarded" would not hold.
 		w.mu.Unlock()
 		return nil
 	}
@@ -388,8 +388,8 @@ func (w *streamFlushWriter) WriteString(data string) error {
 	return nil
 }
 
-// WriteBytes 向流中写入字节切片。
-// 契约：同一实例的 Flush/WriteBytes/WriteString 等方法不得跨 goroutine 并发调用。
+// WriteBytes writes a byte slice into the stream.
+// Contract: the methods of one instance such as Flush/WriteBytes/WriteString must not be called concurrently across goroutines.
 func (w *streamFlushWriter) WriteBytes(data []byte) error {
 	if w == nil || w.writer == nil || len(data) == 0 {
 		return nil
@@ -429,8 +429,8 @@ func (w *streamFlushWriter) WriteBytes(data []byte) error {
 	return nil
 }
 
-// WriteSSEData 向流中写入一条 SSE 数据帧（带 "data: " 前缀与 "\n\n" 后缀）。
-// 契约：同一实例的 Flush/WriteBytes/WriteSSEData 等方法不得跨 goroutine 并发调用。
+// WriteSSEData writes one SSE data frame into the stream (with the "data: " prefix and "\n\n" suffix).
+// Contract: the methods of one instance such as Flush/WriteBytes/WriteSSEData must not be called concurrently across goroutines.
 func (w *streamFlushWriter) WriteSSEData(data []byte) error {
 	if w == nil || w.writer == nil {
 		return nil
@@ -474,11 +474,11 @@ func (w *streamFlushWriter) WriteSSEData(data []byte) error {
 	return nil
 }
 
-// WriteSSEComment 写一条 SSE 注释(如 ": keepalive\n\n")并立即冲刷传输。
-// 注释不是模型输出,不进扫描器:先排空合并缓冲(里面只有完整事件)再直写底层。
-// 输出过滤开启时,scanOutput 已把底层写入对齐到事件边界(见 scanCarry),
-// 底层流不会停在半个事件里,直写是安全的;若改走扫描器,注释会和安全窗一起
-// 被扣到下一个终态帧,上游长时间静默时保活就完全失效。
+// WriteSSEComment writes an SSE comment (such as ": keepalive\n\n") and flushes to the transport at once.
+// Comments are not model output and do not go through the scanner: first drain the merged buffer (it holds only complete events), then write directly to the underlying writer.
+// When output filtering is on, scanOutput has already aligned the underlying writes to event boundaries (see scanCarry),
+// so the underlying stream never stops in the middle of an event and a direct write is safe; if it went through the scanner, the comment would be held back along with the safety window
+// until the next terminal frame, and keepalive would be completely ineffective when upstream is silent for a long time.
 func (w *streamFlushWriter) WriteSSEComment(comment string) error {
 	if w == nil || w.writer == nil || comment == "" {
 		return nil
@@ -505,13 +505,13 @@ func (w *streamFlushWriter) WriteSSEComment(comment string) error {
 	return nil
 }
 
-// DiscardBuffered 彻底丢弃本地缓冲：清空合并 buffer、扫描暂存尾巴并解绑输出
-// 扫描器，同时置位 aborted。guard 命中后调用一次即可保证后续 Flush/Finalize
-// 不再输出任何数据。
+// DiscardBuffered fully discards the local buffer: it clears the merged buffer, discards the scanner's staged tail and detaches the output
+// scanner, while setting aborted. After the guard trips, calling it once guarantees that later Flush/Finalize
+// no longer output any data.
 //
-// 并发契约：aborted 用 CAS 最先置位，保证多路触发（guard 判定、保活/forward
-// 竞态）下只有第一个调用执行清理；CAS 失败说明已有调用完成过丢弃，直接返回。
-// 清理过程只拿内部状态锁，不碰下游写锁，因此不会被慢速客户端拖住。
+// Concurrency contract: aborted is set first with CAS, so that under multiple triggers (guard decision, keepalive / forward
+// race) only the first call performs cleanup; a CAS failure means a discard has already completed, so return directly.
+// The cleanup takes only the internal state lock and does not touch the downstream write lock, so a slow client cannot hold it up.
 func (w *streamFlushWriter) DiscardBuffered() {
 	if w == nil {
 		return
@@ -526,8 +526,8 @@ func (w *streamFlushWriter) DiscardBuffered() {
 	w.mu.Unlock()
 }
 
-// Flush 冲刷当前合并缓冲与输出扫描器已放行的安全窗。
-// 契约：同一实例的 Flush/WriteBytes 等方法不得跨 goroutine 并发调用。
+// Flush writes out the current merged buffer and the safety window already released by the output scanner.
+// Contract: the methods of one instance such as Flush/WriteBytes must not be called concurrently across goroutines.
 func (w *streamFlushWriter) Flush() error {
 	if w == nil {
 		return nil
@@ -535,7 +535,7 @@ func (w *streamFlushWriter) Flush() error {
 	if w.aborted.Load() {
 		return nil
 	}
-	// 锁内只做缓冲/安全窗的快照与清理，写下游在锁外完成。
+	// Under the lock, only snapshot and clean up the buffer / safety window; the downstream write is done outside the lock.
 	w.mu.Lock()
 	buffered := w.takeBufferedLocked()
 	var released []byte
@@ -545,7 +545,7 @@ func (w *streamFlushWriter) Flush() error {
 	}
 	w.mu.Unlock()
 	if w.aborted.Load() {
-		// 已判定失控的缓冲快照就地丢弃，不再释放到下游。
+		// A buffer snapshot already judged runaway is discarded in place and is not released downstream.
 		return nil
 	}
 	if err := w.writeUnderlying(buffered); err != nil {
@@ -570,7 +570,7 @@ func (w *streamFlushWriter) Finalize() error {
 	if w == nil || w.aborted.Load() {
 		return nil
 	}
-	// 第一阶段：只取走合并缓冲快照，写下游在锁外。
+	// Phase 1: only take the merged buffer snapshot; write the downstream outside the lock.
 	w.mu.Lock()
 	buffered := w.takeBufferedLocked()
 	w.mu.Unlock()
@@ -580,7 +580,7 @@ func (w *streamFlushWriter) Finalize() error {
 	if err := w.writeUnderlying(buffered); err != nil {
 		return err
 	}
-	// 第二阶段：释放扫描器安全窗与暂存的半个事件。仍不持锁写下游。
+	// Phase 2: release the scanner safety window and the staged half event. Still do not write downstream while holding the lock.
 	w.mu.Lock()
 	if w.aborted.Load() {
 		w.mu.Unlock()
@@ -591,7 +591,7 @@ func (w *streamFlushWriter) Finalize() error {
 	if w.outputScanner != nil {
 		released, scanErr = w.outputScanner.Finalize()
 		if scanErr != nil {
-			// 判定拦截时连同暂存的半个事件一起丢弃。
+			// When the scanner decides to block, discard the staged half event together with it.
 			w.scanCarry = nil
 		} else {
 			carry = w.scanCarry
@@ -605,7 +605,7 @@ func (w *streamFlushWriter) Finalize() error {
 	if w.aborted.Load() {
 		return nil
 	}
-	// 流真正结束:先补齐暂存的半个事件,再写扫描器释放的安全窗。
+	// When the stream truly ends: first complete the staged half event, then write the safety window the scanner releases.
 	if err := w.writeUnderlying(carry); err != nil {
 		return err
 	}

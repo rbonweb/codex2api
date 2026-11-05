@@ -195,7 +195,7 @@ func (h *Handler) scopedModelRecords(ctx context.Context, row *database.APIKeyRo
 	// Model allow/deny applies to the name the downstream client requests. An
 	// alias may therefore remain visible while its hidden target is denied; the
 	// request path applies the same source-name policy before mapping.
-	// Daybreak 另外校验目标程序模型，避免映射绕过该 Key 的权限名单。
+	// Daybreak additionally checks the target program model, so that the mapping cannot bypass this key's allowlist.
 	for key, record := range records {
 		if checkAPIKeyModel(record.id, row.Limits) != "" || h.daybreakMappedModelDenied(record.id, row.Limits) {
 			delete(records, key)

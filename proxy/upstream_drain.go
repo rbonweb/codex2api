@@ -5,19 +5,19 @@ import (
 	"time"
 )
 
-// upstreamDrainTimeout 控制客户端断开后，最多继续读上游多久以提取 usage。
-// 取值参考：上游 response.completed 一般在断开后 1-3 秒内到达；
-// 5 秒兜住绝大多数情况，又不会在上游卡住时无限占用连接。
+// upstreamDrainTimeout controls how long, at most, to keep reading upstream after the client disconnects in order to extract usage.
+// Reference value: upstream response.completed usually arrives within 1-3 seconds after the disconnect;
+// 5 seconds covers the vast majority of cases without tying up the connection indefinitely when upstream stalls.
 const upstreamDrainTimeout = 5 * time.Second
 
-// newDrainableUpstreamContext 创建一个与客户端 context 解耦的上游 context，
-// 用途：客户端断开后仍能再读 drainTimeout 时间，以便从上游 SSE 拿到
-// response.completed 事件里的 usage（流式请求计费的关键）。
+// newDrainableUpstreamContext creates an upstream context decoupled from the client context,
+// Purpose: after the client disconnects, it can still read for drainTimeout, so it can get from the upstream SSE
+// response.completed event the usage (key to billing streaming requests).
 //
-// 行为：
-//   - 客户端 ctx 取消后，等待 drainTimeout 再 cancel 上游
-//   - 如果在 drainTimeout 之前调用方主动 cancel，立即停止
-//   - parent 为 nil 时退化到 context.Background
+// Behavior:
+//   - After the client ctx is cancelled, wait drainTimeout before cancelling upstream
+//   - If the caller cancels before drainTimeout, stop immediately
+//   - When parent is nil, fall back to context.Background
 func newDrainableUpstreamContext(clientCtx context.Context, drainTimeout time.Duration) (context.Context, context.CancelFunc) {
 	baseCtx := context.Background()
 	if clientCtx != nil {

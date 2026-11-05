@@ -8,7 +8,7 @@ import (
 	"time"
 )
 
-// versionSyncTransport 为 HTTPS 版本源使用 Chrome uTLS，HTTP 供本地源和重定向使用。
+// versionSyncTransport uses Chrome uTLS for HTTPS version sources, and plain HTTP for local sources and redirects.
 type versionSyncTransport struct {
 	chrome *utlsRoundTripper
 	plain  *http.Transport
@@ -33,7 +33,7 @@ func newVersionSyncClient(endpoint, proxyURL string, timeout time.Duration) (*ht
 func (t *versionSyncTransport) RoundTrip(req *http.Request) (*http.Response, error) {
 	switch req.URL.Scheme {
 	case "https":
-		// Gallery CDN 可能只协商 HTTP/1.1，使用支持 ALPN 的标准传输。
+		// The Gallery CDN may only negotiate HTTP/1.1, so use the standard transport that supports ALPN.
 		if req.URL.Hostname() == "openai.gallerycdn.vsassets.io" {
 			return t.plain.RoundTrip(req)
 		}

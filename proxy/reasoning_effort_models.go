@@ -49,7 +49,7 @@ func parseReasoningEffortModelEntries(value string, supportedModels []string, st
 	dec.DisallowUnknownFields()
 	if err := dec.Decode(&raw); err != nil {
 		if strict {
-			return nil, fmt.Errorf("reasoning_effort_models 必须是 JSON 数组: %w", err)
+			return nil, fmt.Errorf("reasoning_effort_models must be a JSON array: %w", err)
 		}
 		return nil, nil
 	}
@@ -57,9 +57,9 @@ func parseReasoningEffortModelEntries(value string, supportedModels []string, st
 	if err := dec.Decode(&extra); err != io.EOF {
 		if strict {
 			if err == nil {
-				return nil, fmt.Errorf("reasoning_effort_models 只能包含一个 JSON 数组")
+				return nil, fmt.Errorf("reasoning_effort_models can only contain one JSON array")
 			}
-			return nil, fmt.Errorf("reasoning_effort_models JSON 无效: %w", err)
+			return nil, fmt.Errorf("reasoning_effort_models JSON is invalid: %w", err)
 		}
 		return nil, nil
 	}
@@ -71,7 +71,7 @@ func parseReasoningEffortModelEntries(value string, supportedModels []string, st
 		effort := normalizeConfiguredReasoningEffort(entry.Effort, model)
 		if model == "" || effort == "" {
 			if strict {
-				return nil, fmt.Errorf("reasoning_effort_models[%d] 需要非空 model 且 effort 必须是 none/minimal/low/medium/high/xhigh/ultra", i)
+				return nil, fmt.Errorf("reasoning_effort_models[%d] needs a non-empty model, and effort must be none/minimal/low/medium/high/xhigh/ultra", i)
 			}
 			continue
 		}
@@ -101,8 +101,8 @@ func normalizeReasoningEffortBaseModel(model string, supportedModels []string) s
 	return strings.ToLower(model)
 }
 
-// normalizeConfiguredReasoningEffort 归一化设置里配置的思考强度档位。
-// max 仅 gpt-5.6 起的模型放行,旧模型配置 max 会被钳到 xhigh(上游不接受)。
+// normalizeConfiguredReasoningEffort normalizes the reasoning effort level configured in settings.
+// max is only allowed for gpt-5.6 and later models, older models configured with max are clamped to xhigh (upstream does not accept it).
 func normalizeConfiguredReasoningEffort(effort, model string) string {
 	switch strings.ToLower(strings.TrimSpace(effort)) {
 	case "none", "minimal", "low", "medium", "high", "xhigh", "ultra":

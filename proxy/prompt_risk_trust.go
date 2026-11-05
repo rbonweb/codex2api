@@ -127,10 +127,10 @@ func promptRiskTrustAcquireReviewLease(subjectKey string, now time.Time) bool {
 	}
 }
 
-// promptRiskTrustReleaseReviewLease 在持锁请求的模型审查失败时立即让出
-// lease,避免同 subject 在剩余租期内跳过强制审查却没有任何一次审查真正
-// 完成。调用方无法区分自己是否持锁;误释放他人在途 lease 的代价只是多一
-// 次审查,朝安全侧失败。
+// promptRiskTrustReleaseReviewLease releases the lease at once when the model review of a request holding it fails,
+// so the same subject cannot skip forced review for the rest of the lease period without any review actually
+// completing. The caller cannot tell whether it holds the lock; the cost of wrongly releasing someone else's in-flight lease is only one extra
+// review, which fails on the safe side.
 func promptRiskTrustReleaseReviewLease(subjectKey string) {
 	if subjectKey != "" {
 		promptRiskTrustReviewLeases.Delete(subjectKey)
@@ -141,8 +141,8 @@ var promptRiskTrustLeaseSweepAtNanos atomic.Int64
 
 const promptRiskTrustLeaseSweepInterval = 10 * time.Minute
 
-// sweepPromptRiskTrustReviewLeases 低频清扫早已过期的 lease 条目;过期条目
-// 只在同 subject 再次请求时才会被覆写,静默离开的 subject 会永久占用内存。
+// sweepPromptRiskTrustReviewLeases periodically sweeps lease entries that expired long ago; expired entries
+// are only overwritten when the same subject makes another request, so a subject that goes quiet would hold memory forever.
 func sweepPromptRiskTrustReviewLeases(now time.Time) {
 	last := promptRiskTrustLeaseSweepAtNanos.Load()
 	if now.UnixNano()-last < int64(promptRiskTrustLeaseSweepInterval) ||
@@ -183,8 +183,8 @@ func (h *Handler) recordPromptRiskTrustBypass(c *gin.Context, policy database.Pr
 	}
 	promptRiskTrustBypassAudit.Store(subjectKey, now)
 	if len(bypassedSignals) > 0 {
-		// 带 signal-only 命中仍旁路是放宽后的新形态,把被旁路的信号名留在
-		// 日志里,运营者才能追溯放宽是否被滥用。与 DB 审计共享同一节流窗口。
+		// Still bypassing on a signal-only hit is the new loosened form; keep the names of the bypassed signals in
+		// the log, so operators can trace whether the loosening is being abused. It shares the same throttle window with DB auditing.
 		log.Printf("adaptive prompt trust bypass with low-impact signals subject=%s signals=%v", subjectKey, bypassedSignals)
 	}
 	requestIDHash := promptfilter.StableEvidenceFingerprint("adaptive-trust-request", ensurePromptPolicyRequestCorrelationID(c))

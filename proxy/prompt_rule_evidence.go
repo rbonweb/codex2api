@@ -299,9 +299,9 @@ func (h *Handler) enqueueUpstreamCyberPolicyEvidence(c *gin.Context, endpoint, m
 		"evidence_quality":  evidenceQuality, "learning_evidence": learningBundle,
 	}
 	metadata := marshalPromptPolicyEvidenceMetadata(metadataFields, learningBundle, len(captured.Matches))
-	rationale := "上游返回 cyber_policy，等待归因和候选规则审核"
+	rationale := "upstream returned cyber_policy, waiting for attribution and candidate rule review"
 	if evidenceQuality == promptPolicyEvidenceQualityInsufficient {
-		rationale = "上游返回 cyber_policy，但请求文本证据不足；仅归档并等待补证，不得用于自动学习"
+		rationale = "upstream returned cyber_policy, but the request text evidence is insufficient; only archive it and wait for more evidence, do not use it for automatic learning"
 	}
 	candidate := database.PromptRuleCandidateInput{
 		Fingerprint:   fingerprint,
@@ -329,7 +329,7 @@ func (h *Handler) enqueueUpstreamCyberPolicyEvidence(c *gin.Context, endpoint, m
 	accepted := h.db.EnqueuePromptPolicyIncident(&incident, &candidate, &evidence)
 	if accepted {
 		if policy, subjectKey, trusted := h.promptRiskTrustPolicyForRequest(c); trusted {
-			h.suspendPromptRiskTrustPolicy(policy, subjectKey, "上游返回 cyber_policy，恢复同步模型复核")
+			h.suspendPromptRiskTrustPolicy(policy, subjectKey, "upstream returned cyber_policy, restore synchronous model review")
 		}
 	}
 	return incidentID, accepted
@@ -443,13 +443,13 @@ func promptPolicyTruncateBytes(value string, maxBytes int) string {
 	return strings.TrimSpace(value[:cut])
 }
 
-// marshalPromptPolicyEvidenceMetadata 收缩元数据直到编码后体积不超过
-// promptPolicyLearningMetadataBytes。学习包各字段的预算是原始字节,而
-// json.Marshal 会把 <>& 与控制字符转义成 \u00XX(最高 6 倍膨胀),原始
-// 预算无法保证编码后大小;若不按编码结果复查,超限元数据会被下游 64 KiB
-// 校验整体拒绝,进而丢掉整条事件记录。收缩顺序:match JSON → Prompt 文本
-// 减半 → 上下文段逐段丢弃 → 错误文本,最终兜底丢弃学习包本身,保证事件
-// 永远可持久化。
+// marshalPromptPolicyEvidenceMetadata shrinks the metadata until its encoded size no longer exceeds
+// promptPolicyLearningMetadataBytes. The per-field budgets of the learning package are raw bytes, but
+// json.Marshal escapes <>& and control characters as \u00XX (up to 6x expansion), so the raw
+// budget cannot guarantee the encoded size; if the result is not rechecked after encoding, oversized metadata is rejected by the downstream 64 KiB
+// validation as a whole, which drops the entire event record. Shrink order: match JSON → Prompt text
+// halve → drop context segments one by one → error text; as a last resort drop the learning package itself, so that the event
+// can always be persisted.
 func marshalPromptPolicyEvidenceMetadata(fields map[string]any, bundle promptPolicyLearningBundle, matchCount int) []byte {
 	encoded, _ := json.Marshal(fields)
 	if len(encoded) <= promptPolicyLearningMetadataBytes {
