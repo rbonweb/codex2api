@@ -72,8 +72,8 @@ func zlibCompress(t *testing.T, data []byte) []byte {
 	return buf.Bytes()
 }
 
-// runDecompressor 以「RequestSizeLimiter 在前」的真实链路跑中间件，返回下游
-// 处理器看到的 raw_body、请求头与响应。
+// runDecompressor runs the middleware through the real chain with RequestSizeLimiter first, and returns what the downstream
+// handler sees: raw_body, request headers and the response.
 func runDecompressor(t *testing.T, body []byte, contentEncoding string, maxSize int64) (downstreamBody []byte, downstreamEncoding string, w *httptest.ResponseRecorder) {
 	t.Helper()
 	gin.SetMode(gin.TestMode)
@@ -87,7 +87,7 @@ func runDecompressor(t *testing.T, body []byte, contentEncoding string, maxSize 
 		downstreamEncoding = c.GetHeader("Content-Encoding")
 		got, _ := io.ReadAll(c.Request.Body)
 		if !bytes.Equal(got, downstreamBody) {
-			t.Errorf("c.Request.Body(%d bytes) 与 raw_body(%d bytes) 不一致", len(got), len(downstreamBody))
+			t.Errorf("c.Request.Body(%d bytes) does not match raw_body(%d bytes)", len(got), len(downstreamBody))
 		}
 		c.Status(http.StatusOK)
 	})
@@ -127,7 +127,7 @@ func TestRequestBodyDecompressorEncodings(t *testing.T) {
 				t.Fatalf("downstream body = %q, want %q", got, plain)
 			}
 			if tc.encoding != "" && tc.encoding != "identity" && encoding != "" {
-				t.Fatalf("Content-Encoding 头未移除: %q", encoding)
+				t.Fatalf("Content-Encoding header was not removed: %q", encoding)
 			}
 		})
 	}
@@ -135,7 +135,7 @@ func TestRequestBodyDecompressorEncodings(t *testing.T) {
 
 func TestRequestBodyDecompressorChainedEncodings(t *testing.T) {
 	plain := []byte(testPlainBody)
-	// 施加顺序 gzip → zstd，头按施加顺序列出，解码应逆序进行。
+	// Applied in the order gzip → zstd; the header lists them in application order, so decoding must run in reverse.
 	body := zstdCompress(t, gzipCompress(t, plain))
 	got, encoding, w := runDecompressor(t, body, "gzip, zstd", 1<<20)
 	if w.Code != http.StatusOK {
@@ -145,7 +145,7 @@ func TestRequestBodyDecompressorChainedEncodings(t *testing.T) {
 		t.Fatalf("downstream body = %q, want %q", got, plain)
 	}
 	if encoding != "" {
-		t.Fatalf("Content-Encoding 头未移除: %q", encoding)
+		t.Fatalf("Content-Encoding header was not removed: %q", encoding)
 	}
 }
 
@@ -156,10 +156,10 @@ func TestRequestBodyDecompressorUnknownEncodingPassthrough(t *testing.T) {
 		t.Fatalf("status = %d, body = %s", w.Code, w.Body.String())
 	}
 	if !bytes.Equal(got, plain) {
-		t.Fatalf("未知编码应原样透传, got %q", got)
+		t.Fatalf("unknown encoding should pass through unchanged, got %q", got)
 	}
 	if encoding != "amz-1.0" {
-		t.Fatalf("未知编码的 Content-Encoding 头应保留, got %q", encoding)
+		t.Fatalf("Content-Encoding header for an unknown encoding should be kept, got %q", encoding)
 	}
 }
 
@@ -171,7 +171,7 @@ func TestRequestBodyDecompressorCorruptBody(t *testing.T) {
 }
 
 func TestRequestBodyDecompressorBombGuard(t *testing.T) {
-	// 压缩后很小、解压后超限的高压缩比载荷。
+	// A high-compression-ratio payload that is small after compression but exceeds the limit once decompressed.
 	huge := bytes.Repeat([]byte("a"), 1<<20)
 	body := zstdCompress(t, huge)
 	_, _, w := runDecompressor(t, body, "zstd", 1<<10)

@@ -14,10 +14,10 @@ import (
 	"github.com/joho/godotenv"
 )
 
-// schemaNameRegex 限定 PostgreSQL schema 名为 ASCII 标识符，避免 DSN/DDL 注入。
+// schemaNameRegex restricts PostgreSQL schema names to ASCII identifiers, to prevent DSN/DDL injection.
 var schemaNameRegex = regexp.MustCompile(`^[A-Za-z_][A-Za-z0-9_]*$`)
 
-// IsValidSchemaName 校验 PostgreSQL schema 名（首字母为字母或下划线，余下为字母/数字/下划线，长度 ≤63）。
+// IsValidSchemaName validates a PostgreSQL schema name (starts with a letter or underscore, the rest are letters, digits or underscores, length <= 63).
 func IsValidSchemaName(name string) bool {
 	if name == "" || len(name) > 63 {
 		return false
@@ -25,7 +25,7 @@ func IsValidSchemaName(name string) bool {
 	return schemaNameRegex.MatchString(name)
 }
 
-// DatabaseConfig 数据库核心配置。
+// DatabaseConfig is the core database configuration.
 type DatabaseConfig struct {
 	Driver   string
 	Path     string
@@ -34,11 +34,11 @@ type DatabaseConfig struct {
 	User     string
 	Password string
 	DBName   string
-	Schema   string // PostgreSQL schema（search_path）；空值保持数据库默认行为
+	Schema   string // PostgreSQL schema (search_path); an empty value keeps the database default behavior
 	SSLMode  string
 }
 
-// DSN 返回当前驱动的连接字符串。
+// DSN returns the connection string for the current driver.
 func (d *DatabaseConfig) DSN() string {
 	if strings.EqualFold(d.Driver, "sqlite") {
 		return d.Path
@@ -50,8 +50,8 @@ func (d *DatabaseConfig) DSN() string {
 	dsn := fmt.Sprintf("host=%s port=%d user=%s password=%s dbname=%s sslmode=%s",
 		quoteDSNValue(d.Host), d.Port, quoteDSNValue(d.User), quoteDSNValue(d.Password), quoteDSNValue(d.DBName), quoteDSNValue(sslMode))
 	if d.Schema != "" {
-		// 通过 PostgreSQL startup options 在连接启动时设置 search_path，覆盖连接池中的所有连接。
-		// schema 已在 Load() 阶段做白名单校验，此处可安全拼接。
+		// Set search_path at connection startup through PostgreSQL startup options, so it applies to every connection in the pool.
+		// The schema was validated against the allowlist in Load(), so it is safe to concatenate here.
 		dsn += fmt.Sprintf(" options='-c search_path=%s,public'", d.Schema)
 	}
 	return dsn
@@ -106,7 +106,7 @@ func applyDatabaseURL(d *DatabaseConfig, raw string) error {
 	return nil
 }
 
-// Label 返回用于展示的数据库标签。
+// Label returns the database label for display.
 func (d *DatabaseConfig) Label() string {
 	if strings.EqualFold(d.Driver, "sqlite") {
 		return "SQLite"
@@ -114,7 +114,7 @@ func (d *DatabaseConfig) Label() string {
 	return "PostgreSQL"
 }
 
-// RedisConfig Redis 核心配置
+// RedisConfig is the core Redis configuration
 type RedisConfig struct {
 	Addr               string
 	Username           string
@@ -124,22 +124,22 @@ type RedisConfig struct {
 	InsecureSkipVerify bool
 }
 
-// CacheConfig 缓存核心配置。
+// CacheConfig is the core cache configuration.
 type CacheConfig struct {
 	Driver               string
 	Redis                RedisConfig
 	ResponseContextStore ResponseContextStoreConfig
 }
 
-// ResponseContextStoreConfig 是 Memory 驱动下 previous_response_id 上下文的本地磁盘持久层。
-// Path 为空表示关闭；默认放在 SQLite 主库同目录的独立文件中，不进入主库备份。
+// ResponseContextStoreConfig is the local disk persistence layer for previous_response_id context under the memory driver.
+// An empty Path means disabled; by default it lives in a separate file in the same directory as the SQLite main database, so it is not included in the main database backup.
 type ResponseContextStoreConfig struct {
 	Path     string
 	TTL      time.Duration
 	MaxBytes int64
 }
 
-// Label 返回用于展示的缓存标签。
+// Label returns the cache label for display.
 func (c *CacheConfig) Label() string {
 	if strings.EqualFold(c.Driver, "memory") {
 		return "Memory"
@@ -147,13 +147,13 @@ func (c *CacheConfig) Label() string {
 	return "Redis"
 }
 
-// Config 全局核心环境配置（物理隔离的服务器参数）
-// 业务逻辑参数（如 ProxyURL，APIKeys，MaxConcurrency）已全部移至数据库 SystemSettings 进行化
+// Config is the global core environment configuration (server parameters that are physically isolated)
+// Business logic parameters (such as ProxyURL, APIKeys and MaxConcurrency) have all been moved to the database SystemSettings instead.
 type Config struct {
 	Port                      int
-	BindAddress               string // 监听地址，默认 0.0.0.0（兼容 Docker / 反代 / 公网）；如需仅本机访问可设为 127.0.0.1
+	BindAddress               string // listen address, default 0.0.0.0 (compatible with Docker / reverse proxy / public network); set to 127.0.0.1 for local-only access
 	AdminSecret               string
-	AllowAnonymousV1          bool // 显式允许 /v1/* 在未配置 API Key 时无鉴权放行（默认禁止）
+	AllowAnonymousV1          bool // explicitly allows /v1/* to pass without auth when no API key is configured (disallowed by default)
 	APIKeyAuthCacheEnabled    bool
 	MaxRequestBodySize        int
 	RequestMemoryBudgetBytes  int64 // Process-local retained HTTP/WS request body budget.
@@ -161,31 +161,31 @@ type Config struct {
 	SchedulerMaxWaitersPerKey int
 	Database                  DatabaseConfig
 	Cache                     CacheConfig
-	UseWebsocket              bool     // 是否启用 WebSocket 传输
-	CodexUpstreamTransport    string   // http|auto|ws，默认 http；USE_WEBSOCKET 作为旧开关兼容
-	TrustedProxies            []string // Gin 可信反向代理 CIDR/IP；默认信任回环与私有网段以兼容 Docker 反代，none/off/false/0 表示禁用
+	UseWebsocket              bool     // whether to enable WebSocket transport
+	CodexUpstreamTransport    string   // http|auto|ws, default http; USE_WEBSOCKET is kept as a legacy switch for compatibility
+	TrustedProxies            []string // Gin trusted reverse proxy CIDRs/IPs; by default loopback and private networks are trusted for compatibility with Docker reverse proxies; none/off/false/0 disable it
 }
 
-// applyTimezone 让 TZ 环境变量(含 .env 里的)真正作用于自然日限额等本地时间语义。
-// Go 的 time.Local 在进程首次格式化本地时间时就已锁定(main 里 config.Load 之前的
-// 启动日志即触发),godotenv 事后 os.Setenv 无法再影响它,必须显式覆盖 time.Local。
+// applyTimezone makes the TZ environment variable (including the one in .env) truly apply to local-time semantics such as daily quota limits.
+// Go's time.Local is locked as soon as the process first formats local time (the startup log before config.Load in main
+// triggers it), so godotenv's os.Setenv afterwards cannot affect it; time.Local must be overridden explicitly.
 func applyTimezone() {
 	tz := strings.TrimSpace(os.Getenv("TZ"))
-	tz = strings.TrimPrefix(tz, ":") // POSIX 允许 ":Asia/Shanghai" 写法
+	tz = strings.TrimPrefix(tz, ":") // POSIX allows the ":Asia/Shanghai" form
 	if tz == "" {
 		return
 	}
 	loc, err := time.LoadLocation(tz)
 	if err != nil {
-		log.Printf("警告: TZ=%q 无法解析(%v),继续使用 %s", tz, err, time.Local)
+		log.Printf("warning: TZ=%q cannot be parsed (%v), continuing with %s", tz, err, time.Local)
 		return
 	}
 	time.Local = loc
 }
 
-// Load 从 .env 文件加载核心环境配置，支持环境变量覆盖
+// Load loads the core environment configuration from the .env file and supports overrides from environment variables.
 func Load(envPath string) (*Config, error) {
-	// 尝试加载 .env 文件（可选，如果文件不存在则忽略并使用当前环境变量）
+	// Try to load the .env file (optional; if it does not exist, ignore it and use the current environment variables)
 	if envPath == "" {
 		envPath = ".env"
 	}
@@ -197,7 +197,7 @@ func Load(envPath string) (*Config, error) {
 		MaxRequestBodySize: 48 * 1024 * 1024,
 	}
 
-	// Web服务端口
+	// Web service port
 	if port := os.Getenv("CODEX_PORT"); port != "" {
 		fmt.Sscanf(port, "%d", &cfg.Port)
 	} else if port := os.Getenv("PORT"); port != "" {
@@ -213,9 +213,9 @@ func Load(envPath string) (*Config, error) {
 		}
 		cfg.APIKeyAuthCacheEnabled = enabled
 	}
-	// 默认绑 0.0.0.0 以兼容 Docker 端口映射、反向代理、生产服务器等常规部署。
-	// 安全防护由 fail-closed 中间件 + 首启自助初始化 (/api/admin/bootstrap) + 启动 banner 共同保证；
-	// 想要严格仅本机访问的用户可设 CODEX_BIND=127.0.0.1。
+	// Default bind is 0.0.0.0, for compatibility with common deployments such as Docker port mapping, reverse proxies and production servers.
+	// Security is ensured jointly by the fail-closed middleware, first-start self-service setup (/api/admin/bootstrap) and the startup banner;
+	// users who want strictly local-only access can set CODEX_BIND=127.0.0.1.
 	cfg.BindAddress = strings.TrimSpace(os.Getenv("CODEX_BIND"))
 	if cfg.BindAddress == "" {
 		cfg.BindAddress = "0.0.0.0"
@@ -253,7 +253,7 @@ func Load(envPath string) (*Config, error) {
 		}
 	}
 
-	// Codex 上游传输配置。CODEX_UPSTREAM_TRANSPORT 优先；USE_WEBSOCKET 保留为旧开关。
+	// Codex upstream transport configuration. CODEX_UPSTREAM_TRANSPORT takes precedence; USE_WEBSOCKET is kept as a legacy switch.
 	cfg.CodexUpstreamTransport = normalizeCodexUpstreamTransport(os.Getenv("CODEX_UPSTREAM_TRANSPORT"))
 	if cfg.CodexUpstreamTransport == "" && parseBoolEnv(os.Getenv("USE_WEBSOCKET")) {
 		cfg.CodexUpstreamTransport = "ws"
@@ -266,7 +266,7 @@ func Load(envPath string) (*Config, error) {
 		cfg.UseWebsocket = true
 	}
 
-	// 数据库配置
+	// Database configuration
 	cfg.Database.Driver = normalizeDriver(os.Getenv("DATABASE_DRIVER"), "postgres")
 	cfg.Database.Path = strings.TrimSpace(os.Getenv("DATABASE_PATH"))
 	cfg.Database.Host = os.Getenv("DATABASE_HOST")
@@ -280,7 +280,7 @@ func Load(envPath string) (*Config, error) {
 	cfg.Database.DBName = os.Getenv("DATABASE_NAME")
 	if v := strings.TrimSpace(os.Getenv("DATABASE_SCHEMA")); v != "" {
 		if !IsValidSchemaName(v) {
-			return nil, fmt.Errorf("非法的 DATABASE_SCHEMA: %q（仅允许字母、数字、下划线，且不能以数字开头，长度不超过 63）", v)
+			return nil, fmt.Errorf("invalid DATABASE_SCHEMA: %q (only letters, digits and underscores are allowed, it must not start with a digit, and the length must not exceed 63)", v)
 		}
 		cfg.Database.Schema = v
 	}
@@ -291,7 +291,7 @@ func Load(envPath string) (*Config, error) {
 	// configures PostgreSQL in one variable and wins over the split DATABASE_* ones.
 	if raw := strings.TrimSpace(os.Getenv("DATABASE_URL")); raw != "" {
 		if explicit := strings.TrimSpace(os.Getenv("DATABASE_DRIVER")); explicit != "" && normalizeDriver(explicit, "postgres") != "postgres" {
-			return nil, fmt.Errorf("DATABASE_URL 只用于 PostgreSQL，不能与 DATABASE_DRIVER=%s 同时设置", explicit)
+			return nil, fmt.Errorf("DATABASE_URL is only for PostgreSQL and cannot be set together with DATABASE_DRIVER=%s", explicit)
 		}
 		cfg.Database.Driver = "postgres"
 		if err := applyDatabaseURL(&cfg.Database, raw); err != nil {
@@ -299,7 +299,7 @@ func Load(envPath string) (*Config, error) {
 		}
 	}
 
-	// 缓存配置
+	// Cache configuration
 	cfg.Cache.Driver = normalizeDriver(os.Getenv("CACHE_DRIVER"), "redis")
 	cfg.Cache.Redis.Addr = strings.TrimSpace(os.Getenv("REDIS_ADDR"))
 	cfg.Cache.Redis.Username = strings.TrimSpace(os.Getenv("REDIS_USERNAME"))
@@ -317,18 +317,18 @@ func Load(envPath string) (*Config, error) {
 	}
 	cfg.Cache.ResponseContextStore = responseContextStore
 
-	// 校验必填物理层配置
+	// Validate the required physical-layer configuration
 	switch cfg.Database.Driver {
 	case "sqlite":
 		if cfg.Database.Path == "" {
-			return nil, fmt.Errorf("必须通过 .env 或环境变量配置 SQLite 数据库路径 (DATABASE_PATH)")
+			return nil, fmt.Errorf("the SQLite database path (DATABASE_PATH) must be configured through .env or environment variables")
 		}
 	case "postgres":
 		if cfg.Database.Host == "" {
-			return nil, fmt.Errorf("必须通过 .env 或环境变量配置 PostgreSQL (DATABASE_URL 或 DATABASE_HOST)")
+			return nil, fmt.Errorf("PostgreSQL must be configured through .env or environment variables (DATABASE_URL or DATABASE_HOST)")
 		}
 	default:
-		return nil, fmt.Errorf("不支持的数据库驱动: %s", cfg.Database.Driver)
+		return nil, fmt.Errorf("unsupported database driver: %s", cfg.Database.Driver)
 	}
 	if cfg.Database.Port == 0 {
 		cfg.Database.Port = 5432
@@ -341,10 +341,10 @@ func Load(envPath string) (*Config, error) {
 	case "memory":
 	case "redis":
 		if cfg.Cache.Redis.Addr == "" {
-			return nil, fmt.Errorf("必须通过 .env 或环境变量配置 Redis (REDIS_ADDR)")
+			return nil, fmt.Errorf("Redis must be configured through .env or environment variables (REDIS_ADDR)")
 		}
 	default:
-		return nil, fmt.Errorf("不支持的缓存驱动: %s", cfg.Cache.Driver)
+		return nil, fmt.Errorf("unsupported cache driver: %s", cfg.Cache.Driver)
 	}
 
 	return cfg, nil
@@ -406,11 +406,11 @@ const (
 	defaultResponseContextStoreMaxMB    = 2048
 )
 
-// loadResponseContextStoreConfig 解析 RESPONSE_CONTEXT_STORE_*。
-//   - RESPONSE_CONTEXT_STORE_PATH：显式路径；off/none/false/0 关闭。未设置时，
-//     Memory 缓存 + SQLite 主库默认使用主库同目录下的 response-context.db。
-//   - RESPONSE_CONTEXT_STORE_TTL_HOURS：最短保留时长（1~720，默认 48）。
-//   - RESPONSE_CONTEXT_STORE_MAX_MB：去重后条目正文总量上限（64~65536，默认 2048）。
+// loadResponseContextStoreConfig parses RESPONSE_CONTEXT_STORE_*.
+//   - RESPONSE_CONTEXT_STORE_PATH: explicit path; off/none/false/0 disable it. When unset,
+//     the memory cache with a SQLite main database uses response-context.db in the same directory as the main database by default.
+//   - RESPONSE_CONTEXT_STORE_TTL_HOURS: minimum retention in hours (1~720, default 48).
+//   - RESPONSE_CONTEXT_STORE_MAX_MB: upper limit on the total body size of deduplicated entries (64~65536, default 2048).
 func loadResponseContextStoreConfig(cacheDriver string, db DatabaseConfig) (ResponseContextStoreConfig, error) {
 	result := ResponseContextStoreConfig{
 		TTL:      defaultResponseContextStoreTTLHours * time.Hour,
@@ -419,14 +419,14 @@ func loadResponseContextStoreConfig(cacheDriver string, db DatabaseConfig) (Resp
 	if value := strings.TrimSpace(os.Getenv("RESPONSE_CONTEXT_STORE_TTL_HOURS")); value != "" {
 		hours, err := strconv.Atoi(value)
 		if err != nil || hours < 1 || hours > 720 {
-			return result, fmt.Errorf("RESPONSE_CONTEXT_STORE_TTL_HOURS 必须是 1~720 的整数: %q", value)
+			return result, fmt.Errorf("RESPONSE_CONTEXT_STORE_TTL_HOURS must be an integer from 1 to 720: %q", value)
 		}
 		result.TTL = time.Duration(hours) * time.Hour
 	}
 	if value := strings.TrimSpace(os.Getenv("RESPONSE_CONTEXT_STORE_MAX_MB")); value != "" {
 		mb, err := strconv.ParseInt(value, 10, 64)
 		if err != nil || mb < 64 || mb > 65536 {
-			return result, fmt.Errorf("RESPONSE_CONTEXT_STORE_MAX_MB 必须是 64~65536 的整数: %q", value)
+			return result, fmt.Errorf("RESPONSE_CONTEXT_STORE_MAX_MB must be an integer from 64 to 65536: %q", value)
 		}
 		result.MaxBytes = mb << 20
 	}
@@ -438,12 +438,12 @@ func loadResponseContextStoreConfig(cacheDriver string, db DatabaseConfig) (Resp
 			return result, nil
 		}
 		if cacheDriver != "memory" {
-			return result, fmt.Errorf("RESPONSE_CONTEXT_STORE_PATH 仅支持 memory 缓存驱动；redis 模式使用共享上下文后端")
+			return result, fmt.Errorf("RESPONSE_CONTEXT_STORE_PATH only supports the memory cache driver; redis mode uses the shared context backend")
 		}
 		result.Path = path
 		return result, nil
 	}
-	// Redis 已经是共享后端；只在 Memory 驱动下默认启用本地持久层。
+	// Redis is already a shared backend; the local persistence layer is enabled by default only under the memory driver.
 	if cacheDriver != "memory" || db.Driver != "sqlite" {
 		return result, nil
 	}
@@ -453,7 +453,7 @@ func loadResponseContextStoreConfig(cacheDriver string, db DatabaseConfig) (Resp
 	return result, nil
 }
 
-// sqliteDatabaseDir 返回 SQLite 主库文件所在目录；内存库或无法识别的 DSN 返回空。
+// sqliteDatabaseDir returns the directory of the SQLite main database file; it returns empty for an in-memory database or an unrecognized DSN.
 func sqliteDatabaseDir(path string) string {
 	path = strings.TrimSpace(path)
 	if path == "" || path == ":memory:" || strings.Contains(strings.ToLower(path), "mode=memory") {

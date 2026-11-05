@@ -2,7 +2,7 @@
 
 ## API Documentation
 
-完整 API 文档参见 [`docs/API.md`](../docs/API.md)，涵盖所有公共 API 和管理 API。
+The full API documentation is in [`docs/API.md`](../docs/API.md), covering all public and admin APIs.
 
 ### OpenAPI/Swagger Specification
 
@@ -18,19 +18,19 @@ This API uses URL path versioning (e.g., `/v1/`). The current version is v1.0.0.
 
 ### Authentication
 
-**公共 API** (`/v1/*`) 使用 API Key 认证:
+**Public API** (`/v1/*`) uses API key authentication:
 
 ```
 Authorization: Bearer sk-...
 ```
 
-**管理 API** (`/api/admin/*`) 使用 Admin Secret 认证:
+**Admin API** (`/api/admin/*`) uses admin secret authentication:
 
 ```
 X-Admin-Key: your-admin-secret
 ```
 
-或
+or
 
 ```
 Authorization: Bearer your-admin-secret
@@ -92,92 +92,89 @@ Rate limits are returned in response headers:
 
 ### Admin API Endpoints
 
-> 以下为速查表，完整请求/响应格式参见 [`docs/API.md`](../docs/API.md)。
+> The table below is a quick reference. For full request/response formats, see [`docs/API.md`](../docs/API.md).
 
-**Token 上传 & 账号管理:**
-
-| Endpoint | Method | Description |
-|----------|--------|-------------|
-| `/api/admin/accounts` | GET | 获取账号列表 |
-| `/api/admin/accounts` | POST | 添加 RT 账号（支持批量） |
-| `/api/admin/accounts/at` | POST | 添加 AT-only 账号（支持批量） |
-| `/api/admin/accounts/import` | POST | 文件批量导入（TXT/JSON/AT-TXT） |
-| `/api/admin/accounts/:id` | DELETE | 删除账号 |
-| `/api/admin/accounts/:id/refresh` | POST | 手动刷新 AT |
-| `/api/admin/accounts/:id/test` | GET | 测试账号连接 |
-| `/api/admin/accounts/:id/usage` | GET | 查看账号用量 |
-| `/api/admin/accounts/claude/oauth/auth-url` | POST | 生成 Claude OAuth PKCE 授权 URL（`mode=oauth|setup_token`） |
-| `/api/admin/accounts/claude/oauth/exchange-code` | POST | 兑换 Claude OAuth code 并入库 |
-| `/api/admin/accounts/claude/oauth/exchange-session-key` | POST | 用 claude.ai sessionKey 一键换出 OAuth 凭据 / Setup Token 并入库 |
-| `/api/admin/accounts/claude/import` | POST | 导入 Claude Token JSON / 对象数组 / `accounts` bundle（`auth_kind=oauth|setup_token|api_key`，OAuth 可只给 refresh_token；api_key 必填 api_key/base_url） |
-| `/api/admin/accounts/claude/import-tokens` | POST | 批量粘贴 `sk-ant-oat01-` Setup Token / `sk-ant-ort01-` Refresh Token 入库（旧名 `/import-setup-tokens`） |
-| `/api/admin/accounts/claude/export` | GET | 导出完整 Claude OAuth 凭据（单 JSON / 多账号 ZIP） |
-| `/api/admin/accounts/:id/claude/models` | POST | 刷新单个 Claude 上游模型目录 |
-| `/api/admin/accounts/claude/models/refresh` | POST | 批量刷新 Claude 模型目录 |
-| `/api/admin/accounts/:id/models/sync-upstream` | POST | 只读预览账号上游模型目录 |
-| `/api/admin/accounts/:id/models` | PATCH | 设置账号级 Claude `claude-*` 模型白名单 |
-| `/api/admin/accounts/:id/usage/refresh` | POST | 执行 Claude 原生用量采样 |
-| `/api/admin/accounts/:id/models/probe` | POST | 只读探测 Claude 模型能力 |
-| `/api/admin/accounts/batch-test` | POST | 批量测试连接（SSE） |
-| `/api/admin/accounts/export` | GET | 导出账号 |
-| `/api/admin/accounts/migrate` | POST | 从远程实例迁移账号（SSE） |
-| `/api/admin/accounts/event-trend` | GET | 账号增删趋势 |
-| `/api/admin/accounts/clean-banned` | POST | 清理 401 账号 |
-| `/api/admin/accounts/clean-rate-limited` | POST | 清理 429 账号 |
-| `/api/admin/accounts/clean-error` | POST | 清理错误账号 |
-
-Claude 凭据导出支持 `ids`、`filter=all|healthy` 和 `format=auto|json|zip`；返回内容含
-OAuth token，只有管理员可访问，客户端应按 `Cache-Control: no-store` 处理并在迁移完成后
-安全删除下载文件。导入端接受单对象、对象数组或 `{"accounts":[...]}`，分组按名称和
-channel 映射，不使用另一实例的数字分组 ID。
-
-**OAuth 授权:**
+**Token upload & account management:**
 
 | Endpoint | Method | Description |
 |----------|--------|-------------|
-| `/api/admin/oauth/generate-auth-url` | POST | 生成 OAuth 授权 URL |
-| `/api/admin/oauth/exchange-code` | POST | 授权码兑换 Token |
+| `/api/admin/accounts` | GET | List accounts |
+| `/api/admin/accounts` | POST | Add RT accounts (batch supported) |
+| `/api/admin/accounts/at` | POST | Add AT-only accounts (batch supported) |
+| `/api/admin/accounts/import` | POST | Batch import from a file (TXT/JSON/AT-TXT) |
+| `/api/admin/accounts/:id` | DELETE | Delete account |
+| `/api/admin/accounts/:id/refresh` | POST | Manually refresh AT |
+| `/api/admin/accounts/:id/test` | GET | Test account connection |
+| `/api/admin/accounts/:id/usage` | GET | View account usage |
+| `/api/admin/accounts/claude/oauth/auth-url` | POST | Generate a Claude OAuth PKCE authorization URL (`mode=oauth|setup_token`) |
+| `/api/admin/accounts/claude/oauth/exchange-code` | POST | Exchange the Claude OAuth code and store the account |
+| `/api/admin/accounts/claude/oauth/exchange-session-key` | POST | Exchange a claude.ai sessionKey for OAuth credentials / Setup Token in one step and store them |
+| `/api/admin/accounts/claude/import` | POST | Import Claude Token JSON / object array / `accounts` bundle (`auth_kind=oauth|setup_token|api_key`; OAuth may give only refresh_token; api_key requires api_key/base_url) |
+| `/api/admin/accounts/claude/import-tokens` | POST | Batch paste `sk-ant-oat01-` Setup Tokens / `sk-ant-ort01-` Refresh Tokens and store them (former name `/import-setup-tokens`) |
+| `/api/admin/accounts/claude/export` | GET | Export full Claude OAuth credentials (single JSON / multi-account ZIP) |
+| `/api/admin/accounts/:id/claude/models` | POST | Refresh the model catalog of one Claude upstream |
+| `/api/admin/accounts/claude/models/refresh` | POST | Batch refresh Claude model catalogs |
+| `/api/admin/accounts/:id/models/sync-upstream` | POST | Read-only preview of the account's upstream model catalog |
+| `/api/admin/accounts/:id/models` | PATCH | Set the account-level Claude `claude-*` model allowlist |
+| `/api/admin/accounts/:id/usage/refresh` | POST | Run native Claude usage sampling |
+| `/api/admin/accounts/:id/models/probe` | POST | Read-only probe of Claude model capabilities |
+| `/api/admin/accounts/batch-test` | POST | Batch test connections (SSE) |
+| `/api/admin/accounts/export` | GET | Export accounts |
+| `/api/admin/accounts/migrate` | POST | Migrate accounts from a remote instance (SSE) |
+| `/api/admin/accounts/event-trend` | GET | Account add/remove trend |
+| `/api/admin/accounts/clean-banned` | POST | Clean up 401 accounts |
+| `/api/admin/accounts/clean-rate-limited` | POST | Clean up 429 accounts |
+| `/api/admin/accounts/clean-error` | POST | Clean up error accounts |
 
-**API Key 管理:**
+The Claude credential export supports `ids`, `filter=all|healthy` and `format=auto|json|zip`. The response contains OAuth tokens and is accessible only to admins. Clients should treat it as `Cache-Control: no-store` and, after the migration completes, securely delete the downloaded file. The import endpoint accepts a single object, an object array or `{"accounts":[...]}`, and maps groups by name and channel; it does not use numeric group IDs from another instance.
 
-| Endpoint | Method | Description |
-|----------|--------|-------------|
-| `/api/admin/keys` | GET | 获取密钥列表 |
-| `/api/admin/keys` | POST | 创建新密钥 |
-| `/api/admin/keys/:id` | DELETE | 删除密钥 |
-
-**系统设置 & 运维:**
-
-| Endpoint | Method | Description |
-|----------|--------|-------------|
-| `/api/admin/stats` | GET | 仪表盘统计 |
-| `/api/admin/health` | GET | 健康检查 |
-| `/api/admin/ops/overview` | GET | 运维监控概览 |
-| `/api/admin/settings` | GET | 获取系统设置 |
-| `/api/admin/settings` | PUT | 更新系统设置 |
-| `/api/admin/models` | GET | 获取支持模型列表 |
-| `/api/admin/models/sync` | POST | 从 OpenAI 官方 Codex 模型页同步模型注册表 |
-| `/api/admin/settings/claude-config` | GET/PUT | Claude 指纹、时区和会话窗口默认配置 |
-
-**用量统计:**
-
-| Endpoint | Method | Description |
-|----------|--------|-------------|
-| `/api/admin/usage/stats` | GET | 使用统计 |
-| `/api/admin/usage/logs` | GET | 使用日志（分页） |
-| `/api/admin/usage/chart-data` | GET | 图表聚合数据 |
-| `/api/admin/usage/logs` | DELETE | 清空日志 |
-
-**代理池管理:**
+**OAuth authorization:**
 
 | Endpoint | Method | Description |
 |----------|--------|-------------|
-| `/api/admin/proxies` | GET | 获取代理列表 |
-| `/api/admin/proxies` | POST | 添加代理（支持批量） |
-| `/api/admin/proxies/:id` | DELETE | 删除代理 |
-| `/api/admin/proxies/:id` | PATCH | 更新代理 |
-| `/api/admin/proxies/batch-delete` | POST | 批量删除 |
-| `/api/admin/proxies/test` | POST | 测试代理连通性 |
+| `/api/admin/oauth/generate-auth-url` | POST | Generate an OAuth authorization URL |
+| `/api/admin/oauth/exchange-code` | POST | Exchange an authorization code for a token |
+
+**API key management:**
+
+| Endpoint | Method | Description |
+|----------|--------|-------------|
+| `/api/admin/keys` | GET | List keys |
+| `/api/admin/keys` | POST | Create a key |
+| `/api/admin/keys/:id` | DELETE | Delete a key |
+
+**System settings & operations:**
+
+| Endpoint | Method | Description |
+|----------|--------|-------------|
+| `/api/admin/stats` | GET | Dashboard statistics |
+| `/api/admin/health` | GET | Health check |
+| `/api/admin/ops/overview` | GET | Operations monitoring overview |
+| `/api/admin/settings` | GET | Get system settings |
+| `/api/admin/settings` | PUT | Update system settings |
+| `/api/admin/models` | GET | List supported models |
+| `/api/admin/models/sync` | POST | Sync the model registry from OpenAI's official Codex models page |
+| `/api/admin/settings/claude-config` | GET/PUT | Default Claude fingerprint, time zone and session window settings |
+
+**Usage statistics:**
+
+| Endpoint | Method | Description |
+|----------|--------|-------------|
+| `/api/admin/usage/stats` | GET | Usage statistics |
+| `/api/admin/usage/logs` | GET | Usage logs (paginated) |
+| `/api/admin/usage/chart-data` | GET | Aggregated chart data |
+| `/api/admin/usage/logs` | DELETE | Clear logs |
+
+**Proxy pool management:**
+
+| Endpoint | Method | Description |
+|----------|--------|-------------|
+| `/api/admin/proxies` | GET | List proxies |
+| `/api/admin/proxies` | POST | Add proxies (batch supported) |
+| `/api/admin/proxies/:id` | DELETE | Delete a proxy |
+| `/api/admin/proxies/:id` | PATCH | Update a proxy |
+| `/api/admin/proxies/batch-delete` | POST | Batch delete |
+| `/api/admin/proxies/test` | POST | Test proxy connectivity |
 
 ### Model Support
 

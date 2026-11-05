@@ -2,9 +2,9 @@ package promptfilter
 
 import "testing"
 
-// skipHeavyFixtureUnderRace 用于单线程、纯 CPU 的超大编码/压缩样本测试：它们在
-// -race 下每个要 3–45 秒，却没有任何并发可供检测。普通构建（CI 的 test 任务）
-// 仍完整执行，语义覆盖不变。
+// skipHeavyFixtureUnderRace is for single-threaded, pure-CPU tests of huge encoding/compression samples: they run in
+// -race, each takes 3-45 seconds with no concurrency for the race detector to check. A normal build (the CI test job)
+// still runs in full, and semantic coverage is unchanged.
 func skipHeavyFixtureUnderRace(t *testing.T) {
 	t.Helper()
 	if raceDetectorEnabled {

@@ -8,7 +8,7 @@ import (
 
 func TestRepetitionDetectorNormalText(t *testing.T) {
 	d := NewRepetitionDetector()
-	// 伪随机非周期数据
+	// Pseudo-random non-periodic data
 	r := rand.New(rand.NewSource(12345))
 	nonRepeating := make([]byte, 10000)
 	r.Read(nonRepeating)
@@ -21,8 +21,8 @@ func TestRepetitionDetectorNormalText(t *testing.T) {
 
 func TestRepetitionDetectorShortPeriodHit(t *testing.T) {
 	d := NewRepetitionDetector()
-	// 创建真实事故重复模式：周期 p = 30 ("_auditfree.md_pluginless.tmp.m")
-	// 数学核实重点：8192 % 30 = 22 != 0，验证有限串数学周期不要求 L % p == 0！
+	// Create the real incident repetition pattern: period p = 30 ("_auditfree.md_pluginless.tmp.m")
+	// Math check focus: 8192 % 30 = 22 != 0; verify that a finite string's period does not require L % p == 0!
 	pattern := []byte("_auditfree.md_pluginless.tmp.m")
 	if len(pattern) != 30 {
 		t.Fatalf("pattern length = %d, want 30", len(pattern))
@@ -32,7 +32,7 @@ func TestRepetitionDetectorShortPeriodHit(t *testing.T) {
 		stream = append(stream, pattern...)
 	}
 
-	// 以 512 字节分块送入
+	// Feed in 512-byte chunks
 	hitFound := false
 	var hitPeriod int
 	for offset := 0; offset < len(stream); offset += 512 {
@@ -58,8 +58,8 @@ func TestRepetitionDetectorShortPeriodHit(t *testing.T) {
 
 func TestRepetitionDetectorTailCheckShortText(t *testing.T) {
 	d := NewRepetitionDetector()
-	// 短文本 < 8192 字节：即使内容高度周期，尾检必须返回 hit=false (Spec §5.2 规则 6)
-	pattern := bytes.Repeat([]byte("abc"), 500) // 1500 字节
+	// Short text < 8192 bytes: even if the content is highly periodic, the tail check must return hit=false (Spec §5.2 rule 6)
+	pattern := bytes.Repeat([]byte("abc"), 500) // 1500 bytes
 	hit, _ := d.Push(pattern)
 	if hit {
 		t.Fatalf("expected hit=false during push for <8192 bytes")
@@ -72,26 +72,26 @@ func TestRepetitionDetectorTailCheckShortText(t *testing.T) {
 
 func TestRepetitionDetectorTailCheckUnalignedWindow(t *testing.T) {
 	d := NewRepetitionDetector()
-	// 构造真实非对齐尾检样本：
-	// 前 108 字节为非周期杂散前缀，后随 8192 字节周期为 10 的重复片段，总长 8300 字节。
-	// 在常规 Push 过程中：
-	// - 当累计达到 8192 字节时触发检查点，此时窗口包含 108 字节杂散前缀 + 8084 字节周期内容，不是完整周期，Push 判定 hit=false；
-	// - 后续送入剩余 108 字节（总长 8300 字节），尚未到达下一个 1024 检查点（9216 字节），Push 仍未命中；
-	// - 此时流结束触发 CheckTail()：提取当前最新的 8192 字节窗口，恰好完全由周期 10 的数据组成，CheckTail 必须精准返回 hit=true, period=10。
+	// Build a real unaligned tail-check sample:
+	// The first 108 bytes are a non-periodic stray prefix, followed by an 8192-byte repeated fragment with period 10; total length 8300 bytes.
+	// During normal Push:
+	// - When the total reaches 8192 bytes the checkpoint fires; the window then holds the 108-byte stray prefix plus 8084 bytes of periodic content, which is not a full period, so Push judges hit=false;
+	// - The remaining 108 bytes are fed next (total 8300 bytes); the next 1024 checkpoint (9216 bytes) is not reached yet, so Push still does not hit;
+	// - The stream ends and triggers CheckTail(): the latest 8192-byte window is made up exactly of period-10 data, so CheckTail must return hit=true, period=10 precisely.
 	prefix := []byte("non-periodic-header-padding-1234567890-abcdefghijklmnopqrstuvwxyz!@#$%^&*()-random-preamble-bytes-to-offset-")
 	if len(prefix) != 108 {
 		t.Fatalf("prefix length = %d, want 108", len(prefix))
 	}
 	pattern := []byte("0123456789") // period 10
 	periodicPart := bytes.Repeat(pattern, 8192/10)
-	periodicPart = append(periodicPart, pattern[:8192%10]...) // 恰好 8192 字节纯周期
+	periodicPart = append(periodicPart, pattern[:8192%10]...) // exactly 8192 bytes of pure periodic data
 	if len(periodicPart) != 8192 {
 		t.Fatalf("periodicPart length = %d, want 8192", len(periodicPart))
 	}
 
-	fullStream := append(prefix, periodicPart...) // 总长 108 + 8192 = 8300 字节
+	fullStream := append(prefix, periodicPart...) // total 108 + 8192 = 8300 bytes
 
-	// 分块推送，断言 Push 期间不会命中（因为 8192 检查点包含前缀，而后续未到 9216 检查点）
+	// Push in chunks and assert that Push never hits (the 8192 checkpoint includes the prefix, and the next 9216 checkpoint is not reached)
 	for offset := 0; offset < len(fullStream); offset += 500 {
 		end := offset + 500
 		if end > len(fullStream) {
@@ -103,7 +103,7 @@ func TestRepetitionDetectorTailCheckUnalignedWindow(t *testing.T) {
 		}
 	}
 
-	// 触发尾检
+	// Trigger the tail check
 	hit, p := d.CheckTail()
 	if !hit {
 		t.Fatalf("expected CheckTail to detect pure periodic window of latest 8192 bytes, got hit=false")
@@ -115,8 +115,8 @@ func TestRepetitionDetectorTailCheckUnalignedWindow(t *testing.T) {
 
 func TestRepetitionDetectorConsecutive9215BytesGuaranteedHit(t *testing.T) {
 	d := NewRepetitionDetector()
-	// Spec §5.2 规则 3: 步长 1024B，任意起点的连续周期片段达到 9215B 时必存在检查点完整落入
-	prefix := make([]byte, 512) // 任意偏置前缀 512B
+	// Spec §5.2 rule 3: step 1024B; a contiguous periodic fragment of any starting point that reaches 9215B always has a checkpoint falling entirely inside it
+	prefix := make([]byte, 512) // arbitrary offset prefix of 512B
 	for i := range prefix {
 		prefix[i] = byte(i % 127)
 	}
@@ -148,7 +148,7 @@ func TestRepetitionDetectorPushWithHashPipelined(t *testing.T) {
 	if hit || p != 0 {
 		t.Fatalf("unexpected hit on short non-repeating data: hit=%v, p=%d", hit, p)
 	}
-	// 计算预期 FNV-1a Hash
+	// Compute the expected FNV-1a hash
 	var expectedHash uint64 = fnvOffset
 	for _, b := range data {
 		expectedHash = (expectedHash ^ uint64(b)) * 1099511628211

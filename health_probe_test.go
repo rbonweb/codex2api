@@ -28,7 +28,7 @@ func TestHealthLockProbeResetsOnSuccess(t *testing.T) {
 	if got := probe.observe(true, base.Add(20*time.Second)); got != 0 {
 		t.Fatalf("success duration = %s, want 0", got)
 	}
-	// 成功之后重新失败要从零开始累计,而不是接着上一段算。
+	// After a success, a new failure must accumulate from zero, not continue from the previous stretch.
 	if got := probe.observe(false, base.Add(40*time.Second)); got != 0 {
 		t.Fatalf("restarted failure duration = %s, want 0", got)
 	}

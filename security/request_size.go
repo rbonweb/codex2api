@@ -55,7 +55,7 @@ func rejectRequestSize(c *gin.Context, limit, observed int64, stage string, lowe
 	encoded, _ := json.Marshal(entry)
 	log.Printf("[request-size] %s", encoded)
 	c.AbortWithStatusJSON(http.StatusRequestEntityTooLarge, gin.H{"error": gin.H{
-		"message": fmt.Sprintf("请求体过大（上限 %d 字节；请缩短会话或减少附件后重试）", limit),
+		"message": fmt.Sprintf("request body too large (limit %d bytes; shorten the session or reduce attachments and retry)", limit),
 		"type":    "invalid_request_error", "code": "request_too_large",
 		"request_id": requestID, "max_body_bytes": limit,
 		"observed_body_bytes": observedBytes, "size_stage": stage,

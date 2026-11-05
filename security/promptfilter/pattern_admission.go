@@ -92,48 +92,48 @@ type admissionCompiledPattern struct {
 func AuditPatternConfig(pattern PatternConfig) *PatternAdmissionError {
 	name := strings.TrimSpace(pattern.Name)
 	if name == "" || utf8.RuneCountInString(name) > maxCustomPatternNameRunes {
-		return patternAdmissionIssue(PatternQuarantineInvalidDefinition, "规则名称不能为空且不能超过 100 个字符")
+		return patternAdmissionIssue(PatternQuarantineInvalidDefinition, "rule name must not be empty or exceed 100 characters")
 	}
 	if pattern.Weight < 1 || pattern.Weight > 1000 {
-		return patternAdmissionIssue(PatternQuarantineInvalidDefinition, "规则权重必须为 1-1000")
+		return patternAdmissionIssue(PatternQuarantineInvalidDefinition, "rule weight must be 1-1000")
 	}
 	if pattern.MinMatches < 0 {
-		return patternAdmissionIssue(PatternQuarantineInvalidDefinition, "min_matches 不能小于 0")
+		return patternAdmissionIssue(PatternQuarantineInvalidDefinition, "min_matches must not be less than 0")
 	}
 	if pattern.MinMatches > 0 && len(pattern.AnyPatterns) == 0 {
-		return patternAdmissionIssue(PatternQuarantineInvalidDefinition, "配置 min_matches 时必须同时配置 any_patterns")
+		return patternAdmissionIssue(PatternQuarantineInvalidDefinition, "any_patterns must be set when min_matches is configured")
 	}
 	if pattern.MinMatches > len(pattern.AnyPatterns) {
-		return patternAdmissionIssue(PatternQuarantineInvalidDefinition, "min_matches 不能大于 any_patterns 数量")
+		return patternAdmissionIssue(PatternQuarantineInvalidDefinition, "min_matches must not be greater than the number of any_patterns")
 	}
 	conditionCount := boolInt(strings.TrimSpace(pattern.Pattern) != "") + len(pattern.AllPatterns) + len(pattern.AnyPatterns) + len(pattern.ExcludePatterns)
 	if conditionCount > maxCustomPatternConditions {
-		return patternAdmissionIssue(PatternQuarantineInvalidDefinition, "单条规则的正则条件不能超过 64 个")
+		return patternAdmissionIssue(PatternQuarantineInvalidDefinition, "a rule must not have more than 64 regex conditions")
 	}
 	compiled, issue := compileAdmissionPattern(pattern)
 	if issue != nil {
 		return issue
 	}
 	if compiled.matches("") || compiled.matches(" ") {
-		return patternAdmissionIssue(PatternQuarantineMatchesEmpty, "规则最终条件可以匹配空文本，可能命中几乎所有请求")
+		return patternAdmissionIssue(PatternQuarantineMatchesEmpty, "the rule's final conditions can match empty text and may hit almost every request")
 	}
 	for _, token := range customPatternGenericTokens {
 		if compiled.matches(token) {
-			return patternAdmissionIssue(PatternQuarantineGenericToken, fmt.Sprintf("规则最终条件可仅凭通用短词 %q 命中，范围过宽", token))
+			return patternAdmissionIssue(PatternQuarantineGenericToken, fmt.Sprintf("the rule's final conditions can match on the generic short word %q alone, which is too broad", token))
 		}
 	}
 	for _, sample := range customPatternBenignCorpus {
 		if compiled.matches(sample) {
-			return patternAdmissionIssue(PatternQuarantineBenignCorpus, "规则最终条件会命中内置良性语料，范围过宽")
+			return patternAdmissionIssue(PatternQuarantineBenignCorpus, "the rule's final conditions match the built-in benign corpus, which is too broad")
 		}
 	}
 	for _, sample := range generatedCustomPatternBenignCorpus() {
 		if compiled.matches(sample) {
-			return patternAdmissionIssue(PatternQuarantineBenignCorpus, "规则最终条件会命中内置长文本良性语料，范围过宽")
+			return patternAdmissionIssue(PatternQuarantineBenignCorpus, "the rule's final conditions match the built-in long-text benign corpus, which is too broad")
 		}
 	}
 	if !patternRequiresSpecificEvidence(pattern) {
-		return patternAdmissionIssue(PatternQuarantineGenericStructure, "规则最终正向条件没有必须出现的具体词组或高约束结构，可能仅凭长度、通配符或宽字符类别命中大量请求")
+		return patternAdmissionIssue(PatternQuarantineGenericStructure, "the rule's final positive conditions have no required concrete phrase or highly constrained structure, so they may match many requests on length, wildcards or broad character classes alone")
 	}
 	return nil
 }
@@ -379,14 +379,14 @@ func compileAdmissionPattern(pattern PatternConfig) (admissionCompiledPattern, *
 	compileOne := func(field string, expression string) (*regexp.Regexp, *PatternAdmissionError) {
 		expression = strings.TrimSpace(expression)
 		if expression == "" {
-			return nil, patternAdmissionIssue(PatternQuarantineInvalidDefinition, field+" 中不能包含空正则")
+			return nil, patternAdmissionIssue(PatternQuarantineInvalidDefinition, field+" must not contain an empty regex")
 		}
 		if utf8.RuneCountInString(expression) > maxCustomPatternRegexRunes {
-			return nil, patternAdmissionIssue(PatternQuarantineInvalidDefinition, field+" 中的正则不能超过 5000 个字符")
+			return nil, patternAdmissionIssue(PatternQuarantineInvalidDefinition, field+" regex must not exceed 5000 characters")
 		}
 		re, err := regexp.Compile(expression)
 		if err != nil {
-			return nil, patternAdmissionIssue(PatternQuarantineInvalidRegex, fmt.Sprintf("%s 正则无效: %v", field, err))
+			return nil, patternAdmissionIssue(PatternQuarantineInvalidRegex, fmt.Sprintf("%s regex is invalid: %v", field, err))
 		}
 		return re, nil
 	}
@@ -422,7 +422,7 @@ func compileAdmissionPattern(pattern PatternConfig) (admissionCompiledPattern, *
 		return compiled, issue
 	}
 	if positiveCount == 0 {
-		return compiled, patternAdmissionIssue(PatternQuarantineInvalidDefinition, "规则至少需要一个 pattern、all_patterns 或 any_patterns 条件")
+		return compiled, patternAdmissionIssue(PatternQuarantineInvalidDefinition, "rule needs at least one pattern, all_patterns or any_patterns condition")
 	}
 	compiled.minimum = pattern.MinMatches
 	if compiled.minimum <= 0 && len(compiled.any) > 0 {

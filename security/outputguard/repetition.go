@@ -11,8 +11,8 @@ type RepetitionDetector struct {
 	window                [WindowSizeBytes]byte
 	linear                [WindowSizeBytes]byte
 	pi                    [WindowSizeBytes]uint16
-	count                 int64 // channel 累计写入总字节数
-	head                  int   // ring buffer 写入游标 (0..8191)
+	count                 int64 // total bytes ever written to the channel
+	head                  int   // ring buffer write cursor (0..8191)
 	lastCheckedCheckpoint int64
 }
 
@@ -70,7 +70,7 @@ func (d *RepetitionDetector) Push(data []byte) (hit bool, period int) {
 			return false, 0
 		}
 
-		// 达到检查点
+		// Checkpoint reached
 		d.writeChunk(data[:needed])
 		data = data[needed:]
 		d.advanceCheckpoint()
@@ -81,7 +81,7 @@ func (d *RepetitionDetector) Push(data []byte) (hit bool, period int) {
 	return false, 0
 }
 
-// PushWithHash 一次遍历同时流水线计算 FNV-1a Hash 并执行滑动窗口重复检测 (Spec §5.3)
+// PushWithHash computes the FNV-1a hash and runs the sliding-window repetition check in one pipelined pass (Spec §5.3)
 func (d *RepetitionDetector) PushWithHash(data []byte, initialHash uint64) (hit bool, period int, finalHash uint64) {
 	h := initialHash
 	for len(data) > 0 {
@@ -110,29 +110,29 @@ func (d *RepetitionDetector) PushWithHash(data []byte, initialHash uint64) (hit 
 }
 
 func (d *RepetitionDetector) CheckTail() (hit bool, period int) {
-	// Spec §5.2 规则 6: 如果 channel 累计总字节数 < 8192，不判定重复，直接放行
+	// Spec §5.2 rule 6: if the channel's total bytes written are < 8192, do not judge repetition; pass directly
 	if d.count < WindowSizeBytes {
 		return false, 0
 	}
-	// 已满 8192 窗口但尾部未对齐 1024，提取最新的完整 8192 窗口执行一次求周期检查
+	// The window is full at 8192 but the tail is not aligned to 1024; extract the latest complete 8192 window and run one period check
 	return d.checkCurrentWindow()
 }
 
-// checkCurrentWindow 提取当前 ring buffer 中的线性 8192 字节，使用前缀函数求最短周期 1 <= p <= 256
-// 数学核实说明：有限字符串周期不要求 L % p == 0（例如事故周期 p=30, 8192 % 30 = 22 != 0）。
-// 前缀函数的最大 border k = pi[L-1] 对应最小周期 p = L - k。
-// 当且仅当 1 <= p <= 256 且满足全部 p <= i < 8192 的 window[i] == window[i-p] 时判定命中。
-// 周期具有前缀遗传性：若前缀 [0..i] 的最小周期 (i+1)-pi[i] > 256，则整个窗口不可能 p <= 256，可立即早退。
+// checkCurrentWindow extracts the linear 8192 bytes from the current ring buffer and uses the prefix function to find the shortest period 1 <= p <= 256
+// Math check: a finite string's period does not require L % p == 0 (for example, incident period p=30, 8192 % 30 = 22 != 0).
+// The maximum border k = pi[L-1] of the prefix function corresponds to the minimum period p = L - k.
+// A hit is declared if and only if 1 <= p <= 256 and window[i] == window[i-p] holds for all p <= i < 8192.
+// Periods are inherited by prefixes: if the minimum period (i+1)-pi[i] of the prefix [0..i] is > 256, the whole window cannot have p <= 256, so it can exit early.
 func (d *RepetitionDetector) checkCurrentWindow() (bool, int) {
 	if d.count < WindowSizeBytes {
 		return false, 0
 	}
-	// 展开当前最新的 8192 字节连续视图：利用 copy 替代逐字节取模展开
+	// Unfold the current latest 8192-byte contiguous view: use copy instead of byte-by-byte modular unfolding
 	tailLen := WindowSizeBytes - d.head
 	copy(d.linear[:tailLen], d.window[d.head:])
 	copy(d.linear[tailLen:], d.window[:d.head])
 
-	// 采用流式 KMP prefix function，并在最小周期超过 MaxRepetitionPeriod 时早退
+	// Use a streaming KMP prefix function and exit early when the minimum period exceeds MaxRepetitionPeriod
 	d.pi[0] = 0
 	for i := 1; i < WindowSizeBytes; i++ {
 		j := int(d.pi[i-1])
@@ -144,8 +144,8 @@ func (d *RepetitionDetector) checkCurrentWindow() (bool, int) {
 		}
 		d.pi[i] = uint16(j)
 
-		// 周期前缀遗传性早退：前缀 [0..i] 的最短周期为 (i+1) - pi[i]
-		// 若前缀的最短周期已超过 MaxRepetitionPeriod (256)，则包含此前缀的整个 8192 窗口最短周期必 > 256
+		// Early exit by prefix inheritance of periods: the shortest period of the prefix [0..i] is (i+1) - pi[i]
+		// If the prefix's shortest period already exceeds MaxRepetitionPeriod (256), the shortest period of the whole 8192 window containing this prefix must be > 256
 		if (i+1)-j > MaxRepetitionPeriod {
 			return false, 0
 		}

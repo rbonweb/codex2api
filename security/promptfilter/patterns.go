@@ -22,14 +22,14 @@ const (
 
 	targetedOperationalIntrusionPattern = `(?i)\b(?:use|run|launch|execute|conduct|perform)\b.{0,96}\b(?:vibe[-_\s]?pentest|nmap|masscan|sqlmap|burp(?:\s+suite)?|metasploit|penetration\s+test(?:ing)?|pentest|vulnerability\s+scan(?:ning)?)\b|(?:使用|运行|启动|执行|发起|进行|开展).{0,64}(?:vibe[-_\s]?pentest|nmap|masscan|sqlmap|burp(?:\s+suite)?|metasploit|渗透测试|漏洞扫描)`
 	targetedIntrusionIntentPattern      = `(?i)\b(?:penetration\s+test(?:ing)?|pentest|exploit|attack|vulnerability\s+scan(?:ning)?)\b|渗透(?:测试)?|入侵|攻击|漏洞扫描`
-	// 目标识别有两条路径。标签式("目标 URL：1.2.3.4"、"target ip: ...")覆盖
-	// 中文与表单式写法;介词式("against 1.2.3.4"、"scan on 1.2.3.4"、"point nmap
-	// at 1.2.3.4")覆盖英文惯用表述——缺少它时,与中文锚点语义完全等价的英文
-	// 定向入侵请求只能拿到 signal-only 分数并被放行。
+	// Target detection has two paths. The labeled form ("target URL: 1.2.3.4", "target ip: ...") covers
+	// Chinese and form-style writing; the preposition form ("against 1.2.3.4", "scan on 1.2.3.4", "point nmap
+	// at 1.2.3.4") covers English idioms. Without it, an English targeted-intrusion request with exactly the same
+	// meaning as the Chinese anchor could only get a signal-only score and would be allowed through.
 	//
-	// 介词式分支刻意只接受 IP 与显式 http(s) URL,不接受裸域名:裸域名正则
-	// (?:[a-z0-9-]+\.)+[a-z]{2,} 会把 main.go、package.json 之类文件名也当作目标,
-	// 配合 on/at 这类高频介词会在普通开发文本上误报。
+	// The preposition branch deliberately accepts only IPs and explicit http(s) URLs, not bare domains: the bare-domain regex
+	// (?:[a-z0-9-]+\.)+[a-z]{2,} would also treat file names such as main.go and package.json as targets,
+	// combined with high-frequency prepositions such as on/at, it would cause false positives on ordinary development text.
 	targetedNetworkTargetPattern   = `(?i)(?:\b(?:targets?|target\s+(?:url|ip|host)|url|ip)\b|目标\s*(?:url|ip|地址|主机)?)[^\n。！？；]{0,48}(?:https?://[^\s<>"']+|(?:\d{1,3}\.){3}\d{1,3}|(?:[a-z0-9-]+\.)+[a-z]{2,})|\b(?:against|targeting|toward|towards|on|upon|at)\b[^\n。！？；]{0,24}(?:https?://[^\s<>"']+|(?:\d{1,3}\.){3}\d{1,3})|(?:针对|对|向)\s*[^\n。！？；]{0,24}?(?:https?://[^\s<>"']+|(?:\d{1,3}\.){3}\d{1,3})`
 	targetedIntrusionAuthorization = `(?i)(?:(?:我(?:自己|们)?的|自有|我方|本公司|本单位|已获授权的?|已经授权的?|经授权的?|授权(?:测试|环境|目标)|靶场|\bctf\b|\bsandbox\b|\btest\s+lab\b|\bmy\s+(?:own\s+)?|\bour\s+(?:own\s+)?|owned\s+by\s+(?:me|us)|\bauthorized\b|with\s+permission).{0,40}(?:网站|站点|服务器|主机|系统|网络|目标|url|ip|domain|host|server|system|network)|(?:网站|站点|服务器|主机|系统|网络|目标|url|ip|domain|host|server|system|network).{0,40}(?:属于我|归我所有|自有|我方|本公司|本单位|已获授权|已经授权|经授权|with\s+permission|\bauthorized\b))`
 
@@ -113,10 +113,10 @@ var defaultPatternConfigs = []PatternConfig{
 	{Name: "prompt_config_injection", Pattern: `(?i)\b(?:write|set|change|replace|edit|modify|inject|copy|deploy|append)\b.{0,80}\b(?:model_instructions_file|\.codex/config\.toml)\b.{0,100}\b(?:jailbreak|unrestricted|no\s+restrictions?|ignore.{0,20}(?:rules?|instructions?)|bypass.{0,20}safety)\b|\b(?:jailbreak|unrestricted|no\s+restrictions?|ignore.{0,20}(?:rules?|instructions?)|bypass.{0,20}safety)\b.{0,100}\b(?:write|set|change|replace|edit|modify|inject|copy|deploy|append)\b.{0,80}\b(?:model_instructions_file|\.codex/config\.toml)\b|(?:写入|设置|更改|修改|替换|编辑|注入|复制|部署|追加).{0,48}(?:model_instructions_file|\.codex/config\.toml|config\.toml).{0,64}(?:破限|破甲|越狱|无限制|忽略.{0,12}(?:规则|指令)|绕过.{0,12}安全)|(?:破限|破甲|越狱|无限制|忽略.{0,12}(?:规则|指令)|绕过.{0,12}安全).{0,64}(?:写入|设置|更改|修改|替换|编辑|注入|复制|部署|追加).{0,48}(?:model_instructions_file|\.codex/config\.toml|config\.toml)`, Weight: 100, Category: "prompt_injection", Strict: true},
 	{Name: "prompt_ctf_policy_downgrade", Pattern: `(?i)(ctf|靶场|沙箱|审核员|出题人).{0,100}(解除|放宽|降级|忽略|无视).{0,30}(安全|限制|策略|政策|拒绝)|(?:解除|放宽|降级).{0,30}(安全|限制|策略).{0,60}(ctf|靶场|沙箱)`, Weight: 80, Category: "prompt_injection", Strict: true},
 	{Name: "prompt_semantic_attack_rewrite", Pattern: `(?i)(替代访问路径|输入处理的健壮性|输出编码机制的完整性|服务端请求伪造防护|签名算法逆向|还原sign参数|提取签名密钥|审计网络出站规则).{0,100}(立即|直接|执行|完成|给出|脚本|命令|payload|利用)|(?:绕过登录|破解密码|脱库|窃取信息|反弹shell|横向移动|后门).{0,30}(替换|改写|表述|换成)`, Weight: 65, Category: "prompt_injection"},
-	// 中文里的“导出”既可能是窃取凭证，也常常只是“导出页面/导出按钮”。
-	// 对窃取、转储、提取仍保留原终局保护；“导出”仅在其直接宾语明确是
-	// 浏览器/登录凭证时才命中，避免跨页面需求把“生成…导出页面…账号密码”
-	// 拼成不存在的恶意语义。
+	// In Chinese, the word for "export" can mean stealing credentials, but it often just means "export page" or "export button".
+	// Stealing, dumping and extracting keep the original end-state protection; "export" only matches when its direct object is clearly
+	// a browser or login credential, so that a cross-page request such as "generate ... export page ... account password" is not
+	// stitched into a malicious meaning that does not exist.
 	{Name: "credential_theft", Pattern: `(?i)(?:^|[.!?。！？]\s*)(steal|dump|extract|exfiltrate|harvest|grab)\b.{0,50}\b(?:credentials?|passwords?|tokens?|cookies?)\b|\b(write|generate|create|give|build|craft|make|show|provide|implement|code|script|tool|steps?|instructions?|how\s+to|how\s+(?:can|do)\s+i|help\s+me|i\s+want\s+to|please|can\s+you)\b.{0,100}\b(steal|dump|extract|exfiltrate|harvest|grab)\b.{0,50}\b(?:credentials?|passwords?|tokens?|cookies?)\b|(?:写|生成|给我|构造|制作|提供|实现)[^。！？；\n]{0,50}(?:窃取|转储|提取)[^。！？；\n]{0,30}(?:凭证|密码|令牌|token|cookie)|(?:写|生成|给我|构造|制作|提供|实现)[^。！？；\n]{0,50}导出(?:(?:Chrome|Edge|Firefox|Safari|IE|谷歌|火狐|微信)[ ]?(?:浏览器)?[里中]?(?:保存)?的?|浏览器(?:保存的)?|保存的浏览器|系统|登录|用户|账号|所有)?(?:凭证|密码|令牌|token|cookie)`, Weight: 100, Category: "malicious", Strict: true},
 	{Name: "malware_family", Pattern: `(?i)\b(keylogger|ransomware|trojan|backdoor|botnet|infostealer)\b`, Weight: 20, Category: "malware", SignalOnly: true},
 	{Name: "evasion", Pattern: `(?i)\b(bypass|disable|evade)\s+(av|edr|defender|antivirus|endpoint\s+detection)\b|免杀|绕过\s*(杀软|edr)`, Weight: 80, Category: "evasion", SignalOnly: true},
@@ -126,7 +126,7 @@ var defaultPatternConfigs = []PatternConfig{
 	{Name: "exploit_payload", Pattern: `(?i)\b(exploit\s+payload|payload\s+for\s+exploiting|weaponiz(?:e|ed|ation))\b`, Weight: 45, Category: "exploit"},
 	// The Chinese branch dropped bare "payload"/"poc": unqualified they match
 	// ordinary dev text (a git/API request payload, or the "poc" substring in
-	// identifiers such as "mattpocock"). Exploit-qualified载荷 and word-bounded poc
+	// identifiers such as "mattpocock"). Exploit-qualified payload and word-bounded poc
 	// still fire; the English branch is unchanged.
 	{Name: "operational_exploit_request", Pattern: `(?i)\b(write|generate|create|give|build|craft|make)\b\s+(?:(?:me|us)\s+)?(?:(?:an?|the|working|functional|weaponized|deployable|practical|privilege|escalation)\s+){0,6}(?:exploit\s+payload|payload\s+for\s+exploiting|exploit|poc|proof[-\s]?of[-\s]?concept|0day|zero[-\s]?day)\b|\b(write|generate|create|give|build|craft|make)\b.{0,30}\b(?:working|functional|weaponized|deployable)\s+(?:exploit|payload|poc)\b|(?:写|生成|给我|构造|制作).{0,20}(漏洞利用(?:代码|载荷)?|攻击载荷|exploit\s+payload|概念验证|\bpoc\b)`, Weight: 45, Category: "exploit", Strict: true},
 	{Name: "exploit_technique", Pattern: `(?i)\b(shellcode|rop\s+chain|heap\s+spray|buffer\s+overflow\s+exploit)\b`, Weight: 35, Category: "exploit"},
@@ -201,7 +201,7 @@ var defaultPatternConfigs = []PatternConfig{
 	{Name: "targeted_operational_intrusion_request", Pattern: targetedOperationalIntrusionPattern, AllPatterns: []string{targetedIntrusionIntentPattern, targetedNetworkTargetPattern}, AuthorizationExcludePatterns: []string{targetedIntrusionAuthorization}, Weight: 100, Category: "unauthorized_access", Strict: true},
 	{Name: "log_evidence_clearing", Pattern: `(?i)(?:^|[.!?;:\n]\s*|\b(?:please|then|next)\s+|\b(?:i\s+(?:want|need)\s+to|help\s+me|can\s+you)\s+)\b(clear|delete|wipe|disable|tamper)\b.{0,60}\b(security|audit|event|system)\s+logs?\b|(?:^|[。！？；：\n]|请|请你|帮我|我要|然后|接着)(?:直接|立即|马上)?(?:清除|删除|擦除|关闭|篡改).{0,40}(安全日志|审计日志|事件日志|系统日志)|(?:^|[.!?;:\n]\s*|\b(?:please|then|next)\s+)\bcover\s+(tracks?|traces?)\b|(?:^|[。！？；：\n]|请|请你|帮我|我要|然后|接着)掩盖.{0,20}(痕迹|踪迹)`, Weight: 100, Category: "evasion", Strict: true},
 	{Name: "unauthorized_exploitation", Pattern: `(?i)(?:^|[.!?;:\n]\s*|\b(?:please|then|next)\s+)(?:without\s+permission|with\s+no\s+authorization|no\s+authorization|against\s+an?\s+unauthorized\s+target)\b[^.!?;:\n]{0,40}\b(?:exploit|compromise|take\s*over|takeover|access)\b|(?:^|[.!?;:\n]\s*|\b(?:please|then|next)\s+)\b(?:exploit|compromise|take\s*over|takeover|access)\b[^.!?;:\n]{0,80}\b(?:without\s+permission|with\s+no\s+authorization|unauthorized\s+target)\b|(?:^|[。！？；：\n]|请|请你|帮我|我要|然后|接着)(?:在)?(?:未授权|未经许可|没有(?:获得|取得|得到)?授权).{0,40}(?:利用|入侵|接管|访问|控制)|(?:^|[。！？；：\n]|请|请你|帮我|我要|然后|接着)(?:利用|入侵|接管|访问|控制).{0,40}(?:未授权|未经许可|没有(?:获得|取得|得到)?授权)`, Weight: 100, Category: "unauthorized_access", Strict: true},
-	// Bare "persistence"/"持久化" is ordinary software-engineering vocabulary (a
+	// Bare "persistence" (and its Chinese equivalent) is ordinary software-engineering vocabulary (a
 	// persistence layer, persisting a task id), so it may not stand alone as
 	// terminal malware evidence. Strong terms (malicious persistence, C2, botnet,
 	// backdoor service) still match on their own; the weak persistence wording

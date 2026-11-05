@@ -19,7 +19,7 @@ type BoundedRuntimeReader interface {
 	GetRuntimeBounded(context.Context, string, string, int64) ([]byte, bool, error)
 }
 
-// ErrRuntimeSnapshotTooLarge 表示后端值在反序列化前超过读取上限。
+// ErrRuntimeSnapshotTooLarge means the backend value exceeds the read limit before deserialization.
 var ErrRuntimeSnapshotTooLarge = errors.New("runtime snapshot exceeds byte limit")
 
 type AuthSnapshotWriter interface {

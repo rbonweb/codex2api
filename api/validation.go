@@ -55,10 +55,10 @@ func NewValidator(body []byte) *Validator {
 
 // ValidateRequest validates the request body against validation rules.
 //
-// 顶层键只遍历一次并缓存，避免对每条规则路径都重新全量扫描请求体。gjson 查一个
-// 顶层键时，若该键缺失或排在大字段（如 input）之后，需扫到对象末尾；规则里多为
-// 可选键（temperature/top_p/stop/... 通常不存在），逐条 GetBytes 会退化成
-// O(rules × body)。大请求体（曾 16MB）上这会造成秒级开销（issue #417）。
+// Top-level keys are walked once and cached, so the request body is not fully rescanned for every rule path. A gjson lookup of one
+// top-level key, when that key is missing or sits after a large field (such as input), must scan to the end of the object; most rules
+// use optional keys (temperature/top_p/stop/... are usually absent), so a GetBytes per rule would degrade into
+// O(rules × body). On large request bodies (once 16MB) this caused second-scale overhead (issue #417).
 func (v *Validator) ValidateRequest(rules map[string][]ValidationRule) *ValidationResult {
 	topLevel := make(map[string]gjson.Result)
 	gjson.ParseBytes(v.Body).ForEach(func(key, value gjson.Result) bool {
@@ -673,7 +673,7 @@ func ValidateInput() ValidationRule {
 		// still allow the item to reach the upstream Responses endpoint.
 		validTypes := map[string]bool{
 			"message": true,
-			// multi-agent 会话的代理间消息历史项,续会话时随 input 回放,上游原生接受
+			// Inter-agent message history items of a multi-agent session are replayed with input when the session continues; the upstream accepts them natively
 			"agent_message":           true,
 			"reasoning":               true,
 			"configuration_update":    true,
@@ -719,9 +719,9 @@ func ValidateInput() ValidationRule {
 			"image":                   true,
 		}
 
-		// 单次 ForEach 遍历，避免按下标 value.Get("i.type") 随机访问——gjson 数组按
-		// 索引访问每次都从头扫描，对大 input 数组是 O(N²)，大请求体上退化到秒级
-		// (issue #417)。空数组由 sawItem 判定。
+		// A single ForEach pass, instead of random access by index with value.Get("i.type"): gjson array access by index
+		// scans from the start on every call, which is O(N²) for large input arrays and degrades to seconds on large request bodies
+		// (issue #417). Empty arrays are detected by sawItem.
 		var verr *ValidationError
 		idx := 0
 		sawItem := false

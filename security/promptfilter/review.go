@@ -252,8 +252,8 @@ type chatReviewDecision struct {
 
 func NormalizeReviewConfig(cfg ReviewConfig) ReviewConfig {
 	defaults := DefaultReviewConfig()
-	// 规范化多 key：按行/逗号/分号/空白切分，去空去重，再以换行拼回，
-	// 便于存储与轮询（issue #289）。单 key 配置行为不变。
+	// Normalize multiple keys: split by line, comma, semicolon or whitespace, drop empty and duplicate entries, then join back with newlines,
+	// to make storage and polling easier (issue #289). Single-key configuration behaves as before.
 	cfg.APIKey = strings.Join(parseReviewAPIKeys(cfg.APIKey), "\n")
 	cfg.BaseURL = strings.TrimRight(strings.TrimSpace(cfg.BaseURL), "/")
 	if cfg.BaseURL == "" {
@@ -271,9 +271,9 @@ func NormalizeReviewConfig(cfg ReviewConfig) ReviewConfig {
 	}
 	explicitMode := strings.ToLower(strings.TrimSpace(cfg.Adapter.RequestMode))
 	cfg.Adapter = NormalizeReviewAdapterConfig(cfg.Adapter)
-	// 请求模式未显式配置时按模型推断:moderation 系列走 /moderations,其余
-	// (deepseek-v4-flash 等对话模型)走 /chat/completions。既有部署的
-	// omni-moderation-latest 继续落在 moderations,不受默认供应商切换影响。
+	// When the request mode is not set explicitly, infer it from the model: the moderation family uses /moderations, the rest
+	// (chat models such as deepseek-v4-flash) use /chat/completions. Existing deployments
+	// omni-moderation-latest keeps using moderations and is not affected by the default provider switch.
 	if explicitMode != ReviewRequestModeChatCompletions && explicitMode != ReviewRequestModeModerations &&
 		!strings.Contains(strings.ToLower(cfg.Model), "moderation") {
 		cfg.Adapter.RequestMode = ReviewRequestModeChatCompletions
@@ -351,9 +351,9 @@ func ShouldReviewVerdict(verdict Verdict, cfg ReviewConfig) bool {
 	}
 }
 
-// APIKeyList 解析配置的审查 API key 列表。可用换行/逗号/分号/空白分隔多个 key，
-// 以便把审核模型的 TPM/RPM 额度分摊到多个账号上（issue #289）。
-// 去除空白项与重复项并保持顺序。
+// APIKeyList parses the configured review API key list. Multiple keys can be separated by newlines, commas, semicolons or whitespace,
+// so the review model's TPM/RPM quota is spread across several accounts (issue #289).
+// Removes blank and duplicate entries and keeps the original order.
 func (cfg ReviewConfig) APIKeyList() []string {
 	return parseReviewAPIKeys(cfg.APIKey)
 }
@@ -408,7 +408,7 @@ func ValidateReviewConfig(cfg ReviewConfig) error {
 	return nil
 }
 
-// reviewKeyCursor 为多 key 轮询提供全局起点游标，让并发请求均匀分摊 TPM 额度。
+// reviewKeyCursor provides a global starting cursor for round-robin across multiple keys, so concurrent requests spread the TPM quota evenly.
 var reviewKeyCursor atomic.Uint64
 
 type reviewLimiter struct {
@@ -579,7 +579,7 @@ func (c ReviewClient) ReviewTextDetailed(ctx context.Context, text string, cfg R
 		return ReviewOutcome{Model: cfg.Model, Endpoint: endpoint}, reviewErr
 	}
 
-	// 轮询起点 + 遇到限流/失效 key（429/401/402/403/5xx/网络错误）自动切换下一个 key。
+	// Round-robin starting point, and on rate limit or invalid key (429/401/402/403/5xx/network error) automatically switch to the next key.
 	var lastErr error
 	for _, candidate := range availableKeys {
 		key := candidate.apiKey
@@ -591,7 +591,7 @@ func (c ReviewClient) ReviewTextDetailed(ctx context.Context, text string, cfg R
 				return outcome, nil
 			}
 			lastErr = reqErr
-			// 模型响应不可解析时 HTTP 已成功（2xx），key 本身健康：清冷却而非再隔离。
+			// When the model response cannot be parsed but the HTTP call succeeded (2xx), the key itself is healthy: clear the cooldown instead of isolating it again.
 			var responseErr *reviewModelResponseError
 			isResponseErr := errors.As(reqErr, &responseErr)
 			if isResponseErr {
@@ -884,8 +884,8 @@ func (c ReviewClient) reviewOnce(ctx context.Context, endpoint, apiKey string, p
 	return outcome, false, nil
 }
 
-// reviewStatusRetriable 判断某个 HTTP 状态码是否应切换到下一个 key 重试：
-// 429（TPM/RPM 限流）、401/402/403（key 失效或额度不可用）、5xx（服务端错误）。
+// reviewStatusRetriable reports whether an HTTP status code should switch to the next key and retry:
+// 429 (TPM/RPM rate limit), 401/402/403 (invalid key or quota unavailable), 5xx (server error).
 func reviewStatusRetriable(status int) bool {
 	switch status {
 	case http.StatusTooManyRequests, http.StatusUnauthorized, http.StatusPaymentRequired, http.StatusForbidden:
@@ -1014,11 +1014,11 @@ func reviewEndpointForMode(baseURL, requestMode string) (string, error) {
 	return parsed.String(), nil
 }
 
-// maxReviewModelsResponseBytes 单独放宽:聚合网关的模型列表可能远大于单条审查响应。
+// maxReviewModelsResponseBytes has its own, looser limit: the model list from an aggregating gateway can be much larger than a single review response.
 const maxReviewModelsResponseBytes = 1024 * 1024
 
-// reviewModelsEndpoint 构造供应商的模型列表端点(OpenAI 兼容 GET /v1/models)。
-// 允许 base_url 直接填到请求端点,剥掉已知后缀再拼 /models。
+// reviewModelsEndpoint builds the provider's model list endpoint (OpenAI-compatible GET /v1/models).
+// Allows base_url to point directly at the request endpoint: strip a known suffix before appending /models.
 func reviewModelsEndpoint(baseURL string) (string, error) {
 	baseURL = strings.TrimRight(strings.TrimSpace(baseURL), "/")
 	if baseURL == "" {
@@ -1053,7 +1053,7 @@ func reviewModelsEndpoint(baseURL string) (string, error) {
 	return parsed.String(), nil
 }
 
-// ListReviewModels 拉取审查供应商的模型列表,依次尝试配置的每个 key,任一成功即返回。
+// ListReviewModels fetches the review provider's model list, trying each configured key in turn, and returns as soon as one succeeds.
 func (c ReviewClient) ListReviewModels(ctx context.Context, cfg ReviewConfig) ([]string, string, error) {
 	cfg = NormalizeReviewConfig(cfg)
 	endpoint, err := reviewModelsEndpoint(cfg.BaseURL)

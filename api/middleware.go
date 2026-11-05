@@ -183,8 +183,8 @@ func randInt() int {
 // BodyCacheMiddleware caches the request body for multiple reads
 func BodyCacheMiddleware() gin.HandlerFunc {
 	return func(c *gin.Context) {
-		// 大批量导入端点由 handler 自己流式解析 multipart（>32MB 落临时文件）。
-		// 这里不能预先 io.ReadAll：鉴权还没发生，200MB 的未认证请求会直接常驻内存。
+		// The large batch import endpoints parse multipart themselves as a stream in the handler (over 32MB goes to a temp file).
+		// Do not call io.ReadAll here: auth has not run yet, so a 200MB unauthenticated request would stay resident in memory.
 		if security.IsLargeImportUploadPath(c.Request.URL.Path) {
 			c.Next()
 			return

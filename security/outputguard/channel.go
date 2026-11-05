@@ -22,26 +22,26 @@ const (
 	KindToolArguments ChannelKind = "tool_arguments"
 )
 
-// allowedTerminalTypes 白名单终态类型（Spec §5.3）
+// allowedTerminalTypes is the allowlist of terminal types (Spec §5.3)
 var allowedTerminalTypes = map[string]bool{
 	"arguments.done":     true,
 	"item.done":          true,
 	"response.completed": true,
 }
 
-// postEndDetector 在 channel 结束后继续对后续 append/snapshot 做有界周期检测。
-// 它只保留 8 KiB 环形窗口与检查点游标（不再保留 24 KiB 的线性化/前缀辅助数组），
-// 真正求周期时借用临时检测器完成。这样 EndChannel 后仍能阻止迟到的重复数据，
-// 同时避免为每个已关闭 channel 长期持有完整 RepetitionDetector 的内存。
+// postEndDetector keeps running bounded periodicity checks on later append/snapshot calls after the channel ends.
+// It keeps only the 8 KiB ring window and the checkpoint cursor (it no longer keeps the 24 KiB linearized/prefix helper arrays),
+// and borrows a temporary detector when it actually computes the period. This way late repeated data is still blocked after EndChannel,
+// and avoids keeping a full RepetitionDetector in memory for every closed channel over the long term.
 type postEndDetector struct {
 	window                [WindowSizeBytes]byte
-	count                 int64 // 累计写入总字节数（与关闭前检测器连续）
-	head                  int   // ring buffer 写入游标 (0..WindowSizeBytes-1)
+	count                 int64 // total bytes written (continuous with the detector before close)
+	head                  int   // ring buffer write cursor (0..WindowSizeBytes-1)
 	lastCheckedCheckpoint int64
 }
 
-// newPostEndDetector 从关闭前的完整检测器继承尾部窗口与检查点状态，
-// 使结束后的窗口判定与"从未释放窗口"时保持等价语义。
+// newPostEndDetector inherits the tail window and checkpoint state from the full detector before close,
+// so window decisions after the end keep the same semantics as a window that was never released.
 func newPostEndDetector(from *RepetitionDetector) *postEndDetector {
 	d := &postEndDetector{}
 	if from != nil {
@@ -94,7 +94,7 @@ func (d *postEndDetector) advanceCheckpoint() {
 	d.lastCheckedCheckpoint = d.count - (d.count % CheckpointStepBytes)
 }
 
-// Push 与 RepetitionDetector.Push 保持相同的检查点语义，仅在检查点对最新窗口求周期。
+// Push keeps the same checkpoint semantics as RepetitionDetector.Push: it computes the period on the latest window only at checkpoints.
 func (d *postEndDetector) Push(data []byte) (hit bool, period int) {
 	for len(data) > 0 {
 		needed := d.bytesNeededToNextCheckpoint()
@@ -114,7 +114,7 @@ func (d *postEndDetector) Push(data []byte) (hit bool, period int) {
 	return false, 0
 }
 
-// CheckTail 与 RepetitionDetector.CheckTail 语义一致：不足一个完整窗口时不判定。
+// CheckTail has the same semantics as RepetitionDetector.CheckTail: it makes no decision when there is less than one full window.
 func (d *postEndDetector) CheckTail() (hit bool, period int) {
 	if d.count < WindowSizeBytes {
 		return false, 0
@@ -122,8 +122,8 @@ func (d *postEndDetector) CheckTail() (hit bool, period int) {
 	return d.checkCurrentWindow()
 }
 
-// checkCurrentWindow 将环形窗口线性化后复用 RepetitionDetector 的 KMP 周期判定，
-// 避免复制重复检测算法。临时检测器为栈上固定大小对象，不产生长期堆占用。
+// checkCurrentWindow linearizes the ring window and reuses the KMP period check of RepetitionDetector,
+// to avoid duplicating the detection algorithm. The temporary detector is a fixed-size stack object and does not occupy the heap long term.
 func (d *postEndDetector) checkCurrentWindow() (bool, int) {
 	if d.count < WindowSizeBytes {
 		return false, 0
@@ -160,7 +160,7 @@ func NewChannelGuard(id string, kind ChannelKind, maxBytes int64, maxDeltas int)
 		kind:                  kind,
 		maxBytes:              maxBytes,
 		maxDeltas:             maxDeltas,
-		remainingScanBudget:   2 * maxBytes, // 累计扫描预算为 2 * limit (Spec §5.3)
+		remainingScanBudget:   2 * maxBytes, // the cumulative scan budget is 2 * limit (Spec §5.3)
 		consumedTerminalTypes: make(map[string]bool),
 		detector:              NewRepetitionDetector(),
 	}
@@ -170,8 +170,8 @@ func (c *ChannelGuard) Highwater() int64           { return c.highwater }
 func (c *ChannelGuard) DeltaCount() int            { return c.deltaCount }
 func (c *ChannelGuard) RemainingScanBudget() int64 { return c.remainingScanBudget }
 
-// ReleaseWindow 释放完整检测窗口，但保留轻量尾部检测器：
-// 已关闭 channel 之后迟到的 append/snapshot 仍必须继续接受有界周期检测。
+// ReleaseWindow releases the full detection window but keeps the lightweight tail detector:
+// late append/snapshot calls after the channel is closed must still accept bounded periodicity checks.
 func (c *ChannelGuard) ReleaseWindow() {
 	if c.isClosed {
 		return
@@ -181,7 +181,7 @@ func (c *ChannelGuard) ReleaseWindow() {
 	c.isClosed = true
 }
 
-// resetScanners 在整帧快照扫描前重置窗口状态（快照代表完整状态，不与历史 append 拼接）。
+// resetScanners resets the window state before a full-frame snapshot scan (the snapshot represents the complete state and is not concatenated with historical appends).
 func (c *ChannelGuard) resetScanners() {
 	if c.detector != nil {
 		c.detector.Reset()
@@ -191,7 +191,7 @@ func (c *ChannelGuard) resetScanners() {
 	}
 }
 
-// scanPush 将数据送入当前可用的检测器；关闭后自动切换到轻量尾部检测器。
+// scanPush feeds data to the currently available detector; after close it switches to the lightweight tail detector automatically.
 func (c *ChannelGuard) scanPush(data []byte) (bool, int) {
 	if c.detector != nil {
 		return c.detector.Push(data)
@@ -219,7 +219,7 @@ func (c *ChannelGuard) CheckAppend(delta []byte) (growth int64, cost int64, err 
 			return 0, 0, ErrToolDeltasExceeded
 		}
 	}
-	// int64 溢出保护：防止加法溢出翻转为负数绕过预算检查
+	// int64 overflow protection: prevents addition overflow from flipping to a negative number and bypassing the budget check
 	if deltaLen > 0 && c.highwater > math.MaxInt64-deltaLen {
 		if c.kind == KindToolArguments {
 			return 0, 0, ErrToolArgumentBytesExceeded
@@ -250,7 +250,7 @@ func (c *ChannelGuard) CommitAppend(delta []byte, growth int64, cost int64) erro
 	c.remainingScanBudget -= cost
 
 	if len(delta) > 0 {
-		// 关闭后由轻量尾部检测器继续扫描，绝不因 EndChannel 跳过周期检测。
+		// After close, the lightweight tail detector keeps scanning; EndChannel never skips periodicity checks.
 		if hit, _ := c.scanPush(delta); hit {
 			return ErrRepetitionDetected
 		}
@@ -270,26 +270,26 @@ func (c *ChannelGuard) CheckSnapshot(snapshot []byte, terminalStage string) (gro
 		return 0, 0, false, ErrChannelBytesExceeded
 	}
 
-	// 资格检查：仅白名单终态类型且具备 baseline hash 且许可未耗尽 (Spec §5.3 步骤 5)
-	// 合法与非法终态配额判断严格在 hash 前！无资格绝不提前计算 hash。
+	// Eligibility check: only an allowlisted terminal type that has a baseline hash and whose permit is not exhausted (Spec §5.3 step 5)
+	// Legal and illegal terminal quota decisions happen strictly before hashing! Ineligible input never computes a hash early.
 	isEligible := c.hasBaselineHash &&
 		allowedTerminalTypes[terminalStage] &&
 		!c.consumedTerminalTypes[terminalStage] &&
 		c.terminalPermitsUsed < 3
 
 	if isEligible {
-		// 计算 snapshot 的抗碰撞摘要比对 baseline 摘要。
-		// 使用 SHA-256 而非 64-bit FNV：攻击者无法以可接受成本构造同摘要异内容快照。
-		// 摘要计算仍受 2*limit 扫描预算与 3 次终态许可约束（与旧实现一致，不增加全文处理量级）。
+		// Compute the collision-resistant digest of the snapshot and compare it with the baseline digest.
+		// Use SHA-256 rather than 64-bit FNV: an attacker cannot build a snapshot with the same digest and different content at an acceptable cost.
+		// Digest computation is still bound by the 2*limit scan budget and the 3 terminal permits (same as the old implementation; it does not add a full-text processing order of magnitude).
 		currentDigest := sha256.Sum256(snapshot)
 		if currentDigest == c.terminalBaselineHash {
-			// 摘要完全一致，纯终态确认快照零计费放行，跳过步骤 7 重复扫描
+			// The digest matches exactly; a pure terminal confirmation snapshot passes at zero cost and skips the step 7 repeat scan
 			return growth, 0, true, nil
 		}
-		// 摘要不一致（变体篡改），作废该类型许可，全额计费
+		// The digest differs (variant tampering); revoke the permit for this type and charge the full cost
 		cost = snapLen
 	} else {
-		// 无免除资格（包括中间替换、首帧终态、重发同类型或超出 3 次配额），严禁提前 Hash，直接全额计费
+		// Not exempt (including an intermediate replacement, a first-frame terminal, a resend of the same type, or exceeding the 3-permit quota); never hash early, charge the full cost directly
 		cost = snapLen
 	}
 
@@ -304,14 +304,14 @@ func (c *ChannelGuard) CommitSnapshot(snapshot []byte, growth int64, cost int64,
 	c.highwater += growth
 	c.remainingScanBudget -= cost
 
-	// 白名单终态类型快照消耗本类型配额
+	// An allowlisted terminal-type snapshot consumes the quota for its type
 	if allowedTerminalTypes[terminalStage] {
 		c.consumedTerminalTypes[terminalStage] = true
 		c.terminalPermitsUsed++
 	}
 
-	// 终态首帧建立 baseline 摘要：仅白名单终态帧类型允许在首帧建立 baseline (Spec §5.3)。
-	// 建立 baseline 与检测器是否仍存活无关：关闭后的白名单终态快照同样需要基线。
+	// The first terminal frame establishes the baseline digest: only allowlisted terminal frame types may establish a baseline on the first frame (Spec §5.3).
+	// Establishing the baseline does not depend on whether the detector is still alive: an allowlisted terminal snapshot after close also needs a baseline.
 	shouldSetBaseline := !c.hasBaselineHash && allowedTerminalTypes[terminalStage]
 
 	if cost > 0 {
@@ -319,7 +319,7 @@ func (c *ChannelGuard) CommitSnapshot(snapshot []byte, growth int64, cost int64,
 			c.terminalBaselineHash = sha256.Sum256(snapshot)
 			c.hasBaselineHash = true
 		}
-		// 整帧快照独立扫描（关闭后由轻量尾部检测器继续执行，不再跳过）。
+		// The full-frame snapshot is scanned independently (after close the lightweight tail detector keeps running and no longer skips).
 		c.resetScanners()
 		if hit, _ := c.scanPush(snapshot); hit {
 			return ErrRepetitionDetected

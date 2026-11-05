@@ -555,14 +555,14 @@ func TestRequiresRequestText(t *testing.T) {
 	}
 }
 
-// buildLargeMultimodalBody 构造一个约 sizeBytes 的 Responses 请求体，模拟长会话 +
-// 内嵌 base64 图片的多模态形态（issue #417 的 16MB 生产样本）：混合大量真实
-// user 文本轮次（会被提取并扫描）与一个大 base64 图片（会被 ExtractText 跳过，
-// 但仍参与 gjson 树遍历）。这样开启态的成本与生产接近，而非只有 JSON 解析。
+// buildLargeMultimodalBody builds a Responses request body of about sizeBytes, simulating a long session +
+// a multimodal form with embedded base64 images (the 16MB production sample from issue #417): mixing many real
+// user text turns (which are extracted and scanned) with one large base64 image (which ExtractText skips,
+// but still takes part in the gjson tree traversal). This keeps the enabled-state cost close to production, not just JSON parsing.
 func buildLargeMultimodalBody(sizeBytes int) []byte {
 	var b strings.Builder
 	b.WriteString(`{"model":"gpt-5.5","input":[`)
-	// 一半预算用于真实文本轮次（提取+扫描的主要成本来源）。
+	// Half of the budget goes to real text turns (the main cost of extraction plus scanning).
 	textBudget := sizeBytes / 2
 	turnText := strings.Repeat("Please review this module and summarize the key changes and risks. ", 30)
 	written := 0
@@ -575,8 +575,8 @@ func buildLargeMultimodalBody(sizeBytes int) []byte {
 		b.WriteString(`"}]}`)
 		written += len(turnText) + 60
 	}
-	// 另一半预算是一个大 base64 图片：ExtractText 跳过 image_url 值，但 gjson 仍需
-	// 解析该节点。
+	// The other half of the budget is one large base64 image: ExtractText skips the image_url value, but gjson still needs
+	// Parse this node.
 	b.WriteString(`,{"role":"user","content":[{"type":"input_image","image_url":"data:image/png;base64,`)
 	imgBytes := sizeBytes - written
 	if imgBytes < 0 {
@@ -594,9 +594,9 @@ func TestInspectDisabledSkipsBodyTraversal(t *testing.T) {
 	if RequiresRequestText(cfg) {
 		t.Fatal("default (disabled) config should not require request text")
 	}
-	// 关闭态：调用方走 RequiresRequestText 早退，根本不会调用 ExtractText/Inspect。
-	// 这里断言 ExtractText 即便被调用也返回空且不 panic（防御性），
-	// 但核心保证是上面的谓词返回 false。
+	// Disabled state: callers take the RequiresRequestText early return and never call ExtractText/Inspect.
+	// Here we assert that ExtractText still returns empty and does not panic even if called (defensive),
+	// but the core guarantee is that the predicate above returns false.
 	_ = body
 }
 
@@ -607,15 +607,15 @@ func BenchmarkInspectDisabledLargeBody(b *testing.B) {
 	b.SetBytes(int64(len(body)))
 	b.ResetTimer()
 	for i := 0; i < b.N; i++ {
-		// 复刻优化后调用方的早退判定：关闭态不应触碰正文。
+		// Replicates the optimized caller's early-return check: the disabled state must not touch the body.
 		if RequiresRequestText(cfg) {
 			_ = Inspect(body, "/v1/responses", cfg)
 		}
 	}
 }
 
-// BenchmarkInspectDisabledLargeBodyOldPath 复刻优化前关闭态仍无条件调用 Inspect
-// 的旧行为，量化本次修复从热路径移除的成本（issue #417）。
+// BenchmarkInspectDisabledLargeBodyOldPath replicates the old pre-optimization behavior, where Inspect was still called unconditionally
+// in the disabled state, and measures the cost this fix removed from the hot path (issue #417).
 func BenchmarkInspectDisabledLargeBodyOldPath(b *testing.B) {
 	body := buildLargeMultimodalBody(8 << 20) // 8MB
 	cfg := DefaultConfig()                    // Enabled=false

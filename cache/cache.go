@@ -6,8 +6,8 @@ import (
 	"time"
 )
 
-// PoolStats 统一的缓存连接池状态表示。
-// 对于内存缓存，这些值用于向管理后台暴露一致的观测接口。
+// PoolStats is the unified representation of cache connection pool status.
+// For the memory cache, these values are used to expose a consistent observability interface to the admin panel.
 type PoolStats struct {
 	TotalConns      uint32
 	IdleConns       uint32
@@ -68,7 +68,7 @@ type RuntimeOwnerStore interface {
 	CompareAndDeleteRuntimeOwner(ctx context.Context, namespace, key string, expected []byte) (bool, error)
 }
 
-// TokenCache 统一的 token 缓存、刷新锁与短期运行态缓存接口。
+// TokenCache is the unified interface for the token cache, refresh locks and short-lived runtime-state cache.
 type TokenCache interface {
 	Driver() string
 	Label() string
@@ -93,13 +93,13 @@ type TokenCache interface {
 	SetRuntime(ctx context.Context, namespace string, key string, value json.RawMessage, ttl time.Duration) error
 	GetRuntime(ctx context.Context, namespace string, key string) (json.RawMessage, bool, error)
 	DeleteRuntime(ctx context.Context, namespace string, key string) error
-	// IncrRuntimeCounters 原子累加一组浮点计数器（同一 key 下的多个字段），并刷新过期时间。
-	// Redis 驱动落成一次 pipeline 的 HINCRBYFLOAT，用于跨实例共享短窗口增量；
-	// 内存驱动在单锁内完成，语义一致但只对本进程可见。
+	// IncrRuntimeCounters atomically adds to a group of float counters (multiple fields under the same key) and refreshes the expiry.
+	// The Redis driver runs one pipelined HINCRBYFLOAT, to share short-window increments across instances;
+	// the memory driver does this under a single lock, with the same semantics but visible only to this process.
 	IncrRuntimeCounters(ctx context.Context, namespace string, key string, deltas map[string]float64, ttl time.Duration) error
-	// GetRuntimeCounters 读取 IncrRuntimeCounters 写入的全部字段。key 不存在时返回 nil。
+	// GetRuntimeCounters reads all fields written by IncrRuntimeCounters. It returns nil when the key does not exist.
 	GetRuntimeCounters(ctx context.Context, namespace string, key string) (map[string]float64, error)
-	// SharedAcrossInstances 表示运行态缓存是否跨实例共享（Redis 为 true，进程内内存为 false）。
-	// 调用方据此决定是否值得为跨实例一致性付额外的往返开销。
+	// SharedAcrossInstances reports whether the runtime-state cache is shared across instances (true for Redis, false for in-process memory).
+	// Callers use it to decide whether the extra round-trip cost is worth paying for cross-instance consistency.
 	SharedAcrossInstances() bool
 }

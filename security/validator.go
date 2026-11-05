@@ -24,15 +24,15 @@ const DefaultMaxRequestBodySize = 48 * 1024 * 1024 // 48MB
 
 var MaxRequestBodySize = DefaultMaxRequestBodySize
 
-// DefaultMaxImportBodySize 是账号批量导入端点(multipart 文件上传)单独放宽的
-// 请求体上限。导入是低频管理操作,允许更大的单批载荷;其余端点保持
-// MaxRequestBodySize,避免把大 body 攻击面扩到 /v1/* 等高频推理端点。
-// 前端按大小分批发送,单批应控制在此上限内。
+// DefaultMaxImportBodySize is the separately relaxed
+// request body limit for the account batch import endpoint (multipart file upload). Imports are low-frequency admin operations, so larger single batches are allowed; other endpoints keep
+// MaxRequestBodySize, so the large-body attack surface does not extend to high-frequency inference endpoints such as /v1/*.
+// The frontend sends in size-based batches, and each batch must stay within this limit.
 const DefaultMaxImportBodySize = 200 * 1024 * 1024 // 200MB
 
 var MaxImportBodySize int64 = DefaultMaxImportBodySize
 
-// IsLargeImportUploadPath 判断请求路径是否为放宽体积上限的管理端导入端点。
+// IsLargeImportUploadPath reports whether the request path is an admin-side import endpoint with a relaxed size limit.
 func IsLargeImportUploadPath(path string) bool {
 	if !strings.HasPrefix(path, "/api/admin/") {
 		return false
@@ -47,7 +47,7 @@ var (
 		regexp.MustCompile(`(?i)<script[^>]*>[\s\S]*?</script>`),
 		regexp.MustCompile(`(?i)javascript:\s*`),
 		regexp.MustCompile(`(?i)on\w+\s*=\s*["'][^"']*["']`),
-		regexp.MustCompile(`(?i)<iframe[^>]*>`), // 匹配任何 iframe 标签开始
+		regexp.MustCompile(`(?i)<iframe[^>]*>`), // matches the start of any iframe tag
 		regexp.MustCompile(`(?i)<object[^>]*>[\s\S]*?</object>`),
 		regexp.MustCompile(`(?i)<embed[^>]*>`),
 		regexp.MustCompile(`(?i)data:\s*text/html`),
@@ -78,8 +78,8 @@ var (
 		regexp.MustCompile(`(?i)(["']?secret["']?\s*[:=]\s*["']?)([^"'\s&]+)`),
 		regexp.MustCompile(`(?i)(["']?password["']?\s*[:=]\s*["']?)([^"'\s&]+)`),
 		regexp.MustCompile(`(?i)(["']?agent[_-]?private[_-]?key["']?\s*[:=]\s*["']?)([^"'\s&]+)`),
-		regexp.MustCompile(`(?i)(sk-)([a-zA-Z0-9]{20,})`),                                    // sk- 前缀单独作为组1
-		regexp.MustCompile(`\beyJ[A-Za-z0-9_-]{8,}\.[A-Za-z0-9_-]{8,}\.[A-Za-z0-9_-]{8,}\b`), // 裸 JWT
+		regexp.MustCompile(`(?i)(sk-)([a-zA-Z0-9]{20,})`),                                    // sk- prefix, captured separately as group 1
+		regexp.MustCompile(`\beyJ[A-Za-z0-9_-]{8,}\.[A-Za-z0-9_-]{8,}\.[A-Za-z0-9_-]{8,}\b`), // bare JWT
 		regexp.MustCompile(`-----BEGIN [A-Z ]*PRIVATE KEY-----[\s\S]*?-----END [A-Z ]*PRIVATE KEY-----`),
 	}
 

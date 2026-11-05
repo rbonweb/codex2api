@@ -17,7 +17,7 @@ import (
 	"github.com/klauspost/compress/zstd"
 )
 
-// errDecompressedBodyTooLarge 表示解压后的请求体超过大小上限（解压炸弹防护）。
+// errDecompressedBodyTooLarge means the decompressed request body exceeds the size limit (decompression bomb protection).
 var errDecompressedBodyTooLarge = errors.New("decompressed body too large")
 
 // A decoder window rejection does not establish the decoded body length.
@@ -30,8 +30,8 @@ type decompressedSizeError struct {
 func (e *decompressedSizeError) Error() string { return errDecompressedBodyTooLarge.Error() }
 func (e *decompressedSizeError) Unwrap() error { return errDecompressedBodyTooLarge }
 
-// parseContentEncodings 解析 Content-Encoding 头，返回小写、去空白的编码列表。
-// 按 RFC 9110，多个编码按施加顺序列出，解码时需要逆序处理；identity 视为无编码。
+// parseContentEncodings parses the Content-Encoding header and returns the list of encodings in lower case, with whitespace removed.
+// Per RFC 9110, multiple encodings are listed in the order they were applied and must be decoded in reverse; identity means no encoding.
 func parseContentEncodings(header string) []string {
 	if strings.TrimSpace(header) == "" {
 		return nil
@@ -56,7 +56,7 @@ func isSupportedContentEncoding(encoding string) bool {
 	}
 }
 
-// decodeContentEncodingOnce 按单个编码解压 data，解压结果超过 maxSize 时报错。
+// decodeContentEncodingOnce decompresses data with a single encoding and returns an error if the result exceeds maxSize.
 func decodeContentEncodingOnce(data []byte, encoding string, maxSize int64) ([]byte, error) {
 	return decodeContentEncodingWithMemory(data, encoding, maxSize, nil)
 }
@@ -85,7 +85,7 @@ func decodeContentEncodingWithMemory(data []byte, encoding string, maxSize int64
 	case "br":
 		reader = brotli.NewReader(bytes.NewReader(data))
 	case "deflate":
-		// RFC 规定 deflate 是 zlib 封装，但部分客户端会发裸 flate 流，做一次回退。
+		// RFC specifies deflate as a zlib wrapper, but some clients send a raw flate stream, so fall back once.
 		zr, err := zlib.NewReader(bytes.NewReader(data))
 		if err != nil {
 			fr := flate.NewReader(bytes.NewReader(data))
@@ -112,11 +112,11 @@ func decodeContentEncodingWithMemory(data []byte, encoding string, maxSize int64
 	return decoded, nil
 }
 
-// RequestBodyDecompressor 按 Content-Encoding 解压入站请求体（zstd/gzip/br/deflate）。
-// 新版 Codex 客户端会用 zstd 压缩 /v1/responses 请求体，不解压的话下游按明文 JSON
-// 解析会读不到任何字段。解压成功后覆盖缓存的 raw_body 与 c.Request.Body，并移除
-// Content-Encoding 头，保证后续流程（含转发上游）看到的都是明文。
-// 未知编码保持原样透传，与历史行为一致。
+// RequestBodyDecompressor decompresses inbound request bodies by Content-Encoding (zstd/gzip/br/deflate).
+// Newer Codex clients compress /v1/responses request bodies with zstd; without decompression, downstream
+// parsing finds no fields. After a successful decompression, the cached raw_body and c.Request.Body are overwritten, and the
+// Content-Encoding header is removed, so later steps (including forwarding upstream) see only plain text.
+// Unknown encodings are passed through unchanged, consistent with the previous behavior.
 func RequestBodyDecompressor(maxSize int64) gin.HandlerFunc {
 	return func(c *gin.Context) {
 		limit := requestBodySizeLimit(c.Request.URL.Path, maxSize)
@@ -145,8 +145,8 @@ func RequestBodyDecompressor(maxSize int64) gin.HandlerFunc {
 			var data []byte
 			var err error
 			if IsLargeImportUploadPath(c.Request.URL.Path) {
-				// 导入端点在鉴权前不缓存 body；解压时也必须计入请求内存预算，
-				// 不能让未认证请求用压缩体绕过 BodyCache 的修复。
+				// The import endpoint does not cache the body before authentication; decompression must also count against the request memory budget,
+				// so an unauthenticated request cannot use a compressed body to bypass the BodyCache fix.
 				reservation, admitted := TryAcquireRequestMemory(0)
 				if !admitted {
 					rejectRequestMemory(c)
@@ -170,7 +170,7 @@ func RequestBodyDecompressor(maxSize int64) gin.HandlerFunc {
 				}
 				c.JSON(http.StatusBadRequest, gin.H{
 					"error": gin.H{
-						"message": "读取请求体失败",
+						"message": "failed to read request body",
 						"type":    "invalid_request_error",
 					},
 				})
@@ -189,7 +189,7 @@ func RequestBodyDecompressor(maxSize int64) gin.HandlerFunc {
 		}
 
 		decoded := body
-		// 多个编码按施加顺序列出，解码逆序进行。
+		// Multiple encodings are listed in the order they were applied; decoding runs in reverse.
 		for i := len(encodings) - 1; i >= 0; i-- {
 			var err error
 			decoded, err = decodeContentEncodingWithMemory(decoded, encodings[i], limit, mem)
@@ -208,7 +208,7 @@ func RequestBodyDecompressor(maxSize int64) gin.HandlerFunc {
 				} else {
 					c.JSON(http.StatusBadRequest, gin.H{
 						"error": gin.H{
-							"message": fmt.Sprintf("请求体解压失败（Content-Encoding: %s）", encodings[i]),
+							"message": fmt.Sprintf("failed to decompress request body (Content-Encoding: %s)", encodings[i]),
 							"type":    "invalid_request_error",
 							"code":    "invalid_request_body_encoding",
 						},

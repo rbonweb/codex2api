@@ -23,8 +23,8 @@ func TestValidateResponsesAPIRequestRejectsEmptyInputArray(t *testing.T) {
 	}
 }
 
-// BenchmarkValidateResponsesLargeInput 守护 issue #417：input 校验必须单遍 O(N)，
-// 不能退化回按下标随机访问的 O(N²)。
+// BenchmarkValidateResponsesLargeInput guards issue #417: input validation must be a single O(N) pass,
+// and must not regress to the O(N²) of random access by index.
 func BenchmarkValidateResponsesLargeInput(b *testing.B) {
 	var sb strings.Builder
 	sb.WriteString(`{"model":"gpt-5.4","input":[`)
@@ -203,8 +203,8 @@ func TestValidateResponsesAPIRequestRejectsUnknownInputType(t *testing.T) {
 }
 
 func TestValidateResponsesAPIRequestAcceptsCompactV2InputTypes(t *testing.T) {
-	// 新版 Codex CLI（compact v2）发送 compaction_trigger 触发服务端压缩，
-	// 后续请求携带 context_compaction/compaction 加密上下文。
+	// Newer Codex CLI (compact v2) sends compaction_trigger to trigger server-side compaction,
+	// and follow-up requests carry the encrypted context_compaction/compaction context.
 	result := ValidateResponsesAPIRequest(
 		[]byte(`{"model":"gpt-5.4","input":[
 			{"type":"message","role":"user","content":"hello"},
@@ -221,7 +221,7 @@ func TestValidateResponsesAPIRequestAcceptsCompactV2InputTypes(t *testing.T) {
 }
 
 func TestValidateResponsesAPIRequestAcceptsAgentMessageInput(t *testing.T) {
-	// multi-agent 会话续写时,历史里的代理间消息会随 input 回放(issue #341)。
+	// When a multi-agent session continues, inter-agent messages in its history are replayed with input (issue #341).
 	result := ValidateResponsesAPIRequest(
 		[]byte(`{"model":"gpt-5.5","input":[
 			{"type":"message","role":"user","content":[{"type":"input_text","text":"hi"}]},

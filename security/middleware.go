@@ -32,8 +32,8 @@ func SecurityHeadersMiddleware() gin.HandlerFunc {
 		c.Header("Referrer-Policy", "strict-origin-when-cross-origin")
 
 		// Content Security Policy
-		// script-src 内联哈希对应 frontend/index.html 中的主题恢复脚本（在 React 挂载前同步 localStorage 主题到 <html>，避免刷新闪烁）。
-		// 如修改该脚本，请同步更新 contentSecurityPolicy（security/csp_test.go 会检查）。
+		// The script-src inline hash matches the theme restore script in frontend/index.html (it syncs the localStorage theme to <html> before React mounts, to avoid a flash on refresh).
+		// If this script changes, update contentSecurityPolicy as well (security/csp_test.go checks it).
 		c.Header("Content-Security-Policy", contentSecurityPolicy)
 
 		// Strict Transport Security (HTTPS only)
@@ -63,8 +63,8 @@ func RateLimitMiddleware(requests int, window time.Duration) gin.HandlerFunc {
 	}
 }
 
-// RequestSizeLimiter limits request body size. 管理端账号导入端点(multipart
-// 文件上传)单独放宽到 MaxImportBodySize,其余端点用传入的 maxSize。
+// RequestSizeLimiter limits request body size. The admin account import endpoint (multipart
+// file upload) is relaxed separately to MaxImportBodySize; other endpoints use the maxSize passed in.
 func RequestSizeLimiter(maxSize int64) gin.HandlerFunc {
 	return requestSizeLimiterWithMemory(maxSize, processRequestMemory)
 }
@@ -74,10 +74,10 @@ func requestSizeLimiterWithMemory(maxSize int64, budget *requestMemoryBudget) gi
 		limit := requestBodySizeLimit(c.Request.URL.Path, maxSize)
 		largeImport := MaxImportBodySize > 0 && IsLargeImportUploadPath(c.Request.URL.Path)
 		c.Header("X-Codex2API-Max-Request-Body-Bytes", strconv.FormatInt(limit, 10))
-		// 导入端点(multipart 文件上传)走流式限制:用 MaxBytesReader 包裹 body 交给
-		// handler,不整体 ReadAll、不缓存 raw_body。避免 200MB 文件在中间件里常驻
-		// 一整份内存(handler 用 ParseMultipartForm 流式解析,>32MB 落临时文件)。
-		// 超限时 handler 的 body 读取会返回错误,由 handler 侧回 400。
+		// The import endpoint (multipart file upload) uses streaming limits: it wraps the body with MaxBytesReader and hands it to the
+		// handler, without a full ReadAll and without caching raw_body. This avoids keeping a 200 MB file resident in memory
+		// inside the middleware (the handler parses it with ParseMultipartForm in streaming mode; files over 32 MB go to temporary files).
+		// When the limit is exceeded, the handler's body read returns an error, and the handler responds with 400.
 		if largeImport {
 			c.Request.Body = http.MaxBytesReader(c.Writer, c.Request.Body, limit)
 			c.Next()
@@ -108,7 +108,7 @@ func requestSizeLimiterWithMemory(maxSize int64, budget *requestMemoryBudget) gi
 			}
 			c.JSON(http.StatusBadRequest, gin.H{
 				"error": gin.H{
-					"message": "读取请求体失败",
+					"message": "failed to read request body",
 					"type":    "invalid_request_error",
 				},
 			})
