@@ -128,8 +128,13 @@ func codexRestoredTLSUpstream(t *testing.T, handler http.HandlerFunc) string {
 		}
 		defer downstream.Close()
 		io.WriteString(downstream, "HTTP/1.1 200 Connection Established\r\n\r\n")
-		go io.Copy(upstream, downstream)
-		io.Copy(downstream, upstream)
+		// A tunnel must end both directions as soon as either side ends: when the client drops the connection the upstream has to see it close, which is how cancellation reaches the fake upstream.
+		// Copying one way and leaving the other open forwards no FIN or reset, so the upstream request context never ends and the test waits on an event that never comes.
+		var wg sync.WaitGroup
+		wg.Add(2)
+		go func() { defer wg.Done(); io.Copy(upstream, downstream); upstream.Close() }()
+		go func() { defer wg.Done(); io.Copy(downstream, upstream); downstream.Close() }()
+		wg.Wait()
 	}))
 	t.Cleanup(tunnel.Close)
 	return tunnel.URL
