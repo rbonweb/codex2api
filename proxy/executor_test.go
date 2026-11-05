@@ -1495,8 +1495,6 @@ func TestResolveUpstreamSessionID(t *testing.T) {
 // （native WS ingress 的 1009 降级 / 生图强制 HTTP / Agent Identity 强制 HTTP
 // 都会带信封 body 走到这里）；嵌套 type 不受影响 (issue #548)。
 func TestExecuteRequestHTTPStripsTopLevelEnvelopeType(t *testing.T) {
-	previousResin := resinCfg.Load()
-	t.Cleanup(func() { resinCfg.Store(previousResin) })
 
 	bodyCh := make(chan []byte, 1)
 	upstream := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
@@ -1506,7 +1504,7 @@ func TestExecuteRequestHTTPStripsTopLevelEnvelopeType(t *testing.T) {
 		_, _ = w.Write([]byte(`{"id":"resp_test"}`))
 	}))
 	t.Cleanup(upstream.Close)
-	SetResinConfig(&ResinConfig{BaseURL: upstream.URL, PlatformName: "test"})
+	useResinForTest(t, upstream.URL, "test")
 
 	raw := []byte(`{"type":"response.create","model":"gpt-5.4","stream":true,"input":[{"type":"message","role":"user","content":[{"type":"input_text","text":"hi"}]}]}`)
 	resp, err := ExecuteRequest(context.Background(), &auth.Account{DBID: 1, AccessToken: "token"}, raw, "", "", "sk-local", nil, http.Header{}, false)

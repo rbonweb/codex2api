@@ -16,8 +16,6 @@ import (
 
 func TestResponsesStreamAppliesCodexRateLimitsFrameToAccount(t *testing.T) {
 	gin.SetMode(gin.TestMode)
-	previousResin := resinCfg.Load()
-	t.Cleanup(func() { resinCfg.Store(previousResin) })
 
 	now := time.Now()
 	events := [][]string{{
@@ -29,7 +27,7 @@ func TestResponsesStreamAppliesCodexRateLimitsFrameToAccount(t *testing.T) {
 		`{"type":"response.completed","response":{"id":"resp_frame_1","status":"completed","usage":{"input_tokens":1,"output_tokens":1,"total_tokens":2}}}`,
 	}}
 	upstream, _ := newAttemptSequenceSSEServer(t, events)
-	SetResinConfig(&ResinConfig{BaseURL: upstream.URL, PlatformName: "test"})
+	useResinForTest(t, upstream.URL, "test")
 
 	store := auth.NewStore(nil, nil, &database.SystemSettings{
 		MaxConcurrency:      1,
@@ -72,8 +70,6 @@ func TestResponsesStreamAppliesCodexRateLimitsFrameToAccount(t *testing.T) {
 
 func TestResponsesNonStreamAppliesCodexRateLimitsFrameToAccount(t *testing.T) {
 	gin.SetMode(gin.TestMode)
-	previousResin := resinCfg.Load()
-	t.Cleanup(func() { resinCfg.Store(previousResin) })
 
 	now := time.Now()
 	events := [][]string{{
@@ -84,7 +80,7 @@ func TestResponsesNonStreamAppliesCodexRateLimitsFrameToAccount(t *testing.T) {
 		`{"type":"response.completed","response":{"id":"resp_nonstream_1","status":"completed","usage":{"input_tokens":1,"output_tokens":1,"total_tokens":2}}}`,
 	}}
 	upstream, _ := newAttemptSequenceSSEServer(t, events)
-	SetResinConfig(&ResinConfig{BaseURL: upstream.URL, PlatformName: "test"})
+	useResinForTest(t, upstream.URL, "test")
 
 	store := auth.NewStore(nil, nil, &database.SystemSettings{MaxConcurrency: 1})
 	t.Cleanup(store.Stop)

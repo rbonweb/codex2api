@@ -141,9 +141,7 @@ func TestSingleMachineFingerprintHTTPAndCompactWire(t *testing.T) {
 				fmt.Fprint(w, `{}`)
 			}))
 			defer server.Close()
-			previous := resinCfg.Load()
-			t.Cleanup(func() { resinCfg.Store(previous) })
-			SetResinConfig(&ResinConfig{BaseURL: server.URL, PlatformName: "test"})
+			useResinForTest(t, server.URL, "test")
 			clientPool.Delete(fmt.Sprintf("resin|%d", a.ID()))
 			var resp *http.Response
 			var err error

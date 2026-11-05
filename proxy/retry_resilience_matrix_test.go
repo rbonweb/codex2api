@@ -840,10 +840,8 @@ func TestResponsesCompactContinuousRetryCyclesSingleAccountAfter503(t *testing.T
 func TestResponsesCompactContinuousRetrySelectsResponseFailedEvent(t *testing.T) {
 	gin.SetMode(gin.TestMode)
 	previousRuntime := CurrentRuntimeSettings()
-	previousResin := resinCfg.Load()
 	t.Cleanup(func() {
 		UpdateRuntimeSettings(func(RuntimeSettings) RuntimeSettings { return previousRuntime })
-		resinCfg.Store(previousResin)
 	})
 	UpdateRuntimeSettings(func(current RuntimeSettings) RuntimeSettings {
 		current.CompactViaResponses = true
@@ -867,7 +865,7 @@ func TestResponsesCompactContinuousRetrySelectsResponseFailedEvent(t *testing.T)
 		_, _ = io.WriteString(w, `data: {"type":"response.completed","response":{"id":"resp_compact_recovered","status":"completed","output":[],"usage":{"input_tokens":3,"output_tokens":2,"total_tokens":5}}}`+"\n\n")
 	}))
 	t.Cleanup(upstream.Close)
-	SetResinConfig(&ResinConfig{BaseURL: upstream.URL, PlatformName: "test"})
+	codexRestoredUseResin(t, upstream.URL)
 
 	store := auth.NewStore(nil, nil, &database.SystemSettings{
 		MaxConcurrency:      1,

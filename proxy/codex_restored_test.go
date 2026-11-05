@@ -39,6 +39,18 @@ func codexRestoredUseResin(t *testing.T, upstreamURL string) {
 	})
 }
 
+// useResinForTest installs a Resin config for one test and restores both the config and the auth egress flag on cleanup.
+func useResinForTest(t *testing.T, baseURL, platform string) {
+	t.Helper()
+	previous := GetResinConfig()
+	previousEgress := auth.ResinEgressEnabled()
+	SetResinConfig(&ResinConfig{BaseURL: baseURL, PlatformName: platform})
+	t.Cleanup(func() {
+		SetResinConfig(previous)
+		auth.SetResinEgressEnabled(previousEgress)
+	})
+}
+
 func codexRestoredCompactRequest(t *testing.T, handler *Handler, ctx context.Context, body string) (*httptest.ResponseRecorder, *gin.Context) {
 	t.Helper()
 	gin.SetMode(gin.TestMode)
