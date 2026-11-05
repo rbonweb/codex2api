@@ -235,13 +235,6 @@ export default function IntelligenceCheck() {
                 />,
               )}
               {field(
-                "Claude 模型",
-                <Input
-                  value={settings.claude_model}
-                  onChange={(e) => change("claude_model", e.target.value)}
-                />,
-              )}
-              {field(
                 "GPT 推理强度",
                 <Select
                   value={settings.reasoning_effort}
@@ -283,7 +276,7 @@ export default function IntelligenceCheck() {
                   checked={settings.new_accounts_enabled}
                   onCheckedChange={(v) => change("new_accounts_enabled", v)}
                 />,
-                "仅支持 Codex 和 Claude；切换分组时，仅同通道新账号默认参与。已有账号不受此选项影响。",
+                "仅支持 Codex；切换分组时，仅同通道新账号默认参与。已有账号不受此选项影响。",
               )}
             </CardContent>
           </Card>
@@ -343,10 +336,10 @@ export default function IntelligenceCheck() {
                       }
                       placeholder="选择分组"
                       options={groups
-                        .filter(g => !g.channel || g.channel === "codex" || g.channel === "claude")
+                        .filter(g => !g.channel || g.channel === "codex")
                         .map(g => ({
                           value: String(g.id),
-                          label: `${g.name}（${g.channel === "claude" ? "Claude" : "Codex"}）`,
+                          label: `${g.name}（Codex）`,
                         }))}
                     />,
                   )}

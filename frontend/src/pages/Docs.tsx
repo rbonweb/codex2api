@@ -31,7 +31,6 @@ import {
   buildDocsMarkdown,
   buildEndpointSpecs,
 } from "./docs/docsContent";
-import { DEFAULT_CLAUDE_MODEL_MAP } from "../lib/modelMapping";
 import { getLobeIconFileUrl } from "../components/ModelLogo";
 import type { ModelsResponse, SystemSettings } from "../types";
 
@@ -40,11 +39,10 @@ const FALLBACK_MODELS = [
   "gpt-5.6-sol",
   "gpt-5.6-luna",
   "gpt-6-astra",
-  "claude-sonnet-4-5",
 ];
 const DEFAULT_QUICK_START_MODEL = "gpt-5.5";
-type CCSwitchApp = "claude" | "codex" | "gemini";
-type QuickToolTab = "codex-cli" | "claude-code" | "cc-switch" | "cherry-studio";
+type CCSwitchApp = "codex";
+type QuickToolTab = "codex-cli" | "cc-switch" | "cherry-studio";
 type QuickServiceTier = "default" | "fast" | "ultrafast";
 type QuickReasoningEffort =
   | "none"
@@ -59,7 +57,6 @@ const CC_SWITCH_LOGO = "https://ccswitch.io/assets/cc-switch-logo-BPrI77SG.png";
 // Bundled from npm `@lobehub/icons-static-svg`.
 const CLIENT_ICON_SRC: Record<QuickToolTab, string> = {
   "codex-cli": getLobeIconFileUrl("codex-color.svg") ?? "",
-  "claude-code": getLobeIconFileUrl("claudecode-color.svg") ?? "",
   "cc-switch": CC_SWITCH_LOGO,
   "cherry-studio": getLobeIconFileUrl("cherrystudio-color.svg") ?? "",
 };
@@ -73,27 +70,10 @@ const CC_SWITCH_APPS: Record<
     fields: { key: string }[];
   }
 > = {
-  claude: {
-    label: "Claude Code",
-    suffix: "Claude",
-    endpoint: (baseUrl) => baseUrl,
-    fields: [
-      { key: "model" },
-      { key: "haikuModel" },
-      { key: "sonnetModel" },
-      { key: "opusModel" },
-    ],
-  },
   codex: {
     label: "Codex CLI",
     suffix: "Codex",
     endpoint: (baseUrl) => `${baseUrl}/v1`,
-    fields: [{ key: "model" }],
-  },
-  gemini: {
-    label: "Gemini CLI",
-    suffix: "Gemini",
-    endpoint: (baseUrl) => baseUrl,
     fields: [{ key: "model" }],
   },
 };
@@ -385,23 +365,6 @@ function buildCCSwitchImportUrl({
   return `ccswitch://v1/import?${params.toString()}`;
 }
 
-function parseModelMapping(
-  settings?: SystemSettings | null,
-): Record<string, string> {
-  if (!settings?.model_mapping) return {};
-  try {
-    const parsed = JSON.parse(settings.model_mapping);
-    if (!parsed || typeof parsed !== "object" || Array.isArray(parsed))
-      return {};
-    const entries = Object.entries(parsed).filter(
-      ([, value]) => typeof value === "string",
-    ) as [string, string][];
-    return entries.length > 0 ? Object.fromEntries(entries) : {};
-  } catch {
-    return {};
-  }
-}
-
 function slugProviderId(name: string) {
   const slug = name
     .trim()
@@ -413,17 +376,6 @@ function slugProviderId(name: string) {
 
 function modelIncludes(models: string[], model?: string) {
   return Boolean(model && models.includes(model));
-}
-
-function preferredMappedClaudeModel(
-  mappedClaudeModels: string[],
-  keyword: string,
-  fallback: string,
-) {
-  return (
-    mappedClaudeModels.find((model) => model.toLowerCase().includes(keyword)) ??
-    fallback
-  );
 }
 
 function encodeBase64(text: string): string {
@@ -440,7 +392,6 @@ export default function Docs() {
   );
   const [quickBaseUrl, setQuickBaseUrl] = useState(baseUrl);
   const [codexOs, setCodexOs] = useState<"unix" | "windows">("unix");
-  const [claudeOs, setClaudeOs] = useState<"unix" | "windows">("unix");
   const [firstKey, setFirstKey] = useState("");
   const [allKeys, setAllKeys] = useState<{ name: string; key: string }[]>([]);
   const [copyingMd, setCopyingMd] = useState(false);
@@ -455,7 +406,7 @@ export default function Docs() {
   const [quickReasoningEffort, setQuickReasoningEffort] =
     useState<QuickReasoningEffort>("xhigh");
   const [settings, setSettings] = useState<SystemSettings | null>(null);
-  const [ccSwitchApp, setCcSwitchApp] = useState<CCSwitchApp>("codex");
+  const ccSwitchApp: CCSwitchApp = "codex";
   const [ccSwitchName, setCcSwitchName] = useState("");
   const [ccSwitchNameEdited, setCcSwitchNameEdited] = useState(false);
   const [ccSwitchModels, setCcSwitchModels] = useState<Record<string, string>>({
@@ -463,12 +414,11 @@ export default function Docs() {
   });
   const [cherryProviderId, setCherryProviderId] = useState("");
   const [cherryProviderEdited, setCherryProviderEdited] = useState(false);
-  const [activeCurl, setActiveCurl] = useState<
-    "responses" | "chat" | "messages"
-  >("responses");
+  const [activeCurl, setActiveCurl] = useState<"responses" | "chat">(
+    "responses",
+  );
   const [curlModel, setCurlModel] = useState(DEFAULT_QUICK_START_MODEL);
   const [models, setModels] = useState(FALLBACK_MODELS);
-  const [claudeModels, setClaudeModels] = useState<string[]>([]);
 
   useEffect(() => {
     api
@@ -493,7 +443,6 @@ export default function Docs() {
         (): ModelsResponse => ({
           models: [],
           items: [],
-          claude_models: [],
           source_url: "",
         }),
       ),
@@ -504,20 +453,8 @@ export default function Docs() {
         const next = [
           ...(res.models ?? []),
           ...(res.items ?? []).map((item) => item.id),
-        ].filter(
-          (model): model is string =>
-            Boolean(model) && !model.toLowerCase().startsWith("claude-"),
-        );
+        ].filter((model): model is string => Boolean(model));
         const unique = Array.from(new Set(next));
-        setClaudeModels(
-          Array.from(
-            new Set(
-              (res.claude_models ?? []).filter(
-                (model: string): model is string => Boolean(model),
-              ),
-            ),
-          ),
-        );
         if (unique.length === 0) return;
         setModels(unique);
         const configuredModel = nextSettings?.test_model;
@@ -541,49 +478,22 @@ export default function Docs() {
       .catch(() => {});
   }, []);
 
-  const modelMapping = useMemo(() => {
-    const configured = parseModelMapping(settings);
-    return Object.keys(configured).length > 0
-      ? configured
-      : DEFAULT_CLAUDE_MODEL_MAP;
-  }, [settings]);
-  const mappedClaudeModels = useMemo(
-    () => Object.keys(modelMapping),
-    [modelMapping],
-  );
   const modelOptions = useMemo(
     () => models.map((model) => ({ label: model, value: model })),
     [models],
   );
-  const claudeModelOptions = useMemo(() => {
-    const catalogModels = [
-      ...claudeModels,
-      ...models.filter((model) => model.startsWith("claude-")),
-    ];
-    const merged = Array.from(
-      new Set([
-        ...(catalogModels.length > 0 ? catalogModels : ["claude-sonnet-4-5"]),
-        ...mappedClaudeModels,
-      ]),
-    );
-    return merged.map((model) => ({ label: model, value: model }));
-  }, [claudeModels, mappedClaudeModels, models]);
-  const curlModelOptions =
-    activeCurl === "messages" ? claudeModelOptions : modelOptions;
+  const curlModelOptions = modelOptions;
   useEffect(() => {
     if (curlModelOptions.some((option) => option.value === curlModel)) return;
     if (curlModelOptions[0]) setCurlModel(curlModelOptions[0].value);
   }, [curlModel, curlModelOptions]);
-  const ccSwitchModelOptions =
-    ccSwitchApp === "claude" ? claudeModelOptions : modelOptions;
   const quickTools = useMemo(() => buildQuickTools(docsLocale), [docsLocale]);
   const ccSwitchConfig = CC_SWITCH_APPS[ccSwitchApp];
   const siteName = settings?.site_name?.trim() || "CodexProxy";
   const defaultCcSwitchName = `${siteName} ${ccSwitchConfig.suffix}`;
   const defaultCherryProviderId = slugProviderId(siteName);
   const showQuickCodexOptions =
-    activeToolTab === "codex-cli" ||
-    (activeToolTab === "cc-switch" && ccSwitchApp === "codex");
+    activeToolTab === "codex-cli" || activeToolTab === "cc-switch";
 
   useEffect(() => {
     if (!ccSwitchNameEdited) setCcSwitchName(defaultCcSwitchName);
@@ -594,76 +504,19 @@ export default function Docs() {
   }, [cherryProviderEdited, defaultCherryProviderId]);
 
   useEffect(() => {
-    const config = CC_SWITCH_APPS[ccSwitchApp];
-    if (!ccSwitchNameEdited) setCcSwitchName(`${siteName} ${config.suffix}`);
     setCcSwitchModels((current) => {
-      const preferredClaude = preferredMappedClaudeModel(
-        mappedClaudeModels,
-        "sonnet",
-        "claude-sonnet-4-5",
-      );
       const preferredCodex = models.includes(quickStartModel)
         ? quickStartModel
         : (models[0] ?? FALLBACK_MODELS[0]);
       const next: Record<string, string> = {};
-      config.fields.forEach((field) => {
-        if (ccSwitchApp === "claude") {
-          if (field.key === "haikuModel")
-            next[field.key] = modelIncludes(
-              mappedClaudeModels,
-              current[field.key],
-            )
-              ? current[field.key]
-              : preferredMappedClaudeModel(
-                  mappedClaudeModels,
-                  "haiku",
-                  preferredClaude,
-                );
-          else if (field.key === "opusModel")
-            next[field.key] = modelIncludes(
-              mappedClaudeModels,
-              current[field.key],
-            )
-              ? current[field.key]
-              : preferredMappedClaudeModel(
-                  mappedClaudeModels,
-                  "opus",
-                  preferredClaude,
-                );
-          else if (field.key === "sonnetModel")
-            next[field.key] = modelIncludes(
-              mappedClaudeModels,
-              current[field.key],
-            )
-              ? current[field.key]
-              : preferredMappedClaudeModel(
-                  mappedClaudeModels,
-                  "sonnet",
-                  preferredClaude,
-                );
-          else
-            next[field.key] = modelIncludes(
-              mappedClaudeModels,
-              current[field.key],
-            )
-              ? current[field.key]
-              : preferredClaude;
-          return;
-        }
+      ccSwitchConfig.fields.forEach((field) => {
         next[field.key] = modelIncludes(models, current[field.key])
           ? current[field.key]
           : preferredCodex;
       });
       return next;
     });
-  }, [
-    ccSwitchApp,
-    ccSwitchNameEdited,
-    mappedClaudeModels,
-    models,
-    quickStartModel,
-    siteName,
-  ]);
+  }, [ccSwitchConfig, models, quickStartModel]);
 
   const modelEndpoints = useMemo(
     () => buildEndpointSpecs(quickBaseUrl, docsLocale),
@@ -706,8 +559,8 @@ export default function Docs() {
         id: "model-api",
         label: copy("接口参考", "API reference"),
         summary: copy(
-          "按需展开文本、图片、视频与进阶接口，查看参数和示例。",
-          "Expand text, image, video and advanced endpoints for parameters and examples.",
+          "按需展开文本、图片与进阶接口，查看参数和示例。",
+          "Expand text, image and advanced endpoints for parameters and examples.",
         ),
         icon: <Wand2 className="size-4" />,
       },
@@ -744,7 +597,7 @@ export default function Docs() {
         id: "qs-tools",
         section: "quick-start",
         title: copy("客户端配置", "Client configuration"),
-        summary: "Codex CLI · Claude Code · CC Switch · Cherry Studio",
+        summary: "Codex CLI · CC Switch · Cherry Studio",
       },
       {
         id: "qs-curl",
@@ -841,11 +694,6 @@ export default function Docs() {
           lang: "json",
           content: codexAuthJson.split(activeKey).join("YOUR_API_KEY"),
         },
-        {
-          label: claudeSettingsPath,
-          lang: "json",
-          content: claudeSettingsJson.split(activeKey).join("YOUR_API_KEY"),
-        },
       ],
       locale: docsLocale,
     });
@@ -868,8 +716,6 @@ export default function Docs() {
 
   const codexConfigDir =
     codexOs === "windows" ? "%userprofile%\\.codex" : "~/.codex";
-  const claudeConfigDir =
-    claudeOs === "windows" ? "%userprofile%\\.claude" : "~/.claude";
   const codexConfigPath =
     codexOs === "windows"
       ? `${codexConfigDir}\\config.toml`
@@ -878,10 +724,6 @@ export default function Docs() {
     codexOs === "windows"
       ? `${codexConfigDir}\\auth.json`
       : `${codexConfigDir}/auth.json`;
-  const claudeSettingsPath =
-    claudeOs === "windows"
-      ? `${claudeConfigDir}\\settings.json`
-      : `${claudeConfigDir}/settings.json`;
   const activeKey = selectedKey || firstKey || "YOUR_API_KEY";
 
   const codexServiceTierLine =
@@ -908,22 +750,6 @@ goals = true`;
   "OPENAI_API_KEY": "${activeKey}"
 }`;
 
-  const claudeSettingsJson = `{
-  "env": {
-    "ANTHROPIC_BASE_URL": "${quickBaseUrl}",
-    "ANTHROPIC_AUTH_TOKEN": "${activeKey}",
-    "CLAUDE_CODE_DISABLE_NONESSENTIAL_TRAFFIC": "1"
-  }
-}`;
-
-  const claudeEnvUnix = `export ANTHROPIC_BASE_URL="${quickBaseUrl}"
-export ANTHROPIC_AUTH_TOKEN="${activeKey}"
-export CLAUDE_CODE_DISABLE_NONESSENTIAL_TRAFFIC=1`;
-
-  const claudeEnvWindows = `set ANTHROPIC_BASE_URL=${quickBaseUrl}
-set ANTHROPIC_AUTH_TOKEN=${activeKey}
-set CLAUDE_CODE_DISABLE_NONESSENTIAL_TRAFFIC=1`;
-
   const responsesCurl = `curl -N -X POST ${quickBaseUrl}/v1/responses \\
   -H "Authorization: Bearer ${activeKey}" \\
   -H "Content-Type: application/json" \\
@@ -940,19 +766,9 @@ set CLAUDE_CODE_DISABLE_NONESSENTIAL_TRAFFIC=1`;
     "messages": [{"role": "user", "content": "Hello"}],
     "stream": true
   }'`;
-  const messagesCurl = `curl -N -X POST ${quickBaseUrl}/v1/messages \\
-  -H "x-api-key: ${activeKey}" \\
-  -H "Content-Type: application/json" \\
-  -H "anthropic-version: 2023-06-01" \\
-  -d '{
-    "model": "${curlModel.startsWith("claude-") ? curlModel : "claude-sonnet-4-5"}",
-    "max_tokens": 1024,
-    "messages": [{"role": "user", "content": "Hello"}]
-  }'`;
   const curlExamples = {
     responses: responsesCurl,
     chat: chatCurl,
-    messages: messagesCurl,
   };
   const ccSwitchUrl = buildCCSwitchImportUrl({
     app: ccSwitchApp,
@@ -961,8 +777,8 @@ set CLAUDE_CODE_DISABLE_NONESSENTIAL_TRAFFIC=1`;
     apiKey: activeKey,
     models: ccSwitchModels,
     homepage: quickBaseUrl,
-    serviceTier: ccSwitchApp === "codex" ? quickServiceTier : "default",
-    reasoningEffort: ccSwitchApp === "codex" ? quickReasoningEffort : undefined,
+    serviceTier: quickServiceTier,
+    reasoningEffort: quickReasoningEffort,
   });
   const cherryConfig = `cherrystudio://providers/api-keys?v=1&data=${encodeURIComponent(
     encodeBase64(
@@ -1176,7 +992,6 @@ set CLAUDE_CODE_DISABLE_NONESSENTIAL_TRAFFIC=1`;
                     <div className="docs-client-tabs">
                       {[
                         { value: "codex-cli", label: "Codex CLI" },
-                        { value: "claude-code", label: "Claude Code" },
                         { value: "cc-switch", label: "CC Switch" },
                         { value: "cherry-studio", label: "Cherry Studio" },
                       ].map((tab) => (
@@ -1205,7 +1020,6 @@ set CLAUDE_CODE_DISABLE_NONESSENTIAL_TRAFFIC=1`;
                           const value = event.target.value;
                           if (
                             activeToolTab === "cc-switch" &&
-                            ccSwitchApp === "codex" &&
                             value.endsWith("/v1")
                           ) {
                             setQuickBaseUrl(value.slice(0, -3));
@@ -1304,50 +1118,15 @@ set CLAUDE_CODE_DISABLE_NONESSENTIAL_TRAFFIC=1`;
                         />
                       </>
                     )}
-                    {activeToolTab === "claude-code" && (
-                      <>
-                        <OsTabs active={claudeOs} onChange={setClaudeOs} />
-                        <p className="docs-callout">
-                          {t("docs.clientConfig.claudeEnvNote")}{" "}
-                          {t("docs.clientConfig.claudeSettingsNote")}
-                        </p>
-                        <CodeBlock
-                          label={
-                            claudeOs === "unix"
-                              ? t("docs.clientConfig.unixTerminal")
-                              : t("docs.clientConfig.windowsTerminal")
-                          }
-                          content={
-                            claudeOs === "unix"
-                              ? claudeEnvUnix
-                              : claudeEnvWindows
-                          }
-                          lang="bash"
-                        />
-                        <CodeBlock
-                          label={claudeSettingsPath}
-                          content={claudeSettingsJson}
-                          lang="json"
-                        />
-                      </>
-                    )}
                     {activeToolTab === "cc-switch" && (
                       <>
                         <div className={`${CONFIG_PANEL} md:grid-cols-2`}>
                           <FieldBox label={t("docs.clientConfig.importTarget")}>
-                            <Select
-                              compact
-                              value={ccSwitchApp}
-                              onValueChange={(value) =>
-                                setCcSwitchApp(value as CCSwitchApp)
-                              }
-                              options={(
-                                Object.keys(CC_SWITCH_APPS) as CCSwitchApp[]
-                              ).map((app) => ({
-                                label: CC_SWITCH_APPS[app].label,
-                                value: app,
-                              }))}
-                            />
+                            <code
+                              className={`${FIELD_INPUT} flex items-center truncate font-mono`}
+                            >
+                              {ccSwitchConfig.label}
+                            </code>
                           </FieldBox>
                           <FieldBox label={t("docs.clientConfig.configName")}>
                             <input
@@ -1376,22 +1155,8 @@ set CLAUDE_CODE_DISABLE_NONESSENTIAL_TRAFFIC=1`;
                                       [field.key]: value,
                                     }))
                                   }
-                                  options={ccSwitchModelOptions}
+                                  options={modelOptions}
                                 />
-                                {ccSwitchApp === "claude" &&
-                                ccSwitchModels[field.key] ? (
-                                  <div className="truncate text-[11px] font-medium text-muted-foreground">
-                                    {t("docs.clientConfig.mappedTo")}{" "}
-                                    <code className="font-mono text-foreground">
-                                      {modelMapping[
-                                        ccSwitchModels[field.key]
-                                      ] ??
-                                        t(
-                                          "docs.clientConfig.backendDefaultModel",
-                                        )}
-                                    </code>
-                                  </div>
-                                ) : null}
                               </div>
                             </FieldBox>
                           ))}
@@ -1472,8 +1237,8 @@ set CLAUDE_CODE_DISABLE_NONESSENTIAL_TRAFFIC=1`;
                       </h3>
                       <p className="text-sm text-muted-foreground">
                         {copy(
-                          "使用当前选中的密钥与模型验证。Responses / Chat 返回 SSE，Messages 返回 JSON。",
-                          "Verify with the selected key and model. Responses / Chat return SSE; Messages returns JSON.",
+                          "使用当前选中的密钥与模型验证。Responses / Chat 返回 SSE。",
+                          "Verify with the selected key and model. Responses / Chat return SSE.",
                         )}
                       </p>
                     </div>
@@ -1500,19 +1265,12 @@ set CLAUDE_CODE_DISABLE_NONESSENTIAL_TRAFFIC=1`;
                           label: "Chat",
                           hint: "/v1/chat/completions",
                         },
-                        {
-                          value: "messages",
-                          label: "Messages",
-                          hint: "/v1/messages",
-                        },
                       ]}
                     />
                     <code className="code-inline text-[11px]">
                       {activeCurl === "responses"
                         ? "/v1/responses"
-                        : activeCurl === "chat"
-                          ? "/v1/chat/completions"
-                          : "/v1/messages"}
+                        : "/v1/chat/completions"}
                     </code>
                   </div>
                   <CodeBlock
@@ -1551,7 +1309,7 @@ set CLAUDE_CODE_DISABLE_NONESSENTIAL_TRAFFIC=1`;
                   {category === "text"
                     ? copy("文本与基础接口", "Text & essentials")
                     : category === "media"
-                      ? copy("图片与视频", "Images & video")
+                      ? copy("图片", "Images")
                       : copy("进阶与兼容接口", "Advanced & compatibility")}
                   <span>
                     {

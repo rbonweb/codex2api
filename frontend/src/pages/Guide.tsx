@@ -1,9 +1,8 @@
 import { useEffect, useMemo, useState } from 'react'
-import { Check, Copy, ExternalLink } from 'lucide-react'
+import { Check, Copy } from 'lucide-react'
 import { api } from '../api'
 import PageHeader from '../components/PageHeader'
 import { Badge } from '@/components/ui/badge'
-import { Button } from '@/components/ui/button'
 import { Card, CardContent } from '@/components/ui/card'
 import { Select } from '@/components/ui/select'
 
@@ -35,22 +34,6 @@ const CLIENT_TOOLS: ClientTool[] = [
     glyph: 'CX',
     tone: 'bg-emerald-500/10 text-emerald-600 dark:text-emerald-400',
   },
-  {
-    id: 'claude',
-    name: 'Claude Code',
-    badge: 'Anthropic',
-    blurb: 'Use environment variables or settings.json for the Messages endpoint.',
-    glyph: 'CC',
-    tone: 'bg-orange-500/10 text-orange-600 dark:text-orange-400',
-  },
-  {
-    id: 'cc-switch',
-    name: 'CC Switch',
-    badge: 'Deeplink',
-    blurb: 'Launch the desktop switcher and import this server as a provider.',
-    glyph: 'CS',
-    tone: 'bg-fuchsia-500/10 text-fuchsia-600 dark:text-fuchsia-400',
-  },
 ]
 
 const FALLBACK_MODELS = [
@@ -58,22 +41,7 @@ const FALLBACK_MODELS = [
   "gpt-5.6-sol",
   "gpt-5.6-luna",
   "gpt-6-astra",
-  "claude-sonnet-4-5",
 ];
-
-function encodeBase64(text: string): string {
-  return btoa(unescape(encodeURIComponent(text)))
-}
-
-function buildCcSwitchUrl(baseUrl: string, apiKey: string): string {
-  const config = encodeURIComponent(encodeBase64(JSON.stringify({
-    name: 'codex2api',
-    baseURL: baseUrl,
-    apiKey,
-    anthropicVersion: '2023-06-01',
-  })))
-  return `cc-switch://import?data=${config}`
-}
 
 function keyLabel(item: ApiKeyOption): string {
   if (!item.key) return item.name || 'API Key'
@@ -153,7 +121,6 @@ function ClientCard({ tool, activeKey, baseUrl }: {
   baseUrl: string
 }) {
   const [codexTab, setCodexTab] = useState<'unix' | 'windows'>('unix')
-  const [claudeTab, setClaudeTab] = useState<'env-unix' | 'env-windows' | 'settings'>('env-unix')
   const key = activeKey || 'YOUR_API_KEY'
   const codexDir = codexTab === 'windows' ? '%userprofile%\\.codex' : '~/.codex'
 
@@ -176,24 +143,6 @@ goals = true`
   const codexAuth = `{
   "OPENAI_API_KEY": "${key}"
 }`
-
-  const claudeEnvUnix = `export ANTHROPIC_BASE_URL="${baseUrl}"
-export ANTHROPIC_AUTH_TOKEN="${key}"
-export CLAUDE_CODE_DISABLE_NONESSENTIAL_TRAFFIC=1`
-
-  const claudeEnvWindows = `set ANTHROPIC_BASE_URL=${baseUrl}
-set ANTHROPIC_AUTH_TOKEN=${key}
-set CLAUDE_CODE_DISABLE_NONESSENTIAL_TRAFFIC=1`
-
-  const claudeSettings = `{
-  "env": {
-    "ANTHROPIC_BASE_URL": "${baseUrl}",
-    "ANTHROPIC_AUTH_TOKEN": "${key}",
-    "CLAUDE_CODE_DISABLE_NONESSENTIAL_TRAFFIC": "1"
-  }
-}`
-
-  const ccSwitchUrl = buildCcSwitchUrl(baseUrl, key)
 
   return (
     <Card id={`client-${tool.id}`} className="scroll-mt-20">
@@ -225,39 +174,6 @@ set CLAUDE_CODE_DISABLE_NONESSENTIAL_TRAFFIC=1`
           </>
         )}
 
-        {tool.id === 'claude' && (
-          <>
-            <Tabs
-              tabs={[
-                { id: 'env-unix', label: 'macOS / Linux env' },
-                { id: 'env-windows', label: 'Windows env' },
-                { id: 'settings', label: 'settings.json' },
-              ]}
-              active={claudeTab}
-              onChange={setClaudeTab}
-            />
-            {claudeTab === 'env-unix' && <CodeBlock label="Terminal" content={claudeEnvUnix} />}
-            {claudeTab === 'env-windows' && <CodeBlock label="Command Prompt" content={claudeEnvWindows} />}
-            {claudeTab === 'settings' && <CodeBlock label="~/.claude/settings.json" content={claudeSettings} />}
-          </>
-        )}
-
-        {tool.id === 'cc-switch' && (
-          <div className="space-y-4">
-            <CodeBlock label="cc-switch deeplink" content={ccSwitchUrl} />
-            <Button
-              asChild
-              disabled={!activeKey}
-              className="gap-2"
-            >
-              <a href={ccSwitchUrl}>
-                <ExternalLink className="size-4" />
-                Import to CC Switch
-              </a>
-            </Button>
-            {!activeKey && <p className="text-xs text-amber-600 dark:text-amber-400">Create or select an API key before launching the deeplink.</p>}
-          </div>
-        )}
       </CardContent>
     </Card>
   )
@@ -268,9 +184,8 @@ export default function Guide() {
   const [apiKeys, setApiKeys] = useState<ApiKeyOption[]>([])
   const [selectedKey, setSelectedKey] = useState('')
   const [models, setModels] = useState(FALLBACK_MODELS)
-  const [claudeModels, setClaudeModels] = useState<string[]>([])
   const [selectedModel, setSelectedModel] = useState('gpt-5.5')
-  const [curlTab, setCurlTab] = useState<'responses' | 'chat' | 'messages'>('responses')
+  const [curlTab, setCurlTab] = useState<'responses' | 'chat'>('responses')
 
   useEffect(() => {
     api.getAPIKeys({ view: 'lite' }).then((res) => {
@@ -280,12 +195,10 @@ export default function Guide() {
     }).catch(() => {})
 
     api.getModels().then((res) => {
-      const nextClaude = Array.from(new Set((res.claude_models ?? []).filter((model): model is string => Boolean(model))))
-      setClaudeModels(nextClaude)
       const next = Array.from(new Set([
         ...(res.models ?? []),
         ...(res.items?.map((item) => item.id) ?? []),
-      ].filter((model): model is string => Boolean(model) && !model.toLowerCase().startsWith('claude-'))))
+      ].filter((model): model is string => Boolean(model))))
       if (next.length > 0) {
         setModels(next)
         setSelectedModel(next.includes('gpt-5.5') ? 'gpt-5.5' : next[0])
@@ -295,22 +208,11 @@ export default function Guide() {
 
   const activeKey = selectedKey || apiKeys[0]?.key || ''
   const keyForSnippet = activeKey || 'YOUR_API_KEY'
-  const claudeModelOptions = useMemo(
-    () => claudeModels.length > 0 ? claudeModels : ['claude-sonnet-4-5'],
-    [claudeModels],
-  )
-  const codexModelOptions = useMemo(() => {
-    const filtered = models.filter((model) => !model.startsWith('claude-'))
-    return filtered.length > 0 ? filtered : FALLBACK_MODELS.filter((model) => !model.startsWith('claude-'))
-  }, [models])
-  const selectedCurlOptions = curlTab === 'messages' ? claudeModelOptions : codexModelOptions
+  const codexModelOptions = useMemo(() => (models.length > 0 ? models : FALLBACK_MODELS), [models])
   useEffect(() => {
-    if (selectedCurlOptions.includes(selectedModel)) return
-    if (selectedCurlOptions[0]) setSelectedModel(selectedCurlOptions[0])
-  }, [selectedCurlOptions, selectedModel])
-  const messagesModel = selectedModel.startsWith('claude-')
-    ? selectedModel
-    : (claudeModelOptions[0] ?? 'claude-sonnet-4-5')
+    if (codexModelOptions.includes(selectedModel)) return
+    if (codexModelOptions[0]) setSelectedModel(codexModelOptions[0])
+  }, [codexModelOptions, selectedModel])
 
   const curlExamples = {
     responses: `curl -X POST ${baseUrl}/v1/responses \\
@@ -329,22 +231,11 @@ export default function Guide() {
     "messages": [{"role": "user", "content": "Hello"}],
     "stream": true
   }'`,
-    messages: `curl -X POST ${baseUrl}/v1/messages \\
-  -H "x-api-key: ${keyForSnippet}" \\
-  -H "Content-Type: application/json" \\
-  -H "anthropic-version: 2023-06-01" \\
-  -d '{
-    "model": "${messagesModel}",
-    "max_tokens": 1024,
-    "messages": [{"role": "user", "content": "Hello"}]
-  }'`,
   }
 
   const tocItems = [
     ['quick-start', 'Quick Start'],
     ['client-codex', 'Codex CLI'],
-    ['client-claude', 'Claude Code'],
-    ['client-cc-switch', 'CC Switch'],
     ['curl-examples', 'cURL Examples'],
     ['auth', 'Authentication'],
   ]
@@ -353,7 +244,7 @@ export default function Guide() {
     <>
       <PageHeader
         title="Usage Guide"
-        description="Configure clients and test the OpenAI / Anthropic compatible endpoints."
+        description="Configure clients and test the OpenAI compatible endpoints."
       />
 
       <div className="grid items-start gap-6 xl:grid-cols-[minmax(0,1fr)_240px]">
@@ -386,7 +277,7 @@ export default function Guide() {
             </CardContent>
           </Card>
 
-          <div className="grid gap-4 lg:grid-cols-3">
+          <div className="grid gap-4">
             {CLIENT_TOOLS.map((tool) => (
               <ClientCard key={tool.id} tool={tool} activeKey={activeKey} baseUrl={baseUrl} />
             ))}
@@ -404,7 +295,7 @@ export default function Guide() {
                   <Select
                     value={selectedModel}
                     onValueChange={setSelectedModel}
-                    options={selectedCurlOptions.map((model) => ({ label: model, value: model }))}
+                    options={codexModelOptions.map((model) => ({ label: model, value: model }))}
                   />
                 </div>
               </div>
@@ -412,7 +303,6 @@ export default function Guide() {
                 tabs={[
                   { id: 'responses', label: '/v1/responses' },
                   { id: 'chat', label: '/v1/chat/completions' },
-                  { id: 'messages', label: '/v1/messages' },
                 ]}
                 active={curlTab}
                 onChange={setCurlTab}
@@ -424,19 +314,11 @@ export default function Guide() {
           <Card id="auth" className="scroll-mt-20">
             <CardContent className="p-5">
               <h2 className="text-lg font-bold text-foreground">Authentication</h2>
-              <p className="mt-1 text-sm text-muted-foreground">Downstream API requests accept standard OpenAI and Anthropic header styles.</p>
+              <p className="mt-1 text-sm text-muted-foreground">Downstream API requests accept the standard OpenAI authorization header.</p>
               <div className="mt-4 grid gap-2">
                 <div className="flex items-center gap-2 rounded-lg border border-border bg-muted/40 px-3 py-2">
                   <Badge variant="outline">Header</Badge>
                   <code className="font-mono text-sm">Authorization: Bearer &lt;key&gt;</code>
-                </div>
-                <div className="flex items-center gap-2 rounded-lg border border-border bg-muted/40 px-3 py-2">
-                  <Badge variant="outline">Header</Badge>
-                  <code className="font-mono text-sm">x-api-key: &lt;key&gt;</code>
-                </div>
-                <div className="flex items-center gap-2 rounded-lg border border-border bg-muted/40 px-3 py-2">
-                  <Badge variant="outline">Header</Badge>
-                  <code className="font-mono text-sm">anthropic-auth-token: &lt;key&gt;</code>
                 </div>
               </div>
             </CardContent>

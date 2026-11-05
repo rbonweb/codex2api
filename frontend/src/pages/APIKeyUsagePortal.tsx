@@ -1199,11 +1199,8 @@ function statusBadgeClass(code: number): string {
   return 'border-transparent bg-slate-500/14 text-slate-600 dark:bg-slate-500/20 dark:text-slate-300'
 }
 
-const CHANNEL_LABELS: Record<UpstreamChannel, string> = {
+const CHANNEL_LABELS: Record<string, string> = {
   codex: 'Codex',
-  grok: 'Grok',
-  antigravity: 'Antigravity',
-  claude: 'Claude',
 }
 
 function isKnownChannel(channel?: string): channel is UpstreamChannel {
@@ -1378,9 +1375,6 @@ function LogChannelSwitcher({ value, onChange }: { value: '' | UpstreamChannel; 
   const options: Array<{ key: '' | UpstreamChannel; label: string }> = [
     { key: '', label: t('usage.channelAll') },
     { key: 'codex', label: CHANNEL_LABELS.codex },
-    { key: 'grok', label: CHANNEL_LABELS.grok },
-    { key: 'antigravity', label: CHANNEL_LABELS.antigravity },
-    { key: 'claude', label: CHANNEL_LABELS.claude },
   ]
   const activeIndex = Math.max(0, options.findIndex((option) => option.key === value))
   return (

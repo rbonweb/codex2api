@@ -312,7 +312,7 @@ function formatUsageAPIKeyLabel(name?: string, maskedKey?: string): string {
 const usageClickableFilterClass = 'cursor-pointer transition-colors hover:text-primary hover:underline underline-offset-2 decoration-dotted'
 
 function formatUsageAccountLabel(log: UsageLog): string {
-  // 邮箱优先：身份账号一律显示邮箱，账号名仅作为无邮箱账号（如 relay API-key 账号）的兜底。
+  // 邮箱优先：身份账号一律显示邮箱，账号名仅作为无邮箱账号的兜底。
   // 避免 AT 导入未命名时的占位名（at-account-N 等）盖过真实邮箱身份。
   const accountEmail = log.account_email?.trim()
   if (accountEmail) {
@@ -521,7 +521,7 @@ function UsageCostCell({ log }: { log: UsageLog }) {
   )
 }
 
-// MediaUsageCost 是 Grok Imagine 媒体行(用户按上游成本计费)的价格列:展示计费单位
+// MediaUsageCost 是媒体行(用户按上游成本计费)的价格列:展示计费单位
 // (张数 / 视频秒数)与上游成本;视频提交行在完成时才结算,成功但无单价的行标"未定价"。
 function MediaUsageCost({ log, unit }: { log: UsageLog; unit: MediaBillingUnit }) {
   const { t } = useTranslation()
@@ -1450,8 +1450,6 @@ export default function Usage() {
   const [showAdvancedFilters, setShowAdvancedFilters] = useState(false)
   const [apiKeys, setAPIKeys] = useState<APIKeyRow[]>([])
   const [modelOptions, setModelOptions] = useState<string[]>([])
-  const [grokModelOptions, setGrokModelOptions] = useState<string[]>([])
-  const [claudeModelOptions, setClaudeModelOptions] = useState<string[]>([])
   const [apiKeyLoadFailed, setAPIKeyLoadFailed] = useState(false)
   const showFastFilter = true
   const pageSizeOptions = DEFAULT_PAGE_SIZE_OPTIONS
@@ -1627,13 +1625,9 @@ export default function Usage() {
           ? response.items.filter((item) => item.enabled).map((item) => item.id)
           : response.models ?? []
         setModelOptions(models)
-        setGrokModelOptions(response.grok_models ?? [])
-        setClaudeModelOptions(response.claude_models ?? [])
       } catch {
         if (active) {
           setModelOptions([])
-          setGrokModelOptions([])
-          setClaudeModelOptions([])
         }
       }
     }
@@ -1706,18 +1700,11 @@ export default function Usage() {
     seenModelsRef.current[channel] = merged
     return merged
   }, [modelStats, channel])
-  // 下拉选项跟随渠道过滤：codex 只列 Codex manifest 目录，grok 只列 Grok 账号声明模型，
-  // 全部渠道两者都列；再并上当前范围实际用过的模型（统计已按渠道过滤），去重后目录顺序优先。
+  // 下拉选项为 Codex manifest 目录，再并上当前范围实际用过的模型（统计已按渠道过滤），去重后目录顺序优先。
   const modelFilterOptions = useMemo(() => {
     const seen = new Set<string>()
     const merged: string[] = []
-    const catalog = channel === 'grok'
-      ? grokModelOptions
-      : channel === 'codex'
-        ? modelOptions
-        : channel === 'claude'
-          ? claudeModelOptions
-          : [...modelOptions, ...grokModelOptions, ...claudeModelOptions]
+    const catalog = modelOptions
     for (const m of catalog) {
       const key = m.trim()
       if (key && !seen.has(key)) { seen.add(key); merged.push(key) }
@@ -1728,7 +1715,7 @@ export default function Usage() {
     // 从表格行点进来的模型可能不在目录里,补进选项让下拉能显示当前选中值。
     if (filterModel && !seen.has(filterModel)) merged.push(filterModel)
     return merged
-  }, [modelOptions, grokModelOptions, claudeModelOptions, seenModels, channel, filterModel])
+  }, [modelOptions, seenModels, filterModel])
   const featureStats = stats?.feature_stats
   const endpointStats = stats?.endpoint_stats ?? []
   const apiKeyStats = stats?.api_key_stats ?? []
@@ -2428,12 +2415,12 @@ export default function Usage() {
                               onClick={() => toggleModelFilter(log.model)}
                               onKeyDown={(e) => { if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); toggleModelFilter(log.model) } }}
                             >
-                              {(log.channel === 'codex' || log.channel === 'grok' || log.channel === 'antigravity' || log.channel === 'claude') && (
+                              {log.channel === 'codex' && (
                                 <ChannelLogo
                                   channel={log.channel}
                                   size={13}
                                   className="mr-1"
-                                  title={log.channel === 'grok' ? 'Grok' : log.channel === 'antigravity' ? 'Antigravity' : log.channel === 'claude' ? 'Claude' : 'Codex'}
+                                  title="Codex"
                                 />
                               )}
                               <span className="min-w-0 break-all text-left">{log.model || '-'}</span>
@@ -2665,12 +2652,12 @@ export default function Usage() {
                               onClick={() => toggleModelFilter(log.model)}
                               onKeyDown={(e) => { if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); toggleModelFilter(log.model) } }}
                             >
-                              {(log.channel === 'codex' || log.channel === 'grok' || log.channel === 'antigravity' || log.channel === 'claude') && (
+                              {log.channel === 'codex' && (
                                 <ChannelLogo
                                   channel={log.channel}
                                   size={13}
                                   className="mr-1"
-                                  title={log.channel === 'grok' ? 'Grok' : log.channel === 'antigravity' ? 'Antigravity' : log.channel === 'claude' ? 'Claude' : 'Codex'}
+                                  title="Codex"
                                 />
                               )}
                               {log.model || '-'}
@@ -2728,7 +2715,7 @@ export default function Usage() {
                         {visibleColumns.endpoint && <TableCell>
                           <div
                             className={`${usageTableMonoClass} leading-relaxed`}
-                            // 中转/Grok 账号的完整上游 URL 收进 tooltip，列内只显示入站端点
+                            // 完整上游 URL 收进 tooltip，列内只显示入站端点
                             title={
                               log.upstream_endpoint && log.upstream_endpoint !== log.inbound_endpoint
                                 ? `→ ${log.upstream_endpoint}`

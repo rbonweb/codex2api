@@ -203,9 +203,6 @@ function TryItDialog({
       };
       if (isAdmin) {
         headers["X-Admin-Key"] = token;
-      } else if (path.startsWith("/v1/messages")) {
-        headers["x-api-key"] = token;
-        headers["anthropic-version"] = "2023-06-01";
       } else if (path !== "/health") {
         headers["Authorization"] = `Bearer ${token}`;
       }
@@ -301,11 +298,9 @@ function TryItDialog({
                     <div>
                       <div className="flex items-center gap-2">
                         <span className="text-sm font-semibold text-foreground">
-                          {path.startsWith("/v1/messages")
-                            ? "x-api-key"
-                            : path.startsWith("/api/admin")
-                              ? "X-Admin-Key"
-                              : "Authorization"}
+                          {path.startsWith("/api/admin")
+                            ? "X-Admin-Key"
+                            : "Authorization"}
                         </span>
                         <span className="code-inline text-[11px]">string</span>
                       </div>
