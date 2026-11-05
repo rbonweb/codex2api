@@ -1174,3 +1174,17 @@ func TestAudioBridgeSixteenKilohertzOutputIsStateful(t *testing.T) {
 		t.Fatalf("total output samples = %d, want about 602", total)
 	}
 }
+
+func TestAudioBridgeDelegationAcknowledgementAutoTurnsFillerBackOn(t *testing.T) {
+	srv := newBridgeTestServer(t, true, true)
+	conn := srv.dial(t, "?model=gpt-realtime&delegation=none")
+	readBridgeUntil(t, conn, "session.created")
+	writeBridgeEvent(t, conn, `{"type":"session.update","session":{"delegation":{"type":"client","acknowledgement":"auto"}}}`)
+	if ack := readBridgeUntil(t, conn, "session.updated"); gjson.GetBytes(ack, "session.delegation.acknowledgement").Exists() {
+		t.Fatalf("ack = %s, want the default acknowledgement reported", ack)
+	}
+	session := startBridgeCall(t, srv, conn)
+	if gjson.GetBytes(session, "delegation.ack_filler").Exists() {
+		t.Fatalf("delegation = %s, want the filler on", gjson.GetBytes(session, "delegation").Raw)
+	}
+}
