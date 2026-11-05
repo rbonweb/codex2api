@@ -23,7 +23,7 @@ type workspaceLinkedMark struct {
 // 兄弟号优先按原生 AccountID 匹配；Team/K12/edu 座位再按生效工作区匹配
 // （每人可能有独立 AccountID，但流量打到同一空间）。
 // 仅请求头覆盖到该空间的个人号不会整号打死。
-// Grok / OpenAI Responses API 账号不参与联动。默认生效，无配置开关。
+// 默认生效，无配置开关。
 func (s *Store) MarkDeactivatedWorkspace(trigger *Account, errorMsg string) {
 	if s == nil || trigger == nil {
 		return
@@ -48,9 +48,6 @@ func deactivatedWorkspaceLinkedMessage(triggerID int64) string {
 }
 
 func (s *Store) workspaceLinkedTargets(trigger *Account) []*Account {
-	if trigger.IsGrokAPI() || trigger.IsOpenAIResponsesAPI() || trigger.IsClaudeOAuth() {
-		return nil
-	}
 	workspaceID := strings.TrimSpace(trigger.EffectiveAccountID())
 	if workspaceID == "" {
 		return nil
@@ -70,9 +67,6 @@ func (s *Store) workspaceLinkedTargets(trigger *Account) []*Account {
 
 func shouldLinkDeactivatedWorkspace(trigger, sibling *Account, workspaceID string) bool {
 	if sibling == nil || trigger == nil || sibling.DBID == trigger.DBID {
-		return false
-	}
-	if sibling.IsGrokAPI() || sibling.IsOpenAIResponsesAPI() || sibling.IsClaudeOAuth() {
 		return false
 	}
 	if siblingErrorStatus(sibling) {
@@ -118,7 +112,7 @@ func siblingErrorStatus(acc *Account) bool {
 // LinkedDeactivatedWorkspaceResult 供批量测试在打 WHAM 前短路：
 // 该账号已因同空间停用被标错，或所属工作区刚被停用。
 func (s *Store) LinkedDeactivatedWorkspaceResult(acc *Account) (string, bool) {
-	if s == nil || acc == nil || acc.IsGrokAPI() || acc.IsOpenAIResponsesAPI() || acc.IsClaudeOAuth() {
+	if s == nil || acc == nil {
 		return "", false
 	}
 	acc.mu.RLock()

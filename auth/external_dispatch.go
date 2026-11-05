@@ -90,10 +90,8 @@ func (s *Store) pinnedAccountUsability(acc *Account) PinnedAccountFailure {
 	if acc.Status == StatusError {
 		return PinnedAccountCredentialUnavailable
 	}
-	// Banned is the unauthorized cooldown. Antigravity keeps its narrow 401
-	// recovery window, matching isAvailableLocked.
-	if acc.healthTierLocked() == HealthTierBanned &&
-		!(acc.isAntigravityAPILocked() && acc.antigravityUnauthorizedRecoveryLocked(time.Now())) {
+	// Banned is the unauthorized cooldown.
+	if acc.healthTierLocked() == HealthTierBanned {
 		return PinnedAccountCredentialUnavailable
 	}
 	if !acc.hasDispatchCredentialLocked() {
