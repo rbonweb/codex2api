@@ -37,6 +37,7 @@ type liveWSFakeCall struct {
 
 	doneOnce  sync.Once
 	closeOnce sync.Once
+	eventsMu  sync.Mutex // orders push against the close of events
 }
 
 func newLiveWSFakeCall() *liveWSFakeCall {
@@ -69,12 +70,18 @@ func (f *liveWSFakeCall) Close() {
 
 // end simulates the Live call ending on its own.
 func (f *liveWSFakeCall) end() {
+	f.eventsMu.Lock()
 	close(f.events)
+	f.eventsMu.Unlock()
 	f.doneOnce.Do(func() { close(f.done) })
 }
 
 // push delivers one internal sideband event to the gateway.
-func (f *liveWSFakeCall) push(event string) { f.events <- []byte(event) }
+func (f *liveWSFakeCall) push(event string) {
+	f.eventsMu.Lock()
+	defer f.eventsMu.Unlock()
+	f.events <- []byte(event)
+}
 
 type liveWSTestServer struct {
 	URL     string
@@ -454,9 +461,16 @@ func TestLiveSessionsWSClientDisconnectReleasesTheCall(t *testing.T) {
 
 func TestLiveSessionsWSExpiryClosesWithExpired(t *testing.T) {
 	prev := liveMaxSessionDuration
-	liveMaxSessionDuration = 150 * time.Millisecond
+	liveMaxSessionDuration = 600 * time.Millisecond
 	t.Cleanup(func() { liveMaxSessionDuration = prev })
 	srv := newLiveWSTestServer(t, true, true)
+	// The upstream call ends by itself at the same deadline as the cap, as the real call does; the gateway must still report expired.
+	inner := openRealtimeAudioCall
+	openRealtimeAudioCall = func(h *Handler, c *gin.Context, session json.RawMessage) (realtimeAudioCallConn, *liveGatewayError) {
+		call, gerr := inner(h, c, session)
+		time.AfterFunc(liveMaxSessionDuration, srv.call.end)
+		return call, gerr
+	}
 	conn := srv.dial(t)
 	liveWSStart(t, srv, conn, `{}`)
 	closed := liveWSReadUntil(t, conn, "session.closed")
@@ -543,5 +557,43 @@ func TestLiveSessionsRouteCoexistsWithTheSidebandRoute(t *testing.T) {
 		if hit != want {
 			t.Fatalf("GET %s reached %q, want %q", path, hit, want)
 		}
+	}
+}
+
+func TestLiveSessionsWSEventsAfterCloseAreNotForwarded(t *testing.T) {
+	srv := newLiveWSTestServer(t, true, true)
+	conn := srv.dial(t)
+	liveWSStart(t, srv, conn, `{}`)
+	liveWSWrite(t, conn, `{"type":"session.close"}`)
+	liveWSWrite(t, conn, `{"type":"session.input_audio.mute"}`)
+	liveWSReadUntil(t, conn, "session.closed")
+	liveWSExpectClose(t, conn)
+	select {
+	case <-srv.call.closed:
+	case <-time.After(liveWSTestTimeout):
+		t.Fatal("the call was not closed")
+	}
+	select {
+	case event := <-srv.call.sent:
+		t.Fatalf("an event was forwarded after session.close: %s", event)
+	default:
+	}
+}
+
+func TestLiveSessionsWSStartTimeoutWritesAnError(t *testing.T) {
+	prev := liveSessionStartTimeout
+	liveSessionStartTimeout = 100 * time.Millisecond
+	t.Cleanup(func() { liveSessionStartTimeout = prev })
+	srv := newLiveWSTestServer(t, true, true)
+	conn := srv.dial(t)
+	event := liveWSRead(t, conn)
+	if gjson.GetBytes(event, "error.code").String() != "invalid_value" || !strings.Contains(gjson.GetBytes(event, "error.message").String(), "session.start not received") {
+		t.Fatalf("event = %s", event)
+	}
+	if code := liveWSExpectClose(t, conn); code != websocket.ClosePolicyViolation {
+		t.Fatalf("close code = %d", code)
+	}
+	if srv.opens.Load() != 0 {
+		t.Fatal("a call was opened")
 	}
 }

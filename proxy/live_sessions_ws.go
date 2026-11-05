@@ -16,10 +16,13 @@ import (
 )
 
 // liveSessionStartTimeout is how long a client has to send session.start after the upgrade.
-const liveSessionStartTimeout = 10 * time.Second
+var liveSessionStartTimeout = 10 * time.Second
 
 // liveSessionTickInterval is how often the transport asks the translator for gateway-clock events.
 const liveSessionTickInterval = time.Second
+
+// liveSessionExpiryMargin is how much earlier than the upstream deadline the gateway ends a capped session, so the public reason is expired.
+const liveSessionExpiryMargin = 2 * time.Second
 
 // liveSessionCloseGrace is how long the transport waits for the client to echo the close frame before it drops the connection.
 const liveSessionCloseGrace = 2 * time.Second
@@ -77,6 +80,7 @@ type liveWSSession struct {
 	cancel context.CancelFunc
 
 	mu         sync.Mutex
+	closeSeen  bool // the client sent session.close; later client events are dropped
 	closing    bool // set once session.closed is being written; nothing else may reach the client afterwards
 	translator *liveSessionTranslator
 	call       realtimeAudioCallConn
@@ -123,6 +127,7 @@ func (s *liveWSSession) run() {
 	if !ok {
 		return
 	}
+	openStart := time.Now()
 	call, gerr := openRealtimeAudioCall(s.h, s.c, cfg.UpstreamSession())
 	if gerr != nil || call == nil {
 		s.failOpen(gerr)
@@ -169,7 +174,16 @@ func (s *liveWSSession) run() {
 
 	ticker := time.NewTicker(liveSessionTickInterval)
 	defer ticker.Stop()
-	expiry := time.NewTimer(liveMaxSessionDuration)
+	// The upstream call expires liveMaxSessionDuration after it was created, so the timer counts from before the open and fires a margin early: the client then sees expired, not remote_hangup.
+	margin := liveMaxSessionDuration / 10
+	if margin > liveSessionExpiryMargin {
+		margin = liveSessionExpiryMargin
+	}
+	expiryIn := liveMaxSessionDuration - time.Since(openStart) - margin
+	if expiryIn < 0 {
+		expiryIn = 0
+	}
+	expiry := time.NewTimer(expiryIn)
 	defer expiry.Stop()
 
 	for {
@@ -196,10 +210,14 @@ func (s *liveWSSession) run() {
 
 // readStart reads and validates session.start. On any failure it answers the client, closes the socket and creates no call.
 func (s *liveWSSession) readStart() (*liveSessionConfig, bool) {
-	_ = s.conn.SetReadDeadline(time.Now().Add(liveSessionStartTimeout))
+	deadline := time.Now().Add(liveSessionStartTimeout)
+	_ = s.conn.SetReadDeadline(deadline)
 	for {
 		payload, release, ok, skip := s.readFrame()
 		if !ok {
+			if !time.Now().Before(deadline) {
+				_ = writeResponsesWSMessage(s.conn, liveErrorEvent("", "invalid_value", "session.start not received.", "", ""))
+			}
 			closeResponsesWS(s.conn, websocket.ClosePolicyViolation, "session.start is required")
 			return nil, false
 		}
@@ -310,11 +328,14 @@ func (s *liveWSSession) clientLoop() {
 // handleClientEvent translates one public client event and applies the result; it returns true when the loop should stop (the connection is unusable).
 func (s *liveWSSession) handleClientEvent(raw []byte) bool {
 	s.mu.Lock()
-	if s.closing {
+	if s.closing || s.closeSeen {
 		s.mu.Unlock()
 		return false
 	}
 	res := s.translator.Client(raw)
+	if res.Close {
+		s.closeSeen = true
+	}
 	for _, event := range res.Client {
 		if !s.writeLocked(event) {
 			s.mu.Unlock()
