@@ -144,11 +144,12 @@ func TestListAccountsPageFiltersAndLegacyCompatibility(t *testing.T) {
 
 func TestAccountListItemMatchesEveryFilter(t *testing.T) {
 	item := &accountListSnapshotItem{
-		Row:         &database.AccountRow{ID: 7, Name: "Alice", ProxyURL: "http://proxy.example"},
-		ID:          7,
-		Status:      "active",
-		Enabled:     true,
-		PlanType:    "plus",
+		Row:            &database.AccountRow{ID: 7, Name: "Alice", ProxyURL: "http://proxy.example"},
+		ID:             7,
+		Status:         "active",
+		Enabled:        true,
+		PlanType:       "plus",
+		UsagePercent7d: 10, UsagePercent7dOK: true,
 		EmailDomain: "example.com",
 		Tags:        []string{"blue", "paid"},
 		GroupIDs:    []int64{10, 20},
