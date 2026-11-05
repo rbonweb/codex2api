@@ -36,25 +36,25 @@ import (
 // Nothing leaves localhost and the local trust root cannot affect other tests.
 
 const (
-	codexRestoredChildEnv            = "CODEX_RESTORED_LOCAL_TLS_TEST"
-	codexRestoredIntelligenceSuccess = `{"type":"response.completed","response":{"status":"completed","model":"gpt-5.4","output":[{"type":"message","role":"assistant","content":[{"type":"output_text","text":"21"}]}],"usage":{"input_tokens":4,"output_tokens":2}}}`
+	codexRestoredTLSChildEnv            = "CODEX_RESTORED_LOCAL_TLS_TEST"
+	codexRestoredTLSIntelligenceSuccess = `{"type":"response.completed","response":{"status":"completed","model":"gpt-5.4","output":[{"type":"message","role":"assistant","content":[{"type":"output_text","text":"21"}]}],"usage":{"input_tokens":4,"output_tokens":2}}}`
 )
 
-var codexRestoredCertificate struct {
+var codexRestoredTLSCertificate struct {
 	once sync.Once
 	der  []byte
 	key  *ecdsa.PrivateKey
 	err  error
 }
 
-// codexRestoredRunInChild re-runs the calling top-level test in a child process with the local trust root and reports whether the caller must return.
-func codexRestoredRunInChild(t *testing.T) bool {
+// codexRestoredTLSRunInChild re-runs the calling top-level test in a child process with the local trust root and reports whether the caller must return.
+func codexRestoredTLSRunInChild(t *testing.T) bool {
 	t.Helper()
-	if os.Getenv(codexRestoredChildEnv) == "1" {
-		codexRestoredCertificate.once.Do(func() {
+	if os.Getenv(codexRestoredTLSChildEnv) == "1" {
+		codexRestoredTLSCertificate.once.Do(func() {
 			key, err := ecdsa.GenerateKey(elliptic.P256(), rand.Reader)
 			if err != nil {
-				codexRestoredCertificate.err = err
+				codexRestoredTLSCertificate.err = err
 				return
 			}
 			template := &x509.Certificate{SerialNumber: big.NewInt(1), Subject: pkix.Name{CommonName: "chatgpt.com", Organization: []string{"local test"}}, DNSNames: []string{"chatgpt.com"},
@@ -63,21 +63,21 @@ func codexRestoredRunInChild(t *testing.T) bool {
 				ExtKeyUsage: []x509.ExtKeyUsage{x509.ExtKeyUsageServerAuth}}
 			der, err := x509.CreateCertificate(rand.Reader, template, template, &key.PublicKey, key)
 			if err != nil {
-				codexRestoredCertificate.err = err
+				codexRestoredTLSCertificate.err = err
 				return
 			}
 			root, err := x509.ParseCertificate(der)
 			if err != nil {
-				codexRestoredCertificate.err = err
+				codexRestoredTLSCertificate.err = err
 				return
 			}
 			roots := x509.NewCertPool()
 			roots.AddCert(root)
 			x509.SetFallbackRoots(roots)
-			codexRestoredCertificate.der, codexRestoredCertificate.key = der, key
+			codexRestoredTLSCertificate.der, codexRestoredTLSCertificate.key = der, key
 		})
-		if codexRestoredCertificate.err != nil {
-			t.Fatal(codexRestoredCertificate.err)
+		if codexRestoredTLSCertificate.err != nil {
+			t.Fatal(codexRestoredTLSCertificate.err)
 		}
 		gin.SetMode(gin.TestMode)
 		t.Setenv("CODEX_TRANSPORT_MODE", "standard")
@@ -91,7 +91,7 @@ func codexRestoredRunInChild(t *testing.T) bool {
 		return false
 	}
 	cmd := exec.Command(os.Args[0], "-test.run=^"+regexp.QuoteMeta(t.Name())+"$", "-test.count=1", "-test.v", "-test.timeout=60s")
-	cmd.Env = append(os.Environ(), codexRestoredChildEnv+"=1", "GODEBUG="+os.Getenv("GODEBUG")+",x509usefallbackroots=1")
+	cmd.Env = append(os.Environ(), codexRestoredTLSChildEnv+"=1", "GODEBUG="+os.Getenv("GODEBUG")+",x509usefallbackroots=1")
 	output, err := cmd.CombinedOutput()
 	if err != nil {
 		t.Fatalf("local TLS fixture: %v\n%s", err, output)
@@ -102,11 +102,11 @@ func codexRestoredRunInChild(t *testing.T) bool {
 	return true
 }
 
-// codexRestoredUpstream serves handler as the Codex upstream and returns the bound proxy URL that tunnels chatgpt.com:443 to it.
-func codexRestoredUpstream(t *testing.T, handler http.HandlerFunc) string {
+// codexRestoredTLSUpstream serves handler as the Codex upstream and returns the bound proxy URL that tunnels chatgpt.com:443 to it.
+func codexRestoredTLSUpstream(t *testing.T, handler http.HandlerFunc) string {
 	t.Helper()
 	server := httptest.NewUnstartedServer(handler)
-	server.TLS = &tls.Config{Certificates: []tls.Certificate{{Certificate: [][]byte{codexRestoredCertificate.der}, PrivateKey: codexRestoredCertificate.key}}}
+	server.TLS = &tls.Config{Certificates: []tls.Certificate{{Certificate: [][]byte{codexRestoredTLSCertificate.der}, PrivateKey: codexRestoredTLSCertificate.key}}}
 	server.StartTLS()
 	t.Cleanup(server.Close)
 	tunnel := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
@@ -135,7 +135,7 @@ func codexRestoredUpstream(t *testing.T, handler http.HandlerFunc) string {
 	return tunnel.URL
 }
 
-func codexRestoredAccount(id int64, proxyURL string) *auth.Account {
+func codexRestoredTLSAccount(id int64, proxyURL string) *auth.Account {
 	return &auth.Account{
 		DBID:        id,
 		AccessToken: "sk-test-secret",
@@ -146,29 +146,29 @@ func codexRestoredAccount(id int64, proxyURL string) *auth.Account {
 	}
 }
 
-// codexRestoredHandler builds an admin handler whose only account (ID 42) is a Codex OAuth account reaching the given upstream.
-func codexRestoredHandler(t *testing.T, upstream http.HandlerFunc) (*Handler, *auth.Account) {
+// codexRestoredTLSHandler builds an admin handler whose only account (ID 42) is a Codex OAuth account reaching the given upstream.
+func codexRestoredTLSHandler(t *testing.T, upstream http.HandlerFunc) (*Handler, *auth.Account) {
 	t.Helper()
-	account := codexRestoredAccount(42, codexRestoredUpstream(t, upstream))
+	account := codexRestoredTLSAccount(42, codexRestoredTLSUpstream(t, upstream))
 	store := auth.NewStore(nil, nil, nil)
 	store.AddAccount(account)
 	return &Handler{store: store}, account
 }
 
-func codexRestoredQualityRouter(h *Handler) *gin.Engine {
+func codexRestoredTLSQualityRouter(h *Handler) *gin.Engine {
 	router := gin.New()
 	router.GET("/accounts/:id/quality-test/options", h.QualityTestOptions)
 	router.POST("/accounts/:id/quality-test", h.QualityTest)
 	return router
 }
 
-func codexRestoredQualityRequest(body string) *http.Request {
+func codexRestoredTLSQualityRequest(body string) *http.Request {
 	req := httptest.NewRequest(http.MethodPost, "/accounts/42/quality-test", strings.NewReader(body))
 	req.Header.Set("Content-Type", "application/json")
 	return req
 }
 
-func codexRestoredDecodeEvents(t *testing.T, body string) []testEvent {
+func codexRestoredTLSDecodeEvents(t *testing.T, body string) []testEvent {
 	t.Helper()
 	var events []testEvent
 	for _, line := range strings.Split(body, "\n") {
@@ -185,14 +185,14 @@ func codexRestoredDecodeEvents(t *testing.T, body string) []testEvent {
 }
 
 func TestQualityTestPinsAccountAndPreservesPromptEffortAndHTML_CodexUpstream(t *testing.T) {
-	if codexRestoredRunInChild(t) {
+	if codexRestoredTLSRunInChild(t) {
 		return
 	}
 	const html = "<!doctype html><html><body><svg>\n  <text>鹈鹕</text>\n</svg></body></html>"
 	const prompt = "创建 HTML\n第二行必须保留\n{{random}}"
 	var gotBody []byte
 	var gotAuthorization string
-	h, _ := codexRestoredHandler(t, func(w http.ResponseWriter, r *http.Request) {
+	h, _ := codexRestoredTLSHandler(t, func(w http.ResponseWriter, r *http.Request) {
 		gotBody, _ = io.ReadAll(r.Body)
 		gotAuthorization = r.Header.Get("Authorization")
 		w.Header().Set("Content-Type", "text/event-stream")
@@ -203,10 +203,10 @@ func TestQualityTestPinsAccountAndPreservesPromptEffortAndHTML_CodexUpstream(t *
 		fmt.Fprint(w, "data: {\"type\":\"response.completed\",\"response\":{\"status\":\"completed\",\"model\":\"actual-model\",\"usage\":{\"input_tokens\":24,\"output_tokens\":88,\"output_tokens_details\":{\"reasoning_tokens\":40}}}}\n\n")
 	})
 	// A second Codex account whose bound proxy is dead: the test must use exactly the selected account.
-	h.store.AddAccount(codexRestoredAccount(43, "http://127.0.0.1:1"))
+	h.store.AddAccount(codexRestoredTLSAccount(43, "http://127.0.0.1:1"))
 	requestBody, _ := json.Marshal(qualityTestRequest{Model: "gpt-5.5", Prompt: prompt, ReasoningEffort: "high"})
 	recorder := httptest.NewRecorder()
-	codexRestoredQualityRouter(h).ServeHTTP(recorder, codexRestoredQualityRequest(string(requestBody)))
+	codexRestoredTLSQualityRouter(h).ServeHTTP(recorder, codexRestoredTLSQualityRequest(string(requestBody)))
 	if recorder.Code != http.StatusOK {
 		t.Fatalf("status=%d body=%s", recorder.Code, recorder.Body.String())
 	}
@@ -222,7 +222,7 @@ func TestQualityTestPinsAccountAndPreservesPromptEffortAndHTML_CodexUpstream(t *
 	var output strings.Builder
 	completed := false
 	var diagnostics *codexTestDiagnostics
-	for _, event := range codexRestoredDecodeEvents(t, recorder.Body.String()) {
+	for _, event := range codexRestoredTLSDecodeEvents(t, recorder.Body.String()) {
 		if event.Type == "content" {
 			output.WriteString(event.Text)
 		}
@@ -242,12 +242,12 @@ func TestQualityTestPinsAccountAndPreservesPromptEffortAndHTML_CodexUpstream(t *
 }
 
 func TestQualityTestCancellationReachesSelectedUpstream_CodexUpstream(t *testing.T) {
-	if codexRestoredRunInChild(t) {
+	if codexRestoredTLSRunInChild(t) {
 		return
 	}
 	started, cancelled := make(chan struct{}), make(chan struct{})
 	var startOnce, cancelOnce sync.Once
-	h, _ := codexRestoredHandler(t, func(w http.ResponseWriter, r *http.Request) {
+	h, _ := codexRestoredTLSHandler(t, func(w http.ResponseWriter, r *http.Request) {
 		w.Header().Set("Content-Type", "text/event-stream")
 		fmt.Fprint(w, "data: {\"type\":\"response.created\"}\n\n")
 		w.(http.Flusher).Flush()
@@ -260,7 +260,7 @@ func TestQualityTestCancellationReachesSelectedUpstream_CodexUpstream(t *testing
 	recorder := httptest.NewRecorder()
 	done := make(chan struct{})
 	go func() {
-		codexRestoredQualityRouter(h).ServeHTTP(recorder, codexRestoredQualityRequest(`{"model":"gpt-5.5","prompt":"HTML"}`).WithContext(ctx))
+		codexRestoredTLSQualityRouter(h).ServeHTTP(recorder, codexRestoredTLSQualityRequest(`{"model":"gpt-5.5","prompt":"HTML"}`).WithContext(ctx))
 		close(done)
 	}()
 	select {
@@ -279,22 +279,22 @@ func TestQualityTestCancellationReachesSelectedUpstream_CodexUpstream(t *testing
 	case <-time.After(10 * time.Second):
 		t.Fatal("handler did not stop")
 	}
-	for _, event := range codexRestoredDecodeEvents(t, recorder.Body.String()) {
+	for _, event := range codexRestoredTLSDecodeEvents(t, recorder.Body.String()) {
 		if event.Type == "test_complete" && event.Success {
 			t.Fatal("cancelled stream reported success")
 		}
 	}
 }
 
-// codexRestoredJobRig is a database-backed handler running quality-test jobs.
-type codexRestoredJobRig struct {
+// codexRestoredTLSJobRig is a database-backed handler running quality-test jobs.
+type codexRestoredTLSJobRig struct {
 	db     *database.DB
 	store  *auth.Store
 	h      *Handler
 	router *gin.Engine
 }
 
-func newCodexRestoredJobRig(t *testing.T) *codexRestoredJobRig {
+func newCodexRestoredTLSJobRig(t *testing.T) *codexRestoredTLSJobRig {
 	t.Helper()
 	db := newTestAdminDB(t)
 	store := auth.NewStore(db, nil, nil)
@@ -305,21 +305,21 @@ func newCodexRestoredJobRig(t *testing.T) *codexRestoredJobRig {
 	router := gin.New()
 	router.POST("/accounts/:id/quality-test", h.CreateQualityTestJob)
 	router.POST("/quality-tests/:id/cancel", (&Handler{db: db, store: store}).CancelQualityTest)
-	return &codexRestoredJobRig{db: db, store: store, h: h, router: router}
+	return &codexRestoredTLSJobRig{db: db, store: store, h: h, router: router}
 }
 
 // addAccount inserts a Codex OAuth account, loads it into the runtime pool and binds it to the given proxy.
-func (r *codexRestoredJobRig) addAccount(t *testing.T, name, proxyURL string) int64 {
+func (r *codexRestoredTLSJobRig) addAccount(t *testing.T, name, token, proxyURL string) int64 {
 	t.Helper()
-	id, err := r.db.InsertAccountWithCredentials(context.Background(), name, map[string]interface{}{"access_token": "test-key", "models": []string{"gpt-5.5"}}, "")
+	id, err := r.db.InsertAccountWithCredentials(context.Background(), name, map[string]interface{}{"access_token": token, "models": []string{"gpt-5.5"}}, "")
 	if err != nil {
 		t.Fatal(err)
 	}
-	r.store.AddAccount(&auth.Account{DBID: id, AccessToken: "test-key", ProxyURL: proxyURL, Models: []string{"gpt-5.5"}, PlanType: "pro", Status: auth.StatusReady})
+	r.store.AddAccount(&auth.Account{DBID: id, AccessToken: token, ProxyURL: proxyURL, Models: []string{"gpt-5.5"}, PlanType: "pro", Status: auth.StatusReady})
 	return id
 }
 
-func (r *codexRestoredJobRig) create(id int64, body string) (*httptest.ResponseRecorder, database.QualityTestJob) {
+func (r *codexRestoredTLSJobRig) create(id int64, body string) (*httptest.ResponseRecorder, database.QualityTestJob) {
 	ctx, cancel := context.WithCancel(context.Background())
 	req := httptest.NewRequest(http.MethodPost, fmt.Sprintf("/accounts/%d/quality-test", id), strings.NewReader(body)).WithContext(ctx)
 	req.Header.Set("Content-Type", "application/json")
@@ -335,16 +335,21 @@ func (r *codexRestoredJobRig) create(id int64, body string) (*httptest.ResponseR
 }
 
 func TestQualityTestJobsSurviveRequestCancellationAndLimitThreeAccounts_CodexUpstream(t *testing.T) {
-	if codexRestoredRunInChild(t) {
+	if codexRestoredTLSRunInChild(t) {
 		return
 	}
 	release := make(chan struct{})
 	started := make(chan struct{}, 8)
-	proxyURL := codexRestoredUpstream(t, func(w http.ResponseWriter, r *http.Request) {
+	proxyURL := codexRestoredTLSUpstream(t, func(w http.ResponseWriter, r *http.Request) {
 		w.Header().Set("Content-Type", "text/event-stream")
 		fmt.Fprint(w, "data: {\"type\":\"response.output_text.delta\",\"delta\":\"<html><svg>\"}\n\n")
 		w.(http.Flusher).Flush()
 		started <- struct{}{}
+		// The account that gets cancelled is never released: only its runner stopping the request ends it, so its stored output stays partial.
+		if r.Header.Get("Authorization") == "Bearer cancel-key" {
+			<-r.Context().Done()
+			return
+		}
 		select {
 		case <-r.Context().Done():
 			return
@@ -352,10 +357,14 @@ func TestQualityTestJobsSurviveRequestCancellationAndLimitThreeAccounts_CodexUps
 		}
 		fmt.Fprint(w, "data: {\"type\":\"response.output_text.delta\",\"delta\":\"</svg></html>\"}\n\ndata: {\"type\":\"response.completed\",\"response\":{\"status\":\"completed\"}}\n\n")
 	})
-	rig := newCodexRestoredJobRig(t)
+	rig := newCodexRestoredTLSJobRig(t)
 	var ids []int64
 	for i := 0; i < 4; i++ {
-		ids = append(ids, rig.addAccount(t, fmt.Sprintf("account-%d", i), proxyURL))
+		token := "test-key"
+		if i == 0 {
+			token = "cancel-key"
+		}
+		ids = append(ids, rig.addAccount(t, fmt.Sprintf("account-%d", i), token, proxyURL))
 	}
 	const body = `{"model":"gpt-5.5","reasoning_effort":"high","prompt":"HTML"}`
 	var jobs []database.QualityTestJob
@@ -393,14 +402,14 @@ func TestQualityTestJobsSurviveRequestCancellationAndLimitThreeAccounts_CodexUps
 	if response.Code != http.StatusOK {
 		t.Fatal(response.Body.String())
 	}
-	// The cancelled job frees its slot once its runner has stopped; the runner finalises on its own schedule, so the slot is checked after every job has ended.
+	// Cancelling only marks the job "cancelling"; its slot is freed when the runner notices on its own one-second ticker and finalises. There is no event for that moment, so freeing the slot while the other jobs still run cannot be asserted without polling or a production hook. This check therefore only proves that no slot stays occupied once every job has ended.
 	close(release)
 	rig.h.WaitQualityTests()
 	if response, _ := rig.create(ids[3], body); response.Code != http.StatusAccepted {
-		t.Fatalf("released slot unavailable: %d %s", response.Code, response.Body.String())
+		t.Fatalf("slot still occupied after every job ended: %d %s", response.Code, response.Body.String())
 	}
 	rig.h.WaitQualityTests()
-	if stopped, err := rig.db.GetQualityTestJob(context.Background(), jobs[0].ID); err != nil || stopped.Status != "stopped" {
+	if stopped, err := rig.db.GetQualityTestJob(context.Background(), jobs[0].ID); err != nil || stopped.Status != "stopped" || stopped.Output != "<html><svg>" {
 		t.Fatalf("cancelled job: %+v %v", stopped, err)
 	}
 	for _, job := range jobs[1:] {
@@ -415,7 +424,7 @@ func TestQualityTestJobsSurviveRequestCancellationAndLimitThreeAccounts_CodexUps
 }
 
 func TestQualityTestJobRetriesOnlyBreaksBeforeOutput_CodexUpstream(t *testing.T) {
-	if codexRestoredRunInChild(t) {
+	if codexRestoredTLSRunInChild(t) {
 		return
 	}
 	previousDelay := qualityTestRetryDelay
@@ -456,13 +465,13 @@ func TestQualityTestJobRetriesOnlyBreaksBeforeOutput_CodexUpstream(t *testing.T)
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
 			var calls atomic.Int32
-			proxyURL := codexRestoredUpstream(t, func(w http.ResponseWriter, r *http.Request) {
+			proxyURL := codexRestoredTLSUpstream(t, func(w http.ResponseWriter, r *http.Request) {
 				n := int(calls.Add(1))
 				w.Header().Set("Content-Type", "text/event-stream")
 				tc.attempt(n, w)
 			})
-			rig := newCodexRestoredJobRig(t)
-			id := rig.addAccount(t, "account", proxyURL)
+			rig := newCodexRestoredTLSJobRig(t)
+			id := rig.addAccount(t, "account", "test-key", proxyURL)
 			response, job := rig.create(id, `{"model":"gpt-5.5","prompt":"HTML"}`)
 			if response.Code != http.StatusAccepted {
 				t.Fatalf("create=%d %s", response.Code, response.Body.String())
@@ -480,11 +489,11 @@ func TestQualityTestJobRetriesOnlyBreaksBeforeOutput_CodexUpstream(t *testing.T)
 }
 
 func TestIntelligenceExecutorPinsPromptAndFinishesBeforeEOF_CodexUpstream(t *testing.T) {
-	if codexRestoredRunInChild(t) {
+	if codexRestoredTLSRunInChild(t) {
 		return
 	}
 	const prompt = "题面\n最终只恢复数字结果。"
-	h, a := codexRestoredHandler(t, func(w http.ResponseWriter, r *http.Request) {
+	h, a := codexRestoredTLSHandler(t, func(w http.ResponseWriter, r *http.Request) {
 		body, _ := io.ReadAll(r.Body)
 		if gjson.GetBytes(body, "input.0.content.0.text").String() != prompt || gjson.GetBytes(body, "instructions").String() != "" || gjson.GetBytes(body, "model").String() != "gpt-5.5" {
 			t.Errorf("payload changed: %s", body)
@@ -497,7 +506,7 @@ func TestIntelligenceExecutorPinsPromptAndFinishesBeforeEOF_CodexUpstream(t *tes
 		w.(http.Flusher).Flush()
 		<-r.Context().Done()
 	})
-	h.store.AddAccount(codexRestoredAccount(43, "http://127.0.0.1:1"))
+	h.store.AddAccount(codexRestoredTLSAccount(43, "http://127.0.0.1:1"))
 	ctx, cancel := context.WithTimeout(context.Background(), 20*time.Second)
 	defer cancel()
 	result := h.executeIntelligenceCheck(ctx, a, "gpt-5.5", "high", prompt)
@@ -511,10 +520,10 @@ func TestIntelligenceExecutorPinsPromptAndFinishesBeforeEOF_CodexUpstream(t *tes
 }
 
 func TestIntelligenceTimeoutKeepsPartialAnswerAsError_CodexUpstream(t *testing.T) {
-	if codexRestoredRunInChild(t) {
+	if codexRestoredTLSRunInChild(t) {
 		return
 	}
-	h, a := codexRestoredHandler(t, func(w http.ResponseWriter, r *http.Request) {
+	h, a := codexRestoredTLSHandler(t, func(w http.ResponseWriter, r *http.Request) {
 		w.Header().Set("Content-Type", "text/event-stream")
 		fmt.Fprint(w, "data: {\"type\":\"response.output_text.delta\",\"delta\":\"21\"}\n\n")
 		w.(http.Flusher).Flush()
@@ -542,10 +551,10 @@ func TestIntelligenceStreamErrorsOverridePartialAnswers_CodexUpstream(t *testing
 }
 
 func TestIntelligenceSuccessDoesNotClearUnrelatedAccountState_CodexUpstream(t *testing.T) {
-	if codexRestoredRunInChild(t) {
+	if codexRestoredTLSRunInChild(t) {
 		return
 	}
-	h, a := codexRestoredHandler(t, func(w http.ResponseWriter, r *http.Request) {
+	h, a := codexRestoredTLSHandler(t, func(w http.ResponseWriter, r *http.Request) {
 		w.Header().Set("Content-Type", "text/event-stream")
 		fmt.Fprint(w, "data: {\"type\":\"response.completed\",\"response\":{\"status\":\"completed\",\"output\":[{\"type\":\"message\",\"role\":\"assistant\",\"content\":[{\"type\":\"output_text\",\"text\":\"21\"}]}]}}\n\n")
 	})
@@ -563,16 +572,16 @@ func TestIntelligenceSuccessDoesNotClearUnrelatedAccountState_CodexUpstream(t *t
 }
 
 func TestIntelligenceAdminAPIAndRunner_CodexUpstream(t *testing.T) {
-	if codexRestoredRunInChild(t) {
+	if codexRestoredTLSRunInChild(t) {
 		return
 	}
 	db := newTestAdminDB(t)
 	id := insertTestAccount(t, db)
 	var requests atomic.Int32
-	proxyURL := codexRestoredUpstream(t, func(w http.ResponseWriter, r *http.Request) {
+	proxyURL := codexRestoredTLSUpstream(t, func(w http.ResponseWriter, r *http.Request) {
 		requests.Add(1)
 		w.Header().Set("Content-Type", "text/event-stream")
-		fmt.Fprintf(w, "data: %s\n\n", codexRestoredIntelligenceSuccess)
+		fmt.Fprintf(w, "data: %s\n\n", codexRestoredTLSIntelligenceSuccess)
 	})
 	ctx := context.Background()
 	if err := db.UpdateCredentials(ctx, id, map[string]interface{}{"access_token": "fixture-key", "models": []string{"gpt-5.4"}}); err != nil {
