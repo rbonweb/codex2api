@@ -3212,12 +3212,12 @@ func TestUsageLogsIncludeAccountNameForOpenAIResponsesAccount(t *testing.T) {
 
 	ctx := context.Background()
 	now := time.Now().UTC()
-	accountID, err := db.InsertOpenAIResponsesAccount(ctx, "API 别名", map[string]interface{}{
+	accountID, err := db.InsertAccountWithUpstream(ctx, "API 别名", "openai", "oauth", map[string]interface{}{
 		"base_url": "https://api.example.com",
 		"email":    "https://api.example.com",
 	}, "")
 	if err != nil {
-		t.Fatalf("InsertOpenAIResponsesAccount 返回错误: %v", err)
+		t.Fatalf("InsertAccountWithUpstream 返回错误: %v", err)
 	}
 	if err := db.InsertUsageLog(ctx, &UsageLogInput{
 		AccountID:  accountID,

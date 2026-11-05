@@ -20,14 +20,14 @@ func TestChannelMonitorConfigHistoryAndBillingLifecycle(t *testing.T) {
 	}
 	t.Cleanup(func() { _ = db.Close() })
 
-	accountID, err := db.InsertOpenAIResponsesAccount(ctx, "relay", map[string]interface{}{
-		"upstream_type": "openai_responses",
-		"base_url":      "https://relay.example/v1",
+	accountID, err := db.InsertAccountWithUpstream(ctx, "relay", "openai", "oauth", map[string]interface{}{
+		"upstream_type": "codex",
+		"base_url":      "https://chatgpt.example/v1",
 		"api_key":       "sk-test",
 		"models":        []string{"gpt-5.4"},
 	}, "")
 	if err != nil {
-		t.Fatalf("InsertOpenAIResponsesAccount: %v", err)
+		t.Fatalf("InsertAccountWithUpstream: %v", err)
 	}
 	if _, err := db.GetChannelMonitorConfig(ctx, accountID); !errors.Is(err, sql.ErrNoRows) {
 		t.Fatalf("fresh config error = %v, want sql.ErrNoRows", err)
@@ -172,14 +172,14 @@ func TestChannelMonitorPostgresLifecycle(t *testing.T) {
 	}
 	t.Cleanup(func() { _ = db.Close() })
 
-	accountID, err := db.InsertOpenAIResponsesAccount(ctx, "postgres-monitor", map[string]interface{}{
-		"upstream_type": "openai_responses",
-		"base_url":      "https://relay.example/v1",
+	accountID, err := db.InsertAccountWithUpstream(ctx, "postgres-monitor", "openai", "oauth", map[string]interface{}{
+		"upstream_type": "codex",
+		"base_url":      "https://chatgpt.example/v1",
 		"api_key":       "sk-postgres-test",
 		"models":        []string{"gpt-5.4"},
 	}, "")
 	if err != nil {
-		t.Fatalf("InsertOpenAIResponsesAccount: %v", err)
+		t.Fatalf("InsertAccountWithUpstream: %v", err)
 	}
 	now := time.Now().UTC().Truncate(time.Microsecond)
 	if _, err := db.UpsertChannelMonitorConfig(ctx, accountID, true, 5, "gpt-5.4", now); err != nil {

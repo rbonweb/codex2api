@@ -8653,23 +8653,6 @@ func (db *DB) InsertPendingAccountWithCredentials(ctx context.Context, name stri
 	)
 }
 
-func (db *DB) InsertOpenAIResponsesAccount(ctx context.Context, name string, credentials map[string]interface{}, proxyURL string) (int64, error) {
-	if credentials == nil {
-		credentials = map[string]interface{}{}
-	}
-	credJSON, err := json.Marshal(encryptSensitiveCredentials(credentials))
-	if err != nil {
-		return 0, err
-	}
-
-	return db.insertAccountRowWithFamily(ctx,
-		`INSERT INTO accounts (name, platform, type, credentials, proxy_url) VALUES ($1, 'openai', 'responses_api', $2, $3) RETURNING id`,
-		`INSERT INTO accounts (name, platform, type, credentials, proxy_url) VALUES ($1, 'openai', 'responses_api', $2, $3)`,
-		credentials,
-		name, credJSON, proxyURL,
-	)
-}
-
 // InsertAccountWithUpstream 插入一个指定 platform / type 的账号，credentials 全量入库。
 func (db *DB) InsertAccountWithUpstream(ctx context.Context, name, platform, accountType string, credentials map[string]interface{}, proxyURL string) (int64, error) {
 	if credentials == nil {
