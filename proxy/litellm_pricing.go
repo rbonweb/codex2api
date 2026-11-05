@@ -51,7 +51,7 @@ func liteLLMFirstPartyModel(id string, entry liteLLMPricingEntry) string {
 	if json.Unmarshal(entry["litellm_provider"], &provider) != nil {
 		return ""
 	}
-	prefix := map[string]string{"openai": "", "anthropic": "claude-", "xai": "grok-"}
+	prefix := map[string]string{"openai": ""}
 	required, ok := prefix[provider]
 	if !ok {
 		return ""
