@@ -23,6 +23,7 @@ import { Card, CardContent } from '@/components/ui/card'
 import { Button } from '@/components/ui/button'
 import { BarChart3, Users, CheckCircle, Gauge, XCircle, Activity } from 'lucide-react'
 import PoolRunwayCard from '../components/PoolRunwayCard'
+import ChannelLogo from '../components/ChannelLogo'
 
 const DashboardUsageCharts = lazy(() => import('../components/DashboardUsageCharts'))
 
@@ -367,6 +368,24 @@ export default function Dashboard() {
                   <Activity className="size-3 text-primary" />
                   {t('dashboard.heroTodayRequests', { count: todayRequests })}
                 </span>
+                {!channel && stats?.channels?.codex && stats.channels.codex.total > 0 ? (
+                  <span
+                    className="inline-flex items-center gap-1.5 rounded-full bg-muted/80 px-3 py-1 font-semibold text-foreground ring-1 ring-border/50"
+                    title={t('dashboard.heroChannelTitle', {
+                      channel: 'Codex',
+                      available: stats.channels.codex.available,
+                      total: stats.channels.codex.total,
+                      requests: stats.channels.codex.today_requests,
+                    })}
+                  >
+                    <ChannelLogo channel="codex" size={13} />
+                    <span className="tabular-nums">
+                      {stats.channels.codex.available}/{stats.channels.codex.total}
+                    </span>
+                    <span className="text-muted-foreground/60">·</span>
+                    <span className="tabular-nums">{stats.channels.codex.today_requests}</span>
+                  </span>
+                ) : null}
                 {errorCount > 0 ? (
                   <span className="inline-flex items-center rounded-full bg-destructive/12 px-3 py-1 font-bold text-destructive ring-1 ring-destructive/20">
                     {t('dashboard.heroErrors', { count: errorCount })}

@@ -25,6 +25,20 @@ const toolBlurb = (locale: DocsLocale, zh: string, en: string) =>
 export function buildQuickTools(locale: DocsLocale): QuickTool[] {
   return [
     {
+      id: "cc-switch",
+      name: "CC Switch",
+      badge: "Desktop",
+      iconHue: "bg-fuchsia-500/12 text-fuchsia-600 dark:text-fuchsia-400",
+      glyph: "CS",
+      blurb: toolBlurb(
+        locale,
+        "Codex 多账号切换器，一键唤起并写入配置。",
+        "Multi-account launcher for Codex. Import config with one click.",
+      ),
+      kind: "protocol",
+      url: "ccswitch",
+    },
+    {
       id: "codex-cli",
       name: "Codex CLI",
       badge: "CLI",
@@ -113,6 +127,18 @@ export function resolveTemplate(
 ): string {
   const base = tool.kind === "protocol" ? tool.url : tool.template;
   if (!base) return "";
+  if (tool.id === "cc-switch") {
+    const params = new URLSearchParams();
+    params.set("resource", "provider");
+    params.set("app", "codex");
+    params.set("name", "Codex2API");
+    params.set("endpoint", address);
+    params.set("apiKey", key);
+    params.set("model", "gpt-5.5");
+    params.set("homepage", address);
+    params.set("enabled", "true");
+    return `ccswitch://v1/import?${params.toString()}`;
+  }
   if (base.includes("{cherryConfig}")) {
     const cfg = encodeURIComponent(
       encodeBase64(
