@@ -70,7 +70,7 @@ export function isCodexInviteSenderCandidate(account: AccountRow): boolean {
   if (!isInviteAccountSelectable(account)) return false
 
   // 中转号与 AT-only 账号没有可持续用于 referral 的 Codex OAuth 凭证。
-  return !account.openai_responses_api && !account.at_only
+  return !account.at_only
 }
 
 export function inviteRecipientCandidates(

@@ -30,37 +30,6 @@ test("usage reload skips accounts that cannot be sampled", () => {
   assert.equal(needsUsageReload({ status: "unauthorized" }), false);
 });
 
-test("Claude usage probe without quota headers still counts as sampled", () => {
-  const sampled = {
-    status: "active",
-    claude_api: true,
-    claude_usage_probe_at: "2026-08-29T05:00:00Z",
-    claude_usage_probe_error: "",
-  };
-  assert.equal(needsUsageReload(sampled), false);
-  assert.equal(isUnsampledQuotaAccount(sampled), false);
-  assert.equal(getAccountStatusBadgeStatus(sampled), "active");
-});
-
-test("Antigravity accounts never show as unsampled", () => {
-  const antigravity = { status: "active", antigravity_api: true };
-  assert.equal(isUnsampledQuotaAccount(antigravity), false);
-  assert.equal(getAccountStatusBadgeStatus(antigravity), "active");
-});
-
-test("Claude probe failures remain unsampled and are not eligible for OpenAI billing", () => {
-  const failed = {
-    status: "active",
-    claude_api: true,
-    claude_usage_probe_at: "2026-08-29T05:00:00Z",
-    claude_usage_probe_error: "upstream timeout",
-  };
-  assert.equal(needsUsageReload(failed), true);
-  assert.equal(isUnsampledQuotaAccount(failed), true);
-  assert.equal(supportsOfficialUsage(failed), false);
-  assert.equal(needsOfficialCostReload(failed), false);
-});
-
 test("unsampled quota accounts are not treated as available", () => {
   assert.equal(isUnsampledQuotaAccount({ status: "active" }), true);
   assert.equal(
@@ -69,14 +38,6 @@ test("unsampled quota accounts are not treated as available", () => {
   );
   assert.equal(
     isUnsampledQuotaAccount({ status: "unauthorized" }),
-    false,
-  );
-  assert.equal(
-    isUnsampledQuotaAccount({ status: "active", grok_api: true }),
-    false,
-  );
-  assert.equal(
-    isUnsampledQuotaAccount({ status: "active", openai_responses_api: true }),
     false,
   );
   assert.equal(getAccountStatusBadgeStatus({ status: "active" }), "unsampled");
@@ -99,9 +60,6 @@ test("official cost reload only retries Codex accounts missing the snapshot", ()
   assert.equal(needsOfficialCostReload({ official_usd: 0 }), false);
   assert.equal(needsOfficialCostReload({ official_usd_7d: 0 }), false);
   assert.equal(needsOfficialCostReload({ official_usd_7d: 12.5 }), false);
-  assert.equal(needsOfficialCostReload({ openai_responses_api: true }), false);
-  assert.equal(needsOfficialCostReload({ grok_api: true }), false);
-  assert.equal(needsOfficialCostReload({ claude_api: true }), false);
   assert.equal(
     needsOfficialCostReload({ access_token_type: "codex_at" }),
     false,
@@ -126,9 +84,6 @@ test("official cost reload only retries Codex accounts missing the snapshot", ()
   assert.equal(supportsOfficialUsage({ access_token_type: "codex_at", chatgpt_account_id: "acc_123" }), true);
   assert.equal(supportsOfficialUsage({ access_token_type: "codex_at", effective_workspace_id: "acc_456" }), true);
   assert.equal(supportsOfficialUsage({ access_token_type: "codex_at", chatgpt_account_id: "", effective_workspace_id: "" }), false);
-  assert.equal(supportsOfficialUsage({ openai_responses_api: true }), false);
-  assert.equal(supportsOfficialUsage({ grok_api: true }), false);
-  assert.equal(supportsOfficialUsage({ claude_api: true }), false);
 
   assert.equal(isWorkspaceCreditHardStop({ credits_spend_control_reached: true }), true);
   assert.equal(isWorkspaceCreditHardStop({ credits_rate_limit_reached_type: "workspace_member_credits_depleted" }), true);

@@ -1,5 +1,4 @@
-// 测连弹窗与账号页共用的模型候选/展示辅助:Codex、Claude、Grok/Responses、
-// Antigravity 四类账号的测试模型来源各不相同,这里只放与渠道无关的纯函数。
+// 测连弹窗与账号页共用的模型候选/展示辅助。
 import type { api } from "../api";
 import type { AccountRow } from "../types";
 import { parseModelMappingEntries } from "./modelMapping";
@@ -96,8 +95,5 @@ export function exactModelMappingAliases(
 }
 
 export function formatAccountName(account: AccountRow): string {
-  if (account.openai_responses_api || account.grok_api) {
-    return account.name?.trim() || `ID ${account.id}`;
-  }
   return account.email || account.name || `ID ${account.id}`;
 }

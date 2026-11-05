@@ -4,8 +4,9 @@ import ChannelLogo from "./ChannelLogo";
 import { cn } from "@/lib/utils";
 import { useVisibleChannels } from "../visibleChannels";
 
-// 仪表盘/用量页共用的上游渠道过滤（全部/Codex/Grok/Antigravity/Claude）。
+// 仪表盘/用量页共用的上游渠道过滤（全部/Codex）。
 // 选择持久化到 localStorage，两页共享同一份状态键。
+// 取值只会是 "" 或 "codex"；其余字面量暂留在类型里，等页面不再比较它们后收窄。
 export type UsageChannel = "" | "codex" | "grok" | "antigravity" | "claude";
 
 const USAGE_CHANNEL_KEY = "codex2api:usage:channel";
@@ -14,7 +15,7 @@ export function useUsageChannel(): [UsageChannel, (next: UsageChannel) => void] 
   const [channel, setChannel] = useState<UsageChannel>(() => {
     try {
       const raw = window.localStorage.getItem(USAGE_CHANNEL_KEY);
-      if (raw === "codex" || raw === "grok" || raw === "antigravity" || raw === "claude") return raw;
+      if (raw === "codex") return raw;
     } catch {
       // ignore
     }
@@ -44,21 +45,21 @@ export default function ChannelFilter({
   const allOptions: Array<{
     key: UsageChannel;
     label: string;
-    logo?: "codex" | "grok" | "antigravity" | "claude";
+    logo?: "codex";
   }> = [
     { key: "", label: t("usage.channelAll") },
     { key: "codex", label: "Codex", logo: "codex" },
-    { key: "grok", label: "Grok", logo: "grok" },
-    { key: "antigravity", label: "Antigravity", logo: "antigravity" },
-    { key: "claude", label: "Claude", logo: "claude" },
   ];
   const options = allOptions.filter((o) => !o.logo || isChannelVisible(o.logo));
   const count = options.length;
   // 当前选中的渠道被设置页隐藏后回到「全部」，否则过滤条件停在一个看不见的选项上。
   const hiddenSelection = value !== "" && !options.some((o) => o.key === value);
+  // 只剩 Codex 一个渠道时过滤器没有意义：不渲染，并清掉残留的过滤值。
+  const singleChannel = options.filter((o) => o.logo).length < 2;
   useEffect(() => {
-    if (hiddenSelection) onChange("");
-  }, [hiddenSelection, onChange]);
+    if (hiddenSelection || (singleChannel && value !== "")) onChange("");
+  }, [hiddenSelection, singleChannel, value, onChange]);
+  if (singleChannel) return null;
   const activeIndex = Math.max(
     0,
     options.findIndex((o) => o.key === value),
@@ -91,7 +92,7 @@ export default function ChannelFilter({
               : "text-muted-foreground opacity-75 grayscale hover:opacity-100 hover:grayscale-0 hover:text-foreground",
           )}
         >
-          {key === "claude" ? <ChannelLogo channel="claude" size={16} /> : logo ? <ChannelLogo channel={logo} size={16} /> : null}
+          {logo ? <ChannelLogo channel={logo} size={16} /> : null}
           {label}
         </button>
       ))}

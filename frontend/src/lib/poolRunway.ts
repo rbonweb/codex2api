@@ -438,11 +438,8 @@ export function isInSupplyPool(account: AccountRow, windowKey: RecoveryWindow): 
 export function hasBurnPrediction(account: AccountRow, windowKey: RecoveryWindow): boolean {
   const status = (account.status || '').toLowerCase()
   if (status === 'unauthorized') return false
-  if (account.openai_responses_api) return false
   if (windowKey === '5h') {
-    // Claude's rolling 5h window uses Anthropic plan keys (max-5x/max-20x,
-    // enterprise, etc.), which are intentionally separate from Codex plans.
-    if (account.claude_api ? !isClaudeUsagePlan(account.plan_type) : !isPremiumUsagePlan(account.plan_type)) return false
+    if (!isPremiumUsagePlan(account.plan_type)) return false
     return typeof account.usage_percent_5h === 'number' && Number.isFinite(account.usage_percent_5h)
   }
   return true
@@ -450,7 +447,7 @@ export function hasBurnPrediction(account: AccountRow, windowKey: RecoveryWindow
 
 export function isWindowRateLimitLike(account: AccountRow, windowKey: RecoveryWindow): boolean {
   if (windowKey === '5h') {
-    const eligible = account.claude_api ? isClaudeUsagePlan(account.plan_type) : isPremiumUsagePlan(account.plan_type)
+    const eligible = isPremiumUsagePlan(account.plan_type)
     return (eligible && isUsageExhausted(account.usage_percent_5h)) || isShortRateLimitLike(account)
   }
   const status = (account.status || '').toLowerCase()
@@ -619,12 +616,6 @@ function normalizePlanType(planType?: string): string {
 
 export function isPremiumUsagePlan(planType?: string): boolean {
   return ['plus', 'pro', 'team', 'teamplus', 'k12', 'edu', 'education', 'go'].includes(normalizePlanType(planType))
-}
-
-/** Claude OAuth 的订阅档位，按 profile 归一化后的 plan_type 匹配。 */
-export function isClaudeUsagePlan(planType?: string): boolean {
-  const normalized = normalizePlanType(planType)
-  return ['claude', 'pro', 'max', 'max-5x', 'max-20x', 'team', 'enterprise', 'business'].includes(normalized) || normalized.startsWith('claude-')
 }
 
 export const POOL_RUNWAY_LOW_CONFIDENCE_THRESHOLD = LOW_CONFIDENCE_THRESHOLD

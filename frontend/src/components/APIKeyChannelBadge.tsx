@@ -4,11 +4,8 @@ import type { UpstreamChannel } from '../types'
 import ChannelLogo from './ChannelLogo'
 import { Badge } from './ui/badge'
 
-const CHANNEL_NAMES: Record<UpstreamChannel, string> = {
+const CHANNEL_NAMES: Record<string, string> = {
   codex: 'Codex',
-  grok: 'Grok',
-  antigravity: 'Antigravity',
-  claude: 'Claude',
 }
 
 export default function APIKeyChannelBadge({ channel }: { channel?: UpstreamChannel }) {

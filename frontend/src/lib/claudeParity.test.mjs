@@ -21,13 +21,6 @@ const types = readFileSync(new URL('../types.ts', import.meta.url), 'utf8')
 const styles = readFileSync(new URL('../index.css', import.meta.url), 'utf8')
 const zh = JSON.parse(readFileSync(new URL('../locales/zh.json', import.meta.url), 'utf8'))
 
-test('shared usage channel filter exposes Claude and persists it', () => {
-  assert.match(channelFilter, /UsageChannel = "" \| "codex" \| "grok" \| "antigravity" \| "claude"/)
-  assert.match(channelFilter, /raw === "claude"/)
-  assert.match(channelFilter, /key: "claude"/)
-  assert.match(channelFilter, /channel="claude"/)
-})
-
 test('dashboard renders Claude channel counters', () => {
   assert.match(dashboard, /'claude'/)
   assert.match(dashboard, /key === 'claude'/)

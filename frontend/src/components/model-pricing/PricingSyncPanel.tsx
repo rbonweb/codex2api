@@ -35,8 +35,9 @@ interface PricingSyncPanelProps {
     litellm: string
     modelsDev: string
     openAI: string
-    xAI: string
-    claude: string
+    /** 已移除的来源，保留可选字段仅为兼容尚未迁移的调用方。 */
+    xAI?: string
+    claude?: string
   }
   config: OfficialPricingSyncConfig
   onConfigChange: (config: OfficialPricingSyncConfig) => void
@@ -65,7 +66,7 @@ export default function PricingSyncPanel({
 }: PricingSyncPanelProps) {
   const { t } = useTranslation()
   const id = useId()
-  const noOfficialSources = !config.include_openai && !config.include_grok && !config.include_claude
+  const noOfficialSources = !config.include_openai
   const trimmedUrl = syncUrl.trim()
   const activePreset = trimmedUrl === '' || trimmedUrl === urls.default
     ? 'default'
@@ -76,8 +77,6 @@ export default function PricingSyncPanel({
         : 'custom'
   const providers = [
     { key: 'include_openai', channel: 'codex', label: 'OpenAI / Codex', source: 'OpenAI', url: urls.openAI },
-    { key: 'include_grok', channel: 'grok', label: 'xAI / Grok', source: 'xAI', url: urls.xAI },
-    { key: 'include_claude', channel: 'claude', label: 'Anthropic / Claude', source: 'Anthropic', url: urls.claude },
   ] as const
 
   return (
