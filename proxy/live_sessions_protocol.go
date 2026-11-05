@@ -9,6 +9,7 @@ import (
 	"unicode"
 	"unicode/utf8"
 
+	"github.com/abadojack/whatlanggo"
 	"github.com/tidwall/gjson"
 )
 
@@ -24,6 +25,8 @@ const (
 	liveSessionMaxInputTokens = 8192
 	// liveContextAppendMaxBytes is the largest text chunk the internal sideband accepts in one context append.
 	liveContextAppendMaxBytes = 500
+	// liveLanguageWindow is the most recent transcript text, in bytes, the language detector looks at.
+	liveLanguageWindow = 200
 	// liveUsageSilence is how long upstream may stay silent before the gateway clock reports usage itself.
 	liveUsageSilence = 60 * time.Second
 )
@@ -500,6 +503,7 @@ type liveSessionTranslator struct {
 	startedAt time.Time
 	usageAt   time.Time // when a usage update was last reported
 	seconds   int       // last reported usage seconds, never decreases
+	heard     [2]string // recent transcript text of the current turn: 0 user, 1 assistant
 }
 
 func newLiveSessionTranslator(cfg *liveSessionConfig) *liveSessionTranslator {
@@ -769,9 +773,9 @@ func (t *liveSessionTranslator) Upstream(raw []byte) liveUpstreamResult {
 		if delta == "" {
 			return res
 		}
-		typ := "session.input_transcript.delta"
+		dir, typ := 0, "session.input_transcript.delta"
 		if root.Get("type").String() == "output_transcript.added" {
-			typ = "session.output_transcript.delta"
+			dir, typ = 1, "session.output_transcript.delta"
 		}
 		event := map[string]any{
 			"type":     typ,
@@ -779,10 +783,21 @@ func (t *liveSessionTranslator) Upstream(raw []byte) liveUpstreamResult {
 			"start_ms": root.Get("start_ms").Int(),
 			"end_ms":   root.Get("end_ms").Int(),
 		}
-		if lang := liveTranscriptLanguage(delta); lang != "" {
+		// Deltas are word fragments, too short to identify a language, so the detector reads the accumulated text of the current turn (the last 200 bytes of it, for this direction only).
+		// The language is put on every delta from the moment the detector is reliable; the accumulator is reset when the turn of that role ends.
+		t.heard[dir] = liveTrimTail(t.heard[dir]+delta, liveLanguageWindow)
+		if lang := liveTranscriptLanguage(t.heard[dir]); lang != "" {
 			event["language"] = lang
 		}
 		emit(event)
+
+	case "turn.done":
+		switch realtimeAudioTurnRole(root) {
+		case "user":
+			t.heard[0] = ""
+		case "assistant":
+			t.heard[1] = ""
+		}
 
 	case "delegation.created":
 		if out, ok := liveDelegationCreatedEvent(raw); ok {
@@ -921,35 +936,40 @@ func liveDelegationCreatedEvent(raw []byte) ([]byte, bool) {
 	return out, true
 }
 
-// liveTranscriptLanguage guesses the language of a transcript from its script: "hi" for Devanagari, "gu" for Gujarati script, "en" for Latin letters.
-// It returns "" when the letters mix scripts or there are none (digits, spaces and punctuation are ignored). Romanized Hindi reads as English: this is a heuristic.
+// liveTrimTail keeps at most max bytes from the end of text, without cutting a UTF-8 sequence.
+func liveTrimTail(text string, max int) string {
+	if len(text) <= max {
+		return text
+	}
+	cut := len(text) - max
+	for cut < len(text) && !utf8.RuneStart(text[cut]) {
+		cut++
+	}
+	return text[cut:]
+}
+
+// liveTranscriptLanguage detects the language of a transcript for any language the detector knows (about 84, no list of its own to limit them).
+// It returns the ISO 639-1 code, or the ISO 639-3 code when the language has no 639-1 code, and "" when the detector is not reliable or the text has fewer than 3 words.
+// Languages written without spaces (Chinese, Japanese, Thai and similar) count two letters as a word. Romanized text is detected by its letters, so romanized Hindi usually reads as English: this is a heuristic, which is why the field is an extension.
 func liveTranscriptLanguage(text string) string {
-	var devanagari, gujarati, latin, other bool
+	words, unspaced := len(strings.Fields(text)), 0
 	for _, r := range text {
-		if !unicode.IsLetter(r) {
-			continue
-		}
-		switch {
-		case unicode.Is(unicode.Devanagari, r):
-			devanagari = true
-		case unicode.Is(unicode.Gujarati, r):
-			gujarati = true
-		case unicode.Is(unicode.Latin, r):
-			latin = true
-		default:
-			other = true
+		if unicode.Is(unicode.Han, r) || unicode.Is(unicode.Hiragana, r) || unicode.Is(unicode.Katakana, r) || unicode.Is(unicode.Thai, r) || unicode.Is(unicode.Lao, r) || unicode.Is(unicode.Khmer, r) || unicode.Is(unicode.Myanmar, r) {
+			unspaced++
 		}
 	}
-	if other {
+	if unspaced/2 > words {
+		words = unspaced / 2
+	}
+	if words < 3 {
 		return ""
 	}
-	switch {
-	case devanagari && !gujarati && !latin:
-		return "hi"
-	case gujarati && !devanagari && !latin:
-		return "gu"
-	case latin && !devanagari && !gujarati:
-		return "en"
+	info := whatlanggo.Detect(text)
+	if !info.IsReliable() {
+		return ""
 	}
-	return ""
+	if code := info.Lang.Iso6391(); code != "" {
+		return code
+	}
+	return info.Lang.Iso6393()
 }
