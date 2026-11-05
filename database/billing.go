@@ -5,10 +5,8 @@ import "strings"
 const longContextThreshold = 272000
 
 type ModelPricing struct {
-	UserBillingMode string
-	ImageUnitPrice  float64
-	// MediaUnitCost 是媒体模型的上游单位成本(USD/张 或 USD/秒,见 MediaBillingUnit)。
-	MediaUnitCost                   float64
+	UserBillingMode                 string
+	ImageUnitPrice                  float64
 	ImageInputPricePerMToken        float64
 	CacheReadImagePricePerMToken    float64
 	InputPricePerMToken             float64

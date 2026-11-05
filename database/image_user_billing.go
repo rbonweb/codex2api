@@ -11,6 +11,22 @@ const (
 	UserBillingModePerImage = "per_image"
 )
 
+// IsUnitUserBillingMode reports whether the user billing mode settles per delivered output unit (an image).
+func IsUnitUserBillingMode(mode string) bool {
+	return mode == UserBillingModePerImage
+}
+
+// userBillingUnits returns the billable unit count for a per-unit user billing mode, counting only delivered outputs.
+func userBillingUnits(input *UsageLogInput, mode string) int {
+	if input.StatusCode < 200 || input.StatusCode >= 300 || input.IsRetryAttempt || input.ErrorMessage != "" {
+		return 0
+	}
+	if mode == UserBillingModePerImage {
+		return max(0, input.ImageCount)
+	}
+	return 0
+}
+
 // SupportsImageBilling deliberately excludes text models with inline image tools.
 // Those requests retain their existing token billing policy.
 func SupportsImageBilling(model string) bool {
@@ -20,27 +36,17 @@ func SupportsImageBilling(model string) bool {
 
 func ValidateModelUserBilling(model string, o ModelPricingOverride) error {
 	switch o.UserBillingMode {
-	case "", UserBillingModeToken, UserBillingModePerImage, UserBillingModePerVideo, UserBillingModePerSecond:
+	case "", UserBillingModeToken, UserBillingModePerImage:
 	default:
-		return fmt.Errorf("user_billing_mode must be token, per_image, per_video or per_second")
+		return fmt.Errorf("user_billing_mode must be token or per_image")
 	}
 	if math.IsNaN(o.ImageUnitPrice) || math.IsInf(o.ImageUnitPrice, 0) || o.ImageUnitPrice < 0 {
 		return fmt.Errorf("image_unit_price must be a finite non-negative USD amount")
-	}
-	if math.IsNaN(o.MediaUnitCost) || math.IsInf(o.MediaUnitCost, 0) || o.MediaUnitCost < 0 {
-		return fmt.Errorf("media_unit_cost must be a finite non-negative USD amount")
-	}
-	if o.MediaUnitCost > 0 && MediaBillingUnit(model) == "" {
-		return fmt.Errorf("media_unit_cost requires a media model")
 	}
 	switch o.UserBillingMode {
 	case UserBillingModePerImage:
 		if !SupportsImageBilling(model) {
 			return fmt.Errorf("per_image billing requires an image model")
-		}
-	case UserBillingModePerVideo, UserBillingModePerSecond:
-		if MediaBillingUnit(model) != MediaUnitSecond {
-			return fmt.Errorf("%s billing requires a video model", o.UserBillingMode)
 		}
 	}
 	if IsUnitUserBillingMode(o.UserBillingMode) && o.ImageUnitPrice <= 0 {
@@ -53,7 +59,7 @@ func ValidateModelUserBilling(model string, o ModelPricingOverride) error {
 // Empty mode identifies legacy rows; an explicit unit-mode zero is never replaced
 // with upstream cost when displaying failed/undelivered outputs.
 // ImageUnitPrice / BilledImageCount 沿用历史列名,语义是"单位价 / 计费单位数":
-// per_image 为张,per_video 为次,per_second 为秒。
+// per_image 为张。
 type UserBilling struct {
 	UserBillingMode  string  `json:"user_billing_mode"`
 	ImageUnitPrice   float64 `json:"image_unit_price"`
@@ -75,17 +81,13 @@ func SnapshotUsageLogBilling(input *UsageLogInput) *UsageLogInput {
 	if model == "" {
 		model = input.Model
 	}
-	mediaUnit := MediaBillingUnit(model)
-	if !SupportsImageBilling(model) && mediaUnit == "" {
+	if !SupportsImageBilling(model) {
 		return input
 	}
 	p := GetModelPricing(model)
 	mode := UserBillingModeToken
 	if IsUnitUserBillingMode(p.UserBillingMode) && p.ImageUnitPrice > 0 {
-		switch {
-		case p.UserBillingMode == UserBillingModePerImage && SupportsImageBilling(model):
-			mode = p.UserBillingMode
-		case p.UserBillingMode != UserBillingModePerImage && mediaUnit == MediaUnitSecond:
+		if p.UserBillingMode == UserBillingModePerImage {
 			mode = p.UserBillingMode
 		}
 	}

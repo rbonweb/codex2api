@@ -35,7 +35,7 @@ func validateSyncedPricing(model string, price database.ModelPricingOverride, co
 
 // validatePricingExtras 校验不属于 token 三元组的价格和上下文阈值。
 func validatePricingExtras(price database.ModelPricingOverride) error {
-	for _, value := range []float64{price.MediaUnitCost, price.ImageUnitPrice, price.CacheWrite5m, price.CacheWrite1h} {
+	for _, value := range []float64{price.ImageUnitPrice, price.CacheWrite5m, price.CacheWrite1h} {
 		if !validPricingNumber(value) {
 			return fmt.Errorf("价格必须为有限的非负数")
 		}
@@ -48,12 +48,6 @@ func validatePricingExtras(price database.ModelPricingOverride) error {
 
 // validateRequiredPricing 校验自动同步所需的完整价格，手动部分覆盖不走此分支。
 func validateRequiredPricing(model string, price database.ModelPricingOverride, groups [][3]float64) error {
-	if database.MediaBillingUnit(model) != "" {
-		if price.MediaUnitCost <= 0 {
-			return fmt.Errorf("媒体单位成本缺失")
-		}
-		return nil
-	}
 	if price.Input <= 0 || price.Output <= 0 {
 		return fmt.Errorf("输入或输出价格缺失")
 	}
