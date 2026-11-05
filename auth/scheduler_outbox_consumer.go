@@ -493,7 +493,6 @@ func (s *Store) applyPersistentAccountSnapshot(dst, src *Account, enabled bool) 
 	dst.CustomHeaders = cloneStringMap(src.CustomHeaders)
 	dst.UpstreamType = src.UpstreamType
 	dst.Models = cloneStringSlice(src.Models)
-	dst.CodexClientMetadataMode = src.CodexClientMetadataMode
 	dst.CodexFingerprintMode = src.CodexFingerprintMode
 	dst.Timezone = src.Timezone
 	dst.CodexAuthMode = src.CodexAuthMode

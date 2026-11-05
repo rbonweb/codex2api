@@ -520,9 +520,7 @@ func (h *Handler) nextRetryAccountForContinuation(ctx context.Context, affinityK
 }
 
 // nextRetryAccountForContinuationWithSelection 是续链（preserveBinding=true）重试的
-// SelectionOptions 变体：续链虽然只认已绑定的账号，但选号实现仍需要 Provider / Policy
-// 才能走对渠道分支。compact 执行器 / native remote compaction 例外，
-// 见 selectionOptionsForCandidatePool。
+// SelectionOptions 变体：续链虽然只认已绑定的账号，但选号实现仍需要 Policy。
 func (h *Handler) nextRetryAccountForContinuationWithSelection(ctx context.Context, affinityKey string, apiKeyID int64, exclusions *retryAccountExclusions, filter auth.AccountFilter, opts auth.SelectionOptions) (*auth.Account, string, error) {
 	account, proxyURL, _, err := h.nextRetryAccountWithGuard(ctx, affinityKey, apiKeyID, exclusions, filter, true, opts)
 	return account, proxyURL, err
@@ -574,8 +572,7 @@ func (h *Handler) nextRetryAccountWithGuard(ctx context.Context, affinityKey str
 		var stickyProxyURL string
 		var guard auth.SessionAffinityGuard
 		if preserveBinding {
-			// 续链同样带上 SelectionOptions：Provider 为空时与 policy-only 行为一致，
-			// 携带渠道时底层选号（含容量借用 / 首次绑定分支）不会丢掉加权避险上下文。
+			// 续链同样带上 SelectionOptions，底层选号（含容量借用 / 首次绑定分支）不会丢掉 Policy。
 			account, stickyProxyURL = h.store.NextForContinuationWithDispatchForProvider(opts, affinityKey, apiKeyID, exclude, filter)
 		} else {
 			account, stickyProxyURL, guard = h.nextAccountForSessionWithDispatchGuard(affinityKey, apiKeyID, exclude, filter, opts)

@@ -8,7 +8,6 @@ export interface ToastState {
 }
 
 export type AccountStatus = 'active' | 'ready' | 'cooldown' | 'error' | 'refreshing' | 'paused' | 'quota_paused' | string
-export type CodexClientMetadataMode = 'auto' | 'always' | 'off'
 /** Codex 官方出站请求的设备指纹收敛档位，默认 off（不收敛）。 */
 export type CodexFingerprintMode = 'off' | 'device' | 'session' | 'single_machine_multi_window' | 'full'
 export type ModelCooldownMode = 'off' | 'fixed' | 'adaptive'
@@ -103,7 +102,6 @@ export interface AccountRow {
   base_url?: string
   models?: string[]
   model_mapping?: string
-  codex_client_metadata_mode?: CodexClientMetadataMode
   codex_fingerprint_mode?: CodexFingerprintMode
   timezone?: string
   /** 账号页跳转地址;空值回退打开 base_url(api-base)。 */

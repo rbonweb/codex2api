@@ -26,7 +26,7 @@ import (
 //
 // 设计要点：
 //   - 使用 HelloChrome_Auto 模拟 Chrome 浏览器的 TLS 指纹
-//   - 支持 HTTP/2 协议（与 OpenAI/Anthropic API 兼容）
+//   - 支持 HTTP/2 协议（与 OpenAI API 兼容）
 //   - 连接池 + pending 管理：防止同一 host 重复创建连接
 //   - 代理支持：HTTP(S) 和 SOCKS5
 

@@ -44,32 +44,6 @@ const (
 )
 
 const (
-	CodexClientMetadataModeAuto   = "auto"
-	CodexClientMetadataModeAlways = "always"
-	CodexClientMetadataModeOff    = "off"
-)
-
-func NormalizeCodexClientMetadataMode(value string) string {
-	switch strings.ToLower(strings.TrimSpace(value)) {
-	case CodexClientMetadataModeAlways:
-		return CodexClientMetadataModeAlways
-	case CodexClientMetadataModeOff:
-		return CodexClientMetadataModeOff
-	default:
-		return CodexClientMetadataModeAuto
-	}
-}
-
-func IsValidCodexClientMetadataMode(value string) bool {
-	switch strings.ToLower(strings.TrimSpace(value)) {
-	case CodexClientMetadataModeAuto, CodexClientMetadataModeAlways, CodexClientMetadataModeOff:
-		return true
-	default:
-		return false
-	}
-}
-
-const (
 	DefaultTestContent = "hi"
 	// DefaultTestModel 是连通性测试的出厂默认模型;须是当前上游仍在线、free/plus/pro
 	// 三档都可用的模型(gpt-5.4 已于 2026-09 下线)。
@@ -97,22 +71,21 @@ type Account struct {
 	mu                        sync.RWMutex
 	usageSyncMu               sync.Mutex
 	// Snapshot writes serialize per account without blocking other accounts or frame ingestion.
-	usageSnapshotPersistMu  sync.Mutex
-	modelCatalogMu          sync.Mutex
-	usageObservedAt         time.Time
-	DBID                    int64 // 数据库 ID
-	RefreshToken            string
-	SessionToken            string
-	AccessToken             string
-	ExpiresAt               time.Time
-	AccountID               string
-	Email                   string
-	PlanType                string
-	ProxyURL                string
-	CustomHeaders           map[string]string
-	UpstreamType            string
-	Models                  []string
-	CodexClientMetadataMode string
+	usageSnapshotPersistMu sync.Mutex
+	modelCatalogMu         sync.Mutex
+	usageObservedAt        time.Time
+	DBID                   int64 // 数据库 ID
+	RefreshToken           string
+	SessionToken           string
+	AccessToken            string
+	ExpiresAt              time.Time
+	AccountID              string
+	Email                  string
+	PlanType               string
+	ProxyURL               string
+	CustomHeaders          map[string]string
+	UpstreamType           string
+	Models                 []string
 	// CodexFingerprintMode 见 codex_fingerprint_mode.go：Codex 官方出站请求的
 	// 设备指纹收敛档位（off / device / session / full），默认 off。
 	CodexFingerprintMode string
@@ -5487,7 +5460,6 @@ func (s *Store) buildAccountFromRow(ctx context.Context, row *database.AccountRo
 		return nil
 	}
 	models := normalizeModelList(row.GetCredentialStringSlice("models"))
-	codexClientMetadataMode := NormalizeCodexClientMetadataMode(row.GetCredential("codex_client_metadata_mode"))
 	codexFingerprintMode := NormalizeCodexFingerprintMode(row.GetCredential(CodexFingerprintModeCredentialKey))
 	accountTimezone := NormalizeAccountTimezone(row.GetCredential(AccountTimezoneCredentialKey))
 	// Agent Identity：无 AT/RT，凭 agent_private_key 动态签名，不能被下面的空凭据 guard 拒绝。
@@ -5511,7 +5483,6 @@ func (s *Store) buildAccountFromRow(ctx context.Context, row *database.AccountRo
 		HealthTier:              HealthTierWarm,
 		UpstreamType:            upstreamType,
 		Models:                  models,
-		CodexClientMetadataMode: codexClientMetadataMode,
 		CodexFingerprintMode:    codexFingerprintMode,
 		Timezone:                accountTimezone,
 	}
