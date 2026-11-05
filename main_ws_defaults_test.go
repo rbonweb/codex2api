@@ -35,7 +35,7 @@ func TestMainFirstStartPersistsWebSocketRetentionDefaults(t *testing.T) {
 		"CODEX_BIND=127.0.0.1", "CODEX_PORT="+strconv.Itoa(port),
 		"DATABASE_DRIVER=sqlite", "DATABASE_PATH="+dbPath, "CACHE_DRIVER=memory",
 		"CODEX_MIGRATE_ONLY=false", "CODEX_ALLOW_ANONYMOUS=false",
-		"CODEX_DISABLE_CLI_VERSION_SYNC=true", "CLAUDE_DISABLE_CLI_VERSION_SYNC=true", "CODEX_TELEMETRY_ENABLED=false",
+		"CODEX_DISABLE_CLI_VERSION_SYNC=true", "CODEX_TELEMETRY_ENABLED=false",
 		"ADMIN_SECRET=synthetic-startup-defaults-test", "LOG_DISABLED=true",
 		"IMAGE_ASSET_DIR="+filepath.Join(root, "images"), "BACKGROUND_ASSET_DIR="+filepath.Join(root, "backgrounds"),
 	)
