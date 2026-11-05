@@ -127,54 +127,10 @@ func sortModelKeysNewestFirst(keys []string) {
 	})
 }
 
-// grokBillingModelIDs 返回定价页要展示的 Grok 模型：各 Grok 账号声明白名单的并集，
-// 外加默认集（只要存在未声明白名单的 Grok 账号——这类账号按默认集对外放行）。
-// 没有 Grok 账号时返回空，纯 Codex 部署的定价页不受影响。
-func (h *Handler) grokBillingModelIDs() []string {
-	if h == nil || h.store == nil {
-		return nil
-	}
-	ids := h.grokChannelModels()
-	// 默认集按凭据类型不同（OAuth 走 CLI 通道、API Key 走公开 API），
-	// 两种通道各取一次，不能见到第一个未声明账号就收工。
-	oauthCovered, apiKeyCovered := false, false
-	for _, account := range h.store.Accounts() {
-		if !account.IsGrokAPI() || len(account.GrokModels()) > 0 {
-			continue
-		}
-		isAPIKey := account.GrokAuthKind() == auth.GrokAuthKindAPIKey
-		if (isAPIKey && apiKeyCovered) || (!isAPIKey && oauthCovered) {
-			continue
-		}
-		if isAPIKey {
-			apiKeyCovered = true
-		} else {
-			oauthCovered = true
-		}
-		ids = append(ids, proxy.DefaultGrokModelIDsForAccount(account)...)
-		if oauthCovered && apiKeyCovered {
-			break
-		}
-	}
-	return ids
-}
-
-// grokDefaultDisplayModelIDs 是定价页始终展示的 Grok 内置模型集(即使没有 Grok 账号),
-// 与 Codex 内置模型的常显行为对齐。取 OAuth 与 API Key 两套文本默认集的并集(后者为超集),
-// 再并入生图/生视频默认集:媒体模型按单位(张/秒)计费,同样需要常显的定价入口。
-func grokDefaultDisplayModelIDs() []string {
-	ids := make([]string, 0, 16)
-	ids = append(ids, auth.GrokOAuthDefaultModelIDs()...)
-	ids = append(ids, auth.GrokAPIKeyDefaultModelIDs()...)
-	ids = append(ids, auth.GrokImageDefaultModelIDs()...)
-	ids = append(ids, auth.GrokVideoDefaultModelIDs()...)
-	return ids
-}
-
 // modelPricingRow 是定价管理页每个规范模型的一行：当前生效价 + 来源。
 type modelPricingRow struct {
 	Model          string                        `json:"model"`
-	Channel        string                        `json:"channel"` // codex / grok / antigravity / claude —— 供前端按 provider 分组
+	Channel        string                        `json:"channel"` // codex
 	Source         string                        `json:"source"`  // custom / synced / default
 	Pricing        database.ModelPricingOverride `json:"pricing"`
 	CanonicalModel string                        `json:"canonical_model,omitempty"`
@@ -279,54 +235,22 @@ func (h *Handler) ListModelPricing(c *gin.Context) {
 	}
 
 	keys := collect(h.codexPricingModelIDs(ctx))
-	// Grok 模型不在 Codex 注册表里，但同样对外暴露、同样按 token 计费，
-	// 单独并进来，否则定价页看不到 grok-4.5 这类模型。
-	seen := make(map[string]struct{}, len(keys))
-	for _, key := range keys {
-		seen[key] = struct{}{}
-	}
-	dedup := func(ids []string) []string {
-		out := make([]string, 0)
-		for _, key := range collect(ids) {
-			if _, ok := seen[key]; ok {
-				continue
-			}
-			seen[key] = struct{}{}
-			out = append(out, key)
-		}
-		return out
-	}
-	// Grok 内置默认模型始终并入,使定价页像 Codex 内置模型一样常显 grok 家族,
-	// 即使当前没有任何 Grok 账号(官方同步的 grok 采集逻辑不受影响)。
-	grokKeys := dedup(append(h.grokBillingModelIDs(), grokDefaultDisplayModelIDs()...))
-	antigravityKeys := dedup(h.antigravityChannelModels())
-	claudeKeys := dedup(h.claudeChannelModels())
-
-	// 每个渠道内按新版本在前排序；渠道之间整体拼接,避免版本号交叉穿插。
+	// 每个渠道内按新版本在前排序。
 	sortModelKeysNewestFirst(keys)
-	sortModelKeysNewestFirst(grokKeys)
-	sortModelKeysNewestFirst(antigravityKeys)
-	sortModelKeysNewestFirst(claudeKeys)
 
-	rows := make([]modelPricingRow, 0, len(keys)+len(grokKeys)+len(antigravityKeys)+len(claudeKeys))
-	appendRows := func(modelKeys []string, channel string) {
-		for _, key := range modelKeys {
-			canonicalModel := database.PricingAliasTarget(key)
-			rows = append(rows, modelPricingRow{
-				Model:          key,
-				Channel:        channel,
-				Source:         database.ModelPricingSourceFor(key),
-				Pricing:        database.ModelPricingOverrideFromPricing(database.GetModelPricing(key), database.ModelPricingSourceFor(key)),
-				CanonicalModel: canonicalModel,
-				IsAlias:        canonicalModel != "",
-				MediaUnit:      database.MediaBillingUnit(key),
-			})
-		}
+	rows := make([]modelPricingRow, 0, len(keys))
+	for _, key := range keys {
+		canonicalModel := database.PricingAliasTarget(key)
+		rows = append(rows, modelPricingRow{
+			Model:          key,
+			Channel:        database.UpstreamChannelCodex,
+			Source:         database.ModelPricingSourceFor(key),
+			Pricing:        database.ModelPricingOverrideFromPricing(database.GetModelPricing(key), database.ModelPricingSourceFor(key)),
+			CanonicalModel: canonicalModel,
+			IsAlias:        canonicalModel != "",
+			MediaUnit:      database.MediaBillingUnit(key),
+		})
 	}
-	appendRows(keys, database.UpstreamChannelCodex)
-	appendRows(grokKeys, database.UpstreamChannelGrok)
-	appendRows(antigravityKeys, database.UpstreamChannelAntigravity)
-	appendRows(claudeKeys, database.UpstreamChannelClaude)
 
 	syncURL := ""
 	if s, err := h.db.GetSystemSettings(ctx); err == nil && s != nil {
@@ -340,8 +264,6 @@ func (h *Handler) ListModelPricing(c *gin.Context) {
 		"models_dev_url":       proxy.ModelsDevPricingSyncURL,
 		"litellm_url":          proxy.LiteLLMPricingSyncURL,
 		"official_openai_url":  proxy.OfficialOpenAIPricingURL,
-		"official_xai_url":     strings.TrimSuffix(proxy.OfficialXAIPricingURL, ".md"),
-		"official_claude_url":  proxy.OfficialAnthropicPricingURL,
 		"official_sync_config": officialPricingConfigResponse(officialCfg),
 	})
 }

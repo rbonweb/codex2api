@@ -58,14 +58,6 @@ func (h *Handler) CreateQualityTestJob(c *gin.Context) {
 		return
 	}
 	channel := "codex"
-	switch {
-	case account.IsClaudeOAuth():
-		channel = "claude"
-	case account.IsGrokAPI():
-		channel = "grok"
-	case account.IsAntigravityAPI():
-		channel = "antigravity"
-	}
 	account.Mu().RLock()
 	name, plan := account.Email, account.PlanType
 	if name == "" {

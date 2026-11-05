@@ -8,36 +8,9 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/codex2api/auth"
 	"github.com/codex2api/database"
-	"github.com/codex2api/proxy"
 	"github.com/gin-gonic/gin"
 )
-
-func TestReviewDuplicateClaudeRefreshDoesNotConsumeCredential(t *testing.T) {
-	db := newTestAdminDB(t)
-	ctx := context.Background()
-	id, err := db.InsertAccountWithUpstream(ctx, "existing", "anthropic", auth.UpstreamClaude, map[string]interface{}{
-		"upstream_type": auth.UpstreamClaude, "refresh_token": "existing-rotating-token", "access_token": "existing-access", "account_id": "existing-id",
-	}, "")
-	if err != nil {
-		t.Fatal(err)
-	}
-	store := auth.NewStore(db, nil, nil)
-	t.Cleanup(store.Stop)
-	h := &Handler{db: db, store: store, refreshClaudeTokensForImport: func(context.Context, string, string) (*auth.ClaudeTokenData, error) {
-		t.Fatal("duplicate import consumed the refresh token")
-		return nil, nil
-	}}
-	_, err = h.createClaudeAccount(ctx, "", "", "", &auth.ClaudeTokenData{RefreshToken: "existing-rotating-token"}, "test", nil)
-	if conflict, ok := err.(*claudeAccountCreateError); !ok || conflict.Status != http.StatusConflict {
-		t.Fatalf("expected conflict, got %v", err)
-	}
-	row, err := db.GetAccountByID(ctx, id)
-	if err != nil || row.GetCredential("refresh_token") != "existing-rotating-token" || row.GetCredential("access_token") != "existing-access" {
-		t.Fatal("duplicate changed existing credentials")
-	}
-}
 
 func TestReviewAstraLongOnlyOverrideAppliesPricing(t *testing.T) {
 	db := newTestAdminDB(t)
@@ -65,38 +38,6 @@ func TestReviewAstraLongOnlyOverrideAppliesPricing(t *testing.T) {
 	got := overrides["gpt-6-astra"]
 	if err != nil || got.InputLong != 20 || got.OutputLong != 75 {
 		t.Fatalf("pricing request did not apply long override: %+v", got)
-	}
-}
-
-func TestReviewClaudeBillingReprobeRestoresWhitelist(t *testing.T) {
-	db := newTestAdminDB(t)
-	ctx := context.Background()
-	models := []string{"claude-haiku-4-5", "claude-fable-5-1"}
-	id, err := db.InsertAccountWithUpstream(ctx, "probe", "anthropic", auth.UpstreamClaude, map[string]interface{}{"upstream_type": auth.UpstreamClaude, "models": models, "access_token": "test-token"}, "")
-	if err != nil {
-		t.Fatal(err)
-	}
-	store := auth.NewStore(db, nil, nil)
-	t.Cleanup(store.Stop)
-	account := &auth.Account{DBID: id, UpstreamType: auth.UpstreamClaude, AccessToken: "test-token", Models: models}
-	store.AddAccount(account)
-	h := &Handler{db: db, store: store}
-	if !proxy.HandleClaudeModelBillingRejection(store, account, models[1], 429, []byte(`{"error":{"message":"Usage credits are required for this model."}}`)) {
-		t.Fatal("billing rejection not handled")
-	}
-	if got, err := h.connectionTestModelForAccount(ctx, account, models[1]); err != nil || got != models[1] {
-		t.Fatalf("explicit reprobe rejected: %q %v", got, err)
-	}
-	if _, err := h.connectionTestModelForAccount(ctx, account, "claude-unrelated"); err == nil {
-		t.Fatal("unrelated whitelist exclusion was bypassed")
-	}
-	if err := store.RestoreClaudeAccountModel(ctx, account, models[1]); err != nil {
-		t.Fatal(err)
-	}
-	store.ClearModelCooldown(account, models[1])
-	row, err := db.GetAccountByID(ctx, id)
-	if err != nil || len(row.GetCredentialStringSlice("models")) != 2 {
-		t.Fatal("successful probe did not restore the persisted catalog")
 	}
 }
 

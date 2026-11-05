@@ -137,8 +137,8 @@ func (h *Handler) scheduledTestAccount(c *gin.Context) (*database.AccountRow, bo
 		return nil, false
 	}
 	upstream := strings.ToLower(strings.TrimSpace(row.GetCredential("upstream_type")))
-	if upstream != "" && upstream != auth.UpstreamOpenAIResponses && upstream != "codex" {
-		c.JSON(400, gin.H{"error": "定时激活仅支持 Codex/Responses 账号"})
+	if upstream != "" && upstream != "codex" {
+		c.JSON(400, gin.H{"error": "定时激活仅支持 Codex 账号"})
 		return nil, false
 	}
 	return row, true

@@ -77,7 +77,7 @@ func TestRefreshAccountSubscription_ManualRefreshAndRateLimit(t *testing.T) {
 	}
 }
 
-// 非 Codex 渠道与不跟踪订阅的套餐直接返回 unsupported，不打上游。
+// 不跟踪订阅的套餐直接返回 unsupported，不打上游。
 func TestRefreshAccountSubscription_Unsupported(t *testing.T) {
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		t.Error("upstream must not be called")
@@ -86,13 +86,11 @@ func TestRefreshAccountSubscription_Unsupported(t *testing.T) {
 	defer proxy.SetSubscriptionsURLForTest(server.URL)()
 
 	store := auth.NewStore(nil, nil, &database.SystemSettings{MaxConcurrency: 2})
-	grok := &auth.Account{DBID: 41, AccessToken: "token", PlanType: "plus", Status: auth.StatusReady, UpstreamType: auth.UpstreamGrok}
 	free := &auth.Account{DBID: 42, AccessToken: "token", PlanType: "free", Status: auth.StatusReady, AccountID: subscriptionTestWorkspaceUUID}
-	store.AddAccount(grok)
 	store.AddAccount(free)
 	handler := &Handler{store: store}
 
-	for _, id := range []string{"41", "42"} {
+	for _, id := range []string{"42"} {
 		rec, payload := runSubscriptionRefresh(t, handler, id)
 		if rec.Code != http.StatusOK || payload["outcome"] != string(proxy.SubscriptionSyncUnsupported) {
 			t.Fatalf("account %s: status=%d payload=%v", id, rec.Code, payload)

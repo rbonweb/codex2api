@@ -113,7 +113,7 @@ func (h *Handler) loadChannelMonitorAccount(ctx context.Context, accountID int64
 			return nil, nil, err
 		}
 	}
-	if account == nil || !account.IsOpenAIResponsesAPI() || account.IsGrokAPI() ||
+	if account == nil || !account.IsOpenAIResponsesAPI() ||
 		!strings.EqualFold(strings.TrimSpace(row.Platform), "openai") ||
 		!strings.EqualFold(strings.TrimSpace(row.Type), "responses_api") {
 		return nil, nil, fmt.Errorf("仅 Responses API 类型的 Codex 渠道支持监控")

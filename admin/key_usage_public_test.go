@@ -15,11 +15,11 @@ import (
 )
 
 func TestParsePublicAPIKeyUsageLogFilter(t *testing.T) {
-	filter, err := parsePublicAPIKeyUsageLogFilter(" gpt-5.5 ", "/v1/responses", "ERROR", "Stream", "Claude")
+	filter, err := parsePublicAPIKeyUsageLogFilter(" gpt-5.5 ", "/v1/responses", "ERROR", "Stream", "Codex")
 	if err != nil {
 		t.Fatalf("parse valid filter: %v", err)
 	}
-	if filter.Model != "gpt-5.5" || filter.Endpoint != "/v1/responses" || filter.Status != "error" || filter.Stream != "stream" || filter.Channel != "claude" {
+	if filter.Model != "gpt-5.5" || filter.Endpoint != "/v1/responses" || filter.Status != "error" || filter.Stream != "stream" || filter.Channel != "codex" {
 		t.Fatalf("filter = %+v", filter)
 	}
 
@@ -30,6 +30,7 @@ func TestParsePublicAPIKeyUsageLogFilter(t *testing.T) {
 		{status: "200"},
 		{stream: "ws"},
 		{channel: "openai"},
+		{channel: "claude"},
 		{model: strings.Repeat("m", publicAPIKeyUsageMaxFilterLen+1)},
 	}
 	for _, tc := range invalid {

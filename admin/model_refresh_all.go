@@ -18,13 +18,12 @@ import (
 )
 
 // 模型目录页「刷新账号模型」的统一入口：一次刷新所有渠道，并把各渠道刷出来的
-// 模型写回各自的真源（Codex → model_registry，Claude/Grok/Antigravity → 账号凭据），
+// 模型写回真源（Codex → model_registry），
 // 使目录页、/v1/models 与调度准入看到同一份清单。
 //
 // 探测按「套餐分组抽样」进行：同一渠道内先按订阅套餐（plan_type）把账号分组，
 // 每个有账号的分组随机抽一个账号去上游拉清单——同套餐账号看到的清单相同，
-// 一万个 Pro 号逐个拉只会放大上游请求量。抽样结果写回同组全部账号
-// （Claude），或写入共享注册表（Codex）。
+// 一万个 Pro 号逐个拉只会放大上游请求量。抽样结果写入共享注册表（Codex）。
 
 const (
 	modelRefreshAllTimeout       = 120 * time.Second
@@ -35,9 +34,6 @@ const (
 // modelRefreshChannelOrder 固定渠道展示顺序，与定价页分组顺序一致。
 var modelRefreshChannelOrder = []string{
 	database.UpstreamChannelCodex,
-	database.UpstreamChannelClaude,
-	database.UpstreamChannelGrok,
-	database.UpstreamChannelAntigravity,
 }
 
 // channelModelRefreshResult 是单个渠道的刷新结果。
@@ -187,34 +183,14 @@ func orderedModelRefreshChannels(results map[string]channelModelRefreshResult) [
 
 func (h *Handler) defaultModelRefreshFuncs() map[string]channelModelRefreshFunc {
 	return map[string]channelModelRefreshFunc{
-		database.UpstreamChannelCodex:       h.refreshCodexChannelModels,
-		database.UpstreamChannelClaude:      h.refreshClaudeChannelModels,
-		database.UpstreamChannelGrok:        h.refreshGrokChannelModels,
-		database.UpstreamChannelAntigravity: h.refreshAntigravityChannelModels,
+		database.UpstreamChannelCodex: h.refreshCodexChannelModels,
 	}
 }
 
 // modelPricingCatalogKeys 返回定价页/模型目录当前展示的全部规范模型键（各渠道拼接），
 // 与 ListModelPricing 的口径一致。
 func (h *Handler) modelPricingCatalogKeys(ctx context.Context) []string {
-	keys := modelPricingManagementKeys(h.codexPricingModelIDs(ctx))
-	seen := make(map[string]struct{}, len(keys))
-	for _, key := range keys {
-		seen[key] = struct{}{}
-	}
-	appendUnique := func(ids []string) {
-		for _, key := range modelPricingManagementKeys(ids) {
-			if _, ok := seen[key]; ok {
-				continue
-			}
-			seen[key] = struct{}{}
-			keys = append(keys, key)
-		}
-	}
-	appendUnique(append(h.grokBillingModelIDs(), grokDefaultDisplayModelIDs()...))
-	appendUnique(h.antigravityChannelModels())
-	appendUnique(h.claudeChannelModels())
-	return keys
+	return modelPricingManagementKeys(h.codexPricingModelIDs(ctx))
 }
 
 // newlyAddedModels 返回 after 中有而 before 中没有的模型（忽略大小写），已排序。
@@ -281,10 +257,6 @@ func groupAccountsByPlan(accounts []*auth.Account, include func(*auth.Account) b
 			continue
 		}
 		plan := modelRefreshPlanKey(account)
-		if account.IsClaudeAPIKey() {
-			// API services and keys have independent catalogs even when their plan labels match.
-			plan = fmt.Sprintf("api_key:%d", account.ID())
-		}
 		byPlan[plan] = append(byPlan[plan], account)
 	}
 	plans := make([]string, 0, len(byPlan))
@@ -376,12 +348,9 @@ func (h *Handler) probePlanGroups(ctx context.Context, channel string, groups []
 // ==================== Codex ====================
 
 // isCodexOAuthAccount 判断账号是否为 ChatGPT OAuth 的 Codex 官方账号
-// （非 relay 中转、非 Grok/Claude/Antigravity）。
+// 移除其它上游后，所有非空账号都是 Codex 账号。
 func isCodexOAuthAccount(account *auth.Account) bool {
-	if account == nil {
-		return false
-	}
-	return !account.IsRelayStyle() && !account.IsAntigravityAPI() && !account.IsGrokAPI() && !account.IsClaudeOAuth()
+	return account != nil
 }
 
 func (h *Handler) refreshCodexChannelModels(ctx context.Context, emit modelRefreshEmitter) channelModelRefreshResult {
@@ -427,103 +396,5 @@ func (h *Handler) refreshCodexChannelModels(ctx context.Context, emit modelRefre
 		})
 
 	result.Added = newlyAddedModels(before, proxy.SupportedModelIDs(ctx, h.db))
-	return result
-}
-
-// ==================== Claude ====================
-
-func (h *Handler) refreshClaudeChannelModels(ctx context.Context, emit modelRefreshEmitter) channelModelRefreshResult {
-	result := channelModelRefreshResult{Channel: database.UpstreamChannelClaude, Added: []string{}}
-	if h == nil || h.db == nil {
-		result.Error = "数据库不可用"
-		return result
-	}
-	before := h.claudeChannelModels()
-	var wrote int32
-	h.probePlanGroups(ctx, database.UpstreamChannelClaude, h.planGroupsFor(func(a *auth.Account) bool { return a.IsClaudeOAuth() }), &result, emit,
-		func(ctx context.Context, group modelRefreshPlanGroup) (int, []string, error) {
-			sample := group.Sample
-			accessToken := strings.TrimSpace(sample.GetAccessToken())
-			if accessToken == "" {
-				return 0, nil, fmt.Errorf("账号缺少 access_token")
-			}
-			models, err := auth.NewClaudeAuth(h.store.ResolveProxyForAccount(sample)).FetchModelsForAccount(ctx, sample)
-			if err != nil {
-				return 0, nil, err
-			}
-			models = auth.NormalizeAccountModels(models)
-			if len(models) == 0 {
-				return 0, nil, fmt.Errorf("上游未返回可用模型")
-			}
-			// 同套餐账号权限一致：抽样结果写回同组全部账号，目录与调度准入保持一致。
-			added := newlyAddedModels(group.Sample.CodexModels(), models)
-			var writeErr error
-			for _, member := range group.Members {
-				if err := h.db.UpdateCredentials(ctx, member.ID(), map[string]interface{}{"models": models}); err != nil {
-					writeErr = err
-					continue
-				}
-				member.Mu().Lock()
-				member.Models = append([]string(nil), models...)
-				member.Mu().Unlock()
-				atomic.StoreInt32(&wrote, 1)
-			}
-			return len(models), added, writeErr
-		})
-	if atomic.LoadInt32(&wrote) == 1 {
-		h.invalidateClaudeCatalogCaches()
-	}
-	result.Added = newlyAddedModels(before, h.claudeChannelModels())
-	return result
-}
-
-// ==================== Grok ====================
-
-func (h *Handler) refreshGrokChannelModels(ctx context.Context, emit modelRefreshEmitter) channelModelRefreshResult {
-	result := channelModelRefreshResult{Channel: database.UpstreamChannelGrok, Added: []string{}}
-	if h == nil || h.store == nil {
-		return result
-	}
-	grokModels := func() []string { return append(h.grokBillingModelIDs(), grokDefaultDisplayModelIDs()...) }
-	before := grokModels()
-	h.probePlanGroups(ctx, database.UpstreamChannelGrok, h.planGroupsFor(func(a *auth.Account) bool { return a.IsGrokAPI() }), &result, emit,
-		func(ctx context.Context, group modelRefreshPlanGroup) (int, []string, error) {
-			id := group.Sample.ID()
-			syncResult, err := h.syncGrokAccountState(ctx, id)
-			if err != nil {
-				return 0, nil, err
-			}
-			if syncResult.capabilityGeneration > 0 {
-				h.triggerGrokCapabilityProbeForGeneration(id, syncResult.capabilityGeneration)
-			}
-			if modelErr := syncResult.Errors["models"]; modelErr != "" {
-				return len(syncResult.Models), nil, fmt.Errorf("模型目录刷新失败: %s", modelErr)
-			}
-			return len(syncResult.Models), nil, nil
-		})
-	result.Added = newlyAddedModels(before, grokModels())
-	return result
-}
-
-// ==================== Antigravity ====================
-
-func (h *Handler) refreshAntigravityChannelModels(ctx context.Context, emit modelRefreshEmitter) channelModelRefreshResult {
-	result := channelModelRefreshResult{Channel: database.UpstreamChannelAntigravity, Added: []string{}}
-	if h == nil || h.store == nil {
-		return result
-	}
-	before := h.antigravityChannelModels()
-	h.probePlanGroups(ctx, database.UpstreamChannelAntigravity, h.planGroupsFor(func(a *auth.Account) bool { return a.IsAntigravityAPI() }), &result, emit,
-		func(ctx context.Context, group modelRefreshPlanGroup) (int, []string, error) {
-			item := h.runAntigravityRefresh(ctx, group.Sample.ID())
-			if !item.OK {
-				if item.Error != "" {
-					return 0, nil, fmt.Errorf("%s", item.Error)
-				}
-				return 0, nil, fmt.Errorf("刷新失败")
-			}
-			return len(group.Sample.AntigravityModels()), nil, nil
-		})
-	result.Added = newlyAddedModels(before, h.antigravityChannelModels())
 	return result
 }

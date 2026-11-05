@@ -117,7 +117,7 @@ func extractPublicAPIKey(c *gin.Context) string {
 			return strings.TrimSpace(fields[1])
 		}
 	}
-	for _, header := range []string{"x-api-key", "anthropic-auth-token"} {
+	for _, header := range []string{"x-api-key"} {
 		if value := strings.TrimSpace(c.GetHeader(header)); value != "" {
 			return value
 		}
@@ -179,9 +179,9 @@ func parsePublicAPIKeyUsageLogFilter(model, endpoint, status, stream, channel st
 		return database.APIKeySelfLogFilter{}, errors.New("stream 参数仅支持 stream、sync")
 	}
 	switch filter.Channel {
-	case "", "codex", "grok", "antigravity", "claude":
+	case "", "codex":
 	default:
-		return database.APIKeySelfLogFilter{}, errors.New("channel 参数仅支持 codex、grok、antigravity、claude")
+		return database.APIKeySelfLogFilter{}, errors.New("channel 参数仅支持 codex")
 	}
 	return filter, nil
 }
