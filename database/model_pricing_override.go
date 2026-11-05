@@ -16,14 +16,11 @@ const (
 
 // ModelPricingOverride 是单个模型的定价覆盖（设置存储与同步 URL 载荷共用同一形态）。
 // Token 价格单位：USD / 1M tokens。Token 字段为 0 时回退代码默认价。
-// ImageUnitPrice 则为用户单位价（按张/按次/按秒模式下的 USD / 计费单位），这些模式要求显式正单价；
-// MediaUnitCost 是媒体模型的上游单位成本（USD / 张 或 USD / 秒）。
+// ImageUnitPrice 则为用户单位价（按张模式下的 USD / 计费单位），该模式要求显式正单价；
 // 优先级：custom > synced > 代码默认。
 type ModelPricingOverride struct {
-	UserBillingMode string  `json:"user_billing_mode,omitempty"`
-	ImageUnitPrice  float64 `json:"image_unit_price,omitempty"` // USD per billed unit (image / video / second) in unit billing modes; upstream cost stays independent.
-	// MediaUnitCost 是媒体模型的上游单位成本(USD/张 或 USD/秒)。
-	MediaUnitCost    float64 `json:"media_unit_cost,omitempty"`
+	UserBillingMode  string  `json:"user_billing_mode,omitempty"`
+	ImageUnitPrice   float64 `json:"image_unit_price,omitempty"` // USD per billed unit (image) in unit billing mode; upstream cost stays independent.
 	ImageInput       float64 `json:"image_input,omitempty"`
 	CachedImageInput float64 `json:"cached_image_input,omitempty"`
 	Source           string  `json:"source,omitempty"`
@@ -66,7 +63,7 @@ func NormalizeModelPricingOverride(model string, o ModelPricingOverride) ModelPr
 
 // IsEmpty 判断覆盖是否不含任何价格（全 0）。
 func (o ModelPricingOverride) IsEmpty() bool {
-	return o.UserBillingMode == "" && o.ImageUnitPrice == 0 && o.MediaUnitCost == 0 && o.ImageInput == 0 && o.CachedImageInput == 0 && o.Input == 0 && o.CachedInput == 0 && o.CacheWrite5m == 0 && o.CacheWrite1h == 0 && o.Output == 0 &&
+	return o.UserBillingMode == "" && o.ImageUnitPrice == 0 && o.ImageInput == 0 && o.CachedImageInput == 0 && o.Input == 0 && o.CachedInput == 0 && o.CacheWrite5m == 0 && o.CacheWrite1h == 0 && o.Output == 0 &&
 		o.InputPriority == 0 && o.CachedInputPriority == 0 && o.OutputPriority == 0 &&
 		o.InputLong == 0 && o.CachedInputLong == 0 && o.OutputLong == 0 &&
 		o.InputLongPriority == 0 && o.CachedInputLongPriority == 0 && o.OutputLongPriority == 0 &&
@@ -80,9 +77,6 @@ func (o ModelPricingOverride) applyNonZero(p *ModelPricing) {
 	}
 	if o.ImageUnitPrice > 0 {
 		p.ImageUnitPrice = o.ImageUnitPrice
-	}
-	if o.MediaUnitCost > 0 {
-		p.MediaUnitCost = o.MediaUnitCost
 	}
 	if o.ImageInput > 0 {
 		p.ImageInputPricePerMToken = o.ImageInput
@@ -146,7 +140,6 @@ func ModelPricingOverrideFromPricing(p *ModelPricing, source string) ModelPricin
 	return ModelPricingOverride{
 		UserBillingMode:            p.UserBillingMode,
 		ImageUnitPrice:             p.ImageUnitPrice,
-		MediaUnitCost:              p.MediaUnitCost,
 		ImageInput:                 p.ImageInputPricePerMToken,
 		CachedImageInput:           p.CacheReadImagePricePerMToken,
 		Source:                     source,
@@ -359,6 +352,10 @@ func ParseModelPricingOverridesJSON(s string) (map[string]ModelPricingOverride, 
 	out := make(map[string]ModelPricingOverride, len(raw))
 	for k, v := range raw {
 		key := strings.ToLower(strings.TrimSpace(k))
+		if isRemovedMediaBillingMode(v.UserBillingMode) {
+			// Entries saved for the removed video billing modes are dropped so they cannot fail the whole blob.
+			continue
+		}
 		if err := ValidateModelUserBilling(key, v); err != nil {
 			return nil, fmt.Errorf("%s: %w", key, err)
 		}

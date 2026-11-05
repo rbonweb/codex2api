@@ -35,7 +35,7 @@ func validateSyncedPricing(model string, price database.ModelPricingOverride, co
 
 // validatePricingExtras validates prices and context thresholds that are not part of the token triple.
 func validatePricingExtras(price database.ModelPricingOverride) error {
-	for _, value := range []float64{price.MediaUnitCost, price.ImageUnitPrice, price.CacheWrite5m, price.CacheWrite1h} {
+	for _, value := range []float64{price.ImageUnitPrice, price.CacheWrite5m, price.CacheWrite1h} {
 		if !validPricingNumber(value) {
 			return fmt.Errorf("price must be a finite non-negative number")
 		}
@@ -48,12 +48,6 @@ func validatePricingExtras(price database.ModelPricingOverride) error {
 
 // validateRequiredPricing validates the complete prices required for automatic sync; manual partial overrides do not go through this branch.
 func validateRequiredPricing(model string, price database.ModelPricingOverride, groups [][3]float64) error {
-	if database.MediaBillingUnit(model) != "" {
-		if price.MediaUnitCost <= 0 {
-			return fmt.Errorf("media unit cost is missing")
-		}
-		return nil
-	}
 	if price.Input <= 0 || price.Output <= 0 {
 		return fmt.Errorf("input or output price is missing")
 	}

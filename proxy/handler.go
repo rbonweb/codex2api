@@ -399,15 +399,6 @@ func accountFilterForModelWithGate(model string, gate modelRateLimitGate) auth.A
 	}
 }
 
-// requestUpstreamChannel returns the upstream channel restriction of the downstream key for the current request (empty = no restriction).
-func requestUpstreamChannel(c *gin.Context) string {
-	row := apiKeyRowFromContext(c)
-	if row == nil {
-		return ""
-	}
-	return row.Limits.ResolveUpstreamChannel()
-}
-
 func accountFilterForResponsesModel(model string, allowCodexAccounts bool) auth.AccountFilter {
 	return accountFilterForResponsesModelWithOriginal(model, model, allowCodexAccounts)
 }

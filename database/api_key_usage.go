@@ -784,10 +784,6 @@ func (l *APIKeySelfUsageLog) populateBillingBreakdown() {
 	if billingModel == "" {
 		billingModel = l.Model
 	}
-	if MediaBillingUnit(billingModel) != "" {
-		l.TotalCost = l.UserBilled
-		return
-	}
 	breakdown := UsageLogCostBreakdown(&UsageLogInput{Model: billingModel, DaybreakProgram: l.DaybreakProgram, ServiceTier: l.ServiceTier, InputTokens: l.InputTokens, OutputTokens: l.OutputTokens, CachedTokens: l.CachedTokens, ImageInputTokens: l.ImageInputTokens, ImageOutputTokens: l.ImageOutputTokens, CachedImageInputTokens: l.CachedImageInputTokens})
 	l.InputCost = breakdown.InputCost
 	l.OutputCost = breakdown.OutputCost
