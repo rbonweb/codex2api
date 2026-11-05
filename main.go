@@ -227,33 +227,6 @@ func main() {
 		log.Fatalf("加载响应缓存设置失败: %v", err)
 	}
 	responseCacheCancel()
-	antigravityOAuthCtx, antigravityOAuthCancel := context.WithTimeout(context.Background(), 3*time.Second)
-	if raw, err := db.LoadAntigravityOAuthConfig(antigravityOAuthCtx); err != nil {
-		log.Printf("加载 Antigravity OAuth client 设置失败(继续以环境变量为准): %v", err)
-	} else if parsed, parseErr := auth.ParseAntigravityOAuthSettings(raw); parseErr != nil {
-		log.Printf("Antigravity OAuth client 设置解析失败(继续以环境变量为准,请在管理页重新保存): %v", parseErr)
-	} else {
-		auth.SetConfiguredAntigravityOAuth(parsed)
-		if len(parsed.Clients) > 0 {
-			log.Printf("Antigravity OAuth client 设置已加载: %d 个 client", len(parsed.Clients))
-		}
-	}
-	antigravityOAuthCancel()
-	antigravityCfgCtx, antigravityCfgCancel := context.WithTimeout(context.Background(), 3*time.Second)
-	if raw, err := db.LoadAntigravityConfig(antigravityCfgCtx); err != nil {
-		log.Printf("加载 Antigravity 渠道设置失败(模型重定向不生效): %v", err)
-	} else if parsed, parseErr := auth.ParseAntigravitySettings(raw); parseErr != nil {
-		log.Printf("Antigravity 渠道设置解析失败(模型重定向不生效,请在管理页重新保存): %v", parseErr)
-	} else {
-		auth.SetConfiguredAntigravitySettings(parsed)
-		if len(parsed.ModelRedirects) > 0 {
-			log.Printf("Antigravity 模型重定向已加载: %d 条", len(parsed.ModelRedirects))
-		}
-		if parsed.ExposeThoughts {
-			log.Printf("Antigravity 思考内容下发已开启")
-		}
-	}
-	antigravityCfgCancel()
 
 	appliedResponseCache := proxy.GetResponseCacheAppliedConfig()
 	log.Printf(
@@ -382,15 +355,6 @@ func main() {
 		}
 	}
 
-	// Claude CLI 同步版本先于账号加载发布，保证 GenerateClaudeFingerprint 与回写使用同一生效版本。
-	claudeCLIVersionCtx, claudeCLIVersionCancel := context.WithTimeout(context.Background(), 10*time.Second)
-	if synced, err := db.GetClaudeSyncedCLIVersion(claudeCLIVersionCtx); err == nil {
-		auth.SetClaudeSyncedCLIVersion(synced)
-	} else {
-		log.Printf("读取 Claude CLI 同步版本失败（使用内置 %s）: %v", auth.BuiltinClaudeCLIVersion, err)
-	}
-	claudeCLIVersionCancel()
-
 	// 5. 初始化账号管理器
 	auth.CodexOAuthIdentityHeaders = proxy.CodexOAuthIdentityHeaders
 	store := auth.NewStore(db, tc, settings)
@@ -412,9 +376,6 @@ func main() {
 
 	// 启动后台刷新
 	store.StartBackgroundRefresh()
-	// Antigravity groups summary 周期巡检（Spec §5.3）：随 Store 生命周期启动，
-	// Store.Stop 在关闭 stopCh 前收口。
-	store.StartAntigravityQuotaScheduler()
 	store.TriggerUsageProbeAsync()
 	store.TriggerRecoveryProbeAsync()
 	store.TriggerAutoCleanupAsync()
@@ -428,8 +389,6 @@ func main() {
 	adminHandler.StartAutoResetCredits(backgroundCtx)
 	adminHandler.StartAutoActivate5hWindow(backgroundCtx)
 	adminHandler.StartScheduledConnectionTests(backgroundCtx)
-	// Grok 账号状态定期探测（默认关，由 grok 系统设置开关/间隔控制）
-	adminHandler.StartGrokStatusProbe(backgroundCtx)
 	// 官方结算用量按天快照：上游只保留 7 天，不落库就永久丢失，长期历史全靠这个任务。
 	adminHandler.StartWhamDailyUsageProbe(backgroundCtx)
 	// 官方模型价目轮询默认关闭；启用后只在网络解析完成后做一次短数据库写入。
@@ -449,9 +408,6 @@ func main() {
 	// 出上游新版本门槛时无需发版即可跟进。开关/间隔在设置页可调，
 	// CODEX_DISABLE_CLI_VERSION_SYNC 为硬关闭。
 	proxy.StartCodexCLIVersionSync(backgroundCtx, db, store.GetProxyURL)
-
-	// Claude Code CLI 版本同步：启动先用生效版本回写账号指纹，再按 ClaudeConfig 开关/间隔联网同步。
-	proxy.StartClaudeCLIVersionSync(backgroundCtx, db, store, store.GetProxyURL)
 
 	log.Printf("账号就绪: %d/%d 可用", store.AvailableCount(), store.AccountCount())
 
@@ -709,7 +665,6 @@ func main() {
 	log.Printf("  API:    GET  /v1/images/jobs/:id")
 	log.Printf("  API:    GET  /v1/images/jobs/:id/output")
 	log.Printf("  API:    POST /v1/images/jobs/:id/ack")
-	log.Printf("  API:    POST /v1/messages")
 	log.Printf("  API:    GET  /v1/models")
 	log.Println("==========================================")
 
