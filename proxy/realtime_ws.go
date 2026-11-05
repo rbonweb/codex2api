@@ -130,7 +130,7 @@ func (h *Handler) RealtimeWebSocket(c *gin.Context) {
 			if audioCfg, audioAck, handoffErr, ok := realtimeAudioHandoff(&state, payload); ok {
 				frameMemory.Release()
 				if handoffErr != nil {
-					_ = writeResponsesWSError(conn, handoffErr)
+					writeRealtimeAudioError(conn, handoffErr, gjson.GetBytes(payload, "event_id").String())
 					continue
 				}
 				h.runRealtimeAudioHandoff(c, conn, requestCtx, cancel, audioCfg, audioAck)

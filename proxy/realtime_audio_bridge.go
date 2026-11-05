@@ -2,6 +2,7 @@ package proxy
 
 import (
 	"context"
+	"encoding/base64"
 	"encoding/json"
 	"errors"
 	"net/http"
@@ -65,6 +66,11 @@ func (h *Handler) serveRealtimeAudio(c *gin.Context) {
 		api.SendErrorWithStatus(c, audioBridgeUnavailableAPIError(), audioBridgeUnavailableStatus)
 		return
 	}
+	audioCfg, queryErr := realtimeAudioConfigFromQuery(c)
+	if queryErr != nil {
+		api.SendErrorWithStatus(c, queryErr, http.StatusBadRequest)
+		return
+	}
 	releaseWS, ok := h.acquireDownstreamWebSocket(c)
 	if !ok {
 		return
@@ -95,8 +101,30 @@ func (h *Handler) serveRealtimeAudio(c *gin.Context) {
 	unregisterWriter := registerResponsesWSWriter(conn)
 	defer unregisterWriter()
 
-	cfg := realtimeAudioConfig{Model: strings.TrimSpace(c.Query("model"))}
-	h.runRealtimeAudioSession(c, conn, requestCtx, cancel, cfg, nil)
+	h.runRealtimeAudioSession(c, conn, requestCtx, cancel, audioCfg, nil)
+}
+
+// realtimeAudioMaxQueryInstructions caps instructions given as a query parameter at the size a client frame may have, the same bound a session.update carries.
+var realtimeAudioMaxQueryInstructions = security.MaxRequestBodySize
+
+// realtimeAudioConfigFromQuery reads the initial session from the WebSocket URL: model, instructions, voice and delegation ("client", or "none" for client delegation without Live's filler acknowledgement). A later session.update before the call exists overrides them. An unsupported delegation or oversized instructions fail before the upgrade.
+func realtimeAudioConfigFromQuery(c *gin.Context) (realtimeAudioConfig, *api.APIError) {
+	cfg := realtimeAudioConfig{
+		Model:        strings.TrimSpace(c.Query("model")),
+		Voice:        strings.TrimSpace(c.Query("voice")),
+		Instructions: c.Query("instructions"),
+	}
+	if len(cfg.Instructions) > realtimeAudioMaxQueryInstructions {
+		return cfg, api.NewAPIError(api.ErrorCode("invalid_value"), "The instructions query parameter is too long.", api.ErrorTypeInvalidRequest)
+	}
+	switch delegation := strings.TrimSpace(c.Query("delegation")); delegation {
+	case "", "client":
+	case "none":
+		cfg.DelegationNoAck = true
+	default:
+		return cfg, api.NewAPIError(api.ErrorCode("unsupported_value"), "The delegation query parameter must be client or none.", api.ErrorTypeInvalidRequest)
+	}
+	return cfg, nil
 }
 
 // runRealtimeAudioHandoff moves a text session that asked for audio output onto the audio bridge. The upgrade, keepalive and writer registration already exist; allow-live and bridge availability fail as WebSocket error events followed by a close.
@@ -128,9 +156,6 @@ func realtimeAudioHandoff(state *realtimeTextSession, raw []byte) (cfg realtimeA
 	return cfg, ack, apiErr, true
 }
 
-// realtimeAudioCreateGrace is how long a new audio session waits for its first session.update, audio, item or response.create before it creates the Live call anyway. ChatGPT Live only accepts instructions and voice at call creation, so waiting lets the client's first session.update reach the call.
-var realtimeAudioCreateGrace = 750 * time.Millisecond
-
 // realtimeAudioBridge is the state of one audio session. The Live call is created lazily by ensureCall. The mapper and the config are touched by the upstream pump and the client loop, so mu guards both.
 type realtimeAudioBridge struct {
 	h      *Handler
@@ -142,18 +167,22 @@ type realtimeAudioBridge struct {
 	mu     sync.Mutex
 	mapper *realtimeAudioMapper
 	cfg    realtimeAudioConfig
+	// acks holds the FIFO acknowledgement queues of context appends, keyed by delegation item id ("" for session-level appends). It reuses the GPT-Live translator's bookkeeping; only its acks and ack are used. Guarded by mu.
+	acks *liveSessionTranslator
 
 	// startMu serializes call creation (it is held for the whole upstream open); stateMu guards the fields below and is never held across I/O.
-	startMu  sync.Mutex
-	stateMu  sync.RWMutex
-	call     realtimeAudioCallConn
-	input    *realtimeAudioInput
-	closed   bool
-	failed   bool
-	graceTmr *time.Timer
+	startMu sync.Mutex
+	stateMu sync.RWMutex
+	call    realtimeAudioCallConn
+	input   *realtimeAudioInput
+	closed  bool
+	failed  bool
+
+	// eventID is the event_id of the client event being handled, echoed as client_event_id on its errors. Only the client loop touches it.
+	eventID string
 }
 
-// runRealtimeAudioSession runs one audio session on an upgraded connection until the client leaves or the Live call ends. A nil ack announces the session with session.created and creates the call on the first trigger or after the grace period; the handoff passes the session.updated ack instead, because the client already saw a text session.created and its session.update is the trigger, so the call is created at once.
+// runRealtimeAudioSession runs one audio session on an upgraded connection until the client leaves or the Live call ends. A nil ack announces the session with session.created; the handoff passes the session.updated ack instead, because the client already saw a text session.created. Either way the Live call is created lazily, on the first audio append, conversation.item.create or response.create: ChatGPT Live only takes instructions, voice and delegation at call creation, so every session.update before that just edits the pending config, and a quiet session never opens a call that could speak first.
 func (h *Handler) runRealtimeAudioSession(c *gin.Context, conn *websocket.Conn, ctx context.Context, cancel context.CancelFunc, cfg realtimeAudioConfig, ack []byte) {
 	b := &realtimeAudioBridge{
 		h:      h,
@@ -163,6 +192,7 @@ func (h *Handler) runRealtimeAudioSession(c *gin.Context, conn *websocket.Conn, 
 		cancel: cancel,
 		mapper: newRealtimeAudioMapper(nil),
 		cfg:    cfg,
+		acks:   newLiveSessionTranslator(nil),
 	}
 	defer b.closeAll()
 
@@ -177,21 +207,11 @@ func (h *Handler) runRealtimeAudioSession(c *gin.Context, conn *websocket.Conn, 
 	if err := writeResponsesWSMessage(conn, first); err != nil {
 		return
 	}
-	if len(ack) > 0 {
-		if !b.ensureCall() {
-			return
-		}
-	} else {
-		b.graceTmr = time.AfterFunc(realtimeAudioCreateGrace, func() { b.ensureCall() })
-	}
 	b.clientLoop(ctx)
 }
 
-// closeAll releases the grace timer, the input pipeline and the call. It waits for a call creation in flight, so a call that finishes opening after the client left is still closed.
+// closeAll releases the input pipeline and the call. It waits for a call creation in flight, so a call that finishes opening after the client left is still closed.
 func (b *realtimeAudioBridge) closeAll() {
-	if b.graceTmr != nil {
-		b.graceTmr.Stop()
-	}
 	b.startMu.Lock()
 	defer b.startMu.Unlock()
 	b.stateMu.Lock()
@@ -235,7 +255,14 @@ func (b *realtimeAudioBridge) ensureCall() bool {
 	cfg := b.cfg
 	b.mu.Unlock()
 
-	call, gerr := openRealtimeAudioCall(b.h, b.c, buildLiveAudioSession(cfg.Model, cfg.Voice, cfg.Instructions))
+	session := buildLiveAudioSession(cfg.Model, cfg.Voice, cfg.Instructions)
+	if cfg.DelegationNoAck {
+		// Client delegation without Live's spoken filler acknowledgement.
+		if withoutAck, err := sjson.SetBytes(session, "delegation.ack_filler", false); err == nil {
+			session = withoutAck
+		}
+	}
+	call, gerr := openRealtimeAudioCall(b.h, b.c, session)
 	if gerr != nil || call == nil {
 		apiErr := (*api.APIError)(nil)
 		status := http.StatusInternalServerError
@@ -325,9 +352,14 @@ func (b *realtimeAudioBridge) pumpUpstream(ctx context.Context, call realtimeAud
 func (b *realtimeAudioBridge) forwardUpstream(raw []byte) bool {
 	b.mu.Lock()
 	mapped := b.mapper.MapUpstream(raw)
+	mapped = append(mapped, b.extensionEvents(raw)...)
 	textOnly := b.cfg.TextOnly
+	outRate := b.cfg.outputRate()
 	b.mu.Unlock()
 	for _, event := range mapped {
+		if outRate != realtimeAudioNativeRate && gjson.GetBytes(event, "type").String() == "response.output_audio.delta" {
+			event = realtimeAudioResampleDelta(event, outRate)
+		}
 		if textOnly {
 			var keep bool
 			if event, keep = realtimeAudioTextOnlyEvent(event); !keep {
@@ -341,6 +373,30 @@ func (b *realtimeAudioBridge) forwardUpstream(raw []byte) bool {
 		}
 	}
 	return true
+}
+
+// extensionEvents turns the internal delegation and context-append events into the gateway extension events: delegation.created becomes session.delegation.created, and the append acknowledgements become session.commentary.appended, session.thinking.appended or session.instructions.appended with the client_event_id of the matching append (first in, first out per delegation item id, session-level appends sharing the key ""). The caller holds b.mu.
+func (b *realtimeAudioBridge) extensionEvents(raw []byte) [][]byte {
+	switch gjson.GetBytes(raw, "type").String() {
+	case "delegation.created":
+		if event, ok := liveDelegationCreatedEvent(raw); ok {
+			return [][]byte{event}
+		}
+	case "delegation.context.appended":
+		return b.appendAck(gjson.GetBytes(raw, "delegation_item_id").String())
+	case "session.context.appended":
+		return b.appendAck("")
+	}
+	return nil
+}
+
+// appendAck pops the oldest outstanding append for key. Appends made on behalf of conversation.item.create queue an entry without an event type so the FIFO stays aligned; those produce no public event.
+func (b *realtimeAudioBridge) appendAck(key string) [][]byte {
+	ack := b.acks.ack(key)
+	if ack == nil || gjson.GetBytes(ack, "type").String() == "" {
+		return nil
+	}
+	return [][]byte{ack}
 }
 
 // endClient tells the client the Live call is over with a normal close, then bounds how long the read loop waits for the client's reply so the session unwinds.
@@ -448,8 +504,67 @@ func (b *realtimeAudioBridge) clientLoop(ctx context.Context) {
 	}
 }
 
+// writeError sends an error event for the client event being handled. An error that names a session field goes out in the public Realtime shape with code, param and client_event_id.
 func (b *realtimeAudioBridge) writeError(apiErr *api.APIError) {
+	if apiErr != nil {
+		if detail, ok := apiErr.Details.(realtimeAudioParamError); ok {
+			b.writeParamError(string(apiErr.Code), detail.Param, apiErr.Message)
+			return
+		}
+	}
 	_ = writeResponsesWSError(b.conn, apiErr)
+}
+
+// writeParamError sends {"type":"error","error":{type,code,message,param,client_event_id}}.
+func (b *realtimeAudioBridge) writeParamError(code, param, message string) {
+	b.writeEvent(liveErrorEvent("invalid_request_error", code, message, param, b.eventID))
+}
+
+// writeRealtimeAudioError writes an API error to conn: one that names a session field goes out in the public shape with error.param and client_event_id, any other as the usual error event.
+func writeRealtimeAudioError(conn *websocket.Conn, apiErr *api.APIError, clientEventID string) {
+	if apiErr != nil {
+		if detail, ok := apiErr.Details.(realtimeAudioParamError); ok {
+			_ = writeResponsesWSMessage(conn, liveErrorEvent("invalid_request_error", string(apiErr.Code), apiErr.Message, detail.Param, clientEventID))
+			return
+		}
+	}
+	_ = writeResponsesWSError(conn, apiErr)
+}
+
+// realtimeAudioResampleDelta converts the base64 PCM16 24 kHz delta of an output audio event to the client's output rate. An undecodable delta is passed through unchanged.
+func realtimeAudioResampleDelta(event []byte, toRate int) []byte {
+	pcm, err := base64.StdEncoding.DecodeString(gjson.GetBytes(event, "delta").String())
+	if err != nil {
+		return event
+	}
+	samples, err := decodePCM16LE(pcm)
+	if err != nil {
+		return event
+	}
+	out, err := sjson.SetBytes(event, "delta", base64.StdEncoding.EncodeToString(encodePCM16LE(resamplePCM16(samples, realtimeAudioNativeRate, toRate))))
+	if err != nil {
+		return event
+	}
+	return out
+}
+
+// appendClientAudio decodes one input_audio_buffer.append payload, resamples it to 24 kHz when the client sends 16 kHz, and feeds the input pipeline.
+func (b *realtimeAudioBridge) appendClientAudio(input *realtimeAudioInput, b64 string) error {
+	b.mu.Lock()
+	rate := b.cfg.inputRate()
+	b.mu.Unlock()
+	if rate == realtimeAudioNativeRate {
+		return input.AppendBase64(b64)
+	}
+	pcm, err := base64.StdEncoding.DecodeString(b64)
+	if err != nil {
+		return err
+	}
+	samples, err := decodePCM16LE(pcm)
+	if err != nil {
+		return err
+	}
+	return input.AppendPCM16(encodePCM16LE(resamplePCM16(samples, rate, realtimeAudioNativeRate)))
 }
 
 func (b *realtimeAudioBridge) writeEvent(event []byte) {
@@ -479,6 +594,7 @@ func (b *realtimeAudioBridge) handleClientEvent(raw []byte) {
 		return
 	}
 	eventType := strings.TrimSpace(gjson.GetBytes(raw, "type").String())
+	b.eventID = gjson.GetBytes(raw, "event_id").String()
 	switch eventType {
 	case "session.update":
 		b.handleSessionUpdate(raw)
@@ -487,7 +603,7 @@ func (b *realtimeAudioBridge) handleClientEvent(raw []byte) {
 		if !b.ensureCall() {
 			return
 		}
-		if err := b.liveInput().AppendBase64(gjson.GetBytes(raw, "audio").String()); err != nil {
+		if err := b.appendClientAudio(b.liveInput(), gjson.GetBytes(raw, "audio").String()); err != nil {
 			b.writeError(invalidAudioRequest("input_audio_buffer.append failed: " + err.Error()))
 		}
 
@@ -530,13 +646,30 @@ func (b *realtimeAudioBridge) handleClientEvent(raw []byte) {
 			b.writeError(apiErr)
 			return
 		}
-		if len(sideband) > 0 && !b.sendUpstream(sideband) {
-			return
+		if len(sideband) > 0 {
+			if !b.ensureCall() {
+				return
+			}
+			// Live acknowledges this append like any other; the placeholder keeps the FIFO aligned and produces no public event.
+			b.mu.Lock()
+			b.acks.acks[""] = append(b.acks.acks[""], &liveAck{remaining: 1})
+			b.mu.Unlock()
+			if !b.sendUpstream(sideband) {
+				return
+			}
 		}
 		b.writeEvent(ack)
 
+	case "session.commentary.append":
+		b.handleContextAppend(raw, "session.commentary.appended", "speakable", true)
+	case "session.thinking.append":
+		b.handleContextAppend(raw, "session.thinking.appended", "commentary", true)
+	case "session.instructions.append":
+		// Instructions are context for later turns, never spoken: always the session-level quiet channel.
+		b.handleContextAppend(raw, "session.instructions.appended", "commentary", false)
+
 	case "response.create":
-		// Upstream rejects parameters on response.create, so only the bare event is forwarded.
+		// Upstream rejects parameters on response.create, so only the bare event is forwarded. It is forwarded even when turn_detection.create_response is false, because the client asked for it; the bridge itself never sends response.create, and Live still decides when to speak on its own turn detection.
 		b.sendUpstream([]byte(`{"type":"response.create"}`))
 
 	case "response.cancel":
@@ -550,9 +683,9 @@ func (b *realtimeAudioBridge) handleClientEvent(raw []byte) {
 	}
 }
 
-// handleSessionUpdate applies a session.update. Before the call exists it only records the config (the call is then created from it, which is how instructions and voice reach ChatGPT Live) and acks. Once the call exists, instructions and voice cannot change: they are not forwarded, the session.updated ack reflects the accepted fields, and each refused field gets an immutable_field_update error event while the session continues.
+// handleSessionUpdate applies a session.update. Before the call exists it only records the config and acks; it never creates the call, so the first audio, item or response.create creates it from the latest config, which is how instructions, voice and delegation reach ChatGPT Live. Once the call exists, instructions and voice cannot change: they are not forwarded, the session.updated ack reflects the accepted fields, and each refused field gets an immutable_field_update error event while the session continues.
 func (b *realtimeAudioBridge) handleSessionUpdate(raw []byte) {
-	// startMu makes "has the call been created" and the config change one step: an update that races the grace timer either lands in the creation session or is refused, never silently lost.
+	// startMu makes "has the call been created" and the config change one step: an update that races a creating trigger either lands in the creation session or is refused, never silently lost.
 	b.startMu.Lock()
 	b.stateMu.RLock()
 	created := b.call != nil
@@ -591,9 +724,40 @@ func (b *realtimeAudioBridge) handleSessionUpdate(raw []byte) {
 	}
 	b.writeEvent(ack)
 	for _, field := range refused {
-		b.writeError(api.NewAPIError(api.ErrorCode("immutable_field_update"), field+" cannot be updated after initialization.", api.ErrorTypeInvalidRequest))
+		param := "session.instructions"
+		if field == "Voice" {
+			param = "session.audio.output.voice"
+		}
+		b.writeParamError("immutable_field_update", param, field+" cannot be updated after initialization.")
 	}
-	if !created {
-		b.ensureCall()
+}
+
+// handleContextAppend serves the extension events session.commentary.append (spoken), session.thinking.append (quiet) and session.instructions.append (quiet, session level). Like conversation.item.create they need the call, so they create it. The content is chunked, one internal append per chunk, and the matching acknowledgement is sent once the last chunk is acknowledged.
+func (b *realtimeAudioBridge) handleContextAppend(raw []byte, ackEvent, channel string, delegationAllowed bool) {
+	delegationID := ""
+	if delegationAllowed {
+		if d := gjson.GetBytes(raw, "delegation_id"); d.Exists() && d.Type != gjson.Null {
+			if d.Type != gjson.String {
+				b.writeParamError("invalid_value", "delegation_id", "delegation_id must be a string or null.")
+				return
+			}
+			delegationID = d.String()
+		}
+	}
+	events, appendErr := liveContextAppendEvents(delegationID, channel, gjson.GetBytes(raw, "content"))
+	if appendErr != nil {
+		b.writeParamError(appendErr.Code, appendErr.Param, appendErr.Message)
+		return
+	}
+	if !b.ensureCall() {
+		return
+	}
+	b.mu.Lock()
+	b.acks.acks[delegationID] = append(b.acks.acks[delegationID], &liveAck{event: ackEvent, clientEventID: b.eventID, remaining: len(events)})
+	b.mu.Unlock()
+	for _, event := range events {
+		if !b.sendUpstream(event) {
+			return
+		}
 	}
 }
