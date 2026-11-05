@@ -89,21 +89,30 @@ type liveWSTestServer struct {
 	call    *liveWSFakeCall
 	session chan []byte
 	opens   atomic.Int32
+	// swapCalls are the calls handed out after the first one, in order; swapErr, when set, fails the next open instead.
+	swapCalls chan *liveWSFakeCall
+	swapErr   atomic.Pointer[liveGatewayError]
 }
 
 func newLiveWSTestServer(t *testing.T, allowLive, supported bool) *liveWSTestServer {
 	t.Helper()
 	gin.SetMode(gin.TestMode)
-	srv := &liveWSTestServer{call: newLiveWSFakeCall(), session: make(chan []byte, 4)}
+	srv := &liveWSTestServer{call: newLiveWSFakeCall(), session: make(chan []byte, 4), swapCalls: make(chan *liveWSFakeCall, 4)}
 
 	prevOpen, prevSupported, prevEncoder := openRealtimeAudioCall, realtimeAudioBridgeSupported, newRealtimeAudioEncoder
 	t.Cleanup(func() {
 		openRealtimeAudioCall, realtimeAudioBridgeSupported, newRealtimeAudioEncoder = prevOpen, prevSupported, prevEncoder
 	})
 	openRealtimeAudioCall = func(_ *Handler, _ *gin.Context, session json.RawMessage) (realtimeAudioCallConn, *liveGatewayError) {
-		srv.opens.Add(1)
+		n := srv.opens.Add(1)
 		srv.session <- append([]byte(nil), session...)
-		return srv.call, nil
+		if n == 1 {
+			return srv.call, nil
+		}
+		if gerr := srv.swapErr.Swap(nil); gerr != nil {
+			return nil, gerr
+		}
+		return <-srv.swapCalls, nil
 	}
 	realtimeAudioBridgeSupported = func() bool { return supported }
 	newRealtimeAudioEncoder = func() (opusEncoder, error) { return liveWSFakeEncoder{}, nil }
