@@ -101,8 +101,8 @@ func TestParseModelPricingPayloadModelsDev(t *testing.T) {
 				"text-embedding-3-large": {"id": "text-embedding-3-large"}
 			}
 		},
-		"anthropic": {
-			"id": "anthropic",
+		"reseller": {
+			"id": "reseller",
 			"models": {"gpt-5.5": {"cost": {"input": 1, "output": 1}}}
 		}
 	}`)

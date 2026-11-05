@@ -77,10 +77,6 @@ func intelligenceCheckSnapshot(s ic.Settings, a IntelligenceCheckAccount, source
 		return IntelligenceCheckRun{}, errIntelligenceNoEnabledQuestion
 	}
 	model, effort := s.GPTModel, s.ReasoningEffort
-	if a.Channel == "claude" {
-		model = s.ClaudeModel
-		effort = ""
-	}
 	snapshot := s
 	snapshot.Questions = nil
 	r := IntelligenceCheckRun{CredentialGeneration: a.CredentialGeneration, AccountID: a.AccountID, AccountName: a.AccountName, Channel: a.Channel, Source: source, Status: "queued", ConfigRevision: s.Revision, ManualRevision: a.ManualRevision, Model: model, ReasoningEffort: effort, JudgeMode: s.JudgeMode, Question: question, Settings: snapshot, CreatedAt: created.UTC()}

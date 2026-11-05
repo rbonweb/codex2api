@@ -19,7 +19,6 @@ export interface IntelligenceSettings {
   revision: number;
   enabled: boolean;
   gpt_model: string;
-  claude_model: string;
   reasoning_effort: string;
   judge_mode: "answer" | "latency" | "both";
   interval_seconds: number;

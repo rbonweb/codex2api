@@ -26,14 +26,7 @@ func nativeGuardCoreConfig() outputguard.Config {
 
 // selectNativeProjector 为上游通道选择真实 upstream projector。
 // 严禁按客户端下游请求路径盲目推测上游协议：Codex/Responses 永远是 Responses SSE，其余按上游协议名分派。
-// isNativeClaude 仅为兼容尚未迁移的调用方而保留，已不再参与选择。
-func selectNativeProjector(protocol string, isNativeClaude bool, isCodexResponses bool) ProtocolProjector {
-	return selectNativeProjectorWithScope(protocol, isNativeClaude, isCodexResponses, "")
-}
-
-// selectNativeProjectorWithScope 为指定 attempt 作用域选择投影器。
-// Responses 与 Chat 投影器没有按 block 区分的通道，因此 scope 不参与选择。
-func selectNativeProjectorWithScope(protocol string, _ bool, isCodexResponses bool, _ string) ProtocolProjector {
+func selectNativeProjector(protocol string, isCodexResponses bool) ProtocolProjector {
 	if isCodexResponses {
 		return NewResponsesProjector()
 	}

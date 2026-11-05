@@ -132,38 +132,6 @@ func (h *Handler) nextAccountForSessionWithDispatchGuard(sessionID string, apiKe
 	return h.store.NextForSessionWithDispatchGuardForProvider(opts, sessionID, apiKeyID, exclude, filter)
 }
 
-// selectionOptionsForRequest 依据当前请求渠道与 public model 组装选号上下文，
-// 交给 Store 走既有选号逻辑。
-func selectionOptionsForRequest(c *gin.Context, model string, policy auth.DispatchPolicy) auth.SelectionOptions {
-	return selectionOptionsForRequestWithProvider(c, model, policy, "")
-}
-
-// selectionOptionsForRequestWithProvider 与 selectionOptionsForRequest 相同，只是用
-// forceProvider 覆盖请求渠道作为选号渠道（forceProvider 为空表示沿用请求渠道）。
-func selectionOptionsForRequestWithProvider(c *gin.Context, model string, policy auth.DispatchPolicy, forceProvider string) auth.SelectionOptions {
-	provider := strings.TrimSpace(forceProvider)
-	if provider == "" {
-		provider = requestUpstreamChannel(c)
-	}
-	return auth.SelectionOptions{
-		Provider: provider,
-		Model:    strings.TrimSpace(model),
-		Policy:   policy,
-	}
-}
-
-// selectionOptionsForCandidatePool 组装选号上下文，并由入口声明是否忽略请求渠道
-// （antigravityExcluded）。
-//
-// 为 true 时只保留 Policy、不带 Provider：compact 执行器与 native remote compaction
-// 的候选池不沿用请求渠道。
-func selectionOptionsForCandidatePool(c *gin.Context, model string, policy auth.DispatchPolicy, antigravityExcluded bool) auth.SelectionOptions {
-	if antigravityExcluded {
-		return auth.SelectionOptions{Policy: policy}
-	}
-	return selectionOptionsForRequest(c, model, policy)
-}
-
 func dispatchPolicyForModel(model string) auth.DispatchPolicy {
 	if isProOnlyModel(model) {
 		return auth.DispatchPolicySpark
@@ -3459,7 +3427,7 @@ func (h *Handler) Responses(c *gin.Context) {
 	capacityShedRetries := map[int64]int{}
 	dispatchPolicy := dispatchPolicyForModel(effectiveModel)
 	// native remote compaction 的候选池不沿用请求渠道，只带调度策略。
-	selectionOpts := selectionOptionsForCandidatePool(c, effectiveModel, dispatchPolicy, nativeRemoteCompactionV2)
+	selectionOpts := auth.SelectionOptions{Policy: dispatchPolicy}
 	var affinityGuard auth.SessionAffinityGuard
 	var selectionErr error
 	for attempt := 0; ; attempt++ {
@@ -4750,7 +4718,7 @@ func (h *Handler) ResponsesCompact(c *gin.Context) {
 	invalidEncryptedContentRetried := false
 
 	dispatchPolicy := dispatchPolicyForModel(effectiveModel)
-	selectionOpts := selectionOptionsForCandidatePool(c, effectiveModel, dispatchPolicy, true)
+	selectionOpts := auth.SelectionOptions{Policy: dispatchPolicy}
 	for attempt := 0; ; attempt++ {
 		var account *auth.Account
 		var stickyProxyURL string
@@ -5383,7 +5351,7 @@ func (h *Handler) ChatCompletions(c *gin.Context) {
 
 	capacityShedRetries := map[int64]int{}
 	dispatchPolicy := dispatchPolicyForModel(effectiveModel)
-	selectionOpts := selectionOptionsForRequest(c, effectiveModel, dispatchPolicy)
+	selectionOpts := auth.SelectionOptions{Policy: dispatchPolicy}
 	var affinityGuard auth.SessionAffinityGuard
 	var selectionErr error
 	for attempt := 0; ; attempt++ {

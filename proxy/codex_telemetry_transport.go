@@ -51,7 +51,7 @@ func sendCodexTelemetryJob(job codexTelemetryJob) error {
 // 分析请求携带账号的 Bearer access token；Go 默认策略只在跨 host 重定向时剥离
 // Authorization，同 host 的 https→http 降级不会剥离。池化客户端按账号复用、
 // 不可就地改写，因此这里浅拷贝一份并覆盖 CheckRedirect，避免凭证被转发到
-// 重定向目标。与 grok_media.go / claude_api_key.go 的既有做法一致。
+// 重定向目标。
 func codexTelemetryHTTPClient(base *http.Client) *http.Client {
 	if base == nil {
 		return &http.Client{CheckRedirect: codexTelemetryRejectRedirect}

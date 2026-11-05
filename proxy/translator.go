@@ -1566,8 +1566,7 @@ func dropBareReasoningInputItems(body map[string]any) bool {
 }
 
 // codexEncryptedContentPrefix 是 Codex 上游 reasoning.encrypted_content 的
-// Fernet 令牌前缀：版本字节 0x80 使 base64 编码恒以 "gAAAA" 开头。其他渠道
-// （如 Grok）的密文是裸 base64，不含此前缀，可据此区分血统。
+// Fernet 令牌前缀：版本字节 0x80 使 base64 编码恒以 "gAAAA" 开头，可据此区分血统。
 const codexEncryptedContentPrefix = "gAAAA"
 
 func dropBareReasoningInputValue(value any) (any, bool, bool) {

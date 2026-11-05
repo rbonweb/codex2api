@@ -7,11 +7,9 @@ import (
 
 // SelectionOptions describes the scheduling context of one account selection.
 //
-// Provider is the upstream channel a downstream key is limited to (empty means unrestricted), Model is the requested public model and Policy is the usage gate (Standard or Spark).
+// Policy is the usage gate (Standard or Spark).
 type SelectionOptions struct {
-	Provider string
-	Model    string
-	Policy   DispatchPolicy
+	Policy DispatchPolicy
 }
 
 // NextForSessionWithDispatchGuardForProvider is the session selection entry that carries SelectionOptions.

@@ -1187,7 +1187,7 @@ func ResolveExplicitSessionID(headers http.Header, body []byte) string {
 			}
 		}
 		// opencode 等第三方 CLI 客户端用 x-session-id / x-session-affinity 标识会话
-		// （值为 ses_...，非 UUID，出站上由 claudeUpstreamSessionID 等确定性派生为
+		// （值为 ses_...，非 UUID，出站上确定性派生为
 		// UUIDv7）。优先级低于既有显式头，高于 body prompt_cache_key。
 		for _, key := range []string{"X-Session-Id", "X-Session-Affinity"} {
 			if v := strings.TrimSpace(headers.Get(key)); v != "" {
