@@ -555,7 +555,12 @@ Real-time voice is served by the ChatGPT Live backend and exposed with OpenAI Re
 
 #### WebRTC calls: `POST /v1/realtime/calls`
 
-`POST /realtime/calls` is the same endpoint without the `/v1` prefix. The body can take one of three shapes.
+`POST /realtime/calls` is the same endpoint without the `/v1` prefix. The body is read by its `Content-Type`:
+
+- `multipart/form-data`: `sdp` and `session` form fields.
+- `application/json`: an object with `sdp` and `session`. Any other type is also parsed as JSON.
+- `application/sdp`: the raw SDP offer, with no session.
+- `text/plain` or no content type: raw SDP when the body starts with `v=0`, otherwise JSON.
 
 Multipart form:
 
@@ -584,13 +589,13 @@ curl "https://your-gateway/v1/realtime/calls?model=gpt-realtime" \
   --data-binary @offer.sdp
 ```
 
-Session fields that are honoured:
+Only three session fields carry over, and the upstream session is built from them:
 
 - `model` (or `?model=`, which wins): must be a realtime or live model name, otherwise 400. The upstream always runs `gpt-live-1-codex`.
 - `voice` or `audio.output.voice`: mapped to a ChatGPT Live voice (see the mapping tables below).
 - `instructions`: sent upstream. When empty, the default instruction is used.
 
-Session fields that are ignored: `type`, `output_modalities`, `modalities`, the audio format fields, `turn_detection`, `tools` and any other field. The call is always audio output, so a call cannot be text-only.
+Every other session field is ignored, including `type`, `output_modalities`, `modalities`, the audio format fields, `turn_detection` and `tools`. The call is always audio output, so a call cannot be text-only.
 
 The response is `200` with `Content-Type: application/sdp` and a `Location: /v1/live/<call_id>` header. Connect the client with that answer SDP.
 
@@ -666,14 +671,15 @@ Form fields:
 | --- | --- | --- |
 | `file` | yes | WAV or raw PCM. At most 25 MiB and 120 seconds. |
 | `model` | no | `gpt-4o-transcribe` (default), `gpt-4o-mini-transcribe` or `whisper-1`. All three use the same upstream, so they return the same kind of transcript. `gpt-4o-transcribe-diarize` returns 400. |
-| `language` | no | Added to the instructions as a hint. |
-| `prompt` | no | Added to the instructions as context. |
+| `language` | no | An ISO language code with an optional region, such as `en`, `fr` or `pt-BR`. Added to the instructions as a hint. Other values return 400. |
+| `prompt` | no | Added to the instructions as context. At most 1000 characters, otherwise 400. |
 | `response_format` | no | `json` (default) or `text`. Other values return 400. |
 | `stream` | no | `true` returns 400. |
 
 Accepted formats:
 
 - WAV with 16-bit PCM. Other WAV encodings (8-bit, float, non-PCM) return 400. Sample rates from 8 kHz to 96 kHz are resampled to 24 kHz, and stereo is mixed down to mono.
+- Streamed WAV files whose `data` chunk declares a size of 0 or more bytes than the file holds are read to the end of the file, as ffmpeg pipes write them.
 - Raw PCM, when the filename ends in `.pcm` or `.raw`, or the content type is `audio/pcm`, `audio/l16` or `audio/x-pcm`. The data must be 16-bit little-endian, 24 kHz, mono.
 - Anything else, such as MP3 or M4A, returns 400 and lists the supported formats.
 
@@ -681,9 +687,10 @@ Limits and errors:
 
 - A file over 25 MiB returns 413.
 - Audio over 120 seconds returns 400.
-- Audio is streamed at real time (1x). A 30-second file takes about 30 seconds plus setup and a 1.5-second trailing silence.
+- Audio is fed at real time (1x), so a 30-second file takes about 30 seconds plus call setup. A 1.5-second trailing silence follows the audio so the turn ends.
 - If the transcript does not arrive within the audio duration plus 20 seconds, the request returns 504.
 - Upstream failures return 502.
+- Builds without the `opus` tag answer 501 `audio_bridge_unavailable` before the upload is read.
 
 #### Voice and model mapping
 
