@@ -19,7 +19,6 @@ import {
   Info,
   InfinityIcon,
   KeyRound,
-  Languages,
   LayoutDashboard,
   Loader2,
   LogIn,
@@ -87,7 +86,7 @@ function normalizeUsageView(value?: string): UsageView {
 }
 
 export default function APIKeyUsagePortal() {
-  const { t, i18n } = useTranslation()
+  const { t } = useTranslation()
   const { siteName, siteLogo } = useBranding()
   const { view } = useParams()
   const navigate = useNavigate()
@@ -98,7 +97,7 @@ export default function APIKeyUsagePortal() {
     return stored.key ? stored.remember : true
   })
   const [activeAPIKey, setActiveAPIKey] = useState(() => readStoredAPIKey().key)
-  // 记录最新的有效 key，用于丢弃切换/退出前发出的过期响应
+  // Track the latest valid key so stale responses sent before a switch or sign-out are discarded
   const activeAPIKeyRef = useRef(activeAPIKey)
   const [showKey, setShowKey] = useState(false)
   const [range, setRange] = useState<UsageRange>('30d')
@@ -111,7 +110,7 @@ export default function APIKeyUsagePortal() {
   const [logFilter, setLogFilter] = useState<PublicAPIKeyUsageLogFilter>({})
   const logoSrc = siteLogo || DEFAULT_SITE_LOGO
 
-  // 已登录后的刷新/切换时间范围（沿用当前会话的 key）
+  // Refresh or change the time range after sign-in (reuses the current session's key)
   const reload = async (nextRange = range, nextLogPage = logPage, nextLogPageSize = logPageSize, nextFilter = logFilter) => {
     const requestAPIKey = activeAPIKey
     if (!requestAPIKey) return
@@ -135,7 +134,7 @@ export default function APIKeyUsagePortal() {
     }
   }
 
-  // 挂载时若浏览器记住了 key，则自动登录；失败则回到登录窗口
+  // On mount, sign in automatically if the browser remembered a key; on failure, return to the sign-in window
   useEffect(() => {
     if (!activeAPIKey) {
       setBootstrapping(false)
@@ -172,7 +171,7 @@ export default function APIKeyUsagePortal() {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [])
 
-  // 登录窗口提交：校验 key 成功后才进入仪表盘并记住会话
+  // Sign-in window submit: enter the dashboard and remember the session only after the key is validated
   const handleLogin = async (event: FormEvent<HTMLFormElement>) => {
     event.preventDefault()
     const trimmed = apiKeyInput.trim()
@@ -230,7 +229,7 @@ export default function APIKeyUsagePortal() {
     void reload(range, 1, logPageSize, {})
   }
 
-  // 非法的子路由回退到概览
+  // An invalid sub-route falls back to the overview
   useEffect(() => {
     if (view && !USAGE_VIEWS.includes(view as UsageView)) {
       navigate('/key-usage/overview', { replace: true })
@@ -265,14 +264,11 @@ export default function APIKeyUsagePortal() {
   const toolbar = (
     <div className="flex items-center gap-2">
       <DisplayTimezoneSelect compact className="hidden w-[240px] sm:block" />
-      <Button variant="outline" size="icon-sm" onClick={() => i18n.changeLanguage(i18n.language === 'zh' ? 'en' : 'zh')} title={t('common.themeStyle')}>
-        <Languages className="size-4" />
-      </Button>
       <CinematicThemeSwitcher size="compact" />
     </div>
   )
 
-  // 启动时自动登录校验中：显示加载占位，避免登录窗口闪现
+  // Auto sign-in check at startup: show a loading placeholder to avoid flashing the sign-in window
   if (bootstrapping) {
     return (
       <div className="flex min-h-dvh items-center justify-center bg-background text-foreground">
@@ -284,7 +280,7 @@ export default function APIKeyUsagePortal() {
     )
   }
 
-  // 未登录：渲染登录窗口
+  // Not signed in: render the sign-in window
   if (!activeAPIKey) {
     return (
       <div className="relative flex min-h-dvh items-center justify-center overflow-hidden bg-background px-4 py-10 text-foreground">
@@ -426,7 +422,7 @@ export default function APIKeyUsagePortal() {
         {data && summary ? (
           <div className="space-y-5">
 
-            {/* 概览：核心指标 + 模型/端点分布 */}
+            {/* Overview: key metrics + model/endpoint distribution */}
             {activeView === 'overview' ? (
               <div className="space-y-5">
                 <div className="grid grid-cols-1 gap-3 min-[560px]:grid-cols-2 xl:grid-cols-4">
@@ -472,7 +468,7 @@ export default function APIKeyUsagePortal() {
               </div>
             ) : null}
 
-            {/* 额度与限额：配额 + 窗口用量 + 限额 */}
+            {/* Quota and limits: quota + window usage + limits */}
             {activeView === 'quota' ? (
               <div className="space-y-5">
                 <div className="grid gap-5 lg:grid-cols-2 xl:grid-cols-3">
@@ -484,7 +480,7 @@ export default function APIKeyUsagePortal() {
               </div>
             ) : null}
 
-            {/* 请求日志：整页表格 */}
+            {/* Request log: full-page table */}
             {activeView === 'logs' ? (
               <RecentLogsTable
                 logs={data.usage.recent_logs}
@@ -511,7 +507,7 @@ export default function APIKeyUsagePortal() {
 }
 
 // ============================================================================
-// UsageTabs —— 顶栏内的分段标签，按 URL 切换概览/额度/日志
+// UsageTabs: segmented tabs in the top bar, switching between overview, quota and logs by URL
 // ============================================================================
 function UsageTabs({ activeView, className = '' }: { activeView: UsageView; className?: string }) {
   const { t } = useTranslation()
@@ -551,8 +547,8 @@ function UsageTabs({ activeView, className = '' }: { activeView: UsageView; clas
 }
 
 // ============================================================================
-// 强调色系统 —— 与管理端 Usage 面板保持一致：每个面板携带一种强调色，
-// 贯穿图标底色、标题分隔线、进度条与排名徽标，亮/暗色与各 theme-* 调色板自适应。
+// Accent color system, consistent with the admin Usage panel: each panel carries one accent color,
+// applied across the icon background, title divider, progress bar and rank badge, adapting to light/dark and each theme-* palette.
 // ============================================================================
 type AccentKey = 'blue' | 'emerald' | 'violet' | 'amber' | 'cyan'
 
@@ -626,7 +622,7 @@ function StatusPill({ status, label }: { status: string; label: string }) {
   )
 }
 
-// PanelShell / PanelHeader —— 复刻管理端面板外壳与表头
+// PanelShell / PanelHeader: replicate the admin panel shell and header
 function PanelShell({ children }: { children: ReactNode }) {
   return (
     <Card className="group/panel h-full py-0 transition-all duration-200 hover:-translate-y-0.5 hover:shadow-md">
@@ -699,7 +695,7 @@ function KeyInfoCard({ data }: { data: PublicAPIKeyUsageResponse }) {
 }
 
 // ============================================================================
-// QuotaHero —— 顶部额度总览：密钥身份 + 剩余额度 + 额度进度条 + 窗口/模型额度剩余
+// QuotaHero: top quota overview: key identity + remaining quota + quota progress bar + remaining window/model quota
 // ============================================================================
 type QuotaTone = 'emerald' | 'amber' | 'red'
 
@@ -948,9 +944,9 @@ function WindowRow({ label, usage, costLimit, tokenLimit }: { label: string; usa
   )
 }
 
-// WindowResetHint 展示服务端下发的窗口重置/回落时刻(issue #460):
-// fixed(自然日)窗口有确定的清零时刻;sliding 窗口没有单一重置点,
-// 只有最早一笔用量滚出窗口、额度开始回落的时间。
+// WindowResetHint shows the window reset or fall-back time sent by the server (issue #460):
+// a fixed (calendar day) window has a definite reset time; a sliding window has no single reset point,
+// only the time when the earliest usage rolls out of the window and quota starts to recover.
 function WindowResetHint({ usage }: { usage: PublicAPIKeyWindowUsage }) {
   const { t } = useTranslation()
   if (usage.window_kind === 'fixed' && usage.reset_at) {
@@ -972,7 +968,7 @@ function WindowResetHint({ usage }: { usage: PublicAPIKeyWindowUsage }) {
   return null
 }
 
-// formatDurationUntil 计算距目标时刻的剩余时长(向上取整到分钟)。
+// formatDurationUntil computes the time remaining until the target moment (rounded up to the minute).
 function formatDurationUntil(dateStr: string): string {
   const diff = new Date(dateStr).getTime() - Date.now()
   if (!Number.isFinite(diff) || diff <= 0) return '0m'
@@ -1214,7 +1210,7 @@ function statusFilterForCode(code: number): NonNullable<PublicAPIKeyUsageLogFilt
   return 'success'
 }
 
-// LogModelBadge —— 与管理端使用统计一致：渠道已知时展示渠道 logo，否则按模型名匹配品牌 logo；点击切换模型筛选
+// LogModelBadge: consistent with admin usage stats: shows the channel logo when the channel is known, otherwise matches a brand logo by model name; clicking toggles the model filter
 function LogModelBadge({ log, active, onToggle, compact = false }: { log: PublicAPIKeyUsageLog; active: boolean; onToggle: (model: string) => void; compact?: boolean }) {
   const { t } = useTranslation()
   const model = log.model || '-'
@@ -1369,7 +1365,7 @@ function LogFilterBar({
   )
 }
 
-// LogChannelSwitcher —— 复刻管理端 ChannelFilter 的滑块样式；公开页不依赖管理端的渠道可见性设置
+// LogChannelSwitcher: replicates the admin ChannelFilter slider style; the public page does not depend on the admin channel visibility settings
 function LogChannelSwitcher({ value, onChange }: { value: '' | UpstreamChannel; onChange: (next: '' | UpstreamChannel) => void }) {
   const { t } = useTranslation()
   const options: Array<{ key: '' | UpstreamChannel; label: string }> = [
@@ -1603,7 +1599,7 @@ function RecentLogsTable({
   )
 }
 
-// LogCostCell —— 价格列：悬停展示输入/输出/缓存的费用与单价明细（与管理端口径一致）
+// LogCostCell: price column: hover shows the cost and unit price breakdown for input/output/cache (same basis as the admin panel)
 function LogCostCell({ log }: { log: PublicAPIKeyUsageLog }) {
   const { t } = useTranslation()
   const mode = log.user_billing_mode || ''
@@ -1614,7 +1610,7 @@ function LogCostCell({ log }: { log: PublicAPIKeyUsageLog }) {
   if (!hasCostContext) {
     return <span className="font-mono text-[13px] text-muted-foreground">-</span>
   }
-  // 媒体模型按张/秒折算上游成本,没有 token 分项可拆,直接展示金额。
+  // Media models convert upstream cost per image or second and have no token breakdown, so the amount is shown directly.
   if (mediaBillingUnit(log.effective_model || log.model)) {
     return <span className="font-mono text-[13px] font-semibold tabular-nums text-emerald-600 dark:text-emerald-400">{formatUSD(log.user_billed)}</span>
   }
@@ -1747,7 +1743,7 @@ function formatTokenPricePerMillion(value?: number | null) {
   return `$${safeNumber(value).toFixed(4)} / 1M Token`
 }
 
-// formatCostCardValue —— 与管理端一致的金额自适应精度（大数省小数，小数留 6 位）
+// formatCostCardValue: adaptive amount precision, consistent with the admin panel (large numbers drop decimals, small ones keep 6 places)
 function formatCostCardValue(value?: number | null) {
   const amount = safeNumber(value)
   if (amount >= 100) return `$${amount.toLocaleString(undefined, { maximumFractionDigits: 2 })}`

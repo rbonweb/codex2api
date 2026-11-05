@@ -1,7 +1,7 @@
 import { type CSSProperties, type PropsWithChildren, type ReactNode, useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import { createPortal } from 'react-dom'
 import { NavLink, useLocation } from 'react-router-dom'
-import { LayoutDashboard, Users, Activity, Settings, Server, Languages, Globe, BookOpen, KeyRound, Image as ImageIcon, ShieldAlert, ExternalLink, ChevronLeft, Palette, Sun, Moon, LogOut, Download, Loader2, RefreshCw, Menu, X, CircleDollarSign, Braces, FlaskConical } from 'lucide-react'
+import { LayoutDashboard, Users, Activity, Settings, Server, Globe, BookOpen, KeyRound, Image as ImageIcon, ShieldAlert, ExternalLink, ChevronLeft, Palette, Sun, Moon, LogOut, Download, Loader2, RefreshCw, Menu, X, CircleDollarSign, Braces, FlaskConical } from 'lucide-react'
 import { useTranslation } from 'react-i18next'
 import { api, resetAdminAuthState } from '../api'
 import { DEFAULT_SITE_LOGO, isBrandingVideo, useBranding } from '../branding'
@@ -50,7 +50,7 @@ const mobileMoreNav = navDefs.filter((item) => !mobilePrimaryPathSet.has(item.to
 
 export default function Layout({ children }: PropsWithChildren) {
   const location = useLocation()
-  const { t, i18n } = useTranslation()
+  const { t } = useTranslation()
   const { currentVersion, frontendVersion, versionMismatch, hasUpdate, latestVersion, updateInfo, refreshVersion } = useVersionCheck(location.pathname)
   const { siteName, siteLogo, backgroundImage, backgroundOpacity, backgroundBlur, backgroundGlassOpacity, backgroundGlassBlur } = useBranding()
   const { theme, toggle } = useTheme()
@@ -62,8 +62,8 @@ export default function Layout({ children }: PropsWithChildren) {
   const [restartingAfterUpdate, setRestartingAfterUpdate] = useState(false)
   const restartPollRef = useRef<number | null>(null)
   const restartPollActiveRef = useRef(false)
-  // 侧栏折叠状态。lg+ 屏才生效;collapsed=true 时只显示 icon,列宽从 264 → 64。
-  // localStorage 持久化跨刷新保留选择。
+  // Sidebar collapsed state. Only takes effect on lg+ screens; when collapsed=true only icons show and the column width goes from 264 to 64.
+  // The choice is persisted in localStorage so it survives refreshes.
   const [sidebarCollapsed, setSidebarCollapsed] = useState<boolean>(() => {
     if (typeof window === 'undefined') return false
     try {
@@ -79,7 +79,7 @@ export default function Layout({ children }: PropsWithChildren) {
       try {
         window.localStorage.setItem('sidebar_collapsed', next ? '1' : '0')
       } catch {
-        /* localStorage 不可用时静默忽略 */
+        /* Ignore silently when localStorage is unavailable */
       }
       return next
     })
@@ -88,7 +88,7 @@ export default function Layout({ children }: PropsWithChildren) {
   const versionButtonRef = useRef<HTMLButtonElement | null>(null)
   const [versionPopoverPos, setVersionPopoverPos] = useState<{ top: number; left: number } | null>(null)
   const releaseURL = updateInfo?.release_url || (latestVersion
-    ? `https://github.com/james-6-23/codex2api/releases/tag/${encodeURIComponent(latestVersion)}`
+    ? `https://github.com/rbonweb/codex2api/releases/tag/${encodeURIComponent(latestVersion)}`
     : undefined)
   const canApplyUpdate = hasUpdate && updateInfo?.has_update === true && updateInfo.supported !== false
   const updateUnavailableReason = updateInfo?.unsupported_reason
@@ -125,8 +125,8 @@ export default function Layout({ children }: PropsWithChildren) {
         if (attempts >= 60) {
           stopRestartPolling()
           setRestartingAfterUpdate(false)
-          // 90s 内未观察到版本切换:服务可能仍在重启(容器/守护进程拉起较慢),
-          // 提示用户稍后手动刷新,而不是静默恢复按钮让人以为“没反应”。
+          // No version change observed within 90s: the service may still be restarting (the container or daemon is slow to come up),
+          // so tell the user to refresh manually later instead of silently restoring the button, which would look like nothing happened.
           showToast(t('common.restartTimeout'), 'error')
           return
         }
@@ -269,12 +269,6 @@ export default function Layout({ children }: PropsWithChildren) {
     }
   }, [backgroundGlassBlur, backgroundGlassOpacity, backgroundImage])
 
-  const toggleLang = () => {
-    const next = i18n.language === 'zh' ? 'en' : 'zh'
-    i18n.changeLanguage(next)
-    localStorage.setItem('lang', next)
-  }
-
   const handleThemeToggle = (e: React.MouseEvent) => {
     setSpinning(true)
     toggle(e)
@@ -291,7 +285,7 @@ export default function Layout({ children }: PropsWithChildren) {
     return location.pathname === item.to || location.pathname.startsWith(`${item.to}/`)
   }, [location.pathname])
 
-  // 表格重度页（账号管理 / 使用统计）在超宽屏上放开 96rem 限宽，减少横向滚动
+  // Table-heavy pages (account management / usage stats) lift the width cap to 96rem on ultra-wide screens to reduce horizontal scrolling
   const isFullWidthRoute =
     location.pathname === '/usage' ||
     location.pathname === '/accounts' ||
@@ -478,7 +472,7 @@ export default function Layout({ children }: PropsWithChildren) {
               </div>
             </div>
 
-            {/* Collapse toggle: 嵌入 brand 与 nav 之间,展开态显示文字,收起态只显示箭头 */}
+            {/* Collapse toggle: sits between the brand and the nav, shows text when expanded and only an arrow when collapsed */}
             <button
               type="button"
               onClick={toggleSidebarCollapsed}
@@ -571,15 +565,8 @@ export default function Layout({ children }: PropsWithChildren) {
               </span>
               <div className={`flex items-center gap-0.5 ${sidebarCollapsed ? 'flex-col' : ''}`}>
                 {!sidebarCollapsed && <CinematicThemeSwitcher size="mini" />}
-                <button
-                  onClick={toggleLang}
-                  className="flex items-center justify-center size-9 rounded-lg text-muted-foreground hover:text-foreground hover:bg-muted/70 transition-colors duration-150 text-[12px] font-bold"
-                  title={i18n.language === 'zh' ? 'English' : '中文'}
-                >
-                  <Languages className="size-[18px]" />
-                </button>
                 <a
-                  href="https://github.com/james-6-23/codex2api"
+                  href="https://github.com/rbonweb/codex2api"
                   target="_blank"
                   rel="noopener noreferrer"
                   className="flex items-center justify-center size-9 rounded-lg text-muted-foreground hover:text-foreground hover:bg-muted/70 transition-colors duration-150"
@@ -654,13 +641,6 @@ export default function Layout({ children }: PropsWithChildren) {
             </div>
             <div className="flex shrink-0 items-center gap-0.5">
               <button
-                onClick={toggleLang}
-                className="flex size-9 items-center justify-center rounded-xl text-muted-foreground transition-colors hover:bg-muted/70 hover:text-foreground"
-                title={i18n.language === 'zh' ? 'English' : '中文'}
-              >
-                <Languages className="size-4" />
-              </button>
-              <button
                 onClick={handleThemeToggle}
                 className="flex size-9 items-center justify-center rounded-xl text-muted-foreground transition-colors hover:bg-muted/70 hover:text-foreground"
                 title={theme === 'dark' ? t('common.switchToLight') : t('common.switchToDark')}
@@ -681,8 +661,8 @@ export default function Layout({ children }: PropsWithChildren) {
             </div>
           </header>
 
-          {/* 统一测宽：超宽屏上卡片/表格不再无界拉伸，与 Settings 固定导航的 72rem 上限同族。
-              账号管理/使用统计是列多的表格重度页，放开限宽让高分屏铺满（issue #522）。 */}
+          {/* Unified measure: cards and tables no longer stretch without bound on ultra-wide screens, in line with the 72rem cap of the fixed Settings navigation.
+              Account management and usage stats are table-heavy pages with many columns, so the cap is lifted to fill high-resolution screens (issue #522). */}
           <div className={`mx-auto w-full ${isFullWidthRoute ? 'max-w-none' : 'max-w-[96rem]'}`}>
             <SecurityBanner />
             <div className="min-h-full">{children}</div>

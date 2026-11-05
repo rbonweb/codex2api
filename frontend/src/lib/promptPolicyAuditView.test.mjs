@@ -48,6 +48,6 @@ test('CY audit chain has a read-only health check without generating incidents',
   assert.match(source, /auditHealth\.queue\.failed \+ auditHealth\.queue\.dropped_high/)
   assert.match(source, /auditHealth\.review_pool\.available/)
   assert.match(source, /auditHealth\.review_fail_closed/)
-  assert.equal(typeof JSON.parse(readFileSync(new URL('../locales/zh.json', import.meta.url), 'utf8')).promptFilter.auditHealth.fallbackLocal, 'string')
+  assert.equal(typeof JSON.parse(readFileSync(new URL('../locales/en.json', import.meta.url), 'utf8')).promptFilter.auditHealth.fallbackLocal, 'string')
   assert.doesNotMatch(source, /createSyntheticPromptPolicyIncident/)
 })
