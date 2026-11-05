@@ -126,10 +126,7 @@ Rate limits are returned in response headers:
 | `/api/admin/accounts/clean-rate-limited` | POST | Clean up 429 accounts |
 | `/api/admin/accounts/clean-error` | POST | Clean up error accounts |
 
-The Claude credential export supports `ids`, `filter=all|healthy` and `format=auto|json|zip`. The response contains
-OAuth tokens and is accessible only to admins. Clients should treat it as `Cache-Control: no-store` and, after the migration completes,
-securely delete the downloaded file. The import endpoint accepts a single object, an object array or `{"accounts":[...]}`, and maps groups by name and
-channel mapping; it does not use numeric group IDs from another instance.
+The Claude credential export supports `ids`, `filter=all|healthy` and `format=auto|json|zip`. The response contains OAuth tokens and is accessible only to admins. Clients should treat it as `Cache-Control: no-store` and, after the migration completes, securely delete the downloaded file. The import endpoint accepts a single object, an object array or `{"accounts":[...]}`, and maps groups by name and channel; it does not use numeric group IDs from another instance.
 
 **OAuth authorization:**
 
