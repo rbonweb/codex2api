@@ -10,12 +10,9 @@ import (
 	"github.com/codex2api/database"
 )
 
-
 var officialDollarPrice = regexp.MustCompile(`^\$(-?(?:\d{1,3}(?:,\d{3})+|\d+)(?:\.\d+)?)(?:\s|/|$)`)
 
 var officialPriceUnit = regexp.MustCompile(`(?i)^/\s*(?:mtok|1m\s+tokens|million\s+tokens|image|img|sec|second)(?:\s|$)`)
-
-
 
 // normalizeOfficialPricingModel 去除上下文注释并保留模型的独立价格键。
 func normalizeOfficialPricingModel(value string) string {

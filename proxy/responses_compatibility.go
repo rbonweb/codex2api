@@ -47,8 +47,7 @@ var codexRelayResponsesCompatibilityFields = []string{
 	"serviceTier",
 }
 
-// Selection, rather than an API key's channel label, determines which payload
-// preparation runs. The Codex/auto pools can also select a Responses relay.
+// The selected account determines whether strict Responses compatibility checks apply.
 func selectedCodexResponsesCompatibilityError(c *gin.Context, account *auth.Account, rawBody []byte) *api.APIError {
 	if account == nil || !strictResponsesCompatibilityRequested(c) {
 		return nil

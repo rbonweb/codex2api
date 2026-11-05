@@ -1,8 +1,8 @@
 package proxy
 
 import (
-	"fmt"
 	"bytes"
+	"fmt"
 	"net/http"
 	"strings"
 

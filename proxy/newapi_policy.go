@@ -592,7 +592,6 @@ func (h *Handler) rejectRequiredNewAPIIdentity(c *gin.Context, cfg promptfilter.
 	return true
 }
 
-
 // VerifyNewAPIPolicyHandshake validates the exact signed identity headers used
 // by NewAPI without invoking an upstream model or recording an offense.
 func (h *Handler) VerifyNewAPIPolicyHandshake(c *gin.Context) {

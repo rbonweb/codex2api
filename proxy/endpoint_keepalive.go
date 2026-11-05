@@ -41,9 +41,7 @@ func readAllLimitedWithContinuousRetryKeepalive(ctx context.Context, reader io.R
 	return body, nil
 }
 
-
-// setContinuousRetryKeepaliveActive 支持重试换号时在 relay 与 Claude OAuth
-// 的不同保活策略之间切换。
+// setContinuousRetryKeepaliveActive 在重试换号时按需启用或关闭下游保活。
 func setContinuousRetryKeepaliveActive(ctx context.Context, active bool) {
 	keepalive := continuousRetryKeepaliveForContext(ctx)
 	if keepalive == nil {

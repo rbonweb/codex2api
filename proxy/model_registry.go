@@ -43,11 +43,11 @@ type ModelInfo struct {
 
 // ModelCatalog is the admin-facing model list plus registry metadata.
 type ModelCatalog struct {
-	Models []string    `json:"models"`
-	Items  []ModelInfo `json:"items"`
-	LastSyncedAt *time.Time `json:"last_synced_at,omitempty"`
-	SourceURL    string     `json:"source_url"`
-	Warning      string     `json:"warning,omitempty"`
+	Models       []string    `json:"models"`
+	Items        []ModelInfo `json:"items"`
+	LastSyncedAt *time.Time  `json:"last_synced_at,omitempty"`
+	SourceURL    string      `json:"source_url"`
+	Warning      string      `json:"warning,omitempty"`
 }
 
 // ModelSyncResult is returned after a manual upstream sync.

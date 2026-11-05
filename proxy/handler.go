@@ -132,19 +132,14 @@ func (h *Handler) nextAccountForSessionWithDispatchGuard(sessionID string, apiKe
 	return h.store.NextForSessionWithDispatchGuardForProvider(opts, sessionID, apiKeyID, exclude, filter)
 }
 
-// selectionOptionsForRequest 依据当前请求渠道与 public model 组装选号上下文：Antigravity
-// 渠道请求据此在 Store 侧启用首绑 / Fresh 加权避险，其余渠道 Provider 非 antigravity，
-// Store 走既有选号逻辑，行为不变。
+// selectionOptionsForRequest 依据当前请求渠道与 public model 组装选号上下文，
+// 交给 Store 走既有选号逻辑。
 func selectionOptionsForRequest(c *gin.Context, model string, policy auth.DispatchPolicy) auth.SelectionOptions {
 	return selectionOptionsForRequestWithProvider(c, model, policy, "")
 }
 
 // selectionOptionsForRequestWithProvider 与 selectionOptionsForRequest 相同，只是用
 // forceProvider 覆盖请求渠道作为选号渠道（forceProvider 为空表示沿用请求渠道）。
-// native Gemini（generateContent / countTokens）的候选池被 antigravityOAuthChannelAccountFilter
-// 硬限定为 Antigravity OAuth：auto 渠道 Key 走到这两个入口时 requestUpstreamChannel 为空，
-// 不覆盖就会把加权避险整个关掉，所以这两个入口按候选池的真实归属强制
-// Provider=antigravity。
 func selectionOptionsForRequestWithProvider(c *gin.Context, model string, policy auth.DispatchPolicy, forceProvider string) auth.SelectionOptions {
 	provider := strings.TrimSpace(forceProvider)
 	if provider == "" {
@@ -157,13 +152,11 @@ func selectionOptionsForRequestWithProvider(c *gin.Context, model string, policy
 	}
 }
 
-// selectionOptionsForCandidatePool 组装选号上下文，并由入口声明候选池是否已显式排除
-// Antigravity 账号（antigravityExcluded）。
+// selectionOptionsForCandidatePool 组装选号上下文，并由入口声明是否忽略请求渠道
+// （antigravityExcluded）。
 //
-// 排除时只保留 Policy、不带 Provider：这类入口（compact 执行器、native remote
-// compaction）的候选只剩 Codex 官方与 relay 账号，而 Antigravity 渠道 Key 打到这些
-// 入口时 requestUpstreamChannel 仍是 antigravity，沿用请求渠道就会让 Store 侧对
-// Codex relay 候选套用 Antigravity 加权打分，并绕过 spread / HRW 一致哈希。
+// 为 true 时只保留 Policy、不带 Provider：compact 执行器与 native remote compaction
+// 的候选池不沿用请求渠道。
 func selectionOptionsForCandidatePool(c *gin.Context, model string, policy auth.DispatchPolicy, antigravityExcluded bool) auth.SelectionOptions {
 	if antigravityExcluded {
 		return auth.SelectionOptions{Policy: policy}
@@ -643,7 +636,7 @@ func usageLogErrorMessageImpl(statusCode int, body []byte, trustedText bool) str
 		}
 	}
 	if message == "" {
-		// Grok/xAI 风格错误体把说明放在顶层字符串 error 字段:
+		// 部分上游错误体把说明放在顶层字符串 error 字段:
 		// {"code":"invalid-argument","error":"..."}。仅在 error 是字符串时采用,
 		// 避免把对象形态的整段 JSON 打进 message。
 		if errField := gjson.GetBytes(body, "error"); errField.Type == gjson.String {
@@ -1310,9 +1303,8 @@ func requestBodyHasCompactionTrigger(body []byte) bool {
 	return requestBodyCompactionMeta(body).ProtocolTriggered
 }
 
-// storeHasAvailableCodexAccount 判断账号池中是否还有可调度的官方（非中转）账号。
-// 这是池级判断，不含 API Key 级的账号分组/套餐约束。流式 Remote Compact 不再
-// 用它来排除中转账号（issue #540）。
+// storeHasAvailableCodexAccount 判断账号池中是否还有可调度的 Codex 账号。
+// 这是池级判断，不含 API Key 级的账号分组/套餐约束。（issue #540）
 func (h *Handler) storeHasAvailableCodexAccount() bool {
 	if h == nil || h.store == nil {
 		return false
@@ -3372,7 +3364,6 @@ func (h *Handler) Responses(c *gin.Context) {
 	validateDone := time.Now()
 
 	// 2. 准备 Codex 上游请求体（Unmarshal→map→Marshal，一次序列化）。
-	// OpenAI Responses relay body 仅在实际命中 relay 账号时惰性生成，避免 Codex 路径重复转换。
 	// previous_response_id 缓存按下游 API Key 隔离，防止跨用户注入他人对话历史。
 	respCacheOwner := responseCacheOwner(apiKeyID)
 	multiAgentV2State := &codexMultiAgentV2State{}
@@ -3467,9 +3458,7 @@ func (h *Handler) Responses(c *gin.Context) {
 
 	capacityShedRetries := map[int64]int{}
 	dispatchPolicy := dispatchPolicyForModel(effectiveModel)
-	// native remote compaction 的候选池被 accountFilterForInlineCompactionModelWithOriginal
-	// 硬排除 Antigravity 账号，此时不带渠道，避免 Antigravity 渠道 Key 对 Codex relay
-	// 候选套用加权避险；普通 Responses 请求的候选池仍可能含 Antigravity 账号，保持渠道。
+	// native remote compaction 的候选池不沿用请求渠道，只带调度策略。
 	selectionOpts := selectionOptionsForCandidatePool(c, effectiveModel, dispatchPolicy, nativeRemoteCompactionV2)
 	var affinityGuard auth.SessionAffinityGuard
 	var selectionErr error
@@ -5345,8 +5334,7 @@ func (h *Handler) ChatCompletions(c *gin.Context) {
 	if releaseAPIKeyConcurrency != nil {
 		defer releaseAPIKeyConcurrency()
 	}
-	// /v1/chat/completions 同时允许官方 Codex OAuth 账号与中转（OpenAI Responses API）账号：
-	// 翻译后的请求体本身就是 Responses 形态，中转账号直接以 HTTP 转发（issue #181）。
+	// /v1/chat/completions 由 Codex 账号服务：翻译后的请求体本身就是 Responses 形态（issue #181）。
 	// A pinned request keeps only capability checks; cooldowns and pool
 	// routing belong to the external scheduler.
 	rateLimitGate := modelRateLimitGateFor(pin)

@@ -64,7 +64,6 @@ func withCompactionAffinity(ctx context.Context, affinity compactionAffinityReso
 	return context.WithValue(ctx, compactionAffinityContextKey{}, affinity)
 }
 
-
 func compactionContentDigest(encryptedContent string) string {
 	sum := sha256.Sum256([]byte(encryptedContent))
 	return hex.EncodeToString(sum[:])

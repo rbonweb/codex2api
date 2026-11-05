@@ -788,7 +788,6 @@ func shouldAutoInjectResponsesImageGenerationTool(body map[string]any) bool {
 	return !hasStructuredResponsesFormat(body)
 }
 
-
 func normalizeResponsesImageOnlyModel(body map[string]any) bool {
 	if len(body) == 0 {
 		return false
@@ -1845,7 +1844,6 @@ func TranslateRequest(rawJSON []byte) ([]byte, error) {
 	return json.Marshal(out)
 }
 
-
 // sanitizeChatCompletionToolHistory removes truncated ordinary function calls
 // together with their matching tool outputs before converting historical Chat
 // messages to Responses input. Empty arguments are the common provider shorthand
@@ -2060,7 +2058,6 @@ func copyChatResponsesControls(out map[string]any, req openAIRequest) error {
 		return fmt.Errorf("Chat Completions tool_choice cannot be represented by Responses")
 	}
 }
-
 
 func chatResponseFormatToResponses(raw json.RawMessage) map[string]any {
 	if len(raw) == 0 || strings.TrimSpace(string(raw)) == "null" {
@@ -2621,7 +2618,6 @@ func prepareResponsesBodyWithOptions(rawBody []byte, opts responsesBodyPrepareOp
 	return result, gjson.GetBytes(result, "input").Raw
 }
 
-
 // PrepareCompactResponsesBody 将 /responses/compact 请求转换为上游可接受的格式。
 // 它复用通用 Responses 预处理，但会移除 compact 端点不接受的自动注入字段。
 func PrepareCompactResponsesBody(rawBody []byte) ([]byte, string) {
@@ -2646,7 +2642,6 @@ func prepareCompactResponsesBodyForOwnerDetailed(rawBody []byte, owner string) r
 	prepared.Body, _ = sjson.DeleteBytes(prepared.Body, "client_metadata")
 	return prepared
 }
-
 
 // normalizeReasoningEffort 将 reasoning_effort 钳位到上游支持的值。
 // max 仅 gpt-5.6 起的模型支持(旧模型上游 400),无模型上下文时安全钳到 xhigh;

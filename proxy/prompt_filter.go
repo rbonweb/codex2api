@@ -140,7 +140,6 @@ func (h *Handler) inspectPromptFilterTextOpenAI(c *gin.Context, text string, end
 	return true
 }
 
-
 func promptFilterWarningMessage(evaluation promptGuardEvaluation) string {
 	if reason := strings.TrimSpace(evaluation.Verdict.Reason); reason != "" {
 		return reason

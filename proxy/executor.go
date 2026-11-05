@@ -37,7 +37,7 @@ import (
 // 从源头剔除，请求得以在别的连接上重建，而非挂死。
 //
 // 仅作用于 HTTP/2 直连（标准 transport 与 uTLS transport）；WebSocket
-// relay 链路已有完整的 Ping/Pong 保活与复用前探活，不走这里。
+// WebSocket 链路已有完整的 Ping/Pong 保活与复用前探活，不走这里。
 // 默认值对直连是合适的；经高延迟代理或弱网出口时 15s 偏激进——一次 PING 未按时
 // 应答就会拆掉整条连接及其上全部复用中的流（表现为 "http2: client connection
 // lost"）。故允许用 CODEX_HTTP2_READ_IDLE_TIMEOUT / CODEX_HTTP2_PING_TIMEOUT
@@ -115,8 +115,6 @@ func (e *poolEntry) expiredByAge(now int64, maxAge time.Duration) bool {
 }
 
 var clientPool sync.Map // map[string]*poolEntry, key = accountID|proxyURL|transportMode
-
-// map[accountID|baseURL]struct{}
 
 // clientPoolTTL 未使用超过此时间的 Client 将被淘汰
 const clientPoolTTL = 5 * time.Minute

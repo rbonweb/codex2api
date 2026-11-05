@@ -13,9 +13,9 @@ import (
 )
 
 const (
-	OfficialOpenAIPricingURL    = "https://developers.openai.com/api/docs/pricing"
-	officialPricingTimeout      = 20 * time.Second
-	officialPricingBodyLimit    = 4 << 20
+	OfficialOpenAIPricingURL = "https://developers.openai.com/api/docs/pricing"
+	officialPricingTimeout   = 20 * time.Second
+	officialPricingBodyLimit = 4 << 20
 )
 
 // OfficialPricingSyncOptions 指定本轮同步的模型和官方来源。

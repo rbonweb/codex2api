@@ -521,9 +521,8 @@ func (h *Handler) nextRetryAccountForContinuation(ctx context.Context, affinityK
 
 // nextRetryAccountForContinuationWithSelection 是续链（preserveBinding=true）重试的
 // SelectionOptions 变体：续链虽然只认已绑定的账号，但选号实现仍需要 Provider / Policy
-// 才能走对渠道分支。传 policy-only 的 SelectionOptions 会让 auto 渠道下的 Antigravity
-// 续链请求丢掉加权避险上下文。候选池已显式排除 Antigravity 的入口（compact 执行器 /
-// native remote compaction）例外，见 selectionOptionsForCandidatePool。
+// 才能走对渠道分支。compact 执行器 / native remote compaction 例外，
+// 见 selectionOptionsForCandidatePool。
 func (h *Handler) nextRetryAccountForContinuationWithSelection(ctx context.Context, affinityKey string, apiKeyID int64, exclusions *retryAccountExclusions, filter auth.AccountFilter, opts auth.SelectionOptions) (*auth.Account, string, error) {
 	account, proxyURL, _, err := h.nextRetryAccountWithGuard(ctx, affinityKey, apiKeyID, exclusions, filter, true, opts)
 	return account, proxyURL, err
@@ -554,8 +553,7 @@ func selectionFilterWithContext(ctx context.Context, filter auth.AccountFilter) 
 // nextRetryAccountWithGuard 是重试选号的底层实现：先在 accountSelectionTimeout 预算内
 // 做一次同步选号（过滤器同时受该预算约束），失败后触发调度状态对账并排队等待。阻塞者
 // 只剩本次请求自身的软 / 暂态排除项时跳过等待直接重置，硬排除、账号冷却与过滤器始终
-// 生效；预算耗尽返回上下文错误，队列准入被拒时上抛准入错误；候选集合全部因 Antigravity
-// 配额硬门禁被阻断时跳过排队等待，直接上抛类型化的配额阻断错误。
+// 生效；预算耗尽返回上下文错误，队列准入被拒时上抛准入错误。
 func (h *Handler) nextRetryAccountWithGuard(ctx context.Context, affinityKey string, apiKeyID int64, exclusions *retryAccountExclusions, filter auth.AccountFilter, preserveBinding bool, opts auth.SelectionOptions) (*auth.Account, string, auth.SessionAffinityGuard, error) {
 	if ctx == nil {
 		ctx = context.Background()

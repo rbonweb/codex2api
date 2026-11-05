@@ -13,11 +13,9 @@ import (
 const schedulerQueueFullMessage = "Scheduler wait queue is full. Retry after 1 second."
 const schedulerSelectionTimeoutMessage = "Account selection timed out. Retry after 1 second."
 
-
 func schedulerQueueFullAPIError() *api.APIError {
 	return api.NewAPIError(api.ErrCodeServiceUnavailable, schedulerQueueFullMessage, api.ErrorTypeServer)
 }
-
 
 func schedulerSelectionAPIError(err error) *api.APIError {
 	switch {
@@ -29,7 +27,6 @@ func schedulerSelectionAPIError(err error) *api.APIError {
 		return nil
 	}
 }
-
 
 // Queue overload and selection timeout are local retryable capacity errors.
 // Neither should start another quota scan or overwrite committed SSE.
