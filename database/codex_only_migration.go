@@ -149,9 +149,6 @@ func (db *DB) migrateCodexOnlyV1(ctx context.Context, tx *sql.Tx) error {
 	if err := rows.Close(); err != nil {
 		return err
 	}
-	if len(counts) == 0 {
-		log.Printf("[data_migration] %s: no removed-provider accounts found", dataMigrationCodexOnlyV1)
-	}
 	for _, upstream := range codexOnlyRemovedUpstreamTypes {
 		if n := counts[upstream]; n > 0 {
 			log.Printf("[data_migration] %s: deleting %d %s account(s)", dataMigrationCodexOnlyV1, n, upstream)
