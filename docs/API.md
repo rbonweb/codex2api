@@ -472,13 +472,9 @@ curl 'https://your-host/v1/images/jobs/42/result' \
 分页使用 `page`（默认 1）和 `page_size`（默认 20，最多 100），响应为
 `{ "items": [...], "total": 0, "page": 1, "page_size": 20 }`。
 账号开关及手动检测每次最多提交 200 个账号，状态条每次最多读取 500 个账号。
-`channel` 使用 `codex`。任务 `status` 为 `queued`、`running`、
-`normal`、`degraded`、`error`、`interrupted`；未检测账号的 `latest_status` 为 `unknown`。
-任务详情包含配置版本、题目快照、请求及响应模型、推理强度、判定模式、最终输出、
-耗时、token 用量、错误、发起来源及自动处置。`source` 为 `manual` 或 `automatic`，
-时间使用 RFC3339。状态条只返回最近 20 条终态摘要及 `enabled`、`quality_paused`、
-`action`，存在运行中或当前可执行的排队任务时附带 `active_run_id` 和 `active_status`。
-关闭自动检测后，不可执行的自动排队任务不占用按钮的活动状态，仍可提交手动检测。
+`channel` 使用 `codex`。任务 `status` 为 `queued`、`running`、`normal`、`degraded`、`error`、`interrupted`；未检测账号的 `latest_status` 为 `unknown`。
+
+任务详情包含配置版本、题目快照、请求及响应模型、推理强度、判定模式、最终输出、耗时、token 用量、错误、发起来源及自动处置。`source` 为 `manual` 或 `automatic`，时间使用 RFC3339。状态条只返回最近 20 条终态摘要及 `enabled`、`quality_paused`、`action`，存在运行中或当前可执行的排队任务时附带 `active_run_id` 和 `active_status`。关闭自动检测后，不可执行的自动排队任务不占用按钮的活动状态，仍可提交手动检测。
 
 ### 账号管理
 
