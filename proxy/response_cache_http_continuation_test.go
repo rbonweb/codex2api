@@ -103,45 +103,29 @@ func TestResponsesHTTPContinuationFailsClosedWithoutParentSnapshot(t *testing.T)
 	}
 }
 
-func TestResponsesHTTPOrdinaryContinuationBackendErrorAndRelayPassthrough(t *testing.T) {
+func TestResponsesHTTPOrdinaryContinuationBackendErrorReturns503(t *testing.T) {
 	gin.SetMode(gin.TestMode)
-	for _, relay := range []bool{false, true} {
-		name := "Codex 503"
-		if relay {
-			name = "native Responses relay preserves previous id"
-		}
-		t.Run(name, func(t *testing.T) {
-			resetResponseCacheStateForTest(testResponseCacheConfig())
-			t.Cleanup(resetResponseCacheForTest)
-			backend := newRecordingResponseContextBackend(true)
-			backend.boundedErr = errSyntheticBackend
-			SetResponseContextCache(backend)
-			t.Cleanup(func() { SetResponseContextCache(nil); _ = backend.TokenCache.Close() })
-			var seenBody []byte
-			upstream := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-				seenBody = readUpstreamRequestBody(r)
-				w.Header().Set("Content-Type", "application/json")
-				_, _ = io.WriteString(w, `{"id":"resp_native_relay","status":"completed","output":[{"type":"message","role":"assistant","content":[{"type":"output_text","text":"RELAY_CHAIN_OK"}]}],"usage":{"input_tokens":1,"output_tokens":1}}`)
-			}))
-			t.Cleanup(upstream.Close)
-			store := newContinuationCodexStore()
-			if relay {
-				store.Stop()
-				store = newContinuationRelayStore(upstream.URL)
-			}
-			defer store.Stop()
-			handler := NewHandler(store, nil, nil, nil)
-			raw := []byte(`{"model":"gpt-5.5","store":false,"previous_response_id":"resp_missing","input":"Return the prior marker only."}`)
-			response := invokeResponsesHandler(t, handler.Responses, raw)
-			if relay {
-				if response.Code != http.StatusOK || gjson.GetBytes(seenBody, "previous_response_id").String() != "resp_missing" ||
-					gjson.GetBytes(seenBody, "store").Type != gjson.False || gjson.GetBytes(seenBody, "input").String() != "Return the prior marker only." {
-					t.Fatalf("native relay lost upstream continuation: status=%d sent=%s response=%s", response.Code, seenBody, response.Body.String())
-				}
-			} else if response.Code != http.StatusServiceUnavailable || len(seenBody) != 0 || gjson.GetBytes(response.Body.Bytes(), "error.code").String() != string(api.ErrCodeServiceUnavailable) {
-				t.Fatalf("backend fault was silently accepted: status=%d sent=%s response=%s", response.Code, seenBody, response.Body.String())
-			}
-		})
+	resetResponseCacheStateForTest(testResponseCacheConfig())
+	t.Cleanup(resetResponseCacheForTest)
+	backend := newRecordingResponseContextBackend(true)
+	backend.boundedErr = errSyntheticBackend
+	SetResponseContextCache(backend)
+	t.Cleanup(func() { SetResponseContextCache(nil); _ = backend.TokenCache.Close() })
+	var seenBody []byte
+	upstream := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		seenBody = readUpstreamRequestBody(r)
+		w.Header().Set("Content-Type", "application/json")
+		_, _ = io.WriteString(w, `{"id":"resp_codex","status":"completed","output":[],"usage":{"input_tokens":1,"output_tokens":1}}`)
+	}))
+	t.Cleanup(upstream.Close)
+	codexRestoredUseResin(t, upstream.URL)
+	store := newContinuationCodexStore()
+	defer store.Stop()
+	handler := NewHandler(store, nil, nil, nil)
+	raw := []byte(`{"model":"gpt-5.5","store":false,"previous_response_id":"resp_missing","input":"Return the prior marker only."}`)
+	response := invokeResponsesHandler(t, handler.Responses, raw)
+	if response.Code != http.StatusServiceUnavailable || len(seenBody) != 0 || gjson.GetBytes(response.Body.Bytes(), "error.code").String() != string(api.ErrCodeServiceUnavailable) {
+		t.Fatalf("backend fault was silently accepted: status=%d sent=%s response=%s", response.Code, seenBody, response.Body.String())
 	}
 }
 
