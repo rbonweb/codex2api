@@ -583,10 +583,10 @@ The response is `201` with `{"session":{"id":"<call id>"},"transport":{"type":"w
 | Field | What it does |
 | --- | --- |
 | `model` | `gpt-live-1` (default), `gpt-live-1-codex`, or a realtime or live model name such as `gpt-realtime` or `gpt-live-*`. Other names return `unsupported_value`. Every name runs `gpt-live-1-codex` upstream. |
-| `instructions` | System instructions, at most 16,384 tokens (estimated as bytes / 4). Fixed after `session.start`. When empty, none are sent upstream. When set, the gateway also sends them upstream as a leading developer message, because ChatGPT Live does not apply the `instructions` field on its own. |
+| `instructions` | System instructions, at most 16,384 tokens (estimated as bytes / 4). Can change after the start with `session.update`, see [Changing instructions and voice](#changing-instructions-and-voice-during-a-session). When empty, none are sent upstream. When set, the gateway also sends them upstream as a leading developer message, because ChatGPT Live does not apply the `instructions` field on its own. |
 | `input` | Conversation history as message items: `type`, `role` (`user`, `assistant`, `developer` or `system`) and `content` text parts. At most 128 items and 8,192 tokens, otherwise `invalid_value`. The gateway sends `instructions` as one more item and the transcription language as another, so the limit is 127 with one of them set and 126 with both. |
 | `audio.format` | `{"type","rate"}`, WebSocket only. See [Audio formats](#audio-formats). WebRTC negotiates the format in the SDP, so this field returns `unsupported_value` there. |
-| `audio.output.voice` | A public voice name from the table below. Default `marin`. Unknown names return `unsupported_value`. The voice is fixed when the session starts: ChatGPT Live answers a later change with `immutable_field_update` ("Voice cannot be updated after initialization."), so open a new session to change it. |
+| `audio.output.voice` | A public voice name from the table below. Default `marin`. Unknown names return `unsupported_value`. Can change after the start on the WebSocket surface with `session.update`: ChatGPT Live refuses it ("Voice cannot be updated after initialization."), so the gateway replaces the call, see [Changing instructions and voice](#changing-instructions-and-voice-during-a-session). On a WebRTC session it returns `immutable_field_update`. |
 | `audio.input.transcription.language` | Gateway extension, in the shape of OpenAI Realtime GA. An ISO 639-1 code such as `gu`, `hi` or `en` (any case, stored in lower case); anything else returns `invalid_value`. See [Transcription language](#transcription-language). |
 | `delegation` | `type` must be `client`. `acknowledgement` is `auto` (default) or `none`, a gateway extension. `acknowledgement_delay_ms` is an integer of 0 or more, echoed back and not acted on. `responses` returns `unsupported_value`. |
 | `store` | A boolean. Accepted and echoed in `session.started`. |
@@ -602,7 +602,10 @@ Validation is strict. A field the gateway does not know returns `unknown_paramet
 | `unknown_parameter` | The field is not in the public schema. |
 | `unsupported_value` | The field is known but the value is not supported, such as an unknown model, voice or format. |
 | `missing_required_parameter` | A required field is absent, such as `type` or `session.start`'s `session`. |
-| `immutable_field_update` | A field that is fixed after the session starts was sent in `session.update`. |
+| `immutable_field_update` | A field that is fixed after the session starts was sent in `session.update`, or a voice change was sent on a WebRTC session. |
+| `voice_change_failed` | Gateway extension. A voice change could not open the new call. The old call stays. |
+| `delegation_cancelled` | Gateway extension. A voice change replaced the call while a delegation was open. `error.delegation_id` is the delegation. |
+| `append_not_delivered` | Gateway extension. A voice change replaced the call before an append was acknowledged. Send it again. |
 | `invalid_value` | The value has the wrong type or breaks a limit. |
 
 ##### Client events
@@ -616,7 +619,7 @@ Validation is strict. A field the gateway does not know returns `unknown_paramet
 | `session.commentary.append` | `content` (a string or text parts) and an optional `delegation_id`. The model speaks it. Acked with `session.commentary.appended`. |
 | `session.thinking.append` | Same fields as `session.commentary.append`. Quiet: the model uses it and may voice it as progress while a delegation is open. Acked with `session.thinking.appended`. |
 | `session.instructions.append` | `content`. Quiet session-level context for later turns, never spoken. Acked with `session.instructions.appended`. |
-| `session.update` | Any field returns `immutable_field_update`. An unknown field returns `unknown_parameter`. `delegation.responses` returns `unsupported_value`. |
+| `session.update` | `instructions` and `audio.output.voice` can change, see [Changing instructions and voice](#changing-instructions-and-voice-during-a-session). Every other field (`model`, `input`, `store`, `audio.format`, `audio.input`, `delegation`) returns `immutable_field_update`. An unknown field returns `unknown_parameter`. `delegation.responses` returns `unsupported_value`. The update is all or nothing: one rejected field rejects the whole event. Replied with `session.updated`. |
 | `session.close` | Ends the call. The gateway replies with `session.closed` and reason `close_requested`. |
 | `response.create`, `response.item.create` | Return `unsupported_value`. GPT-Live decides when to speak. |
 
@@ -636,11 +639,23 @@ An append whose `content` is longer than 500 bytes is split into chunks without 
 | `session.delegation.created` | `offset_ms` and `delegation` with `id`, `type` (`delegation`), `target` (`client`) and `content`, the text of the request. Gateway extension. |
 | `session.commentary.appended`, `session.thinking.appended`, `session.instructions.appended` | Acks for the matching append, with `client_event_id` when the client sent an `event_id`. |
 | `session.input_audio.muted`, `session.input_audio.unmuted` | Acks for mute and unmute. |
+| `session.updated` | `session`: the effective public session, and `client_event_id`. The answer to a `session.update`. |
+| `session.voice_changed` | `voice`, `previous_voice` and `gap_ms`. Gateway extension. The call was replaced and the new voice is live. See [Changing instructions and voice](#changing-instructions-and-voice-during-a-session). |
 | `session.usage.updated` | `usage.seconds`. Live sends it about every 15 seconds. The gateway sends it itself after 60 seconds without one from Live. |
 | `session.closed` | `reason` and `usage.seconds`. The WebSocket then closes with the same reason. |
 | `error` | The public error event shown above. Upstream errors keep their code. |
 
 Close reasons are `close_requested` (the client sent `session.close`), `remote_hangup` (Live ended the call), `expired` (the one-hour limit) and `connection_lost` (the client's connection dropped).
+
+##### Changing instructions and voice during a session
+
+ChatGPT Live refuses both changes on a running call (`immutable_field_update`: "Instructions cannot be updated after initialization." and "Voice cannot be updated after initialization."), so the gateway emulates them. Send `{"type":"session.update","event_id":"u1","session":{"instructions":"...","audio":{"output":{"voice":"cove"}}}}`. Both fields are optional, a blank voice means no change, and the whole event is validated before anything is applied.
+
+- **Instructions.** The gateway keeps the new text as the effective instructions and sends it upstream as a quiet context append: "Updated instructions for the rest of this call (these replace the earlier instructions): ...", chunked at 500 bytes like every other append. It answers `session.updated` with the effective session once Live acknowledges the append. An empty string means no special instructions from now on. The call keeps running, so there is no gap. The earlier instructions stay in Live's context and the append tells it they are replaced, so a model can still echo them in rare cases. Works on WebSocket and WebRTC attach sessions.
+- **Voice.** Live fixes the voice at call creation, so the gateway swaps the call and keeps the WebSocket open. It opens a new Live call with the new voice, the effective instructions, the transcription language and the conversation so far (the `input` items plus the user and assistant turns heard so far, newest last, within the 128-item and 8,192-token limits, oldest dropped first). While the new call opens, the old call keeps answering, and your audio and appends are held back. When the new call has started, the gateway cuts any reply still in progress (`session.output_audio.interrupted`), moves to the new call, closes the old one and replays the held events on the new call in order. Then you get `session.voice_changed {voice, previous_voice, gap_ms}` and `session.updated`. `gap_ms` is how long your events were held, typically one to three seconds, and the one place the model does not answer. Anything said while the call opened is added to the new call as quiet context. The session id and the usage counter carry over: `session.usage.updated` and `session.closed` add the seconds of both calls.
+- **Delegations do not survive.** Live does not know a request that the old call made. A delegation is open from `session.delegation.created` until you answer it with a `session.commentary.append` that names it. Before the old call closes, you get an `error` with code `delegation_cancelled` and `error.delegation_id` for each open one. Send the work again if it still matters. Appends that Live had not acknowledged yet come back as `append_not_delivered` errors with their `client_event_id`.
+- **If the new call fails** (no account, no free call slot, no `session.started` in 20 seconds) you get `error` `voice_change_failed`, the old call and its voice stay, and the held events are replayed on it. The swap needs a second call to be open for a moment, so a key at its concurrent-call limit cannot change the voice. A voice change before `session.started` returns `voice_change_failed` too. The same voice again, or another public name for the same ChatGPT Live voice, only answers `session.updated`.
+- **WebRTC.** `POST /v1/live/sessions` plus `/attach` cannot swap, because your own connection owns the media. Instructions work as above. A voice change returns `immutable_field_update` with a message that voice changes need the WebSocket surface. `model` and `audio.format` cannot change on either surface.
 
 ##### Speech and interruption events
 

@@ -25,6 +25,18 @@ const liveSessionTickInterval = time.Second
 // liveSessionExpiryMargin is how much earlier than the upstream deadline the gateway ends a capped session, so the public reason is expired.
 const liveSessionExpiryMargin = 2 * time.Second
 
+// liveSwapStartTimeout is how long a voice change waits for the new call to start; tests shorten it.
+var liveSwapStartTimeout = 20 * time.Second
+
+// liveSwapQueuedForTest, when set by a test, is called after each client event was held back during a voice change.
+var liveSwapQueuedForTest func()
+
+// liveSwapQueueMaxEvents and liveSwapQueueMaxBytes bound the client events held while a voice change opens the new call.
+const (
+	liveSwapQueueMaxEvents = 4096
+	liveSwapQueueMaxBytes  = 8 << 20
+)
+
 // liveSessionCloseGrace is how long the transport waits for the client to echo the close frame before it drops the connection.
 const liveSessionCloseGrace = 2 * time.Second
 
@@ -92,6 +104,11 @@ type liveWSSession struct {
 	vad   *audioVAD
 	muted bool
 
+	// swapping is true from the moment a voice change starts until the events held meanwhile have been replayed. Client events that arrive in that time wait in swapQueue.
+	swapping       bool
+	swapQueue      [][]byte
+	swapQueueBytes int
+
 	end       chan string
 	loopDone  chan struct{}
 	endOnce   sync.Once
@@ -151,16 +168,21 @@ func (s *liveWSSession) run() {
 	}
 	format := clientAudioFormat{Type: cfg.FormatType, Rate: cfg.FormatRate}
 	s.translator = newLiveSessionTranslator(cfg)
+	s.translator.AllowVoiceSwap()
 	s.call, s.input = call, input
 	s.decoder, s.encoder = newClientAudioDecoder(format), newClientAudioEncoder(format)
 	s.vad = newAudioVAD()
 	input.Start(s.ctx)
 
 	// Whatever way the session ends, the input, the call and the goroutines are released.
+	// A voice change may have replaced the call and the input, so the current ones are closed. The cancel comes first: a swap that is still opening a call checks it before it adopts the call and closes the call itself otherwise.
 	defer func() {
+		s.cancel()
+		s.mu.Lock()
+		input, call := s.input, s.call
+		s.mu.Unlock()
 		input.Close()
 		call.Close()
-		s.cancel()
 		_ = s.conn.Close()
 		s.wg.Wait()
 	}()
@@ -168,7 +190,7 @@ func (s *liveWSSession) run() {
 	s.wg.Add(1)
 	go func() {
 		defer s.wg.Done()
-		s.pumpUpstream()
+		s.pumpUpstream(call)
 	}()
 	s.wg.Add(1)
 	go func() {
@@ -330,12 +352,38 @@ func (s *liveWSSession) clientLoop() {
 	}
 }
 
-// handleClientEvent translates one public client event and applies the result; it returns true when the loop should stop (the connection is unusable).
+// handleClientEvent applies one public client event; it returns true when the loop should stop (the connection is unusable). While a voice change is opening the new call the event waits in swapQueue, and is replayed on the call that wins. session.close does not wait.
 func (s *liveWSSession) handleClientEvent(raw []byte) bool {
+	s.mu.Lock()
+	if s.swapping && !s.closing && !s.closeSeen && gjson.GetBytes(raw, "type").String() != "session.close" {
+		if len(s.swapQueue) >= liveSwapQueueMaxEvents || s.swapQueueBytes+len(raw) > liveSwapQueueMaxBytes {
+			ok := s.writeLocked(liveErrorEvent("", "invalid_value", "Too many events while the voice is changing; this one was dropped.", "", liveEventID(gjson.ParseBytes(raw))))
+			s.mu.Unlock()
+			return !ok
+		}
+		// The frame memory is released when this call returns, so the event is copied.
+		s.swapQueue = append(s.swapQueue, append([]byte(nil), raw...))
+		s.swapQueueBytes += len(raw)
+		s.mu.Unlock()
+		if liveSwapQueuedForTest != nil {
+			liveSwapQueuedForTest()
+		}
+		return false
+	}
+	s.mu.Unlock()
+	stop, swap := s.processClientEvent(raw)
+	if swap != nil && !stop {
+		s.startSwap(swap)
+	}
+	return stop
+}
+
+// processClientEvent translates one public client event and applies the result. It returns a voice change when the event asked for one.
+func (s *liveWSSession) processClientEvent(raw []byte) (stop bool, swap *liveVoiceChange) {
 	s.mu.Lock()
 	if s.closing || s.closeSeen {
 		s.mu.Unlock()
-		return false
+		return false, nil
 	}
 	res := s.translator.Client(raw)
 	if res.Close {
@@ -356,19 +404,20 @@ func (s *liveWSSession) handleClientEvent(raw []byte) bool {
 	for _, event := range res.Client {
 		if !s.writeLocked(event) {
 			s.mu.Unlock()
-			return true
+			return true, nil
 		}
 	}
 	if !s.sendUpstreamLocked(res.Upstream) {
 		s.mu.Unlock()
-		return true
+		return true, nil
 	}
+	input := s.input
 	s.mu.Unlock()
 
 	if len(res.Audio) > 0 {
 		pcm := s.decoder.Decode(res.Audio)
 		if len(pcm) > 0 {
-			if err := s.input.AppendPCM16(pcm); err != nil {
+			if err := input.AppendPCM16(pcm); err != nil {
 				s.mu.Lock()
 				s.writeLocked(liveErrorEvent("", "invalid_value", "The audio could not be processed: "+err.Error(), "audio", ""))
 				s.mu.Unlock()
@@ -389,23 +438,154 @@ func (s *liveWSSession) handleClientEvent(raw []byte) bool {
 		// The loop keeps reading so the client's close echo is consumed; shutdown bounds the wait.
 		s.finish("close_requested")
 	}
-	return false
+	return false, res.Swap
+}
+
+// startSwap begins a voice change: from now on client events wait in swapQueue, and a goroutine opens the new call. The old call keeps serving, and its reply in progress finishes, until the new call has started.
+func (s *liveWSSession) startSwap(change *liveVoiceChange) {
+	s.mu.Lock()
+	s.swapping = true
+	next, since := s.translator.SwapConfig(change)
+	s.mu.Unlock()
+	started := time.Now()
+	s.wg.Add(1)
+	go func() {
+		defer s.wg.Done()
+		s.runSwap(change, next, since, started)
+	}()
+}
+
+// runSwap opens the call with the new voice, switches the session to it and closes the old one. When the new call cannot be opened the old call stays and the client gets voice_change_failed.
+func (s *liveWSSession) runSwap(change *liveVoiceChange, next *liveSessionConfig, since int, started time.Time) {
+	call, input, reason := s.openSwapCall(next)
+	if call == nil {
+		if s.ctx.Err() == nil {
+			s.mu.Lock()
+			s.writeLocked(liveVoiceChangeFailedEvent(reason+" The voice stays as it was.", change.ClientEventID))
+			s.mu.Unlock()
+		}
+		s.drainSwapQueue()
+		return
+	}
+
+	s.mu.Lock()
+	if s.closing || s.closeSeen || s.ctx.Err() != nil {
+		s.mu.Unlock()
+		input.Close()
+		call.Close()
+		return
+	}
+	out := s.translator.Resume(next, since, change, time.Since(started))
+	oldCall, oldInput := s.call, s.input
+	s.call, s.input = call, input
+	ok := true
+	for _, event := range out.Client {
+		if !s.writeLocked(event) {
+			ok = false
+			break
+		}
+	}
+	if ok {
+		s.sendUpstreamLocked(out.Upstream)
+	}
+	s.mu.Unlock()
+
+	s.wg.Add(1)
+	go func() {
+		defer s.wg.Done()
+		s.pumpUpstream(call)
+	}()
+	oldInput.Close()
+	oldCall.Close()
+	s.drainSwapQueue()
+}
+
+// openSwapCall opens the replacement call and waits for its session.started. On failure the reason says why and no call stays open.
+func (s *liveWSSession) openSwapCall(next *liveSessionConfig) (realtimeAudioCallConn, *realtimeAudioInput, string) {
+	call, gerr := openRealtimeAudioCall(s.h, s.c, next.UpstreamSession())
+	if gerr != nil || call == nil {
+		reason := "The new call could not be opened."
+		if gerr != nil && gerr.Err != nil && gerr.Err.Message != "" {
+			reason = "The new call could not be opened: " + gerr.Err.Message + "."
+		}
+		return nil, nil, reason
+	}
+	input, err := newRealtimeAudioInput(call.WriteOpusFrame)
+	if err != nil {
+		call.Close()
+		return nil, nil, "The audio input for the new call could not be started."
+	}
+	timer := time.NewTimer(liveSwapStartTimeout)
+	defer timer.Stop()
+	events := call.Events()
+	for {
+		select {
+		case raw, ok := <-events:
+			if !ok {
+				input.Close()
+				call.Close()
+				return nil, nil, "The new call ended before it started."
+			}
+			switch gjson.GetBytes(raw, "type").String() {
+			case "session.started":
+				input.Start(s.ctx)
+				return call, input, ""
+			case "error":
+				message := gjson.GetBytes(raw, "error.message").String()
+				input.Close()
+				call.Close()
+				return nil, nil, "The new call was refused: " + message
+			}
+		case <-timer.C:
+			input.Close()
+			call.Close()
+			return nil, nil, "The new call did not start in time."
+		case <-s.ctx.Done():
+			input.Close()
+			call.Close()
+			return nil, nil, ""
+		}
+	}
+}
+
+// drainSwapQueue replays the client events held during a voice change, in order, on the current call. A replayed event may ask for another voice change; then the rest stays queued behind it.
+func (s *liveWSSession) drainSwapQueue() {
+	for {
+		s.mu.Lock()
+		if len(s.swapQueue) == 0 || s.closing || s.closeSeen || s.ctx.Err() != nil {
+			s.swapQueue, s.swapQueueBytes, s.swapping = nil, 0, false
+			s.mu.Unlock()
+			return
+		}
+		raw := s.swapQueue[0]
+		s.swapQueue = s.swapQueue[1:]
+		s.swapQueueBytes -= len(raw)
+		s.mu.Unlock()
+		stop, swap := s.processClientEvent(raw)
+		if stop {
+			return
+		}
+		if swap != nil {
+			s.startSwap(swap)
+			return
+		}
+	}
 }
 
 // pumpUpstream maps every Live sideband event to public events. When the events channel closes or the call is done, the session ends as remote_hangup; events still buffered at that point are written first.
-func (s *liveWSSession) pumpUpstream() {
-	events := s.call.Events()
-	done := s.call.Done()
+func (s *liveWSSession) pumpUpstream(call realtimeAudioCallConn) {
+	events := call.Events()
+	done := call.Done()
 	for {
 		select {
 		case <-s.ctx.Done():
 			return
 		case raw, ok := <-events:
 			if !ok {
-				s.finish("remote_hangup")
+				s.callEnded(call)
 				return
 			}
-			if !s.forwardUpstream(raw) {
+			if !s.forwardUpstream(call, raw) {
 				return
 			}
 		case <-done:
@@ -413,10 +593,10 @@ func (s *liveWSSession) pumpUpstream() {
 				select {
 				case raw, ok := <-events:
 					if !ok {
-						s.finish("remote_hangup")
+						s.callEnded(call)
 						return
 					}
-					if !s.forwardUpstream(raw) {
+					if !s.forwardUpstream(call, raw) {
 						return
 					}
 					continue
@@ -424,16 +604,29 @@ func (s *liveWSSession) pumpUpstream() {
 				}
 				break
 			}
-			s.finish("remote_hangup")
+			s.callEnded(call)
 			return
 		}
 	}
 }
 
-// forwardUpstream translates one sideband event and writes the result. It returns false once the session cannot continue.
-func (s *liveWSSession) forwardUpstream(raw []byte) bool {
+// callEnded ends the session as remote_hangup, unless the call is one that a voice change replaced.
+func (s *liveWSSession) callEnded(call realtimeAudioCallConn) {
+	s.mu.Lock()
+	current := s.call == call
+	s.mu.Unlock()
+	if current {
+		s.finish("remote_hangup")
+	}
+}
+
+// forwardUpstream translates one sideband event of call and writes the result. It returns false once the session cannot continue or call is no longer the session's call.
+func (s *liveWSSession) forwardUpstream(call realtimeAudioCallConn, raw []byte) bool {
 	s.mu.Lock()
 	defer s.mu.Unlock()
+	if s.call != call {
+		return false
+	}
 	res := s.translator.Upstream(raw)
 	if !s.sendUpstreamLocked(res.Upstream) {
 		return false

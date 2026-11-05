@@ -4,6 +4,7 @@ import (
 	"encoding/base64"
 	"encoding/json"
 	"math"
+	"sort"
 	"strings"
 	"sync"
 	"time"
@@ -30,6 +31,8 @@ const (
 	liveMaxQueuedEvents = 256
 	// liveLanguageWindow is the most recent transcript text, in bytes, the language detector looks at.
 	liveLanguageWindow = 200
+	// liveTurnTextMax bounds the transcript kept for the reply in progress.
+	liveTurnTextMax = 32768
 	// liveUsageSilence is how long upstream may stay silent before the gateway clock reports usage itself.
 	liveUsageSilence = 60 * time.Second
 )
@@ -556,6 +559,7 @@ type liveAck struct {
 	remaining     int // internal chunks still to be acknowledged
 	seq           int // order in which the appends were made, across all queues
 	failed        bool
+	session       bool // the public ack is session.updated and carries the effective session
 }
 
 // liveTiming is the latest known start and end of a turn, in milliseconds.
@@ -585,6 +589,32 @@ type liveSessionTranslator struct {
 	speech    audioSpeechTracker
 	// fixScript converts input transcripts to the script of the transcription language (Gujarati); nil leaves them as they are.
 	fixScript func(string) string
+
+	// history is the conversation so far for a voice change: the session's input items, then every finished turn, within the item and token caps. histSeq numbers the items added at run time.
+	history    []liveHistoryItem
+	histBytes  int
+	histSeq    int
+	turnText   [2]string // transcript of the turn in progress, per direction (0 user, 1 assistant), for a reply cut by a voice change
+	delegation []string  // delegation item ids that Live created and the client has not answered with a commentary append yet
+	usageBase  int       // seconds used by the calls that a voice change replaced
+	swapOK     bool      // the transport can replace the call, so a voice change is possible
+}
+
+// liveHistoryItem is one message of the conversation kept for a voice change.
+type liveHistoryItem struct {
+	seq   int // 0 for the items the session started with
+	role  string
+	text  string
+	item  json.RawMessage
+	bytes int
+}
+
+// liveVoiceChange is a validated session.update that needs a new call: the transport opens it, then asks the translator to switch.
+type liveVoiceChange struct {
+	Voice         string  // public voice name
+	LiveVoice     string  // internal voice
+	Instructions  *string // new effective instructions when the same update changes them
+	ClientEventID string
 }
 
 func newLiveSessionTranslator(cfg *liveSessionConfig) *liveSessionTranslator {
@@ -592,8 +622,23 @@ func newLiveSessionTranslator(cfg *liveSessionConfig) *liveSessionTranslator {
 	t.barge = newAudioBargeIn(func() time.Time { return t.now() })
 	if cfg != nil {
 		t.fixScript = transcriptionScriptFix(cfg.Language)
+		for _, item := range cfg.InitialItems {
+			t.seedHistory(item)
+		}
 	}
 	return t
+}
+
+// languageHint is the quiet append that tells Live the transcription language after the call started; nil when no language is set or it needs no hint. The caller holds the mutex.
+func (t *liveSessionTranslator) languageHint() []byte {
+	return transcriptionLanguageHintEventFor(t.cfg)
+}
+
+// AllowVoiceSwap tells the translator that its transport can replace the call, which makes a voice change in session.update possible.
+func (t *liveSessionTranslator) AllowVoiceSwap() {
+	t.mu.Lock()
+	t.swapOK = true
+	t.mu.Unlock()
 }
 
 // Speech turns the detector's changes on the client's audio into session.input_audio.speech_started {audio_start_ms} and session.input_audio.speech_stopped {audio_end_ms}; the times count milliseconds of audio the client has sent. The detector reports them well before ChatGPT Live does, so the upstream turn events add nothing for a turn the detector saw.
@@ -615,10 +660,11 @@ func (t *liveSessionTranslator) Speech(events []audioSpeechEvent) [][]byte {
 
 // liveClientResult is what one public client event asks the transport to do.
 type liveClientResult struct {
-	Upstream [][]byte // internal sideband events to send now, in order (empty while queued before session.started)
-	Client   [][]byte // public events to write to the client now (errors, local acks)
-	Audio    []byte   // decoded payload of session.input_audio.append (raw client-format bytes, base64 already decoded); the transport converts and writes it to the track
-	Close    bool     // session.close: the transport closes with reason close_requested
+	Upstream [][]byte         // internal sideband events to send now, in order (empty while queued before session.started)
+	Client   [][]byte         // public events to write to the client now (errors, local acks)
+	Audio    []byte           // decoded payload of session.input_audio.append (raw client-format bytes, base64 already decoded); the transport converts and writes it to the track
+	Close    bool             // session.close: the transport closes with reason close_requested
+	Swap     *liveVoiceChange // session.update with a new voice: the transport replaces the call
 }
 
 // Client translates one public client event. Sideband events are queued until upstream session.started, errors come back at once.
@@ -741,48 +787,382 @@ func (t *liveSessionTranslator) Client(raw []byte) liveClientResult {
 	return fail("invalid_value", "type", "Unknown event type: '"+typ.String()+"'.", id)
 }
 
-// update handles session.update: only delegation.responses is mutable on the public API, and the gateway does not support it.
+// liveUpdateFields is what a validated session.update asks for.
+type liveUpdateFields struct {
+	Instructions *string
+	Voice        string // public voice name, "" when the update names none
+	LiveVoice    string
+}
+
+// parseLiveUpdate validates a session.update object. It stops at the first field, in document order, that cannot be applied: an unknown field is unknown_parameter, a known field that is fixed after the start is immutable_field_update, and delegation.responses is unsupported_value. Only instructions and audio.output.voice can change. Nothing is applied here, so a rejected update changes nothing.
+func parseLiveUpdate(session gjson.Result, clientEventID string) (liveUpdateFields, *liveSessionError) {
+	var upd liveUpdateFields
+	var failure *liveSessionError
+	fail := func(code, param, msg string) bool {
+		failure = newLiveSessionError(code, param, msg, clientEventID)
+		return false
+	}
+	immutable := func(param string) bool {
+		return fail("immutable_field_update", param, param+" cannot be updated after the session has started.")
+	}
+	session.ForEach(func(k, v gjson.Result) bool {
+		switch name := k.String(); name {
+		case "instructions":
+			if liveAbsent(v) {
+				return true
+			}
+			if v.Type != gjson.String {
+				return fail("invalid_value", "session.instructions", "session.instructions must be a string.")
+			}
+			if len(v.String())/4 > liveSessionMaxInstructionTokens {
+				return fail("invalid_value", "session.instructions", "session.instructions is longer than 16,384 tokens.")
+			}
+			text := v.String()
+			upd.Instructions = &text
+		case "audio":
+			if liveAbsent(v) {
+				return true
+			}
+			if !v.IsObject() {
+				return fail("invalid_value", "session.audio", "session.audio must be an object.")
+			}
+			v.ForEach(func(ak, av gjson.Result) bool {
+				switch aname := ak.String(); aname {
+				case "output":
+					if liveAbsent(av) {
+						return true
+					}
+					if !av.IsObject() {
+						return fail("invalid_value", "session.audio.output", "session.audio.output must be an object.")
+					}
+					if e := liveUnknownKeys(av, "session.audio.output", []string{"voice"}, clientEventID); e != nil {
+						failure = e
+						return false
+					}
+					voice := av.Get("voice")
+					if liveAbsent(voice) {
+						return true
+					}
+					if voice.Type != gjson.String {
+						return fail("invalid_value", "session.audio.output.voice", "session.audio.output.voice must be a string.")
+					}
+					if strings.TrimSpace(voice.String()) == "" {
+						return true
+					}
+					live, ok := liveSessionVoice(voice.String())
+					if !ok {
+						return fail("unsupported_value", "session.audio.output.voice", "Unsupported voice: '"+voice.String()+"'.")
+					}
+					upd.Voice, upd.LiveVoice = strings.ToLower(strings.TrimSpace(voice.String())), live
+				case "format":
+					return immutable("session.audio.format")
+				case "input":
+					if av.IsObject() {
+						if e := liveUnknownKeys(av, "session.audio.input", []string{"transcription"}, clientEventID); e != nil {
+							failure = e
+							return false
+						}
+					}
+					return immutable("session.audio.input")
+				default:
+					return fail("unknown_parameter", "session.audio."+aname, "Unknown parameter: 'session.audio."+aname+"'.")
+				}
+				return true
+			})
+			return failure == nil
+		case "delegation":
+			if v.IsObject() {
+				responsesOnly := true
+				v.ForEach(func(dk, _ gjson.Result) bool {
+					if dk.String() != "responses" {
+						responsesOnly = false
+					}
+					return responsesOnly
+				})
+				if responsesOnly {
+					return fail("unsupported_value", "session.delegation.responses", "Responses delegation is not supported by this gateway.")
+				}
+			}
+			return immutable("session.delegation")
+		case "model", "input", "store":
+			return immutable("session." + name)
+		default:
+			return fail("unknown_parameter", "session."+name, "Unknown parameter: 'session."+name+"'.")
+		}
+		return true
+	})
+	return upd, failure
+}
+
+// liveVoiceNeedsWebSocket is the message of a voice change on a surface that cannot replace the call.
+const liveVoiceNeedsWebSocket = "session.audio.output.voice cannot be changed on this session: the media belongs to your own connection. Voice changes need the WebSocket surface (GET /v1/live/sessions), where the gateway can replace the call."
+
+// update handles session.update; the caller holds the mutex. Instructions change on every surface: they go upstream as a quiet context append and session.updated follows its acknowledgement. A voice change needs a new call, so it is handed to the transport as res.Swap and is only possible when the transport called AllowVoiceSwap. Everything else is fixed after the start.
 func (t *liveSessionTranslator) update(root gjson.Result, id string) liveClientResult {
 	var res liveClientResult
-	fail := func(code, param, msg string) liveClientResult {
-		res.Client = append(res.Client, newLiveSessionError(code, param, msg, id).Event())
+	fail := func(e *liveSessionError) liveClientResult {
+		res.Client = append(res.Client, e.Event())
 		return res
 	}
 	session := root.Get("session")
 	if !session.IsObject() {
-		return fail("missing_required_parameter", "session", "session.update requires a session object.")
+		return fail(newLiveSessionError("missing_required_parameter", "session", "session.update requires a session object.", id))
 	}
-	known := map[string]bool{"model": true, "instructions": true, "input": true, "audio": true, "delegation": true, "store": true}
-	var key string
-	onlyResponses, seen := true, false
-	session.ForEach(func(k, v gjson.Result) bool {
-		seen = true
-		name := k.String()
-		if name == "delegation" && v.IsObject() {
-			mutable := true
-			v.ForEach(func(dk, _ gjson.Result) bool {
-				if dk.String() != "responses" {
-					mutable = false
-				}
-				return mutable
-			})
-			if mutable {
-				return true
-			}
+	if len(session.Map()) == 0 {
+		return fail(newLiveSessionError("missing_required_parameter", "session", "session.update needs at least one field.", id))
+	}
+	upd, e := parseLiveUpdate(session, id)
+	if e != nil {
+		return fail(e)
+	}
+	needSwap := upd.Voice != "" && upd.LiveVoice != t.cfg.LiveVoice
+	if needSwap && !t.swapOK {
+		return fail(newLiveSessionError("immutable_field_update", "session.audio.output.voice", liveVoiceNeedsWebSocket, id))
+	}
+	if needSwap && !t.started {
+		return fail(&liveSessionError{Code: "voice_change_failed", Param: "session.audio.output.voice", Message: "The voice cannot change before session.started. Send the change again once the session has started.", ClientEventID: id})
+	}
+	if needSwap {
+		res.Swap = &liveVoiceChange{Voice: upd.Voice, LiveVoice: upd.LiveVoice, Instructions: upd.Instructions, ClientEventID: id}
+		return res
+	}
+	if upd.Voice != "" {
+		// Another public name for the voice the call already has.
+		t.cfg.Voice = upd.Voice
+	}
+	if upd.Instructions != nil && *upd.Instructions != t.cfg.Instructions {
+		events := liveQuietAppendEvents(liveInstructionsUpdateText(*upd.Instructions))
+		if !t.started && len(t.queued)+len(events) > liveMaxQueuedEvents {
+			return fail(newLiveSessionError("invalid_value", "", "too many events before session.started", id))
 		}
-		key, onlyResponses = name, false
-		return false
+		t.cfg.Instructions = *upd.Instructions
+		t.pushAck("", "session.updated", id, len(events))
+		t.acks[""][len(t.acks[""])-1].session = true
+		if t.started {
+			res.Upstream = append(res.Upstream, events...)
+		} else {
+			t.queued = append(t.queued, events...)
+		}
+		return res
+	}
+	res.Client = append(res.Client, t.sessionUpdatedEvent(id))
+	return res
+}
+
+// liveInstructionsUpdateText is the text of the quiet append that carries new instructions to a running call.
+func liveInstructionsUpdateText(instructions string) string {
+	const lead = "Updated instructions for the rest of this call (these replace the earlier instructions): "
+	if strings.TrimSpace(instructions) == "" {
+		return lead + "there are no special instructions now."
+	}
+	return lead + instructions
+}
+
+// sessionUpdatedEvent renders session.updated with the effective session; the caller holds the mutex.
+func (t *liveSessionTranslator) sessionUpdatedEvent(clientEventID string) []byte {
+	var clientValue any
+	if clientEventID != "" {
+		clientValue = clientEventID
+	}
+	out, _ := json.Marshal(map[string]any{"type": "session.updated", "session": t.cfg.PublicSession(t.sessionID), "client_event_id": clientValue})
+	return out
+}
+
+// liveQuietAppendEvents builds the session-level quiet context appends for a text: the commentary channel, which Live uses as context and does not speak. The text is chunked like every other append.
+func liveQuietAppendEvents(text string) [][]byte {
+	var events [][]byte
+	for _, chunk := range liveChunkText(text, liveContextAppendMaxBytes) {
+		raw, _ := json.Marshal(map[string]any{
+			"type":    "session.context.append",
+			"channel": "commentary",
+			"content": []map[string]any{{"type": "input_text", "text": chunk}},
+		})
+		events = append(events, raw)
+	}
+	return events
+}
+
+// liveVoiceChangeFailedEvent is the extension error for a voice change that did not happen.
+func liveVoiceChangeFailedEvent(message, clientEventID string) []byte {
+	return liveErrorEvent("server_error", "voice_change_failed", message, "session.audio.output.voice", clientEventID)
+}
+
+// liveDelegationCancelledEvent tells the client that an open delegation did not survive a voice change. delegation_id on the error object is a gateway extension.
+func liveDelegationCancelledEvent(id string) []byte {
+	raw, _ := json.Marshal(map[string]any{
+		"type": "error",
+		"error": map[string]any{
+			"type":            "invalid_request_error",
+			"code":            "delegation_cancelled",
+			"message":         "Delegation " + id + " was cancelled because the voice changed and the call was replaced. Live no longer knows this request: ask again or wait for the user to repeat it.",
+			"param":           "delegation_id",
+			"client_event_id": nil,
+			"delegation_id":   id,
+		},
 	})
-	if !seen {
-		return fail("missing_required_parameter", "session", "session.update needs at least one field.")
+	return raw
+}
+
+// closeDelegation forgets an open delegation; the caller holds the mutex.
+func (t *liveSessionTranslator) closeDelegation(id string) {
+	for i, open := range t.delegation {
+		if open == id {
+			t.delegation = append(t.delegation[:i], t.delegation[i+1:]...)
+			return
+		}
 	}
-	if onlyResponses {
-		return fail("unsupported_value", "session.delegation.responses", "Responses delegation is not supported by this gateway.")
+}
+
+// seedHistory adds an input item of the session start to the conversation.
+func (t *liveSessionTranslator) seedHistory(item json.RawMessage) {
+	root := gjson.ParseBytes(item)
+	var text strings.Builder
+	for _, part := range root.Get("content").Array() {
+		text.WriteString(part.Get("text").String())
 	}
-	if !known[key] {
-		return fail("unknown_parameter", "session."+key, "Unknown parameter: 'session."+key+"'.")
+	t.pushHistory(liveHistoryItem{role: root.Get("role").String(), text: text.String(), item: item, bytes: text.Len()})
+}
+
+// addHistory adds a finished turn to the conversation. role is user or assistant.
+func (t *liveSessionTranslator) addHistory(role, text string) {
+	text = strings.TrimSpace(text)
+	if text == "" {
+		return
 	}
-	return fail("immutable_field_update", "session."+key, "session."+key+" cannot be updated after the session has started.")
+	partType := "input_text"
+	if role == "assistant" {
+		partType = "output_text"
+	}
+	raw, _ := json.Marshal(map[string]any{"type": "message", "role": role, "content": []map[string]any{{"type": partType, "text": text}}})
+	t.histSeq++
+	t.pushHistory(liveHistoryItem{seq: t.histSeq, role: role, text: text, item: raw, bytes: len(text)})
+}
+
+// pushHistory keeps the conversation inside the caps: at most 128 items and 8,192 tokens, the oldest dropped first.
+func (t *liveSessionTranslator) pushHistory(h liveHistoryItem) {
+	t.history = append(t.history, h)
+	t.histBytes += h.bytes
+	for len(t.history) > 0 && (len(t.history) > liveSessionMaxInputItems || t.histBytes/4 > liveSessionMaxInputTokens) {
+		t.histBytes -= t.history[0].bytes
+		t.history = t.history[1:]
+	}
+}
+
+// historyItems returns the newest part of the conversation that fits in the caps next to `reserved` developer items the gateway adds itself, oldest first.
+func (t *liveSessionTranslator) historyItems(reserved int) []json.RawMessage {
+	maxItems := liveSessionMaxInputItems - reserved
+	bytes, start := 0, len(t.history)
+	for i := len(t.history) - 1; i >= 0 && len(t.history)-i <= maxItems; i-- {
+		if (bytes+t.history[i].bytes)/4 > liveSessionMaxInputTokens {
+			break
+		}
+		bytes += t.history[i].bytes
+		start = i
+	}
+	items := make([]json.RawMessage, 0, len(t.history)-start)
+	for _, h := range t.history[start:] {
+		items = append(items, h.item)
+	}
+	return items
+}
+
+// SwapConfig returns the session for the call that replaces this one: the effective session with the new voice, the effective instructions and the conversation so far as the input items. since marks how far the conversation had come, for Resume.
+func (t *liveSessionTranslator) SwapConfig(change *liveVoiceChange) (cfg *liveSessionConfig, since int) {
+	t.mu.Lock()
+	defer t.mu.Unlock()
+	next := *t.cfg
+	next.Voice, next.LiveVoice = change.Voice, change.LiveVoice
+	if change.Instructions != nil {
+		next.Instructions = *change.Instructions
+	}
+	reserved := 0
+	if next.Instructions != "" {
+		reserved++
+	}
+	if next.Language != "" {
+		reserved++
+	}
+	next.InitialItems = t.historyItems(reserved)
+	return &next, t.histSeq
+}
+
+// liveSwapOutcome is what switching to the new call asks the transport to write.
+type liveSwapOutcome struct {
+	Client   [][]byte // public events for the client, in order
+	Upstream [][]byte // quiet appends for the new call
+}
+
+// Resume switches the translator to the new call, which has started. The reply in progress is cut, the open delegations and the appends that were never acknowledged are reported to the client as errors, whatever was said while the new call was opening is appended to the new call (since is the value SwapConfig returned), and usage keeps counting on top of the old call. The client then gets session.voice_changed and session.updated.
+func (t *liveSessionTranslator) Resume(cfg *liveSessionConfig, since int, change *liveVoiceChange, gap time.Duration) liveSwapOutcome {
+	t.mu.Lock()
+	defer t.mu.Unlock()
+	var out liveSwapOutcome
+	now := t.now()
+	previous := t.cfg.Voice
+	emit := func(event []byte) { out.Client = append(out.Client, event) }
+
+	if t.barge.open {
+		if text := t.turnText[1]; strings.TrimSpace(text) != "" {
+			t.addHistory("assistant", text)
+		}
+		raw, _ := json.Marshal(liveInterruptedEvent(t.barge.openID))
+		emit(raw)
+	}
+	for _, id := range t.delegation {
+		emit(liveDelegationCancelledEvent(id))
+	}
+	var lost []*liveAck
+	for _, queue := range t.acks {
+		lost = append(lost, queue...)
+	}
+	sort.Slice(lost, func(i, j int) bool { return lost[i].seq < lost[j].seq })
+	for _, ack := range lost {
+		// A pending instructions update is carried by the new call, which has the instructions from the start.
+		if ack.failed || ack.session || ack.clientEventID == "" {
+			continue
+		}
+		emit(liveErrorEvent("server_error", "append_not_delivered", "The call was replaced by a voice change before this append was acknowledged, so Live may not have it. Send it again.", "", ack.clientEventID))
+	}
+
+	t.acks = map[string][]*liveAck{}
+	if hint := transcriptionLanguageHintEventFor(cfg); hint != nil {
+		// The new call gets the language hint right after it started, before the catch-up.
+		out.Upstream = append(out.Upstream, hint)
+		t.pushAck("", "", "", 1)
+	}
+
+	var missed strings.Builder
+	for _, h := range t.history {
+		if h.seq <= since {
+			continue
+		}
+		role := "User"
+		if h.role == "assistant" {
+			role = "Assistant"
+		}
+		missed.WriteString("\n" + role + ": " + h.text)
+	}
+	if missed.Len() > 0 {
+		events := liveQuietAppendEvents("The conversation continued while the voice was changing. Add this to what you remember:" + missed.String())
+		t.pushAck("", "", "", len(events))
+		out.Upstream = append(out.Upstream, events...)
+	}
+
+	t.usageBase = t.usage(now, 0)
+	t.startedAt, t.usageAt = now, now
+	t.cfg = cfg
+	t.started = true
+	t.queued = nil
+	t.delegation = nil
+	t.heard, t.timing, t.turnText = [2]string{}, [2]liveTiming{}, [2]string{}
+	t.turnDir = map[string]int{}
+	t.barge = newAudioBargeIn(func() time.Time { return t.now() })
+	t.speech = audioSpeechTracker{}
+
+	voiceChanged, _ := json.Marshal(map[string]any{"type": "session.voice_changed", "voice": change.Voice, "previous_voice": previous, "gap_ms": gap.Milliseconds()})
+	emit(voiceChanged)
+	emit(t.sessionUpdatedEvent(change.ClientEventID))
+	return out
 }
 
 // liveContextAppendEvents builds the internal context append events for one public append.
@@ -886,6 +1266,11 @@ func (t *liveSessionTranslator) Upstream(raw []byte) liveUpstreamResult {
 		t.usageAt = t.startedAt
 		emit(map[string]any{"type": "session.started", "session": t.cfg.PublicSession(t.sessionID)})
 		res.Upstream, t.queued = t.queued, nil
+		if hint := t.languageHint(); hint != nil {
+			// The hint goes first, right after session.started; its acknowledgement is put first in the queue too, so the acks of the client's own appends keep their order.
+			res.Upstream = append([][]byte{hint}, res.Upstream...)
+			t.acks[""] = append([]*liveAck{{remaining: 1}}, t.acks[""]...)
+		}
 
 	case "session.output_audio.delta", "output_audio.delta":
 		if pcm, err := base64.StdEncoding.DecodeString(root.Get("delta").String()); err == nil {
@@ -916,6 +1301,9 @@ func (t *liveSessionTranslator) Upstream(raw []byte) liveUpstreamResult {
 		// Deltas are word fragments, too short to identify a language, so the detector reads the accumulated text of the current turn (the last 200 bytes of it, for this direction only).
 		// The language is put on every delta from the moment the detector is reliable; the accumulator is reset when the turn of that role ends.
 		t.heard[dir] = liveTrimTail(t.heard[dir]+delta, liveLanguageWindow)
+		if dir == 1 && len(t.turnText[1]) < liveTurnTextMax {
+			t.turnText[1] += delta
+		}
 		if dir == 0 && t.cfg != nil && t.cfg.Language != "" {
 			// The client named the language, so it is reported as given instead of the detector's guess.
 			event["language"] = t.cfg.Language
@@ -949,8 +1337,15 @@ func (t *liveSessionTranslator) Upstream(raw []byte) liveUpstreamResult {
 	case "turn.done":
 		role := realtimeAudioTurnRole(root)
 		if dir, ok := liveTurnDir(role); ok {
-			t.heard[dir], t.timing[dir] = "", liveTiming{}
+			t.heard[dir], t.timing[dir], t.turnText[dir] = "", liveTiming{}, ""
 			delete(t.turnDir, root.Get("turn.id").String())
+			if transcript := root.Get("turn.transcript"); transcript.Type == gjson.String {
+				text := transcript.String()
+				if dir == 0 && t.fixScript != nil {
+					text = t.fixScript(text)
+				}
+				t.addHistory(role, text)
+			}
 		}
 		if role == "user" && t.speech.TurnDone() {
 			emit(map[string]any{"type": "session.input_audio.speech_stopped", "audio_end_ms": root.Get("turn.end_ms").Int(), "source": "upstream"})
@@ -962,6 +1357,14 @@ func (t *liveSessionTranslator) Upstream(raw []byte) liveUpstreamResult {
 	case "delegation.created":
 		if out, ok := liveDelegationCreatedEvent(raw); ok {
 			res.Client = append(res.Client, out)
+			id := root.Get("item.id").String()
+			open := false
+			for _, known := range t.delegation {
+				open = open || known == id
+			}
+			if !open {
+				t.delegation = append(t.delegation, id)
+			}
 		}
 
 	case "delegation.context.appended":
@@ -997,6 +1400,14 @@ func (t *liveSessionTranslator) Upstream(raw []byte) liveUpstreamResult {
 		res.Client = append(res.Client, liveErrorEvent(liveFirstString(e, "type"), code, message, param, clientEventID))
 	}
 	return res
+}
+
+// transcriptionLanguageHintEventFor is the language hint for a session config, nil when it has no language.
+func transcriptionLanguageHintEventFor(cfg *liveSessionConfig) []byte {
+	if cfg == nil || cfg.Language == "" {
+		return nil
+	}
+	return transcriptionLanguageHintEvent(cfg.Language)
 }
 
 // liveInterruptedEvent is the gateway extension session.output_audio.interrupted: the user spoke over the assistant, so the assistant reply was cut. The client should drop the reply audio it has queued. turn_id is the upstream id of the cut assistant turn.
@@ -1103,8 +1514,11 @@ func (t *liveSessionTranslator) ack(key string) []byte {
 		return nil
 	}
 	t.popAck(key)
-	if head.failed {
+	if head.failed || head.event == "" {
 		return nil
+	}
+	if head.session {
+		return t.sessionUpdatedEvent(head.clientEventID)
 	}
 	var clientValue any
 	if head.clientEventID != "" {
@@ -1122,6 +1536,8 @@ func (t *liveSessionTranslator) usage(now time.Time, upstreamSeconds int) int {
 			seconds = elapsed
 		}
 	}
+	// The calls that a voice change replaced were used too.
+	seconds += t.usageBase
 	if seconds > t.seconds {
 		t.seconds = seconds
 	}
