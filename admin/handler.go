@@ -17,7 +17,6 @@ import (
 	"math"
 	"mime"
 	"mime/multipart"
-	"net"
 	"net/http"
 	"net/url"
 	"os"
@@ -41,7 +40,6 @@ import (
 	"github.com/codex2api/security"
 	"github.com/codex2api/security/promptfilter"
 	"github.com/gin-gonic/gin"
-	"github.com/tidwall/gjson"
 )
 
 // Handler 管理后台 API 处理器
@@ -366,8 +364,7 @@ func (h *Handler) probeImportedAccountUsage(ctx context.Context, accountID int64
 		log.Printf("导入账号 %d 用量采样失败 (%s): %v", accountID, source, err)
 		return
 	}
-	// Agent Identity 无 OAuth 身份合并需求（无 RT/AT），Claude 也使用
-	// Anthropic account UUID 而非 ChatGPT workspace 身份；两者都不能进入
+	// Agent Identity 无 OAuth 身份合并需求（无 RT/AT），不能进入
 	// Codex 的 email+workspace 查重链。
 	if !shouldMergeImportedIdentity(account) {
 		return
@@ -382,7 +379,7 @@ func (h *Handler) probeImportedAccountUsage(ctx context.Context, accountID int64
 }
 
 func shouldMergeImportedIdentity(account *auth.Account) bool {
-	return account != nil && !account.IsCodexAgentIdentity() && !account.IsClaudeOAuth()
+	return account != nil && !account.IsCodexAgentIdentity()
 }
 
 func (h *Handler) startDBBackgroundTask(task func(context.Context)) bool {
@@ -1021,12 +1018,6 @@ func parseUsageChannel(c *gin.Context) string {
 	switch strings.ToLower(strings.TrimSpace(c.Query("channel"))) {
 	case database.UpstreamChannelCodex:
 		return database.UpstreamChannelCodex
-	case database.UpstreamChannelGrok:
-		return database.UpstreamChannelGrok
-	case database.UpstreamChannelAntigravity:
-		return database.UpstreamChannelAntigravity
-	case database.UpstreamChannelClaude:
-		return database.UpstreamChannelClaude
 	}
 	return ""
 }
@@ -1149,55 +1140,8 @@ func (h *Handler) RegisterRoutes(r *gin.Engine) {
 	api.POST("/accounts/at", h.AddATAccount)
 	api.POST("/accounts/codex/agent-identity", h.ImportCodexAgentIdentity)
 	api.POST("/accounts/codex/agent-identity/import", h.BatchImportCodexAgentIdentity)
-	api.POST("/accounts/openai-responses", h.AddOpenAIResponsesAccount)
-	api.POST("/accounts/openai-responses/models", h.FetchOpenAIResponsesModels)
-	api.PATCH("/accounts/:id/openai-responses", h.UpdateOpenAIResponsesAccount)
-	api.GET("/accounts/:id/openai-responses/balance", h.GetOpenAIResponsesBalance)
 	api.GET("/accounts/:id/channel-monitor", h.GetChannelMonitorConfig)
 	api.PUT("/accounts/:id/channel-monitor", h.UpdateChannelMonitorConfig)
-	api.POST("/accounts/grok", h.AddGrokAccount)
-	api.POST("/accounts/grok/models", h.FetchGrokModels)
-	api.POST("/accounts/grok/batch-models", h.BatchUpdateGrokModels)
-	api.GET("/accounts/grok/export", h.ExportGrokAccounts)
-	api.POST("/accounts/grok/oauth/device/start", h.StartGrokDeviceAuth)
-	api.POST("/accounts/grok/oauth/device/poll", h.PollGrokDeviceAuth)
-	api.POST("/accounts/grok/sso/import", h.ImportGrokSSO)
-	api.POST("/accounts/grok/refresh/import", h.ImportGrokRefreshTokens)
-	api.POST("/accounts/grok/import", h.BatchImportGrokAccounts)
-	api.POST("/accounts/grok/oauth/auth-url", h.GenerateGrokAuthURL)        // 兼容旧客户端
-	api.POST("/accounts/grok/oauth/exchange-code", h.ExchangeGrokOAuthCode) // 兼容旧客户端
-	api.POST("/accounts/claude/oauth/auth-url", h.GenerateClaudeAuthURL)
-	api.POST("/accounts/claude/oauth/exchange-code", h.ExchangeClaudeOAuthCode)
-	api.POST("/accounts/claude/oauth/exchange-session-key", h.ExchangeClaudeSessionKey)
-	api.POST("/accounts/claude/import", h.ImportClaudeToken)
-	api.POST("/accounts/claude/import-setup-tokens", h.ImportClaudeSetupTokens) // 兼容旧名:同时接受 oat01/ort01
-	api.POST("/accounts/claude/import-tokens", h.ImportClaudeSetupTokens)
-	api.GET("/accounts/claude/export", h.ExportClaudeAccounts)
-	api.POST("/accounts/:id/claude/models", h.RefreshClaudeModels)
-	api.POST("/accounts/claude/models/refresh", h.RefreshAllClaudeModels)
-	api.POST("/accounts/antigravity", h.AddAntigravityAccount)
-	api.POST("/accounts/antigravity/models", h.FetchAntigravityModels)
-	api.POST("/accounts/antigravity/batch-models", h.BatchUpdateAntigravityModels)
-	api.GET("/accounts/antigravity/export", h.ExportAntigravityAccounts)
-	api.POST("/accounts/antigravity/import", h.BatchImportAntigravityAccounts)
-	api.POST("/accounts/antigravity/refresh", h.BatchRefreshAntigravityAccounts)
-	// 运维止血：清除配额事实并递增 quota_epoch（Spec §8.2），与批量刷新同为账号级入口。
-	api.POST("/accounts/antigravity/quota/clear", h.ClearAntigravityQuotaHandler)
-	api.POST("/accounts/antigravity/oauth/start", h.StartAntigravityOAuth)
-	api.GET("/accounts/antigravity/oauth/status", h.GetAntigravityOAuthStatus)
-	api.POST("/accounts/antigravity/oauth/complete", h.CompleteAntigravityOAuth)
-	api.DELETE("/accounts/antigravity/oauth/:session_id", h.CancelAntigravityOAuth)
-	api.PATCH("/accounts/:id/antigravity", h.UpdateAntigravityAccount)
-	api.POST("/accounts/:id/antigravity/refresh", h.RefreshAntigravityAccount)
-	api.POST("/accounts/:id/antigravity/quota", h.RefreshAntigravityQuota)
-	api.GET("/accounts/:id/antigravity/state", h.GetAntigravityAccountState)
-	api.POST("/accounts/:id/antigravity/sync", h.SyncAntigravityAccountState)
-	api.POST("/accounts/:id/antigravity/capabilities/probe", h.ProbeAntigravityAccountCapabilities)
-	api.PATCH("/accounts/:id/grok", h.UpdateGrokAccount)
-	api.GET("/accounts/:id/grok/state", h.GetGrokAccountState)
-	api.POST("/accounts/:id/grok/sync", h.SyncGrokAccountState)
-	api.POST("/accounts/:id/grok/capabilities/probe", h.ProbeGrokAccountCapabilities)
-	api.GET("/accounts/:id/grok/auth-json", h.GetGrokAccountAuthJSON)
 	api.POST("/accounts/:id/oauth/exchange-code", h.UpdateOAuthAccountCode)
 	api.POST("/accounts/import", h.ImportAccounts)
 	api.POST("/accounts/sub2api/preview", h.PreviewSub2APIAccounts)
@@ -1266,10 +1210,6 @@ func (h *Handler) RegisterRoutes(r *gin.Engine) {
 	api.POST("/accounts/clean-banned", h.CleanBanned)
 	api.POST("/accounts/clean-rate-limited", h.CleanRateLimited)
 	api.POST("/accounts/clean-error", h.CleanError)
-	api.POST("/accounts/grok/clean-banned", h.CleanGrokBanned)
-	api.POST("/accounts/grok/clean-error", h.CleanGrokError)
-	api.POST("/accounts/antigravity/clean-banned", h.CleanAntigravityBanned)
-	api.POST("/accounts/antigravity/clean-error", h.CleanAntigravityError)
 	api.GET("/accounts/export", h.ExportAccounts)
 	api.POST("/accounts/migrate", h.MigrateAccounts)
 	api.GET("/accounts/event-trend", h.GetAccountEventTrend)
@@ -1310,9 +1250,6 @@ func (h *Handler) RegisterRoutes(r *gin.Engine) {
 	api.PUT("/settings", h.UpdateSettings)
 	api.GET("/settings/codex-user-agent/catalog", h.GetCodexUserAgentCatalog)
 	api.POST("/settings/codex-user-agent/preview", h.PreviewCodexUserAgent)
-	api.GET("/settings/claude-config", h.GetClaudeConfig)
-	api.PUT("/settings/claude-config", h.UpdateClaudeConfig)
-	api.POST("/settings/claude-config/cli-version/sync", h.SyncClaudeCLIVersion)
 	api.GET("/settings/observed-instructions", h.GetObservedInstructions)
 	api.GET("/settings/invite-guide", h.GetInviteGuideSettings)
 	api.PUT("/settings/invite-guide", h.UpdateInviteGuideSettings)
@@ -1320,8 +1257,6 @@ func (h *Handler) RegisterRoutes(r *gin.Engine) {
 	api.PUT("/settings/visible-channels", h.UpdateVisibleChannelsSettings)
 	api.GET("/settings/channel-tests", h.GetChannelTestSettings)
 	api.PUT("/settings/channel-tests", h.UpdateChannelTestSettings)
-	api.GET("/settings/antigravity", h.GetAntigravitySettings)
-	api.PUT("/settings/antigravity", h.UpdateAntigravitySettings)
 	api.POST("/settings/background-upload", h.UploadBackgroundAsset)
 	api.POST("/settings/image-storage/test", h.TestImageStorageConnection)
 	api.GET("/prompt-filter/logs", h.ListPromptFilterLogs)
@@ -1580,10 +1515,7 @@ func summarizeDashboardAccounts(rows []*database.AccountRow, runtimeAccounts []*
 
 	var counts dashboardAccountCounts
 	channelCounts := map[string]dashboardAccountCounts{
-		database.UpstreamChannelCodex:       {},
-		database.UpstreamChannelGrok:        {},
-		database.UpstreamChannelAntigravity: {},
-		database.UpstreamChannelClaude:      {},
+		database.UpstreamChannelCodex: {},
 	}
 	counts.total = len(rows)
 	for _, row := range rows {
@@ -1593,29 +1525,13 @@ func summarizeDashboardAccounts(rows []*database.AccountRow, runtimeAccounts []*
 		status := strings.ToLower(strings.TrimSpace(row.Status))
 		cooldownReason := strings.ToLower(strings.TrimSpace(row.CooldownReason))
 		channel := database.UpstreamChannelCodex
-		upstreamType := strings.TrimSpace(row.GetCredential("upstream_type"))
-		if strings.EqualFold(upstreamType, auth.UpstreamGrok) {
-			channel = database.UpstreamChannelGrok
-		} else if strings.EqualFold(upstreamType, auth.UpstreamAntigravity) {
-			channel = database.UpstreamChannelAntigravity
-		} else if strings.EqualFold(upstreamType, auth.UpstreamClaude) {
-			channel = database.UpstreamChannelClaude
-		}
 		usingCredits := false
 		acc := runtimeByID[row.ID]
-		isAntigravity := channel == database.UpstreamChannelAntigravity
-		if isAntigravity {
-			status, _ = antigravityPersistedStatus(row)
-		} else if acc != nil {
+		if acc != nil {
 			status = strings.ToLower(strings.TrimSpace(acc.RuntimeStatus()))
 			cooldownReason = ""
 			// 积分顶替限流：状态仍报限流（窗口客观打满），但账号照常参与调度，按可用计。
 			usingCredits = acc.UsingCredits()
-			if acc.IsGrokAPI() {
-				channel = database.UpstreamChannelGrok
-			} else if acc.IsClaudeOAuth() {
-				channel = database.UpstreamChannelClaude
-			}
 		}
 		perChannel := channelCounts[channel]
 		perChannel.total++
@@ -1648,17 +1564,9 @@ func isDashboardAbnormalAccount(status string) bool {
 
 func isDashboardUnsampledAccount(row *database.AccountRow, acc *auth.Account) bool {
 	if acc != nil {
-		if acc.IsGrokAPI() || acc.IsOpenAIResponsesAPI() || acc.IsAntigravityAPI() {
-			return false
-		}
 		snapshot := acc.GetAccountListRuntimeSnapshot()
 		status := strings.ToLower(strings.TrimSpace(snapshot.Status))
 		if status == "unauthorized" || status == "error" {
-			return false
-		}
-		if acc.IsClaudeOAuth() && row != nil &&
-			strings.TrimSpace(row.GetCredential(auth.ClaudeUsageProbeAtCredentialKey)) != "" &&
-			strings.TrimSpace(row.GetCredential(auth.ClaudeUsageProbeErrorCredentialKey)) == "" {
 			return false
 		}
 		return !snapshot.UsagePercent5hValid && !snapshot.UsagePercent7dValid
@@ -1666,19 +1574,8 @@ func isDashboardUnsampledAccount(row *database.AccountRow, acc *auth.Account) bo
 	if row == nil {
 		return false
 	}
-	upstreamType := strings.TrimSpace(row.GetCredential("upstream_type"))
-	if strings.EqualFold(upstreamType, auth.UpstreamGrok) ||
-		strings.EqualFold(upstreamType, auth.UpstreamOpenAIResponses) ||
-		strings.EqualFold(upstreamType, auth.UpstreamAntigravity) {
-		return false
-	}
 	status := strings.ToLower(strings.TrimSpace(row.Status))
 	if status == "unauthorized" || status == "error" {
-		return false
-	}
-	if strings.EqualFold(upstreamType, auth.UpstreamClaude) &&
-		strings.TrimSpace(row.GetCredential(auth.ClaudeUsageProbeAtCredentialKey)) != "" &&
-		strings.TrimSpace(row.GetCredential(auth.ClaudeUsageProbeErrorCredentialKey)) == "" {
 		return false
 	}
 	return true
@@ -1943,8 +1840,7 @@ func (h *Handler) ListAccounts(c *gin.Context) {
 		h.store.TriggerRecoveryProbeAsync()
 	}
 
-	// Optional ?channel=codex|grok — server-side filter so Grok/Codex admin
-	// pages only transfer and enrich their own account set.
+	// Optional ?channel=codex — server-side filter for the account set.
 	channel := parseUsageChannel(c)
 	var pageSelection *accountPageSelection
 	var rows []*database.AccountRow
@@ -1964,11 +1860,6 @@ func (h *Handler) ListAccounts(c *gin.Context) {
 		} else {
 			writeInternalError(c, err)
 		}
-		return
-	}
-
-	if err := h.db.HydrateGrokDisplay(ctx, rows); err != nil {
-		writeInternalError(c, err)
 		return
 	}
 
@@ -2109,10 +2000,6 @@ func (h *Handler) GetAccount(c *gin.Context) {
 		usage7d = make(map[int64]*database.AccountTimeRangeUsage)
 	}
 
-	if err := h.db.HydrateGrokDisplay(ctx, []*database.AccountRow{row}); err != nil {
-		writeInternalError(c, err)
-		return
-	}
 	runtimeAccount := h.store.FindByID(id)
 	resp := h.buildAccountResponse(row, runtimeAccount, requestCounts[id], usage5h[id], usage7d[id], true)
 	if runtimeAccount != nil {
@@ -2141,19 +2028,15 @@ func (h *Handler) GetAccount(c *gin.Context) {
 // accountLiteResponse 是 ?view=lite 的账号条目:身份 + 绑定字段,无调度/用量指标。
 // 字段名与完整版 accountResponse 对齐,前端可直接当 AccountRow 子集消费。
 type accountLiteResponse struct {
-	ID                 int64  `json:"id"`
-	Name               string `json:"name"`
-	Email              string `json:"email"`
-	PlanType           string `json:"plan_type"`
-	Status             string `json:"status"`
-	Enabled            bool   `json:"enabled"`
-	ProxyURL           string `json:"proxy_url"`
-	ATOnly             bool   `json:"at_only"`
-	OpenAIResponsesAPI bool   `json:"openai_responses_api"`
-	GrokAPI            bool   `json:"grok_api"`
-	ClaudeAPI          bool   `json:"claude_api"`
-	AgentIdentity      bool   `json:"agent_identity"`
-	GrokAuthKind       string `json:"grok_auth_kind,omitempty"`
+	ID            int64  `json:"id"`
+	Name          string `json:"name"`
+	Email         string `json:"email"`
+	PlanType      string `json:"plan_type"`
+	Status        string `json:"status"`
+	Enabled       bool   `json:"enabled"`
+	ProxyURL      string `json:"proxy_url"`
+	ATOnly        bool   `json:"at_only"`
+	AgentIdentity bool   `json:"agent_identity"`
 }
 
 func (h *Handler) listAccountsLite(c *gin.Context, ctx context.Context) {
@@ -2172,44 +2055,22 @@ func (h *Handler) listAccountsLite(c *gin.Context, ctx context.Context) {
 
 	accounts := make([]accountLiteResponse, 0, len(rows))
 	for _, row := range rows {
-		upstreamType := strings.TrimSpace(row.GetCredential("upstream_type"))
-		isOpenAIResponsesAccount := strings.EqualFold(upstreamType, auth.UpstreamOpenAIResponses)
-		isGrokAccount := strings.EqualFold(upstreamType, auth.UpstreamGrok)
-		isClaudeAccount := strings.EqualFold(upstreamType, auth.UpstreamClaude)
-		grokAuthKind := ""
-		if isGrokAccount {
-			if strings.TrimSpace(row.GetCredential("api_key")) != "" {
-				grokAuthKind = auth.GrokAuthKindAPIKey
-			} else {
-				grokAuthKind = auth.GrokAuthKindOAuth
-			}
-		}
 		email := row.GetCredential("email")
-		if isOpenAIResponsesAccount && email == "" {
-			email = row.GetCredential("base_url")
-		}
 		planType := row.GetCredential("plan_type")
-		if (isOpenAIResponsesAccount || (isGrokAccount && grokAuthKind == auth.GrokAuthKindAPIKey)) && planType == "" {
-			planType = "api"
-		}
 		status := row.Status
 		if rt, ok := runtimeStatus[row.ID]; ok && rt != "" {
 			status = rt
 		}
 		accounts = append(accounts, accountLiteResponse{
-			ID:                 row.ID,
-			Name:               row.Name,
-			Email:              email,
-			PlanType:           planType,
-			Status:             status,
-			Enabled:            row.Enabled,
-			ProxyURL:           row.ProxyURL,
-			ATOnly:             !isOpenAIResponsesAccount && !isGrokAccount && !isClaudeAccount && row.GetCredential("refresh_token") == "" && row.GetCredential("access_token") != "",
-			OpenAIResponsesAPI: isOpenAIResponsesAccount,
-			GrokAPI:            isGrokAccount,
-			ClaudeAPI:          isClaudeAccount,
-			AgentIdentity:      isAgentIdentityCredentialRow(row),
-			GrokAuthKind:       grokAuthKind,
+			ID:            row.ID,
+			Name:          row.Name,
+			Email:         email,
+			PlanType:      planType,
+			Status:        status,
+			Enabled:       row.Enabled,
+			ProxyURL:      row.ProxyURL,
+			ATOnly:        row.GetCredential("refresh_token") == "" && row.GetCredential("access_token") != "",
+			AgentIdentity: isAgentIdentityCredentialRow(row),
 		})
 	}
 	c.JSON(http.StatusOK, gin.H{"accounts": accounts})
@@ -2234,10 +2095,6 @@ type updateAccountSchedulerReq struct {
 	ProxyURL                json.RawMessage `json:"proxy_url"`
 	CustomHeaders           json.RawMessage `json:"custom_headers"`
 	CodexFingerprintMode    json.RawMessage `json:"codex_fingerprint_mode"`
-	ClaudeFingerprintMode   json.RawMessage `json:"claude_fingerprint_mode"`
-	ClaudeClientPlatform    json.RawMessage `json:"claude_client_platform"`
-	ClaudeVersionPolicy     json.RawMessage `json:"claude_version_policy"`
-	ClaudeClientVersion     json.RawMessage `json:"claude_client_version"`
 	Timezone                json.RawMessage `json:"timezone"`
 	AccountHref             json.RawMessage `json:"account_href"`
 }
@@ -2260,10 +2117,6 @@ type accountSchedulerUpdate struct {
 	ProxyURL                database.OptionalString
 	CustomHeaders           optionalCustomHeaders
 	CodexFingerprintMode    database.OptionalString
-	ClaudeFingerprintMode   database.OptionalString
-	ClaudeClientPlatform    database.OptionalString
-	ClaudeVersionPolicy     database.OptionalString
-	ClaudeClientVersion     database.OptionalString
 	Timezone                database.OptionalString
 	AccountHref             database.OptionalString
 	CredentialUpdates       map[string]interface{}
@@ -2341,37 +2194,6 @@ func parseAccountSchedulerUpdate(req updateAccountSchedulerReq) (accountSchedule
 	if err != nil {
 		return accountSchedulerUpdate{}, err
 	}
-	claudeFingerprintMode, err := parseOptionalStringField(req.ClaudeFingerprintMode, "claude_fingerprint_mode", validateClaudeFingerprintMode)
-	if err != nil {
-		return accountSchedulerUpdate{}, err
-	}
-	if claudeFingerprintMode.Set {
-		claudeFingerprintMode.Value = auth.NormalizeClaudeFingerprintMode(claudeFingerprintMode.Value)
-	}
-	claudeClientPlatform, err := parseOptionalStringField(req.ClaudeClientPlatform, "claude_client_platform", validateClaudeClientPlatform)
-	if err != nil {
-		return accountSchedulerUpdate{}, err
-	}
-	if claudeClientPlatform.Set {
-		claudeClientPlatform.Value = string(auth.ClaudeClientPlatform(strings.ToLower(strings.TrimSpace(claudeClientPlatform.Value))))
-	}
-	claudeVersionPolicy, err := parseOptionalStringField(req.ClaudeVersionPolicy, "claude_version_policy", validateClaudeVersionPolicy)
-	if err != nil {
-		return accountSchedulerUpdate{}, err
-	}
-	if claudeVersionPolicy.Set {
-		claudeVersionPolicy.Value = string(auth.ClaudeVersionPolicy(strings.ToLower(strings.TrimSpace(claudeVersionPolicy.Value))))
-	}
-	claudeClientVersion, err := parseOptionalStringField(req.ClaudeClientVersion, "claude_client_version", validateClaudeClientVersion)
-	if err != nil {
-		return accountSchedulerUpdate{}, err
-	}
-	if claudeClientVersion.Set {
-		claudeClientVersion.Value = strings.TrimSpace(claudeClientVersion.Value)
-	}
-	if claudeVersionPolicy.Set && (claudeVersionPolicy.Value == string(auth.ClaudeVersionPolicyFixed) || claudeVersionPolicy.Value == string(auth.ClaudeVersionPolicyMinimum)) && (!claudeClientVersion.Set || claudeClientVersion.Value == "") {
-		return accountSchedulerUpdate{}, errors.New("claude_client_version is required for fixed/minimum policy")
-	}
 	timezoneField, err := parseOptionalStringField(req.Timezone, "timezone", validateAccountTimezone)
 	if err != nil {
 		return accountSchedulerUpdate{}, err
@@ -2396,18 +2218,6 @@ func parseAccountSchedulerUpdate(req updateAccountSchedulerReq) (accountSchedule
 	}
 	if codexFingerprintMode.Set {
 		credentialUpdates[auth.CodexFingerprintModeCredentialKey] = codexFingerprintMode.Value
-	}
-	if claudeFingerprintMode.Set {
-		credentialUpdates[auth.ClaudeFingerprintModeCredentialKey] = claudeFingerprintMode.Value
-	}
-	if claudeClientPlatform.Set {
-		credentialUpdates[auth.ClaudeClientPlatformCredentialKey] = claudeClientPlatform.Value
-	}
-	if claudeVersionPolicy.Set {
-		credentialUpdates[auth.ClaudeVersionPolicyCredentialKey] = claudeVersionPolicy.Value
-	}
-	if claudeClientVersion.Set {
-		credentialUpdates[auth.ClaudeClientVersionCredentialKey] = claudeClientVersion.Value
 	}
 	if timezoneField.Set {
 		credentialUpdates[auth.AccountTimezoneCredentialKey] = strings.TrimSpace(timezoneField.Value)
@@ -2477,46 +2287,10 @@ func parseAccountSchedulerUpdate(req updateAccountSchedulerReq) (accountSchedule
 		ProxyURL:                proxyURL,
 		CustomHeaders:           customHeaders,
 		CodexFingerprintMode:    codexFingerprintMode,
-		ClaudeFingerprintMode:   claudeFingerprintMode,
-		ClaudeClientPlatform:    claudeClientPlatform,
-		ClaudeVersionPolicy:     claudeVersionPolicy,
-		ClaudeClientVersion:     claudeClientVersion,
 		Timezone:                timezoneField,
 		AccountHref:             accountHref,
 		CredentialUpdates:       credentialUpdates,
 	}, nil
-}
-
-// validateClaudeFingerprintMode 允许空串(=跟随全局默认),其余必须是 preserve/force。
-func validateClaudeFingerprintMode(value string) error {
-	if auth.IsValidClaudeFingerprintMode(value) {
-		return nil
-	}
-	return fmt.Errorf("claude_fingerprint_mode must be one of: preserve, force")
-}
-
-func validateClaudeClientPlatform(value string) error {
-	if strings.EqualFold(strings.TrimSpace(value), string(auth.ClaudeClientPlatformAny)) || strings.EqualFold(strings.TrimSpace(value), string(auth.ClaudeClientPlatformCLIOnly)) || strings.TrimSpace(value) == "" {
-		return nil
-	}
-	return fmt.Errorf("claude_client_platform must be any or claude_code_cli_only")
-}
-
-func validateClaudeVersionPolicy(value string) error {
-	switch strings.ToLower(strings.TrimSpace(value)) {
-	case "", string(auth.ClaudeVersionPolicyPassthrough), string(auth.ClaudeVersionPolicyFixed), string(auth.ClaudeVersionPolicyMinimum):
-		return nil
-	default:
-		return fmt.Errorf("claude_version_policy must be passthrough, fixed, or minimum")
-	}
-}
-
-func validateClaudeClientVersion(value string) error {
-	if strings.TrimSpace(value) == "" {
-		return nil
-	}
-	_, err := auth.CompareClaudeClientVersions(strings.TrimSpace(value), strings.TrimSpace(value))
-	return err
 }
 
 // validateAccountTimezone 允许空串(=清除);非空必须是可加载的 IANA 时区。
@@ -2567,10 +2341,6 @@ func (u accountSchedulerUpdate) hasChanges() bool {
 		u.ProxyURL.Set ||
 		u.CustomHeaders.Set ||
 		u.CodexFingerprintMode.Set ||
-		u.ClaudeFingerprintMode.Set ||
-		u.ClaudeClientPlatform.Set ||
-		u.ClaudeVersionPolicy.Set ||
-		u.ClaudeClientVersion.Set ||
 		u.Timezone.Set ||
 		u.AccountHref.Set
 }
@@ -2704,7 +2474,7 @@ func (h *Handler) UpdateAccountScheduler(c *gin.Context) {
 		if update.CredentialUpdates == nil {
 			update.CredentialUpdates = make(map[string]interface{})
 		}
-		row, err := h.db.GetAccountByID(ctx, id)
+		_, err := h.db.GetAccountByID(ctx, id)
 		if err != nil {
 			if errors.Is(err, sql.ErrNoRows) {
 				writeError(c, http.StatusNotFound, "账号不存在")
@@ -2712,24 +2482,6 @@ func (h *Handler) UpdateAccountScheduler(c *gin.Context) {
 			}
 			writeError(c, http.StatusInternalServerError, "查询账号失败: "+err.Error())
 			return
-		}
-		applied, err := prepareClaudeTimezoneCredentialUpdateWithHeaders(row, update.Timezone.Value, update.CredentialUpdates, func() map[string]string {
-			if update.CustomHeaders.Set {
-				return update.CustomHeaders.Values
-			}
-			return nil
-		}())
-		if err != nil {
-			writeError(c, http.StatusBadRequest, err.Error())
-			return
-		}
-		if applied {
-			if headers, ok := update.CredentialUpdates["custom_headers"].(map[string]string); ok {
-				// The timezone path owns the final safe identity snapshot even
-				// when the request also supplied custom_headers; use that same
-				// snapshot for duplicate checks and immediate runtime updates.
-				update.CustomHeaders = optionalCustomHeaders{Set: true, Values: headers}
-			}
 		}
 	}
 
@@ -2745,17 +2497,6 @@ func (h *Handler) UpdateAccountScheduler(c *gin.Context) {
 			}
 			writeError(c, http.StatusInternalServerError, "查询账号失败: "+err.Error())
 			return
-		}
-		// Claude API Key 账号的 custom_headers 是出站自定义头(issue #647):网关保留头
-		// (Authorization / x-api-key / Content-Type / Accept 等)不允许覆盖。
-		if strings.EqualFold(strings.TrimSpace(row.GetCredential("upstream_type")), auth.UpstreamClaude) && claudeAuthKindForRow(row, true) == auth.ClaudeAuthKindAPIKey {
-			normalized, err := normalizeClaudeAPIKeyCustomHeaders(update.CustomHeaders.Values)
-			if err != nil {
-				writeError(c, http.StatusBadRequest, err.Error())
-				return
-			}
-			update.CustomHeaders.Values = normalized
-			update.CredentialUpdates["custom_headers"] = cloneCustomHeaders(normalized)
 		}
 		seed := tokenCredentialSeedFromAccountRow(row)
 		previousOverride := openaiidentity.WorkspaceOverrideFromHeaders(seed.customHeaders)
@@ -2852,44 +2593,6 @@ func (h *Handler) applyAccountSchedulerRuntimeUpdate(id int64, update accountSch
 	}
 	if update.CustomHeaders.Set {
 		h.store.ApplyAccountCustomHeaders(id, update.CustomHeaders.Values)
-	} else if update.Timezone.Set {
-		// A Claude timezone edit rebuilds the restricted identity headers in
-		// CredentialUpdates; publish the same snapshot immediately instead of
-		// waiting for the scheduler outbox/restart to refresh runtime state.
-		if headers, ok := update.CredentialUpdates["custom_headers"].(map[string]string); ok {
-			h.store.ApplyAccountCustomHeaders(id, headers)
-		}
-	}
-	if update.ClaudeFingerprintMode.Set {
-		h.store.ApplyAccountClaudeFingerprintMode(id, update.ClaudeFingerprintMode.Value)
-	}
-	if update.ClaudeClientPlatform.Set || update.ClaudeVersionPolicy.Set || update.ClaudeClientVersion.Set {
-		policy := auth.ClaudeClientPolicy{}
-		if update.ClaudeClientPlatform.Set {
-			policy.Platform = auth.ClaudeClientPlatform(update.ClaudeClientPlatform.Value)
-		}
-		if update.ClaudeVersionPolicy.Set {
-			policy.VersionPolicy = auth.ClaudeVersionPolicy(update.ClaudeVersionPolicy.Value)
-		}
-		if update.ClaudeClientVersion.Set {
-			policy.ClientVersion = update.ClaudeClientVersion.Value
-		}
-		// Empty fields mean inherit global. The runtime account is updated with
-		// only the explicitly changed values by reading its current overrides.
-		if account := h.store.FindByID(id); account != nil {
-			account.Mu().RLock()
-			if !update.ClaudeClientPlatform.Set {
-				policy.Platform = auth.ClaudeClientPlatform(account.ClaudeClientPlatformOverride)
-			}
-			if !update.ClaudeVersionPolicy.Set {
-				policy.VersionPolicy = auth.ClaudeVersionPolicy(account.ClaudeVersionPolicyOverride)
-			}
-			if !update.ClaudeClientVersion.Set {
-				policy.ClientVersion = account.ClaudeClientVersionOverride
-			}
-			account.Mu().RUnlock()
-		}
-		h.store.ApplyAccountClaudeClientPolicy(id, policy)
 	}
 	if update.CodexFingerprintMode.Set {
 		h.store.ApplyAccountCodexFingerprintMode(id, update.CodexFingerprintMode.Value)
@@ -4215,468 +3918,12 @@ func (h *Handler) streamAddATAccounts(c *gin.Context, req addATAccountReq, token
 	})
 }
 
-type addOpenAIResponsesAccountReq struct {
-	Name                       string            `json:"name"`
-	BaseURL                    string            `json:"base_url"`
-	APIKey                     string            `json:"api_key"`
-	BalanceQueryURL            string            `json:"balance_query_url"`
-	Models                     []string          `json:"models"`
-	ModelMapping               string            `json:"model_mapping"`
-	CodexClientMetadataMode    *string           `json:"codex_client_metadata_mode"`
-	CodexPassthroughMode       *string           `json:"codex_passthrough_mode"`
-	ResponsesUpstreamTransport *string           `json:"responses_upstream_transport"`
-	ProxyURL                   string            `json:"proxy_url"`
-	CustomHeaders              map[string]string `json:"custom_headers"`
-}
-
-type fetchOpenAIResponsesModelsReq struct {
-	AccountID     int64             `json:"account_id"`
-	BaseURL       string            `json:"base_url"`
-	APIKey        string            `json:"api_key"`
-	ProxyURL      string            `json:"proxy_url"`
-	CustomHeaders map[string]string `json:"custom_headers"`
-}
-
-func (h *Handler) AddOpenAIResponsesAccount(c *gin.Context) {
-	var req addOpenAIResponsesAccountReq
-	if err := c.ShouldBindJSON(&req); err != nil {
-		writeError(c, http.StatusBadRequest, "请求格式错误")
-		return
-	}
-
-	req.Name = security.SanitizeInput(req.Name)
-	req.ProxyURL = security.SanitizeInput(req.ProxyURL)
-	req.APIKey = strings.TrimSpace(req.APIKey)
-	baseURL, err := auth.NormalizeOpenAIResponsesBaseURL(req.BaseURL)
-	if err != nil {
-		writeError(c, http.StatusBadRequest, err.Error())
-		return
-	}
-	balanceQueryURL, err := normalizeOpenAIResponsesBalanceQueryURL(req.BalanceQueryURL)
-	if err != nil {
-		writeError(c, http.StatusBadRequest, err.Error())
-		return
-	}
-	models := auth.NormalizeOpenAIResponsesModels(req.Models)
-
-	if req.APIKey == "" {
-		writeError(c, http.StatusBadRequest, "API Key 是必填字段")
-		return
-	}
-	if len(models) == 0 {
-		writeError(c, http.StatusBadRequest, "至少需要添加一个模型")
-		return
-	}
-	if security.ContainsXSS(req.Name) || security.ContainsSQLInjection(req.Name) {
-		writeError(c, http.StatusBadRequest, "名称包含非法字符")
-		return
-	}
-	if utf8.RuneCountInString(req.Name) > 100 {
-		writeError(c, http.StatusBadRequest, "名称长度不能超过100字符")
-		return
-	}
-	if err := security.ValidateProxyURL(req.ProxyURL); err != nil {
-		writeError(c, http.StatusBadRequest, "代理URL无效")
-		return
-	}
-	customHeaders, err := normalizeCustomHeaders(req.CustomHeaders)
-	if err != nil {
-		writeError(c, http.StatusBadRequest, err.Error())
-		return
-	}
-	modelMapping, err := normalizeAccountModelMapping(req.ModelMapping)
-	if err != nil {
-		writeError(c, http.StatusBadRequest, err.Error())
-		return
-	}
-	codexClientMetadataMode := auth.CodexClientMetadataModeAuto
-	if req.CodexClientMetadataMode != nil {
-		if !auth.IsValidCodexClientMetadataMode(*req.CodexClientMetadataMode) {
-			writeError(c, http.StatusBadRequest, "codex_client_metadata_mode 必须是 auto、always 或 off")
-			return
-		}
-		codexClientMetadataMode = auth.NormalizeCodexClientMetadataMode(*req.CodexClientMetadataMode)
-	}
-	codexPassthroughMode := auth.CodexPassthroughModeOff
-	if req.CodexPassthroughMode != nil {
-		if !auth.IsValidCodexPassthroughMode(*req.CodexPassthroughMode) {
-			writeError(c, http.StatusBadRequest, "codex_passthrough_mode 必须是 off、auto 或 always")
-			return
-		}
-		codexPassthroughMode = auth.NormalizeCodexPassthroughMode(*req.CodexPassthroughMode)
-	}
-	responsesUpstreamTransport := auth.OpenAIResponsesTransportHTTP
-	if req.ResponsesUpstreamTransport != nil {
-		if !auth.IsValidOpenAIResponsesUpstreamTransport(*req.ResponsesUpstreamTransport) {
-			writeError(c, http.StatusBadRequest, "responses_upstream_transport 必须是 http 或 websocket")
-			return
-		}
-		responsesUpstreamTransport = auth.NormalizeOpenAIResponsesUpstreamTransport(*req.ResponsesUpstreamTransport)
-	}
-	for _, model := range models {
-		if err := security.ValidateModelName(model); err != nil {
-			writeError(c, http.StatusBadRequest, fmt.Sprintf("模型名称无效: %s", model))
-			return
-		}
-	}
-
-	ctx, cancel := context.WithTimeout(c.Request.Context(), 10*time.Second)
-	defer cancel()
-
-	existing, err := h.db.GetAllOpenAIAPIKeys(ctx)
-	if err != nil {
-		writeInternalError(c, err)
-		return
-	}
-	if existing[req.APIKey] {
-		writeError(c, http.StatusConflict, "该 API Key 已存在")
-		return
-	}
-
-	name := req.Name
-	if name == "" {
-		name = "openai-responses"
-	}
-	credentials := map[string]interface{}{
-		"upstream_type":                          auth.UpstreamOpenAIResponses,
-		"base_url":                               baseURL,
-		"api_key":                                req.APIKey,
-		openAIResponsesBalanceQueryURLCredential: balanceQueryURL,
-		"models":                                 models,
-		"model_mapping":                          modelMapping,
-		"codex_client_metadata_mode":             codexClientMetadataMode,
-		"codex_passthrough_mode":                 codexPassthroughMode,
-		"responses_upstream_transport":           responsesUpstreamTransport,
-		"plan_type":                              "api",
-		"email":                                  baseURL,
-	}
-	if len(customHeaders) > 0 {
-		credentials["custom_headers"] = cloneCustomHeaders(customHeaders)
-	}
-	id, err := h.db.InsertOpenAIResponsesAccount(ctx, name, credentials, req.ProxyURL)
-	if err != nil {
-		writeInternalError(c, err)
-		return
-	}
-	h.db.InsertAccountEventAsync(id, "added", "manual_openai_responses")
-
-	h.store.AddAccount(&auth.Account{
-		DBID:                       id,
-		ProxyURL:                   req.ProxyURL,
-		HealthTier:                 auth.HealthTierHealthy,
-		UpstreamType:               auth.UpstreamOpenAIResponses,
-		BaseURL:                    baseURL,
-		APIKey:                     req.APIKey,
-		Models:                     models,
-		ModelMapping:               modelMapping,
-		CodexClientMetadataMode:    codexClientMetadataMode,
-		CodexPassthroughMode:       codexPassthroughMode,
-		ResponsesUpstreamTransport: responsesUpstreamTransport,
-		CustomHeaders:              customHeaders,
-		Email:                      baseURL,
-		PlanType:                   "api",
-	})
-
-	security.SecurityAuditLog("OPENAI_RESPONSES_ACCOUNT_ADDED", fmt.Sprintf("account_id=%d models=%d ip=%s", id, len(models), c.ClientIP()))
-	c.JSON(http.StatusOK, gin.H{
-		"message": "成功添加 OpenAI Responses API 账号",
-		"id":      id,
-	})
-}
-
-func (h *Handler) FetchOpenAIResponsesModels(c *gin.Context) {
-	var req fetchOpenAIResponsesModelsReq
-	if err := c.ShouldBindJSON(&req); err != nil {
-		writeError(c, http.StatusBadRequest, "请求格式错误")
-		return
-	}
-
-	req.APIKey = strings.TrimSpace(req.APIKey)
-	req.ProxyURL = security.SanitizeInput(req.ProxyURL)
-	if req.AccountID > 0 && req.APIKey == "" {
-		row, err := h.db.GetAccountByID(c.Request.Context(), req.AccountID)
-		if err != nil {
-			if errors.Is(err, sql.ErrNoRows) {
-				writeError(c, http.StatusNotFound, "账号不存在")
-				return
-			}
-			writeInternalError(c, err)
-			return
-		}
-		if !strings.EqualFold(strings.TrimSpace(row.GetCredential("upstream_type")), auth.UpstreamOpenAIResponses) {
-			writeError(c, http.StatusBadRequest, "仅 OpenAI Responses API 账号支持使用已保存的 API Key 获取模型")
-			return
-		}
-		req.APIKey = row.GetCredential("api_key")
-		if strings.TrimSpace(req.BaseURL) == "" {
-			req.BaseURL = row.GetCredential("base_url")
-		}
-		if strings.TrimSpace(req.ProxyURL) == "" {
-			req.ProxyURL = row.ProxyURL
-		}
-		if len(req.CustomHeaders) == 0 {
-			req.CustomHeaders = row.GetCredentialStringMap("custom_headers")
-		}
-	}
-	baseURL, err := auth.NormalizeOpenAIResponsesBaseURL(req.BaseURL)
-	if err != nil {
-		writeError(c, http.StatusBadRequest, err.Error())
-		return
-	}
-	if req.APIKey == "" {
-		writeError(c, http.StatusBadRequest, "API Key 是必填字段")
-		return
-	}
-	if err := security.ValidateProxyURL(req.ProxyURL); err != nil {
-		writeError(c, http.StatusBadRequest, "代理URL无效")
-		return
-	}
-	customHeaders, err := normalizeCustomHeaders(req.CustomHeaders)
-	if err != nil {
-		writeError(c, http.StatusBadRequest, err.Error())
-		return
-	}
-
-	ctx, cancel := context.WithTimeout(c.Request.Context(), 20*time.Second)
-	defer cancel()
-	// 编辑已有账号时带上账号本身：号池画像按账号抽取，与该账号的
-	// 对话请求取同一份身份（issue #774）；新建账号尚未落库，为空。
-	var account *auth.Account
-	if req.AccountID > 0 && h.store != nil {
-		account = h.store.FindByID(req.AccountID)
-	}
-	models, err := fetchOpenAIResponsesModelIDs(ctx, account, baseURL, req.APIKey, req.ProxyURL, customHeaders)
-	if err != nil {
-		writeError(c, http.StatusBadGateway, err.Error())
-		return
-	}
-	c.JSON(http.StatusOK, gin.H{
-		"models":   models,
-		"base_url": baseURL,
-	})
-}
-
-func (h *Handler) UpdateOpenAIResponsesAccount(c *gin.Context) {
-	id, err := strconv.ParseInt(c.Param("id"), 10, 64)
-	if err != nil {
-		writeError(c, http.StatusBadRequest, "无效的账号 ID")
-		return
-	}
-
-	var req addOpenAIResponsesAccountReq
-	if err := c.ShouldBindJSON(&req); err != nil {
-		writeError(c, http.StatusBadRequest, "请求格式错误")
-		return
-	}
-	req.Name = security.SanitizeInput(req.Name)
-	req.ProxyURL = security.SanitizeInput(req.ProxyURL)
-	req.APIKey = strings.TrimSpace(req.APIKey)
-
-	ctx, cancel := context.WithTimeout(c.Request.Context(), 10*time.Second)
-	defer cancel()
-	row, err := h.db.GetAccountByID(ctx, id)
-	if err != nil {
-		if errors.Is(err, sql.ErrNoRows) {
-			writeError(c, http.StatusNotFound, "账号不存在")
-			return
-		}
-		writeInternalError(c, err)
-		return
-	}
-	if !strings.EqualFold(strings.TrimSpace(row.GetCredential("upstream_type")), auth.UpstreamOpenAIResponses) {
-		writeError(c, http.StatusBadRequest, "仅 OpenAI Responses API 账号支持账号设置")
-		return
-	}
-
-	baseURL, err := auth.NormalizeOpenAIResponsesBaseURL(req.BaseURL)
-	if err != nil {
-		writeError(c, http.StatusBadRequest, err.Error())
-		return
-	}
-	balanceQueryURL, err := normalizeOpenAIResponsesBalanceQueryURL(req.BalanceQueryURL)
-	if err != nil {
-		writeError(c, http.StatusBadRequest, err.Error())
-		return
-	}
-	models := auth.NormalizeOpenAIResponsesModels(req.Models)
-	if len(models) == 0 {
-		writeError(c, http.StatusBadRequest, "至少需要添加一个模型")
-		return
-	}
-	if security.ContainsXSS(req.Name) || security.ContainsSQLInjection(req.Name) {
-		writeError(c, http.StatusBadRequest, "名称包含非法字符")
-		return
-	}
-	if utf8.RuneCountInString(req.Name) > 100 {
-		writeError(c, http.StatusBadRequest, "名称长度不能超过100字符")
-		return
-	}
-	if err := security.ValidateProxyURL(req.ProxyURL); err != nil {
-		writeError(c, http.StatusBadRequest, "代理URL无效")
-		return
-	}
-	customHeaders, err := normalizeCustomHeaders(req.CustomHeaders)
-	if err != nil {
-		writeError(c, http.StatusBadRequest, err.Error())
-		return
-	}
-	modelMapping, err := normalizeAccountModelMapping(req.ModelMapping)
-	if err != nil {
-		writeError(c, http.StatusBadRequest, err.Error())
-		return
-	}
-	codexClientMetadataMode := auth.NormalizeCodexClientMetadataMode(row.GetCredential("codex_client_metadata_mode"))
-	if req.CodexClientMetadataMode != nil {
-		if !auth.IsValidCodexClientMetadataMode(*req.CodexClientMetadataMode) {
-			writeError(c, http.StatusBadRequest, "codex_client_metadata_mode 必须是 auto、always 或 off")
-			return
-		}
-		codexClientMetadataMode = auth.NormalizeCodexClientMetadataMode(*req.CodexClientMetadataMode)
-	}
-	codexPassthroughMode := auth.NormalizeCodexPassthroughMode(row.GetCredential("codex_passthrough_mode"))
-	if req.CodexPassthroughMode != nil {
-		if !auth.IsValidCodexPassthroughMode(*req.CodexPassthroughMode) {
-			writeError(c, http.StatusBadRequest, "codex_passthrough_mode 必须是 off、auto 或 always")
-			return
-		}
-		codexPassthroughMode = auth.NormalizeCodexPassthroughMode(*req.CodexPassthroughMode)
-	}
-	responsesUpstreamTransport := auth.NormalizeOpenAIResponsesUpstreamTransport(row.GetCredential(auth.OpenAIResponsesUpstreamTransportCredentialKey))
-	if req.ResponsesUpstreamTransport != nil {
-		if !auth.IsValidOpenAIResponsesUpstreamTransport(*req.ResponsesUpstreamTransport) {
-			writeError(c, http.StatusBadRequest, "responses_upstream_transport 必须是 http 或 websocket")
-			return
-		}
-		responsesUpstreamTransport = auth.NormalizeOpenAIResponsesUpstreamTransport(*req.ResponsesUpstreamTransport)
-	}
-	for _, model := range models {
-		if err := security.ValidateModelName(model); err != nil {
-			writeError(c, http.StatusBadRequest, fmt.Sprintf("模型名称无效: %s", model))
-			return
-		}
-	}
-
-	name := req.Name
-	if name == "" {
-		name = row.Name
-	}
-	if name == "" {
-		name = "openai-responses"
-	}
-
-	credentials := map[string]interface{}{
-		"upstream_type":                          auth.UpstreamOpenAIResponses,
-		"base_url":                               baseURL,
-		openAIResponsesBalanceQueryURLCredential: balanceQueryURL,
-		"models":                                 models,
-		"model_mapping":                          modelMapping,
-		"codex_client_metadata_mode":             codexClientMetadataMode,
-		"codex_passthrough_mode":                 codexPassthroughMode,
-		"responses_upstream_transport":           responsesUpstreamTransport,
-		"plan_type":                              "api",
-		"email":                                  baseURL,
-		"custom_headers":                         cloneCustomHeaders(customHeaders),
-	}
-	if req.APIKey != "" {
-		credentials["api_key"] = req.APIKey
-	}
-	if req.APIKey == "" && strings.TrimSpace(row.GetCredential("api_key")) == "" {
-		writeError(c, http.StatusBadRequest, "API Key 是必填字段")
-		return
-	}
-
-	if err := h.db.UpdateOpenAIResponsesAccount(ctx, id, name, credentials, req.ProxyURL); err != nil {
-		if errors.Is(err, sql.ErrNoRows) {
-			writeError(c, http.StatusNotFound, "账号不存在")
-			return
-		}
-		writeInternalError(c, err)
-		return
-	}
-	if h.store != nil {
-		h.store.ApplyOpenAIResponsesConfig(id, baseURL, req.APIKey, models, modelMapping, codexClientMetadataMode, codexPassthroughMode, req.ProxyURL)
-		h.store.ApplyAccountCustomHeaders(id, customHeaders)
-	}
-	h.db.InsertAccountEventAsync(id, "updated", "manual_openai_responses")
-
-	writeMessage(c, http.StatusOK, "OpenAI Responses API 账号设置已更新")
-}
-
-func fetchOpenAIResponsesModelIDs(ctx context.Context, account *auth.Account, baseURL, apiKey, proxyURL string, customHeaders map[string]string) ([]string, error) {
-	endpoint := auth.OpenAIResponsesEndpoint(baseURL, "/v1/models")
-	transport := http.DefaultTransport.(*http.Transport).Clone()
-	baseDialer := &net.Dialer{Timeout: 10 * time.Second, KeepAlive: 30 * time.Second}
-	transport.DialContext = baseDialer.DialContext
-	if err := auth.ConfigureTransportProxy(transport, proxyURL, baseDialer); err != nil {
-		return nil, fmt.Errorf("代理URL无效: %w", err)
-	}
-	client := &http.Client{
-		Transport: transport,
-		Timeout:   20 * time.Second,
-	}
-	req, err := http.NewRequestWithContext(ctx, http.MethodGet, endpoint, nil)
-	if err != nil {
-		return nil, fmt.Errorf("创建模型列表请求失败: %w", err)
-	}
-	req.Header.Set("Authorization", "Bearer "+apiKey)
-	req.Header.Set("Accept", "application/json")
-	if err := proxy.ApplyCodexModelDiscoveryHeaders(req.Header, account, baseURL, apiKey); err != nil {
-		return nil, err
-	}
-	for name, value := range customHeaders {
-		name = strings.TrimSpace(name)
-		if name == "" {
-			continue
-		}
-		req.Header.Set(name, value)
-	}
-
-	resp, err := client.Do(req)
-	if err != nil {
-		return nil, fmt.Errorf("请求 /v1/models 失败: %w", err)
-	}
-	defer resp.Body.Close()
-
-	body, readErr := proxy.ReadModelsListBody(resp.Body, proxy.CurrentRuntimeSettings().ModelsListReadMaxBytes)
-	if readErr != nil {
-		return nil, fmt.Errorf("读取 /v1/models 响应失败: %w", readErr)
-	}
-	if resp.StatusCode < 200 || resp.StatusCode >= 300 {
-		message := strings.TrimSpace(gjson.GetBytes(body, "error.message").String())
-		if message == "" {
-			message = strings.TrimSpace(string(body))
-		}
-		if message == "" {
-			message = http.StatusText(resp.StatusCode)
-		}
-		return nil, fmt.Errorf("/v1/models 返回 %d: %s", resp.StatusCode, message)
-	}
-
-	var payload struct {
-		Data []struct {
-			ID string `json:"id"`
-		} `json:"data"`
-	}
-	if err := json.Unmarshal(body, &payload); err != nil {
-		return nil, fmt.Errorf("解析 /v1/models 响应失败: %w", err)
-	}
-	models := make([]string, 0, len(payload.Data))
-	for _, item := range payload.Data {
-		models = append(models, item.ID)
-	}
-	models = auth.NormalizeOpenAIResponsesModels(models)
-	if len(models) == 0 {
-		return nil, fmt.Errorf("/v1/models 未返回可用模型")
-	}
-	return models, nil
-}
-
 type updateAccountModelsRequest struct {
 	Models []string `json:"models"`
 }
 
 // UpdateAccountModels 设置 OAuth 账号的支持模型白名单。
-// Claude 账号仅接受 claude-* 原生模型；空数组 = 清空白名单，放行全部模型；
+// 空数组 = 清空白名单，放行全部模型；
 // 非空时调度器只会把白名单内模型的请求派给该账号。
 func (h *Handler) UpdateAccountModels(c *gin.Context) {
 	id, err := strconv.ParseInt(c.Param("id"), 10, 64)
@@ -4706,14 +3953,6 @@ func (h *Handler) UpdateAccountModels(c *gin.Context) {
 		writeError(c, http.StatusNotFound, "账号不在运行时池中")
 		return
 	}
-	if err := validateAccountModelsForAccount(account, models); err != nil {
-		writeError(c, http.StatusBadRequest, err.Error())
-		return
-	}
-	if account.IsRelayStyle() && !account.IsClaudeOAuth() {
-		writeError(c, http.StatusBadRequest, "中转/Grok 账号请在账号设置中编辑模型列表")
-		return
-	}
 
 	ctx, cancel := context.WithTimeout(c.Request.Context(), 5*time.Second)
 	defer cancel()
@@ -4724,24 +3963,6 @@ func (h *Handler) UpdateAccountModels(c *gin.Context) {
 	h.store.ApplyAccountModels(id, models)
 	h.db.InsertAccountEventAsync(id, "updated", "account_models")
 	c.JSON(http.StatusOK, gin.H{"models": models})
-}
-
-// validateAccountModelsForAccount keeps provider-specific model namespaces
-// out of the shared account-model endpoint. An empty list intentionally clears
-// the override; a non-empty Claude allowlist must contain only native
-// claude-* IDs so a stale Codex/Grok entry can never make a Claude account
-// appear routable for an incompatible protocol.
-func validateAccountModelsForAccount(account *auth.Account, models []string) error {
-	if account == nil || !account.IsClaudeOAuth() {
-		return nil
-	}
-	for _, model := range models {
-		model = strings.TrimSpace(model)
-		if !strings.HasPrefix(strings.ToLower(model), "claude-") {
-			return fmt.Errorf("Claude 账号模型必须使用 claude-* 原生模型: %s", model)
-		}
-	}
-	return nil
 }
 
 // SyncAccountUpstreamModels 用账号自身凭据实时拉取上游模型清单，
@@ -4760,42 +3981,6 @@ func (h *Handler) SyncAccountUpstreamModels(c *gin.Context) {
 		writeError(c, http.StatusNotFound, "账号不在运行时池中")
 		return
 	}
-	if account.IsAntigravityAPI() {
-		writeError(c, http.StatusBadRequest, "Antigravity 账号请使用专用配额刷新")
-		return
-	}
-	if account.IsGrokAPI() {
-		// Grok 账号同步完整富目录到 catalog 表；响应 models 是可见目录，不覆盖账号白名单。
-		ctx, cancel := context.WithTimeout(c.Request.Context(), 110*time.Second)
-		defer cancel()
-		result, err := h.syncGrokAccountState(ctx, id)
-		if err != nil {
-			writeError(c, http.StatusBadGateway, fmt.Sprintf("拉取 Grok 上游模型目录失败: %s", err.Error()))
-			return
-		}
-		if result.capabilityGeneration > 0 {
-			h.triggerGrokCapabilityProbeForGeneration(id, result.capabilityGeneration)
-		}
-		c.JSON(http.StatusOK, gin.H{"models": result.Models, "state": result.State, "errors": result.Errors})
-		return
-	}
-	if account.IsClaudeOAuth() {
-		ctx, cancel := context.WithTimeout(c.Request.Context(), 30*time.Second)
-		defer cancel()
-		models, fetchErr := auth.NewClaudeAuth(h.store.ResolveProxyForAccount(account)).FetchModelsForAccount(ctx, account)
-		if fetchErr != nil {
-			writeError(c, http.StatusBadGateway, fmt.Sprintf("拉取 Claude 上游模型清单失败: %s", fetchErr.Error()))
-			return
-		}
-		models = auth.NormalizeAccountModels(models)
-		c.JSON(http.StatusOK, gin.H{"models": models})
-		return
-	}
-	if account.IsOpenAIResponsesAPI() {
-		writeError(c, http.StatusBadRequest, "OpenAI Responses API 账号请使用账号设置中的模型同步")
-		return
-	}
-
 	ctx, cancel := context.WithTimeout(c.Request.Context(), 20*time.Second)
 	defer cancel()
 	daybreakSnapshot := account.BeginDaybreakObservation()
@@ -6383,25 +5568,6 @@ func (h *Handler) RefreshAccountUsage(c *gin.Context) {
 	if t := account.GetResetSparkAt(); !t.IsZero() {
 		resp["reset_spark_at"] = t.Format(time.RFC3339)
 	}
-	if account.IsClaudeOAuth() && h.db != nil {
-		// The Claude probe records its attempt metadata in credentials. Read the
-		// merged row back so the caller gets the durable timestamp/error even
-		// when the response carried no quota headers.
-		if row, readErr := h.db.GetAccountByID(ctx, id); readErr == nil {
-			if value := row.GetCredential(auth.ClaudeUsageProbeAtCredentialKey); value != "" {
-				resp["claude_usage_probe_at"] = value
-			}
-			if value := row.GetCredential(auth.ClaudeUsageProbeErrorCredentialKey); value != "" {
-				resp["claude_usage_probe_error"] = value
-			}
-			if value := row.GetCredential(auth.ClaudeUsageWindowsCredentialKey); value != "" {
-				resp["claude_usage_windows_probed"] = true
-			}
-			if windows := claudeAccountUsageWindows(row); len(windows) > 0 {
-				resp["claude_usage_windows"] = windows
-			}
-		}
-	}
 	c.JSON(http.StatusOK, resp)
 }
 
@@ -6420,7 +5586,7 @@ type batchUpdateAccountsReq struct {
 
 func (h *Handler) accountOperationIdentity(id int64) (string, string) {
 	h.accountListCacheMu.RLock()
-	for _, channel := range []string{database.UpstreamChannelCodex, database.UpstreamChannelGrok, database.UpstreamChannelAntigravity, database.UpstreamChannelClaude} {
+	for _, channel := range []string{database.UpstreamChannelCodex} {
 		snapshot := h.accountListCache[channel]
 		if snapshot == nil {
 			continue
@@ -6479,20 +5645,17 @@ func (h *Handler) deleteAccountByID(ctx context.Context, id int64) error {
 }
 
 type recycleBinAccountResponse struct {
-	ID                 int64    `json:"id"`
-	Name               string   `json:"name"`
-	Email              string   `json:"email"`
-	PlanType           string   `json:"plan_type"`
-	ATOnly             bool     `json:"at_only"`
-	AccessTokenType    string   `json:"access_token_type,omitempty"`
-	OpenAIResponsesAPI bool     `json:"openai_responses_api"`
-	ClaudeAPI          bool     `json:"claude_api"`
-	BaseURL            string   `json:"base_url,omitempty"`
-	Models             []string `json:"models,omitempty"`
-	CreatedAt          string   `json:"created_at"`
-	DeletedAt          string   `json:"deleted_at,omitempty"`
-	LastTestStatus     string   `json:"last_test_status,omitempty"`
-	LastTestAt         string   `json:"last_test_at,omitempty"`
+	ID              int64    `json:"id"`
+	Name            string   `json:"name"`
+	Email           string   `json:"email"`
+	PlanType        string   `json:"plan_type"`
+	ATOnly          bool     `json:"at_only"`
+	AccessTokenType string   `json:"access_token_type,omitempty"`
+	Models          []string `json:"models,omitempty"`
+	CreatedAt       string   `json:"created_at"`
+	DeletedAt       string   `json:"deleted_at,omitempty"`
+	LastTestStatus  string   `json:"last_test_status,omitempty"`
+	LastTestAt      string   `json:"last_test_at,omitempty"`
 }
 
 // ListRecycleBinAccounts 获取回收站账号列表
@@ -6509,32 +5672,17 @@ func (h *Handler) ListRecycleBinAccounts(c *gin.Context) {
 
 	accounts := make([]recycleBinAccountResponse, 0, len(rows))
 	for _, row := range rows {
-		upstreamType := strings.TrimSpace(row.GetCredential("upstream_type"))
-		isOpenAIResponsesAccount := strings.EqualFold(upstreamType, auth.UpstreamOpenAIResponses)
-		isClaudeAccount := strings.EqualFold(upstreamType, auth.UpstreamClaude)
-		email := row.GetCredential("email")
-		baseURL := row.GetCredential("base_url")
-		if isOpenAIResponsesAccount && email == "" {
-			email = baseURL
-		}
-		planType := row.GetCredential("plan_type")
-		if isOpenAIResponsesAccount && planType == "" {
-			planType = "api"
-		}
 		resp := recycleBinAccountResponse{
-			ID:                 row.ID,
-			Name:               row.Name,
-			Email:              email,
-			PlanType:           planType,
-			ATOnly:             !isOpenAIResponsesAccount && !isClaudeAccount && row.GetCredential("refresh_token") == "" && row.GetCredential("access_token") != "",
-			AccessTokenType:    accountAccessTokenType(row),
-			OpenAIResponsesAPI: isOpenAIResponsesAccount,
-			ClaudeAPI:          isClaudeAccount,
-			BaseURL:            baseURL,
-			Models:             row.GetCredentialStringSlice("models"),
-			CreatedAt:          row.CreatedAt.Format(time.RFC3339),
-			LastTestStatus:     row.GetCredential("recycle_last_test_status"),
-			LastTestAt:         row.GetCredential("recycle_last_test_at"),
+			ID:              row.ID,
+			Name:            row.Name,
+			Email:           row.GetCredential("email"),
+			PlanType:        row.GetCredential("plan_type"),
+			ATOnly:          row.GetCredential("refresh_token") == "" && row.GetCredential("access_token") != "",
+			AccessTokenType: accountAccessTokenType(row),
+			Models:          row.GetCredentialStringSlice("models"),
+			CreatedAt:       row.CreatedAt.Format(time.RFC3339),
+			LastTestStatus:  row.GetCredential("recycle_last_test_status"),
+			LastTestAt:      row.GetCredential("recycle_last_test_at"),
 		}
 		if row.DeletedAt.Valid {
 			resp.DeletedAt = row.DeletedAt.Time.Format(time.RFC3339)
