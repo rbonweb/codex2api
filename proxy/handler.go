@@ -2503,9 +2503,17 @@ func (h *Handler) RegisterRoutes(r *gin.Engine) {
 	// Codex CLI web_search = "live" 的 standalone 联网搜索端点 (issue #359)
 	v1.POST("/alpha/search", h.CodexAlphaSearchHandler)
 	v1.POST("/live", h.LiveCreate)
+	v1.GET("/live/sessions", h.LiveSessionsWebSocket)
 	v1.GET("/live/:call_id", h.LiveSideband)
+
+	v1.POST("/live/sessions", h.LiveSessionsCreate)
+	v1.GET("/live/sessions/:session_id/attach", h.LiveSessionsAttach)
+
 	v1.POST("/realtime/calls", h.RealtimeCalls)
 	v1.POST("/audio/transcriptions", h.AudioTranscriptions)
+	v1.POST("/audio/speech", h.AudioSpeech)
+	v1.GET("/audio/voices", h.AudioVoices)
+	v1.GET("/live/voices", h.AudioVoices)
 
 	// 无前缀路由（兼容 base_url 已包含 /v1 的客户端）
 	r.POST("/chat/completions", auth, h.ChatCompletions)
@@ -2519,9 +2527,17 @@ func (h *Handler) RegisterRoutes(r *gin.Engine) {
 	r.GET("/models", auth, h.listModelsOrManifest)
 	r.POST("/alpha/search", auth, h.CodexAlphaSearchHandler)
 	r.POST("/live", auth, h.LiveCreate)
+	r.GET("/live/sessions", auth, h.LiveSessionsWebSocket)
 	r.GET("/live/:call_id", auth, h.LiveSideband)
+
+	r.POST("/live/sessions", auth, h.LiveSessionsCreate)
+	r.GET("/live/sessions/:session_id/attach", auth, h.LiveSessionsAttach)
+
 	r.POST("/realtime/calls", auth, h.RealtimeCalls)
 	r.POST("/audio/transcriptions", auth, h.AudioTranscriptions)
+	r.POST("/audio/speech", auth, h.AudioSpeech)
+	r.GET("/audio/voices", auth, h.AudioVoices)
+	r.GET("/live/voices", auth, h.AudioVoices)
 
 	codexDirect := r.Group("/backend-api/codex")
 	codexDirect.Use(auth)

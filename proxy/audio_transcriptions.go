@@ -110,7 +110,7 @@ func (h *Handler) AudioTranscriptions(c *gin.Context) {
 	if req.prompt != "" {
 		instructions += " Context: " + req.prompt
 	}
-	call, gerr := openTranscriptionCall(h, c, buildLiveAudioSession(liveAudioDefaultModel, "", instructions))
+	call, gerr := openTranscriptionCall(h, c, buildLiveTranscriptionSession(instructions))
 	if gerr != nil {
 		api.SendErrorWithStatus(c, gerr.Err, gerr.Status)
 		return

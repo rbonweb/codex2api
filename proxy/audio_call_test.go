@@ -211,6 +211,11 @@ func TestAudioCallOpenRelaysEventsMediaAndCloses(t *testing.T) {
 		t.Fatalf("event = %s", got)
 	}
 
+	// Nothing may reach the sideband before session.started; once it arrives, sends go straight through.
+	if err := sb.WriteMessage(websocket.TextMessage, []byte(`{"type":"session.started"}`)); err != nil {
+		t.Fatal(err)
+	}
+	receiveWithin(t, call.Events(), "session.started event")
 	if err := call.Send([]byte(`{"type":"input_text","text":"hi"}`)); err != nil {
 		t.Fatal(err)
 	}
@@ -346,11 +351,15 @@ func TestAudioCallConnectTimeoutReleasesTheCallOnce(t *testing.T) {
 func TestAudioCallConcurrentSendWriteAndClose(t *testing.T) {
 	handler, fx := newAudioCallFixture(t, http.StatusCreated)
 	call := openTestAudioCall(t, handler)
-	receiveWithin(t, fx.sbConn, "sideband connection")
+	sb := receiveWithin(t, fx.sbConn, "sideband connection")
 	go func() {
 		for range fx.sbReceived {
 		}
 	}()
+	if err := sb.WriteMessage(websocket.TextMessage, []byte(`{"type":"session.started"}`)); err != nil {
+		t.Fatal(err)
+	}
+	receiveWithin(t, call.Events(), "session.started event")
 
 	var wg sync.WaitGroup
 	frame := []byte{0x78, 0x01, 0x02}
@@ -379,4 +388,94 @@ func TestAudioCallConcurrentSendWriteAndClose(t *testing.T) {
 		t.Fatalf("usage logs = %d, want 1", fx.usageLogs.Load())
 	}
 	assertKeyConcurrencyFree(t, handler)
+}
+
+func TestAudioCallSendQueuesUntilSessionStarted(t *testing.T) {
+	handler, fx := newAudioCallFixture(t, http.StatusCreated)
+	call := openTestAudioCall(t, handler)
+	sb := receiveWithin(t, fx.sbConn, "sideband connection")
+
+	for _, event := range []string{`{"n":1}`, `{"n":2}`} {
+		if err := call.Send([]byte(event)); err != nil {
+			t.Fatal(err)
+		}
+	}
+	select {
+	case got := <-fx.sbReceived:
+		t.Fatalf("an event reached the sideband before session.started: %s", got)
+	default:
+	}
+
+	if err := sb.WriteMessage(websocket.TextMessage, []byte(`{"type":"session.started"}`)); err != nil {
+		t.Fatal(err)
+	}
+	for _, want := range []string{`{"n":1}`, `{"n":2}`} {
+		if got := receiveWithin(t, fx.sbReceived, "queued event"); got != want {
+			t.Fatalf("flushed %s, want %s", got, want)
+		}
+	}
+	if got := receiveWithin(t, call.Events(), "session.started event"); string(got) != `{"type":"session.started"}` {
+		t.Fatalf("event = %s", got)
+	}
+	if err := call.Send([]byte(`{"n":3}`)); err != nil {
+		t.Fatal(err)
+	}
+	if got := receiveWithin(t, fx.sbReceived, "direct event"); got != `{"n":3}` {
+		t.Fatalf("direct send = %s", got)
+	}
+}
+
+func TestSidebandStartGate(t *testing.T) {
+	var gate sidebandStartGate
+	for _, event := range []string{"a", "b", "c"} {
+		if queued, err := gate.enqueue([]byte(event)); !queued || err != nil {
+			t.Fatalf("enqueue %s = %v, %v", event, queued, err)
+		}
+	}
+	queued := gate.start()
+	if len(queued) != 3 || string(queued[0]) != "a" || string(queued[1]) != "b" || string(queued[2]) != "c" {
+		t.Fatalf("start returned %q, want a b c in order", queued)
+	}
+	if again := gate.start(); again != nil {
+		t.Fatalf("a second start returned %q", again)
+	}
+	if queued, err := gate.enqueue([]byte("d")); queued || err != nil {
+		t.Fatalf("after start enqueue = %v, %v, want a direct write", queued, err)
+	}
+
+	var bounded sidebandStartGate
+	for i := 0; i < audioCallStartQueueMax; i++ {
+		if queued, err := bounded.enqueue([]byte("x")); !queued || err != nil {
+			t.Fatalf("enqueue %d = %v, %v", i, queued, err)
+		}
+	}
+	if _, err := bounded.enqueue([]byte("x")); err != errAudioCallStartQueueFull {
+		t.Fatalf("enqueue past the bound = %v, want errAudioCallStartQueueFull", err)
+	}
+
+	var closing sidebandStartGate
+	_, _ = closing.enqueue([]byte("x"))
+	closing.close()
+	if dropped := closing.start(); dropped != nil {
+		t.Fatalf("close kept %q", dropped)
+	}
+	if queued, _ := closing.enqueue([]byte("y")); queued {
+		t.Fatal("a closed gate queued an event")
+	}
+}
+
+func TestAudioCallClosesWhenSessionNeverStarts(t *testing.T) {
+	previous := audioCallStartTimeout
+	t.Cleanup(func() { audioCallStartTimeout = previous })
+	audioCallStartTimeout = 50 * time.Millisecond
+	handler, fx := newAudioCallFixture(t, http.StatusCreated)
+	call := openTestAudioCall(t, handler)
+	receiveWithin(t, fx.sbConn, "sideband connection")
+	if err := call.Send([]byte(`{"n":1}`)); err != nil {
+		t.Fatal(err)
+	}
+	receiveWithin(t, call.Done(), "the call closing without session.started")
+	if err := call.Send([]byte(`{"n":2}`)); err == nil {
+		t.Fatal("Send after the start timeout should fail")
+	}
 }

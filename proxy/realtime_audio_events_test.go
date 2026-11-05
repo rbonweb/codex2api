@@ -8,6 +8,7 @@ import (
 	"testing"
 
 	"github.com/codex2api/api"
+	"github.com/tidwall/gjson"
 )
 
 // realtimeAudioTestIDs returns a deterministic id generator: prefix_01, prefix_02, ...
@@ -459,50 +460,64 @@ func TestRealtimeAudioSessionUpdateRejectsBadSession(t *testing.T) {
 }
 
 func TestRealtimeAudioSessionUpdateFormats(t *testing.T) {
-	const inMsg = `only pcm16 24 kHz mono input audio is supported (audio.input.format {"type":"audio/pcm","rate":24000})`
-	const outMsg = `only pcm16 24 kHz mono output audio is supported (audio.output.format {"type":"audio/pcm","rate":24000})`
 	tests := []struct {
-		name    string
-		session string
-		wantErr string
+		name      string
+		session   string
+		wantParam string
+		wantIn    int
+		wantOut   int
 	}{
-		{"no formats", `{}`, ""},
-		{"input pcm16 string", `{"input_audio_format":"pcm16"}`, ""},
-		{"audio input pcm16 string", `{"audio":{"input":{"format":"pcm16"}}}`, ""},
-		{"audio input object without rate", `{"audio":{"input":{"format":{"type":"audio/pcm"}}}}`, ""},
-		{"audio input object at 24 kHz", `{"audio":{"input":{"format":{"type":"audio/pcm","rate":24000}}}}`, ""},
-		{"output pcm16 string", `{"output_audio_format":"pcm16"}`, ""},
-		{"audio output object at 24 kHz", `{"audio":{"output":{"format":{"type":"audio/pcm","rate":24000}}}}`, ""},
-		{"input g711 string", `{"input_audio_format":"g711_ulaw"}`, inMsg},
-		{"audio input pcmu", `{"audio":{"input":{"format":{"type":"audio/pcmu"}}}}`, inMsg},
-		{"audio input pcma", `{"audio":{"input":{"format":{"type":"audio/pcma"}}}}`, inMsg},
-		{"audio input 16 kHz", `{"audio":{"input":{"format":{"type":"audio/pcm","rate":16000}}}}`, inMsg},
-		{"output g711 string", `{"output_audio_format":"g711_alaw"}`, outMsg},
-		{"audio output pcmu", `{"audio":{"output":{"format":{"type":"audio/pcmu"}}}}`, outMsg},
-		{"audio output 48 kHz", `{"audio":{"output":{"format":{"type":"audio/pcm","rate":48000}}}}`, outMsg},
+		{"no formats", `{}`, "", 24000, 24000},
+		{"input pcm16 string", `{"input_audio_format":"pcm16"}`, "", 24000, 24000},
+		{"audio input pcm16 string", `{"audio":{"input":{"format":"pcm16"}}}`, "", 24000, 24000},
+		{"audio input object without rate", `{"audio":{"input":{"format":{"type":"audio/pcm"}}}}`, "", 24000, 24000},
+		{"audio input object at 24 kHz", `{"audio":{"input":{"format":{"type":"audio/pcm","rate":24000}}}}`, "", 24000, 24000},
+		{"output pcm16 string", `{"output_audio_format":"pcm16"}`, "", 24000, 24000},
+		{"audio output object at 24 kHz", `{"audio":{"output":{"format":{"type":"audio/pcm","rate":24000}}}}`, "", 24000, 24000},
+		{"audio input 16 kHz", `{"audio":{"input":{"format":{"type":"audio/pcm","rate":16000}}}}`, "", 16000, 24000},
+		{"legacy input object at 16 kHz", `{"input_audio_format":{"type":"audio/pcm","rate":16000}}`, "", 16000, 24000},
+		{"audio output 16 kHz", `{"audio":{"output":{"format":{"type":"audio/pcm","rate":16000}}}}`, "", 24000, 16000},
+		{"different input and output rates", `{"audio":{"input":{"format":{"type":"audio/pcm","rate":16000}},"output":{"format":{"type":"audio/pcm","rate":24000}}}}`, "", 16000, 24000},
+		{"input g711 string", `{"input_audio_format":"g711_ulaw"}`, "session.input_audio_format", 0, 0},
+		{"audio input pcmu", `{"audio":{"input":{"format":{"type":"audio/pcmu"}}}}`, "session.audio.input.format", 0, 0},
+		{"audio input pcma", `{"audio":{"input":{"format":{"type":"audio/pcma"}}}}`, "session.audio.input.format", 0, 0},
+		{"audio input 8 kHz", `{"audio":{"input":{"format":{"type":"audio/pcm","rate":8000}}}}`, "session.audio.input.format", 0, 0},
+		{"output g711 string", `{"output_audio_format":"g711_alaw"}`, "session.output_audio_format", 0, 0},
+		{"audio output pcmu", `{"audio":{"output":{"format":{"type":"audio/pcmu"}}}}`, "session.audio.output.format", 0, 0},
+		{"audio output 48 kHz", `{"audio":{"output":{"format":{"type":"audio/pcm","rate":48000}}}}`, "session.audio.output.format", 0, 0},
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
 			raw := []byte(`{"type":"session.update","session":` + tt.session + `}`)
 			cfg := &realtimeAudioConfig{}
 			_, ack, apiErr := applyRealtimeAudioSessionUpdate(cfg, raw)
-			if tt.wantErr == "" {
+			if tt.wantParam == "" {
 				if apiErr != nil {
 					t.Fatalf("unexpected error: %+v", apiErr)
 				}
 				if decodeRealtimeAudioJSON(t, ack)["type"] != "session.updated" {
 					t.Fatalf("ack = %s", ack)
 				}
+				if cfg.inputRate() != tt.wantIn || cfg.outputRate() != tt.wantOut {
+					t.Fatalf("rates = %d/%d, want %d/%d", cfg.inputRate(), cfg.outputRate(), tt.wantIn, tt.wantOut)
+				}
+				if got := gjson.GetBytes(ack, "session.audio.input.format.rate").Int(); got != int64(tt.wantIn) {
+					t.Fatalf("ack input rate = %d, want %d", got, tt.wantIn)
+				}
+				if got := gjson.GetBytes(ack, "session.audio.output.format.rate").Int(); got != int64(tt.wantOut) {
+					t.Fatalf("ack output rate = %d, want %d", got, tt.wantOut)
+				}
 				return
 			}
 			if apiErr == nil {
-				t.Fatalf("expected rejection with %q", tt.wantErr)
+				t.Fatalf("expected rejection for %s", tt.wantParam)
 			}
-			if apiErr.Code != api.ErrCodeInvalidRequest || apiErr.Type != api.ErrorTypeInvalidRequest {
-				t.Fatalf("apiErr code/type = %s/%s, want invalid_request/invalid_request_error", apiErr.Code, apiErr.Type)
+			detail, _ := apiErr.Details.(realtimeAudioParamError)
+			if apiErr.Code != "unsupported_value" || apiErr.Type != api.ErrorTypeInvalidRequest || detail.Param != tt.wantParam {
+				t.Fatalf("apiErr = %+v, want unsupported_value with param %s", apiErr, tt.wantParam)
 			}
-			if apiErr.Message != tt.wantErr {
-				t.Fatalf("message = %q, want %q", apiErr.Message, tt.wantErr)
+			if *cfg != (realtimeAudioConfig{}) {
+				t.Fatalf("a rejected update changed the config: %+v", *cfg)
 			}
 		})
 	}
@@ -704,6 +719,7 @@ func TestRealtimeAudioTextItemToContextAppend(t *testing.T) {
 			}
 			wantSideband := map[string]any{
 				"type":    "session.context.append",
+				"channel": "commentary",
 				"content": []any{map[string]any{"type": "input_text", "text": tt.wantText}},
 			}
 			if got := decodeRealtimeAudioJSON(t, sideband); !reflect.DeepEqual(got, wantSideband) {

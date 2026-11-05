@@ -86,18 +86,124 @@ func mapRealtimeVoiceToLive(voice string) string {
 	return liveAudioDefaultVoice
 }
 
-// buildLiveAudioSession returns the session.update body sent to ChatGPT Live when a call is created.
+// liveInstructionsItem is the developer message that carries the instructions text as an initial item.
+// ChatGPT Live ignores the call-create instructions field but honours the same text as a developer message (proven live on 2026-11-05), so every call sends the text both ways.
+func liveInstructionsItem(instructions string) map[string]any {
+	return map[string]any{
+		"type": "message",
+		"role": "developer",
+		"content": []map[string]any{
+			{"type": "input_text", "text": instructions},
+		},
+	}
+}
+
+// buildLiveAudioSession returns the session.update body sent to ChatGPT Live when a conversational call is created (/v1/realtime and /v1/realtime/calls).
+// The effective instructions (the default when the client gave none) go in the instructions field and as the only initial_items developer message.
 func buildLiveAudioSession(model, voice, instructions string) json.RawMessage {
+	return buildLiveAudioSessionWith(model, voice, instructions, "", true)
+}
+
+// buildLiveAudioSessionForLanguage is buildLiveAudioSession with the transcription language: a non-empty ISO 639-1 code adds one developer message saying the user speaks that language and replies should use it unless the user switches.
+func buildLiveAudioSessionForLanguage(model, voice, instructions, language string) json.RawMessage {
+	return buildLiveAudioSessionWith(model, voice, instructions, language, true)
+}
+
+// buildLiveTranscriptionSession is the call-create session for /v1/audio/transcriptions: the instructions field only, with no developer item.
+// A developer item carrying the stay-silent text stops ChatGPT Live from completing the user turn, so the transcript times out (live QA, 2026-11-05).
+func buildLiveTranscriptionSession(instructions string) json.RawMessage {
+	return buildLiveAudioSessionWith(liveAudioDefaultModel, "", instructions, "", false)
+}
+
+func buildLiveAudioSessionWith(model, voice, instructions, language string, instructionsItem bool) json.RawMessage {
 	if strings.TrimSpace(instructions) == "" {
 		instructions = liveAudioDefaultInstructions
 	}
-	raw, _ := json.Marshal(map[string]any{
+	session := map[string]any{
 		"model":        mapRealtimeModelToLive(model),
 		"instructions": instructions,
 		"audio": map[string]any{
 			"output": map[string]any{"voice": mapRealtimeVoiceToLive(voice)},
 		},
 		"delegation": map[string]any{"type": "client"},
-	})
+	}
+	if instructionsItem {
+		items := []any{liveInstructionsItem(instructions)}
+		if language != "" {
+			items = append(items, transcriptionLanguageItem(language))
+		}
+		session["initial_items"] = items
+	}
+	raw, _ := json.Marshal(session)
 	return raw
+}
+
+// liveSessionDefaultModel is the public GPT-Live model name used when a session names none.
+const liveSessionDefaultModel = "gpt-live-1"
+
+// liveSessionDefaultVoice is the public GPT-Live voice used when a session names none.
+const liveSessionDefaultVoice = "marin"
+
+// liveSessionVoiceAlias maps one public GPT-Live voice name to the ChatGPT Live voice that stands in for it.
+type liveSessionVoiceAlias struct {
+	Public string
+	Live   string
+}
+
+// liveSessionVoiceAliases lists the public GPT-Live voices in the order of the public voice table.
+// ChatGPT Live only has nine voices, so the 22 public names are spread over them by a fixed, judgment-based table (the public voices cannot be matched by ear): marin maps to maple like the Realtime alias, the rest are spread so neighbouring public names do not share a voice where avoidable, and nira (the public Hindi voice) maps to maple as the voice that suits Hindi best.
+// The table is part of the documented behaviour: changing an entry changes what existing clients hear.
+var liveSessionVoiceAliases = []liveSessionVoiceAlias{
+	{Public: "marin", Live: "maple"},
+	{Public: "quartz", Live: "sol"},
+	{Public: "ripple", Live: "breeze"},
+	{Public: "vesper", Live: "vale"},
+	{Public: "willow", Live: "juniper"},
+	{Public: "stone", Live: "arbor"},
+	{Public: "gleam", Live: "ember"},
+	{Public: "meridian", Live: "cove"},
+	{Public: "bossa", Live: "spruce"},
+	{Public: "tempo", Live: "ember"},
+	{Public: "beacon", Live: "sol"},
+	{Public: "delta", Live: "arbor"},
+	{Public: "cinder", Live: "spruce"},
+	{Public: "nuri", Live: "juniper"},
+	{Public: "juni", Live: "cove"},
+	{Public: "flitz", Live: "breeze"},
+	{Public: "brise", Live: "vale"},
+	{Public: "sillage", Live: "maple"},
+	{Public: "nira", Live: "maple"},
+	{Public: "harema", Live: "juniper"},
+	{Public: "shida", Live: "vale"},
+	{Public: "noeul", Live: "breeze"},
+}
+
+// liveSessionVoice resolves a voice name sent in a public GPT-Live session to the ChatGPT Live voice.
+// It accepts the public GPT-Live names, the ChatGPT Live names and the OpenAI Realtime names, case-insensitively; an empty name selects the default voice.
+func liveSessionVoice(name string) (string, bool) {
+	name = strings.ToLower(strings.TrimSpace(name))
+	if name == "" {
+		name = liveSessionDefaultVoice
+	}
+	for _, alias := range liveSessionVoiceAliases {
+		if alias.Public == name {
+			return alias.Live, true
+		}
+	}
+	if liveVoiceNames[name] {
+		return name, true
+	}
+	for _, alias := range realtimeVoiceAliases {
+		if alias.OpenAI == name {
+			return alias.Live, true
+		}
+	}
+	return "", false
+}
+
+// isLiveSessionModel reports whether a model name is accepted by the public GPT-Live surface.
+// The upstream model is always liveAudioDefaultModel.
+func isLiveSessionModel(model string) bool {
+	model = strings.ToLower(strings.TrimSpace(model))
+	return model == "gpt-live-1" || model == liveAudioDefaultModel || isRealtimeAudioModel(model)
 }

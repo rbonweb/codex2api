@@ -3,6 +3,8 @@ package proxy
 import (
 	"encoding/json"
 	"testing"
+
+	"github.com/tidwall/gjson"
 )
 
 func TestAudioNamesModelDetection(t *testing.T) {
@@ -133,6 +135,74 @@ func TestLiveAudioSessionJSON(t *testing.T) {
 			if delegation["type"] != "client" {
 				t.Errorf("delegation.type = %v, want client", delegation["type"])
 			}
+			parsed := gjson.ParseBytes(raw)
+			if parsed.Get("initial_items.#").Int() != 1 || parsed.Get("initial_items.0.type").String() != "message" || parsed.Get("initial_items.0.role").String() != "developer" || parsed.Get("initial_items.0.content.0.type").String() != "input_text" || parsed.Get("initial_items.0.content.0.text").String() != tt.wantInstr {
+				t.Errorf("initial_items = %s, want one developer message with %q", parsed.Get("initial_items").Raw, tt.wantInstr)
+			}
 		})
+	}
+}
+
+func TestLiveTranscriptionSessionHasNoInitialItems(t *testing.T) {
+	raw := buildLiveTranscriptionSession(transcriptionInstructions + " The audio is in fr.")
+	got := gjson.ParseBytes(raw)
+	if got.Get("initial_items").Exists() {
+		t.Fatalf("transcription session must not carry initial_items: %s", raw)
+	}
+	if got.Get("instructions").String() != transcriptionInstructions+" The audio is in fr." || got.Get("model").String() != liveAudioDefaultModel || got.Get("delegation.type").String() != "client" {
+		t.Fatalf("transcription session = %s", raw)
+	}
+}
+
+func TestAudioNamesLiveSessionVoices(t *testing.T) {
+	public := []string{"marin", "quartz", "ripple", "vesper", "willow", "stone", "gleam", "meridian", "bossa", "tempo", "beacon", "delta", "cinder", "nuri", "juni", "flitz", "brise", "sillage", "nira", "harema", "shida", "noeul"}
+	if len(liveSessionVoiceAliases) != len(public) {
+		t.Fatalf("liveSessionVoiceAliases has %d entries, want %d", len(liveSessionVoiceAliases), len(public))
+	}
+	for i, name := range public {
+		if liveSessionVoiceAliases[i].Public != name {
+			t.Errorf("entry %d is %q, want %q", i, liveSessionVoiceAliases[i].Public, name)
+		}
+		got, ok := liveSessionVoice(name)
+		if !ok || !liveVoiceNames[got] {
+			t.Errorf("liveSessionVoice(%q) = %q, %v, want an internal voice", name, got, ok)
+		}
+	}
+	if got, _ := liveSessionVoice("marin"); got != "maple" {
+		t.Errorf("marin maps to %q, want maple", got)
+	}
+	if got := mapRealtimeVoiceToLive("marin"); got != "maple" {
+		t.Errorf("Realtime marin alias = %q, want maple", got)
+	}
+	tests := []struct {
+		name string
+		want string
+		ok   bool
+	}{
+		{"", "maple", true},
+		{"  NIRA ", "maple", true},
+		{"sol", "sol", true},
+		{"Alloy", "cove", true},
+		{"cedar", "arbor", true},
+		{"nope", "", false},
+	}
+	for _, tt := range tests {
+		got, ok := liveSessionVoice(tt.name)
+		if got != tt.want || ok != tt.ok {
+			t.Errorf("liveSessionVoice(%q) = %q, %v, want %q, %v", tt.name, got, ok, tt.want, tt.ok)
+		}
+	}
+}
+
+func TestAudioNamesLiveSessionModels(t *testing.T) {
+	for _, model := range []string{"gpt-live-1", "gpt-live-1-codex", " GPT-Live-1 ", "gpt-realtime", "gpt-4o-realtime-preview"} {
+		if !isLiveSessionModel(model) {
+			t.Errorf("isLiveSessionModel(%q) = false, want true", model)
+		}
+	}
+	for _, model := range []string{"", "gpt-5", "gpt-livex", "whisper-1"} {
+		if isLiveSessionModel(model) {
+			t.Errorf("isLiveSessionModel(%q) = true, want false", model)
+		}
 	}
 }

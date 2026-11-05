@@ -16,6 +16,7 @@ import (
 	"github.com/gorilla/websocket"
 	"github.com/pion/webrtc/v4"
 	"github.com/pion/webrtc/v4/pkg/media"
+	"github.com/tidwall/gjson"
 )
 
 const (
@@ -23,13 +24,21 @@ const (
 	audioCallSendDeadline   = 5 * time.Second
 	audioCallCloseDeadline  = time.Second
 	audioCallSidebandReadMB = 8
+	// audioCallStartTimeoutDefault is how long a call may wait for the upstream session.started before it is closed.
+	audioCallStartTimeoutDefault = 15 * time.Second
+	// audioCallStartQueueMax bounds the events Send holds back until upstream announces session.started.
+	audioCallStartQueueMax = 256
 )
 
 var (
 	// audioCallSetupTimeout bounds the whole setup; tests shorten it.
 	audioCallSetupTimeout = 25 * time.Second
+	// audioCallStartTimeout bounds the wait for session.started after the sideband opened; tests shorten it.
+	audioCallStartTimeout = audioCallStartTimeoutDefault
 
 	errAudioCallClosed = errors.New("the audio call is closed")
+	// errAudioCallStartQueueFull is returned by Send when too many events wait for session.started.
+	errAudioCallStartQueueFull = errors.New("too many events before the Live session started")
 
 	// audioCallICEServers is the STUN server set the gateway peer gathers with; tests clear it to stay on loopback.
 	audioCallICEServers = []webrtc.ICEServer{{URLs: []string{"stun:stun.l.google.com:19302"}}}
@@ -49,12 +58,66 @@ type audioCall struct {
 	done   chan struct{}
 	cancel context.CancelFunc
 
+	// startGate holds the events Send receives before the upstream session.started; writeMu serializes it with the sideband writes.
+	startGate sidebandStartGate
 	writeMu   sync.Mutex
 	closeOnce sync.Once
 	closed    atomic.Bool
 	expiry    atomic.Pointer[time.Timer]
-	setup     time.Duration
-	opened    time.Time
+	// startTimer closes the call when session.started never arrives.
+	startTimer atomic.Pointer[time.Timer]
+	setup      time.Duration
+	opened     time.Time
+}
+
+// sidebandStartGate holds back client events until the upstream announces session.started: the internal sideband closes itself (1011) when the client sends anything earlier. Events queue in order, up to audioCallStartQueueMax, start hands them back exactly once for flushing, and later events pass straight through. It is safe for concurrent use; the audio call additionally serializes its flush with direct writes through writeMu so order is kept across both paths.
+type sidebandStartGate struct {
+	mu      sync.Mutex
+	started bool
+	closed  bool
+	queue   [][]byte
+}
+
+// enqueue holds the event back and reports true while the session has not started. It reports false once the session started, or the gate closed, when the caller must write the event itself (a closed call refuses it first). A full queue returns errAudioCallStartQueueFull.
+func (g *sidebandStartGate) enqueue(event []byte) (bool, error) {
+	g.mu.Lock()
+	defer g.mu.Unlock()
+	if g.started || g.closed {
+		return false, nil
+	}
+	if len(g.queue) >= audioCallStartQueueMax {
+		return false, errAudioCallStartQueueFull
+	}
+	g.queue = append(g.queue, append([]byte(nil), event...))
+	return true, nil
+}
+
+// start marks the session started and returns the queued events in arrival order; later calls return nil.
+func (g *sidebandStartGate) start() [][]byte {
+	g.mu.Lock()
+	defer g.mu.Unlock()
+	if g.started || g.closed {
+		return nil
+	}
+	g.started = true
+	queued := g.queue
+	g.queue = nil
+	return queued
+}
+
+// isStarted reports whether session.started has been seen.
+func (g *sidebandStartGate) isStarted() bool {
+	g.mu.Lock()
+	defer g.mu.Unlock()
+	return g.started
+}
+
+// close drops whatever is still queued; nothing is queued or flushed afterwards.
+func (g *sidebandStartGate) close() {
+	g.mu.Lock()
+	defer g.mu.Unlock()
+	g.closed = true
+	g.queue = nil
 }
 
 func newAudioCallPeerConnection() (*webrtc.PeerConnection, error) {
@@ -175,6 +238,16 @@ func (h *Handler) openAudioCall(c *gin.Context, session json.RawMessage) (*audio
 	if call.closed.Load() {
 		timer.Stop()
 	}
+	startTimer := time.AfterFunc(audioCallStartTimeout, func() {
+		if !call.startGate.isStarted() && !call.closed.Load() {
+			log.Printf("audio call %s: no session.started within %s, closing", record.CallHash, audioCallStartTimeout)
+			call.Close()
+		}
+	})
+	call.startTimer.Store(startTimer)
+	if call.closed.Load() {
+		startTimer.Stop()
+	}
 	go call.readSideband(callCtx)
 	go func() {
 		select {
@@ -196,7 +269,7 @@ func drainRTCP(sender *webrtc.RTPSender) {
 	}
 }
 
-// readSideband forwards sideband messages to Events. A slow consumer blocks the reader instead of losing audio; Close unblocks it.
+// readSideband forwards sideband messages to Events. A slow consumer blocks the reader instead of losing audio; Close unblocks it. The first session.started releases the events Send held back, in order, before anything else is forwarded.
 func (a *audioCall) readSideband(ctx context.Context) {
 	defer func() {
 		close(a.events)
@@ -207,12 +280,34 @@ func (a *audioCall) readSideband(ctx context.Context) {
 		if err != nil {
 			return
 		}
+		if !a.startGate.isStarted() && gjson.GetBytes(payload, "type").String() == "session.started" {
+			if !a.flushQueued() {
+				return
+			}
+		}
 		select {
 		case a.events <- payload:
 		case <-ctx.Done():
 			return
 		}
 	}
+}
+
+// flushQueued marks the session started and writes the events Send held back. It holds writeMu throughout, so a Send that arrives meanwhile writes after them. It returns false when a write failed.
+func (a *audioCall) flushQueued() bool {
+	a.writeMu.Lock()
+	defer a.writeMu.Unlock()
+	queued := a.startGate.start()
+	if a.closed.Load() {
+		return true
+	}
+	for _, event := range queued {
+		_ = a.sideband.SetWriteDeadline(time.Now().Add(audioCallSendDeadline))
+		if err := a.sideband.WriteMessage(websocket.TextMessage, event); err != nil {
+			return false
+		}
+	}
+	return true
 }
 
 // WriteOpusFrame writes one Opus frame of duration d to the outgoing microphone track; it is an audioFrameSink.
@@ -226,7 +321,7 @@ func (a *audioCall) WriteOpusFrame(frame []byte, d time.Duration) error {
 // Events carries the sideband server events; it is closed when the sideband ends.
 func (a *audioCall) Events() <-chan []byte { return a.events }
 
-// Send writes one client event to the sideband.
+// Send writes one client event to the sideband. Before the upstream session.started arrives the event is queued (up to audioCallStartQueueMax) and written in order once it does.
 func (a *audioCall) Send(event []byte) error {
 	if a.closed.Load() {
 		return errAudioCallClosed
@@ -235,6 +330,9 @@ func (a *audioCall) Send(event []byte) error {
 	defer a.writeMu.Unlock()
 	if a.closed.Load() {
 		return errAudioCallClosed
+	}
+	if queued, err := a.startGate.enqueue(event); queued || err != nil {
+		return err
 	}
 	_ = a.sideband.SetWriteDeadline(time.Now().Add(audioCallSendDeadline))
 	return a.sideband.WriteMessage(websocket.TextMessage, event)
@@ -253,13 +351,20 @@ func (a *audioCall) SetupDuration() time.Duration { return a.setup }
 func (a *audioCall) Close() {
 	a.closeOnce.Do(func() {
 		a.closed.Store(true)
+		a.startGate.close()
 		if timer := a.expiry.Load(); timer != nil {
 			timer.Stop()
 		}
+		if timer := a.startTimer.Load(); timer != nil {
+			timer.Stop()
+		}
 		// The goodbye is best effort: when a Send holds the write lock the sideband is closed instead, which also unblocks that writer, so releasing the lease, key slot and usage record is never delayed.
+		// Before session.started nothing may be written: upstream would kill the sideband, and the close below ends the call anyway.
 		if a.writeMu.TryLock() {
-			_ = a.sideband.SetWriteDeadline(time.Now().Add(audioCallCloseDeadline))
-			_ = a.sideband.WriteMessage(websocket.TextMessage, []byte(`{"type":"session.close"}`))
+			if a.startGate.isStarted() {
+				_ = a.sideband.SetWriteDeadline(time.Now().Add(audioCallCloseDeadline))
+				_ = a.sideband.WriteMessage(websocket.TextMessage, []byte(`{"type":"session.close"}`))
+			}
 			a.writeMu.Unlock()
 		}
 		_ = a.sideband.Close()
