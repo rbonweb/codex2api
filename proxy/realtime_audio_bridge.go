@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"errors"
 	"net/http"
+	"strconv"
 	"strings"
 	"sync"
 	"time"
@@ -113,7 +114,7 @@ func (h *Handler) runRealtimeAudioHandoff(c *gin.Context, conn *websocket.Conn, 
 	h.runRealtimeAudioSession(c, conn, ctx, cancel, cfg, ack)
 }
 
-// realtimeAudioHandoff decides whether a text-session client event hands the connection to the audio bridge: a session.update whose modalities contain audio. ok is true when it does; apiErr is set when the update itself is invalid, and the connection then stays on the text path. The returned ack is the session.updated event for the audio session.
+// realtimeAudioHandoff decides whether a text-session client event hands the connection to the audio bridge: a session.update whose modalities contain audio. Only the model and instructions carry over from the text session; its tools, tool_choice, queued conversation items and history are dropped, because a ChatGPT Live call has no equivalent and the audio session starts a fresh conversation. ok is true when it does; apiErr is set when the update itself is invalid, and the connection then stays on the text path. The returned ack is the session.updated event for the audio session.
 func realtimeAudioHandoff(state *realtimeTextSession, raw []byte) (cfg realtimeAudioConfig, ack []byte, apiErr *api.APIError, ok bool) {
 	if gjson.GetBytes(raw, "type").String() != "session.update" {
 		return cfg, nil, nil, false
@@ -122,7 +123,7 @@ func realtimeAudioHandoff(state *realtimeTextSession, raw []byte) (cfg realtimeA
 	if !session.IsObject() || !(realtimeModalitiesContainAudio(session.Get("output_modalities")) || realtimeModalitiesContainAudio(session.Get("modalities"))) {
 		return cfg, nil, nil, false
 	}
-	cfg = realtimeAudioConfig{Model: state.Model, Instructions: state.Instructions}
+	cfg = realtimeAudioConfig{Model: mapRealtimeModelToLive(state.Model), Instructions: state.Instructions}
 	_, ack, apiErr = applyRealtimeAudioSessionUpdate(&cfg, raw)
 	return cfg, ack, apiErr, true
 }
@@ -199,7 +200,7 @@ func (h *Handler) runRealtimeAudioSession(c *gin.Context, conn *websocket.Conn, 
 	b.clientLoop(ctx)
 }
 
-// pumpUpstream maps every Live sideband event to OpenAI events for the client, and closes the client when the call ends.
+// pumpUpstream maps every Live sideband event to OpenAI events for the client, and closes the client when the call ends. Events still buffered when the call ends are written first, so the final turn.done or error is not lost.
 func (b *realtimeAudioBridge) pumpUpstream(ctx context.Context) {
 	events := b.call.Events()
 	done := b.call.Done()
@@ -212,27 +213,52 @@ func (b *realtimeAudioBridge) pumpUpstream(ctx context.Context) {
 				b.endClient()
 				return
 			}
-			b.mu.Lock()
-			mapped := b.mapper.MapUpstream(raw)
-			textOnly := b.cfg.TextOnly
-			b.mu.Unlock()
-			for _, event := range mapped {
-				if textOnly {
-					var keep bool
-					if event, keep = realtimeAudioTextOnlyEvent(event); !keep {
-						continue
-					}
-				}
-				if err := writeResponsesWSMessage(b.conn, event); err != nil {
-					b.cancel()
-					return
-				}
+			if !b.forwardUpstream(raw) {
+				return
 			}
 		case <-done:
+			// The call is over, but events it queued before closing may still be buffered: drain them without blocking, then close the client.
+			for {
+				select {
+				case raw, ok := <-events:
+					if !ok {
+						b.endClient()
+						return
+					}
+					if !b.forwardUpstream(raw) {
+						return
+					}
+					continue
+				default:
+				}
+				break
+			}
 			b.endClient()
 			return
 		}
 	}
+}
+
+// forwardUpstream maps one Live event and writes the result to the client. It returns false after a write error, having closed the client connection so the client loop exits and the call is released promptly.
+func (b *realtimeAudioBridge) forwardUpstream(raw []byte) bool {
+	b.mu.Lock()
+	mapped := b.mapper.MapUpstream(raw)
+	textOnly := b.cfg.TextOnly
+	b.mu.Unlock()
+	for _, event := range mapped {
+		if textOnly {
+			var keep bool
+			if event, keep = realtimeAudioTextOnlyEvent(event); !keep {
+				continue
+			}
+		}
+		if err := writeResponsesWSMessage(b.conn, event); err != nil {
+			b.cancel()
+			_ = b.conn.Close()
+			return false
+		}
+	}
+	return true
 }
 
 // endClient tells the client the Live call is over with a normal close, then bounds how long the read loop waits for the client's reply so the session unwinds.
@@ -241,7 +267,7 @@ func (b *realtimeAudioBridge) endClient() {
 	_ = b.conn.SetReadDeadline(time.Now().Add(realtimeAudioCloseGrace))
 }
 
-// realtimeAudioTextOnlyEvent adapts a mapped event for a text-only session (output_modalities ["text"]): audio deltas and the audio done event are dropped, and the assistant transcript events become response.output_text.delta and response.output_text.done, where done carries text instead of transcript.
+// realtimeAudioTextOnlyEvent adapts a mapped event for a text-only session (output_modalities ["text"]): audio deltas and the audio done event are dropped, the assistant transcript events become response.output_text.delta and response.output_text.done (done carries text instead of transcript), and the content parts that describe the assistant message become text parts so the stream stays consistent.
 func realtimeAudioTextOnlyEvent(event []byte) ([]byte, bool) {
 	switch gjson.GetBytes(event, "type").String() {
 	case "response.output_audio.delta", "response.output_audio.done":
@@ -254,15 +280,61 @@ func realtimeAudioTextOnlyEvent(event []byte) ([]byte, bool) {
 		if err != nil {
 			return nil, false
 		}
-		text := gjson.GetBytes(renamed, "transcript").String()
-		renamed, err = sjson.DeleteBytes(renamed, "transcript")
-		if err != nil {
-			return nil, false
-		}
-		renamed, err = sjson.SetBytes(renamed, "text", text)
-		return renamed, err == nil
+		return realtimeAudioMoveTranscriptToText(renamed, "")
+	case "response.content_part.added", "response.content_part.done":
+		return realtimeAudioMoveTranscriptToText(event, "part.")
+	case "response.output_item.done":
+		return realtimeAudioTextItemContent(event, "item.content")
+	case "response.done":
+		return realtimeAudioTextItemContent(event, "response.output.0.content")
 	}
 	return event, true
+}
+
+// realtimeAudioMoveTranscriptToText turns the transcript field under prefix into a text field; a part gets type "text".
+func realtimeAudioMoveTranscriptToText(event []byte, prefix string) ([]byte, bool) {
+	transcript := gjson.GetBytes(event, prefix+"transcript")
+	if !transcript.Exists() {
+		return event, true
+	}
+	out, err := sjson.DeleteBytes(event, prefix+"transcript")
+	if err != nil {
+		return nil, false
+	}
+	if out, err = sjson.SetBytes(out, prefix+"text", transcript.String()); err != nil {
+		return nil, false
+	}
+	if prefix != "" {
+		if out, err = sjson.SetBytes(out, prefix+"type", "text"); err != nil {
+			return nil, false
+		}
+	}
+	return out, true
+}
+
+// realtimeAudioTextItemContent rewrites output_audio content parts at path into output_text parts carrying text. Paths that are absent leave the event unchanged.
+func realtimeAudioTextItemContent(event []byte, path string) ([]byte, bool) {
+	content := gjson.GetBytes(event, path)
+	if !content.IsArray() {
+		return event, true
+	}
+	out := event
+	for i, part := range content.Array() {
+		if part.Get("type").String() != "output_audio" {
+			continue
+		}
+		var err error
+		if out, err = sjson.SetBytes(out, path+"."+strconv.Itoa(i)+".type", "output_text"); err != nil {
+			return nil, false
+		}
+		if out, err = sjson.SetBytes(out, path+"."+strconv.Itoa(i)+".text", part.Get("transcript").String()); err != nil {
+			return nil, false
+		}
+		if out, err = sjson.DeleteBytes(out, path+"."+strconv.Itoa(i)+".transcript"); err != nil {
+			return nil, false
+		}
+	}
+	return out, true
 }
 
 // clientLoop reads client events until the connection ends. It uses the same frame reading and memory admission as the text path.

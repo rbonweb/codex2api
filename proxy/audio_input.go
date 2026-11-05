@@ -129,8 +129,14 @@ func (in *realtimeAudioInput) encodeLocked(frames [][]int16) ([][]byte, error) {
 // enqueueLocked queues encoded frames for the pacer. The caller holds in.mu.
 func (in *realtimeAudioInput) enqueueLocked(packets [][]byte) error {
 	err := in.pacer.Enqueue(packets)
-	if errors.Is(err, errAudioPacerFull) {
-		return errAudioInputFull
+	switch {
+	case err == nil:
+		return nil
+	case errors.Is(err, errAudioPacerFull):
+		return fmt.Errorf("%w (%w)", errAudioInputFull, err)
+	case in.pacer.Err() != nil:
+		// The sink failed and stopped the pacer: report the call's audio track as closed instead of a misleading cap message.
+		return fmt.Errorf("live call audio track closed: %w", in.pacer.Err())
 	}
 	return err
 }

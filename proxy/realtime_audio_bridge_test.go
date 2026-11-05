@@ -1,8 +1,10 @@
 package proxy
 
 import (
+	"context"
 	"encoding/base64"
 	"encoding/json"
+	"errors"
 	"io"
 	"net/http"
 	"net/http/httptest"
@@ -368,6 +370,52 @@ func TestAudioBridgeTextOnlySessionRenamesTranscriptEvents(t *testing.T) {
 	}
 }
 
+func TestAudioBridgeTextOnlySessionKeepsContentConsistent(t *testing.T) {
+	srv := newBridgeTestServer(t, true, true)
+	conn := srv.dial(t, "?model=gpt-realtime")
+	readBridgeUntil(t, conn, "session.created")
+	writeBridgeEvent(t, conn, `{"type":"session.update","session":{"output_modalities":["text"]}}`)
+	readBridgeUntil(t, conn, "session.updated")
+
+	srv.call.events <- []byte(`{"type":"output_transcript.added","item":{"text":"Hi"}}`)
+	srv.call.events <- []byte(`{"type":"turn.done","turn":{"role":"assistant","transcript":"Hi"}}`)
+
+	added := readBridgeUntil(t, conn, "response.content_part.added")
+	if gjson.GetBytes(added, "part.type").String() != "text" || gjson.GetBytes(added, "part.transcript").Exists() {
+		t.Fatalf("content_part.added = %s", added)
+	}
+	partDone := readBridgeUntil(t, conn, "response.content_part.done")
+	if gjson.GetBytes(partDone, "part.type").String() != "text" || gjson.GetBytes(partDone, "part.text").String() != "Hi" || gjson.GetBytes(partDone, "part.transcript").Exists() {
+		t.Fatalf("content_part.done = %s", partDone)
+	}
+	itemDone := readBridgeUntil(t, conn, "response.output_item.done")
+	if gjson.GetBytes(itemDone, "item.content.0.type").String() != "output_text" || gjson.GetBytes(itemDone, "item.content.0.text").String() != "Hi" || gjson.GetBytes(itemDone, "item.content.0.transcript").Exists() {
+		t.Fatalf("output_item.done = %s", itemDone)
+	}
+	done := readBridgeUntil(t, conn, "response.done")
+	if gjson.GetBytes(done, "response.output.0.content.0.type").String() != "output_text" || gjson.GetBytes(done, "response.output.0.content.0.text").String() != "Hi" {
+		t.Fatalf("response.done = %s", done)
+	}
+}
+
+func TestAudioBridgeDeliversBufferedEventsWhenTheCallEnds(t *testing.T) {
+	srv := newBridgeTestServer(t, true, true)
+	conn := srv.dial(t, "?model=gpt-realtime")
+	readBridgeUntil(t, conn, "session.created")
+
+	// The final events and the end of the call are ready together, as when the sideband closes right after turn.done.
+	srv.call.events <- []byte(`{"type":"turn.done","turn":{"role":"assistant","transcript":"bye"}}`)
+	srv.call.events <- []byte(`{"type":"error","error":{"message":"last words"}}`)
+	srv.call.end()
+
+	readBridgeUntil(t, conn, "response.done")
+	readBridgeUntil(t, conn, "error")
+	_, _, err := conn.ReadMessage()
+	if closeErr, ok := err.(*websocket.CloseError); !ok || closeErr.Code != websocket.CloseNormalClosure {
+		t.Fatalf("read error = %#v, want a normal close", err)
+	}
+}
+
 func TestAudioBridgeRejectsBadInput(t *testing.T) {
 	srv := newBridgeTestServer(t, true, true)
 	conn := srv.dial(t, "?model=gpt-realtime")
@@ -551,5 +599,30 @@ func TestRealtimeAudioTextOnlyEventDropsAndRenames(t *testing.T) {
 	untouched := []byte(`{"type":"response.done"}`)
 	if got, keep := realtimeAudioTextOnlyEvent(untouched); !keep || string(got) != string(untouched) {
 		t.Fatalf("other event changed: %s", got)
+	}
+}
+
+func TestRealtimeAudioInputReportsClosedTrackAfterSinkFailure(t *testing.T) {
+	prev := newRealtimeAudioEncoder
+	newRealtimeAudioEncoder = func() (opusEncoder, error) { return bridgeFakeEncoder{}, nil }
+	t.Cleanup(func() { newRealtimeAudioEncoder = prev })
+
+	sinkErr := errors.New("track write failed")
+	input, err := newRealtimeAudioInput(func([]byte, time.Duration) error { return sinkErr })
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer input.Close()
+	input.Start(context.Background())
+	<-input.pacer.done
+
+	for name, call := range map[string]func() error{
+		"append": func() error { return input.AppendPCM16(make([]byte, 4800)) },
+		"commit": func() error { return input.Commit() },
+	} {
+		err := call()
+		if err == nil || !errors.Is(err, sinkErr) || !strings.Contains(err.Error(), "live call audio track closed") {
+			t.Fatalf("%s error = %v, want the closed-track error wrapping the sink error", name, err)
+		}
 	}
 }
