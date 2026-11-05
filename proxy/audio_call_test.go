@@ -30,6 +30,8 @@ type audioCallFixture struct {
 	sbOnce     sync.Once
 	usageLogs  atomic.Int32
 	session    chan json.RawMessage
+	// badAnswer makes the fake upstream answer with garbage; deadAnswer answers validly from a peer it closes at once, so the media never connects.
+	badAnswer, deadAnswer atomic.Bool
 }
 
 func newAudioCallFixture(t *testing.T, createStatus int) (*Handler, *audioCallFixture) {
@@ -93,11 +95,17 @@ func newAudioCallFixture(t *testing.T, createStatus int) (*Handler, *audioCallFi
 			return
 		}
 		fx.session <- body.Session
-		answer, err := fx.answer(body.SDP)
-		if err != nil {
-			t.Errorf("answer: %v", err)
-			w.WriteHeader(http.StatusInternalServerError)
-			return
+		answer := "v=0\r\nnot an sdp answer\r\n"
+		if !fx.badAnswer.Load() {
+			var err error
+			if answer, err = fx.answer(body.SDP); err != nil {
+				t.Errorf("answer: %v", err)
+				w.WriteHeader(http.StatusInternalServerError)
+				return
+			}
+			if fx.deadAnswer.Load() {
+				_ = fx.answerer.Close()
+			}
 		}
 		w.Header().Set("Location", "/v1/realtime/calls/rtc_test1")
 		w.Header().Set("Content-Type", "application/sdp")
@@ -298,6 +306,75 @@ func TestAudioCallSidebandFailureReleasesTheCall(t *testing.T) {
 	if call != nil || gwErr == nil || gwErr.Status != http.StatusBadGateway {
 		t.Fatalf("call=%v gwErr=%+v", call, gwErr)
 	}
+	if fx.usageLogs.Load() != 1 {
+		t.Fatalf("usage logs = %d, want 1", fx.usageLogs.Load())
+	}
+	assertKeyConcurrencyFree(t, handler)
+}
+
+func TestAudioCallAnswerRejectedReleasesTheCallOnce(t *testing.T) {
+	handler, fx := newAudioCallFixture(t, http.StatusCreated)
+	fx.badAnswer.Store(true)
+	c, _ := liveTestContext(t, http.MethodPost, "/v1/realtime/calls", nil, audioCallTestKey())
+	call, gwErr := handler.openAudioCall(c, json.RawMessage(`{"model":"gpt-live-1-codex"}`))
+	if call != nil || gwErr == nil || gwErr.Status != http.StatusBadGateway {
+		t.Fatalf("call=%v gwErr=%+v", call, gwErr)
+	}
+	if fx.usageLogs.Load() != 1 {
+		t.Fatalf("usage logs = %d, want 1", fx.usageLogs.Load())
+	}
+	assertKeyConcurrencyFree(t, handler)
+}
+
+func TestAudioCallConnectTimeoutReleasesTheCallOnce(t *testing.T) {
+	previous := audioCallSetupTimeout
+	t.Cleanup(func() { audioCallSetupTimeout = previous })
+	audioCallSetupTimeout = 3 * time.Second
+	handler, fx := newAudioCallFixture(t, http.StatusCreated)
+	fx.deadAnswer.Store(true)
+	c, _ := liveTestContext(t, http.MethodPost, "/v1/realtime/calls", nil, audioCallTestKey())
+	call, gwErr := handler.openAudioCall(c, json.RawMessage(`{"model":"gpt-live-1-codex"}`))
+	if call != nil || gwErr == nil || (gwErr.Status != http.StatusGatewayTimeout && gwErr.Status != http.StatusBadGateway) {
+		t.Fatalf("call=%v gwErr=%+v", call, gwErr)
+	}
+	if fx.usageLogs.Load() != 1 {
+		t.Fatalf("usage logs = %d, want 1", fx.usageLogs.Load())
+	}
+	assertKeyConcurrencyFree(t, handler)
+}
+
+func TestAudioCallConcurrentSendWriteAndClose(t *testing.T) {
+	handler, fx := newAudioCallFixture(t, http.StatusCreated)
+	call := openTestAudioCall(t, handler)
+	receiveWithin(t, fx.sbConn, "sideband connection")
+	go func() {
+		for range fx.sbReceived {
+		}
+	}()
+
+	var wg sync.WaitGroup
+	frame := []byte{0x78, 0x01, 0x02}
+	for i := 0; i < 4; i++ {
+		wg.Add(3)
+		go func() {
+			defer wg.Done()
+			for j := 0; j < 50; j++ {
+				_ = call.Send([]byte(`{"type":"ping"}`))
+			}
+		}()
+		go func() {
+			defer wg.Done()
+			for j := 0; j < 50; j++ {
+				_ = call.WriteOpusFrame(frame, 20*time.Millisecond)
+			}
+		}()
+		go func() {
+			defer wg.Done()
+			call.Close()
+		}()
+	}
+	wg.Wait()
+	receiveWithin(t, call.Done(), "Done")
 	if fx.usageLogs.Load() != 1 {
 		t.Fatalf("usage logs = %d, want 1", fx.usageLogs.Load())
 	}
