@@ -214,3 +214,61 @@ func TestAudioPacerStopIdempotentAndStartAfterStop(t *testing.T) {
 	never.Stop() // Stop without Start must not block
 	never.Stop()
 }
+
+func TestAudioPacerClearWakesWaiter(t *testing.T) {
+	p, _ := newTestPacer(t, 0, nil) // never started, so only Clear can wake the waiter
+	if err := p.Enqueue([][]byte{{1}, {2}}); err != nil {
+		t.Fatal(err)
+	}
+	done := make(chan error, 1)
+	go func() { done <- p.WaitDrained(context.Background()) }()
+	// Whether the waiter is already blocked or not yet registered, one Clear leaves the queue empty and releases it.
+	p.Clear()
+	select {
+	case err := <-done:
+		if err != nil {
+			t.Fatalf("WaitDrained after Clear: %v", err)
+		}
+	case <-time.After(5 * time.Second):
+		t.Fatal("Clear did not wake the waiter")
+	}
+}
+
+func TestAudioPacerEnqueueAfterStopRejectsEmptyBatch(t *testing.T) {
+	p, _ := newTestPacer(t, 0, nil)
+	p.Stop()
+	if err := p.Enqueue(nil); err == nil {
+		t.Fatal("Enqueue(nil) after Stop must return the stopped error")
+	}
+}
+
+func TestAudioPacerConcurrentEnqueueWaitDrained(t *testing.T) {
+	p, _ := newTestPacer(t, 0, nil)
+	p.Start(context.Background())
+	const workers = 4
+	const rounds = 50
+	errs := make(chan error, workers)
+	for w := 0; w < workers; w++ {
+		go func() {
+			for i := 0; i < rounds; i++ {
+				if err := p.Enqueue([][]byte{{1}, {2}}); err != nil {
+					errs <- err
+					return
+				}
+				ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
+				err := p.WaitDrained(ctx)
+				cancel()
+				if err != nil {
+					errs <- err
+					return
+				}
+			}
+			errs <- nil
+		}()
+	}
+	for w := 0; w < workers; w++ {
+		if err := <-errs; err != nil {
+			t.Fatalf("worker: %v", err)
+		}
+	}
+}

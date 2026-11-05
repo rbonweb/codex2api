@@ -84,6 +84,14 @@ func (p *audioPacer) loop(ctx context.Context) {
 			return
 		case <-ticker.C:
 		}
+		// A tick and a stop can be ready together; select picks at random, so check again before writing.
+		select {
+		case <-ctx.Done():
+			return
+		case <-p.stopCh:
+			return
+		default:
+		}
 		if err := p.sink(p.next(), audioFrameInterval); err != nil {
 			p.mu.Lock()
 			p.err = err
@@ -127,9 +135,6 @@ func (p *audioPacer) releaseDrainLocked() {
 
 // Enqueue copies and queues frames. It queues nothing and returns errAudioPacerFull when the cap would be exceeded.
 func (p *audioPacer) Enqueue(frames [][]byte) error {
-	if len(frames) == 0 {
-		return nil
-	}
 	p.mu.Lock()
 	defer p.mu.Unlock()
 	if p.stopped {
@@ -137,6 +142,9 @@ func (p *audioPacer) Enqueue(frames [][]byte) error {
 			return p.err
 		}
 		return errAudioPacerStopped
+	}
+	if len(frames) == 0 {
+		return nil
 	}
 	if len(p.queue)+len(frames) > p.maxBuffered {
 		return errAudioPacerFull
@@ -170,40 +178,36 @@ func (p *audioPacer) Err() error {
 }
 
 // WaitDrained blocks until the queue is empty, the pacer stops, or ctx ends.
+// It wakes when the loop pops the last frame, which is just before that frame's sink write returns, so the final frame may still be in flight.
+// Frames enqueued after the wake-up but before the waiter runs again keep it waiting until they drain too.
 func (p *audioPacer) WaitDrained(ctx context.Context) error {
-	p.mu.Lock()
-	if len(p.queue) == 0 {
-		p.mu.Unlock()
-		return nil
-	}
-	if p.stopped {
-		err := p.err
-		p.mu.Unlock()
-		if err == nil {
-			err = errAudioPacerStopped
+	for {
+		p.mu.Lock()
+		if len(p.queue) == 0 {
+			p.mu.Unlock()
+			return nil
 		}
-		return err
-	}
-	if p.drained == nil {
-		p.drained = make(chan struct{})
-	}
-	ch := p.drained
-	p.mu.Unlock()
-
-	select {
-	case <-ch:
-	case <-ctx.Done():
-		return ctx.Err()
-	}
-	p.mu.Lock()
-	defer p.mu.Unlock()
-	if len(p.queue) > 0 || p.err != nil {
 		if p.err != nil {
-			return p.err
+			err := p.err
+			p.mu.Unlock()
+			return err
 		}
-		return errAudioPacerStopped
+		if p.stopped {
+			p.mu.Unlock()
+			return errAudioPacerStopped
+		}
+		if p.drained == nil {
+			p.drained = make(chan struct{})
+		}
+		ch := p.drained
+		p.mu.Unlock()
+
+		select {
+		case <-ch:
+		case <-ctx.Done():
+			return ctx.Err()
+		}
 	}
-	return nil
 }
 
 // Stop ends the loop and waits for the goroutine to exit. It is idempotent.
