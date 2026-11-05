@@ -47,6 +47,10 @@ func (h *Handler) RealtimeWebSocket(c *gin.Context) {
 		), http.StatusUpgradeRequired)
 		return
 	}
+	if isRealtimeAudioModel(c.Query("model")) {
+		h.serveRealtimeAudio(c)
+		return
+	}
 	releaseWS, ok := h.acquireDownstreamWebSocket(c)
 	if !ok {
 		return
@@ -95,6 +99,7 @@ func (h *Handler) RealtimeWebSocket(c *gin.Context) {
 	})); err != nil {
 		return
 	}
+	turnRan := false
 	for turn := 0; ; turn++ {
 		if turn == 0 {
 			_ = conn.SetReadDeadline(time.Now().Add(responsesWSFirstMessageTimeout))
@@ -119,6 +124,19 @@ func (h *Handler) RealtimeWebSocket(c *gin.Context) {
 			continue
 		}
 		payload, forwardedEventID := stripNewAPIPolicyWebSocketEventID(payload)
+
+		// A session.update asking for audio output before any turn has run hands this connection to the audio bridge. After a turn ran, audio stays a text-only error.
+		if !turnRan {
+			if audioCfg, audioAck, handoffErr, ok := realtimeAudioHandoff(&state, payload); ok {
+				frameMemory.Release()
+				if handoffErr != nil {
+					_ = writeResponsesWSError(conn, handoffErr)
+					continue
+				}
+				h.runRealtimeAudioHandoff(c, conn, requestCtx, cancel, audioCfg, audioAck)
+				return
+			}
+		}
 
 		ack, forward, apiErr := normalizeRealtimeTextClientEvent(&state, payload)
 		if !stateMemory.TryResize(state.retainedLogicalBytes()) {
@@ -146,6 +164,7 @@ func (h *Handler) RealtimeWebSocket(c *gin.Context) {
 		if forwardedEventID == "" {
 			forwardedEventID = fmt.Sprintf("realtime:%d", turn)
 		}
+		turnRan = true
 		completed := false
 		var completedOutput []json.RawMessage
 		options := &responsesWSForwardOptions{
