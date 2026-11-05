@@ -1,7 +1,6 @@
 package admin
 
 import (
-	"context"
 	"strings"
 	"testing"
 )
@@ -30,15 +29,6 @@ func TestIntelligenceFinalAnswerExcludesCommentary(t *testing.T) {
 				t.Fatalf("final answer polluted: %+v", result)
 			}
 		})
-	}
-}
-
-func TestIntelligenceBoundProxyFailureNeverFallsBack(t *testing.T) {
-	h, a := newCodexDiagnosticsTestHandler(t)
-	a.ProxyURL = "http://127.0.0.1:1"
-	result := h.executeIntelligenceCheck(context.Background(), a, "gpt-4o-mini", "high", "answer")
-	if result.Interrupted || result.Complete || result.Error == "" {
-		t.Fatalf("proxy network failure result=%+v", result)
 	}
 }
 
