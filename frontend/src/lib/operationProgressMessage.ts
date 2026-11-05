@@ -7,7 +7,7 @@ export interface OperationProgressMessageEvent {
   account_name?: string;
 }
 
-const CLEAN_DONE_MESSAGE = /账号已清理|已清理 \d+ 个账号|accounts? cleared/i;
+const CLEAN_DONE_MESSAGE = /Cleaned up \d+ accounts?|accounts? cleared/i;
 
 function currentAccountLabel(event: OperationProgressMessageEvent): string | undefined {
   return event.account_email?.trim() || event.account_name?.trim() || undefined;

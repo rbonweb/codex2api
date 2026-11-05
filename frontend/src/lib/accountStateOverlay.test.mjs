@@ -80,7 +80,7 @@ test("table markers replace status content without entering selection cells", ()
   const accountsRow = sourceSlice(
     accountsSource,
     "const AccountTableRow = memo(function AccountTableRow(",
-    "// AccountMobileCard",
+    "// Memo wrapper for AccountMobileCard",
   );
 
   const accountsSelectionCell = sourceSlice(

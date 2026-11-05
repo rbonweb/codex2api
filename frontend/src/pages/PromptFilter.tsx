@@ -2927,7 +2927,7 @@ function OverviewView({
     () => parseAdaptiveReview(advancedDocument.value ?? {}),
     [advancedDocument.value],
   )
-  const [reviewTestText, setReviewTestText] = useState('请帮我整理今天的会议纪要。')
+  const [reviewTestText, setReviewTestText] = useState("Please help me summarize today's meeting notes.")
   const [reviewTesting, setReviewTesting] = useState(false)
   const [reviewModelsLoading, setReviewModelsLoading] = useState(false)
   const [reviewModelOptions, setReviewModelOptions] = useState<string[]>([])

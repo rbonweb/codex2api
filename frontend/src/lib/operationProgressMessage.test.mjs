@@ -8,7 +8,7 @@ describe("operationProgressMessage", () => {
       operationProgressMessage({
         type: "progress",
         action: "clean",
-        message: "账号已清理",
+        message: "Account cleared",
         account_email: "a@example.com",
       }),
       "a@example.com",
@@ -21,11 +21,11 @@ describe("operationProgressMessage", () => {
         {
           type: "complete",
           action: "clean",
-          message: "已清理 532 个账号",
+          message: "Cleaned up 532 accounts",
         },
         "a@example.com",
       ),
-      "已清理 532 个账号",
+      "Cleaned up 532 accounts",
     );
   });
 
@@ -34,10 +34,10 @@ describe("operationProgressMessage", () => {
       operationProgressMessage({
         type: "progress",
         action: "clean",
-        error: "账号不存在",
+        error: "Account does not exist",
         account_email: "a@example.com",
       }),
-      "账号不存在",
+      "Account does not exist",
     );
   });
 });
