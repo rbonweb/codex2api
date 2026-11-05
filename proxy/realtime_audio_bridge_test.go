@@ -436,6 +436,10 @@ func TestAudioBridgeSessionUpdateOverridesQueryParameters(t *testing.T) {
 	conn := srv.dial(t, "?model=gpt-realtime&instructions=From%20the%20URL&voice=echo&delegation=none")
 	readBridgeUntil(t, conn, "session.created")
 	writeBridgeEvent(t, conn, `{"type":"session.update","session":{"instructions":"From the event.","delegation":{"type":"client"}}}`)
+	if ack := readBridgeUntil(t, conn, "session.updated"); gjson.GetBytes(ack, "session.delegation.acknowledgement").String() != "none" {
+		t.Fatalf("a delegation without acknowledgement should keep the query's none: %s", ack)
+	}
+	writeBridgeEvent(t, conn, `{"type":"session.update","session":{"delegation":{"type":"client","acknowledgement":"default"}}}`)
 	readBridgeUntil(t, conn, "session.updated")
 	session := startBridgeCall(t, srv, conn)
 	if got := gjson.GetBytes(session, "instructions").String(); got != "From the event." {
@@ -571,17 +575,17 @@ func TestAudioBridgeSixteenKilohertzInput(t *testing.T) {
 	// 100 ms at 16 kHz is 1600 samples; resampled to 24 kHz it is 2400, the same five 20 ms frames as 100 ms of native audio.
 	pcm := base64.StdEncoding.EncodeToString(make([]byte, 3200))
 	writeBridgeEvent(t, conn, `{"type":"input_audio_buffer.append","audio":"`+pcm+`"}`)
-	for i := 0; i < 5; i++ {
+	// The stateful converter holds back a few samples for interpolation, so the last frame may wait for the next chunk.
+	for i := 0; i < 4; i++ {
 		select {
 		case <-srv.call.frames:
 		case <-time.After(bridgeTestTimeout):
-			t.Fatalf("got %d speech frames, want 5", i)
+			t.Fatalf("got %d speech frames, want at least 4", i)
 		}
 	}
-	select {
-	case <-srv.call.frames:
+	pingBridge(t, conn)
+	if len(srv.call.frames) > 1 {
 		t.Fatal("more than five frames for 100 ms of 16 kHz audio")
-	default:
 	}
 }
 
@@ -1120,5 +1124,53 @@ func TestAudioBridgeHandoffParamErrorUsesPublicShape(t *testing.T) {
 	errEvent := readBridgeUntil(t, conn, "error")
 	if gjson.GetBytes(errEvent, "error.code").String() != "unknown_parameter" || gjson.GetBytes(errEvent, "error.param").String() != "session.foo" || gjson.GetBytes(errEvent, "error.client_event_id").String() != "h1" {
 		t.Fatalf("error = %s", errEvent)
+	}
+}
+
+func TestAudioBridgeDelegationAcknowledgementIsImmutableAfterCreation(t *testing.T) {
+	srv := newBridgeTestServer(t, true, true)
+	conn := srv.dial(t, "?model=gpt-realtime&delegation=none")
+	readBridgeUntil(t, conn, "session.created")
+	startBridgeCall(t, srv, conn)
+
+	writeBridgeEvent(t, conn, `{"event_id":"d1","type":"session.update","session":{"delegation":{"type":"client","acknowledgement":"default"}}}`)
+	ack := readBridgeUntil(t, conn, "session.updated")
+	if gjson.GetBytes(ack, "session.delegation.acknowledgement").String() != "none" {
+		t.Fatalf("ack = %s, want the accepted none", ack)
+	}
+	errEvent := readBridgeUntil(t, conn, "error")
+	if gjson.GetBytes(errEvent, "error.code").String() != "immutable_field_update" || gjson.GetBytes(errEvent, "error.param").String() != "session.delegation.acknowledgement" || gjson.GetBytes(errEvent, "error.client_event_id").String() != "d1" {
+		t.Fatalf("error = %s", errEvent)
+	}
+	// A delegation without acknowledgement is not a change.
+	writeBridgeEvent(t, conn, `{"type":"session.update","session":{"delegation":{"type":"client"}}}`)
+	readBridgeUntil(t, conn, "session.updated")
+	pingBridge(t, conn)
+}
+
+// TestAudioBridgeSixteenKilohertzStreamKeepsResamplerState feeds odd-sized chunks and checks the totals match one big chunk, which a stateless per-chunk resampler would not give.
+func TestAudioBridgeSixteenKilohertzOutputIsStateful(t *testing.T) {
+	srv := newBridgeTestServer(t, true, true)
+	conn := srv.dial(t, "?model=gpt-realtime")
+	readBridgeUntil(t, conn, "session.created")
+	writeBridgeEvent(t, conn, `{"type":"session.update","session":{"audio":{"output":{"format":{"type":"audio/pcm","rate":16000}}}}}`)
+	readBridgeUntil(t, conn, "session.updated")
+	startBridgeCall(t, srv, conn)
+
+	// Three chunks of 301 samples (903 samples at 24 kHz) must yield 602 samples at 16 kHz in total, give or take the sample the resampler holds back.
+	total := 0
+	for i := 0; i < 3; i++ {
+		srv.call.events <- []byte(`{"type":"session.output_audio.delta","delta":"` + base64.StdEncoding.EncodeToString(make([]byte, 602)) + `"}`)
+	}
+	for i := 0; i < 3; i++ {
+		delta := readBridgeUntil(t, conn, "response.output_audio.delta")
+		raw, err := base64.StdEncoding.DecodeString(gjson.GetBytes(delta, "delta").String())
+		if err != nil {
+			t.Fatal(err)
+		}
+		total += len(raw) / 2
+	}
+	if total < 600 || total > 604 {
+		t.Fatalf("total output samples = %d, want about 602", total)
 	}
 }
