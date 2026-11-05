@@ -6445,23 +6445,6 @@ func (s *Store) reconcileDispatchState(ctx context.Context) (bool, error) {
 		}
 		activeIDs[row.ID] = struct{}{}
 		if acc := s.FindByID(row.ID); acc != nil {
-			if openAIResponsesRuntimeConfigDiffers(acc, row) {
-				s.applyOpenAIResponsesConfig(
-					ctx,
-					row,
-					row.ID,
-					row.GetCredential("base_url"),
-					row.GetCredential("api_key"),
-					row.GetCredentialStringSlice("models"),
-					row.GetCredential("model_mapping"),
-					row.GetCredential("codex_client_metadata_mode"),
-					row.GetCredential("codex_passthrough_mode"),
-					row.ProxyURL,
-				)
-				s.ApplyAccountCustomHeaders(row.ID, row.GetCredentialStringMap("custom_headers"))
-				changed = true
-			}
-
 			groupIDs := normalizeAllowedGroupIDs(memberships[row.ID])
 			allowedAPIKeyIDs := normalizeAllowedAPIKeyIDs(row.GetCredentialInt64Slice("allowed_api_key_ids"))
 			acc.mu.Lock()
@@ -6597,15 +6580,11 @@ func (s *Store) StartBackgroundRefresh() {
 	go func() {
 		defer s.wg.Done()
 		refreshTimer := time.NewTimer(s.GetBackgroundRefreshInterval())
-		catalogTimer := time.NewTimer(10 * time.Second)
-		defer catalogTimer.Stop()
 		autoCleanupTicker := time.NewTicker(30 * time.Second)
 		fullUsageCleanupTicker := time.NewTicker(5 * time.Minute)
 		expiredCleanupTicker := time.NewTicker(15 * time.Minute)
 		// 添加定时重建 FastScheduler 以优化性能
 		rebuildSchedulerTicker := time.NewTicker(10 * time.Minute)
-		// Grok 配额余量快照按分钟批量落库(逐请求都在变,不逐请求写库)。
-		grokRateLimitPersistTicker := time.NewTicker(time.Minute)
 		// 到点即探定时器：始终武装到「最近的限流冷却/窗口重置边界」，倒计时归零即探针刷新。
 		boundaryProbeTimer := time.NewTimer(time.Hour)
 		if !boundaryProbeTimer.Stop() {
@@ -6616,7 +6595,6 @@ func (s *Store) StartBackgroundRefresh() {
 		defer fullUsageCleanupTicker.Stop()
 		defer expiredCleanupTicker.Stop()
 		defer rebuildSchedulerTicker.Stop()
-		defer grokRateLimitPersistTicker.Stop()
 		defer boundaryProbeTimer.Stop()
 
 		resetRefreshTimer := func() {
@@ -6634,9 +6612,6 @@ func (s *Store) StartBackgroundRefresh() {
 
 		for {
 			select {
-			case <-catalogTimer.C:
-				s.triggerAntigravityCatalogRefresh()
-				catalogTimer.Reset(antigravityCatalogRefreshInterval)
 			case <-refreshTimer.C:
 				if s.GetLazyMode() {
 					if s.GetCodexOAuthKeepalive() {
@@ -6681,49 +6656,13 @@ func (s *Store) StartBackgroundRefresh() {
 				if s.FastSchedulerEnabled() {
 					s.rebuildFastScheduler()
 				}
-			case <-grokRateLimitPersistTicker.C:
-				s.flushGrokRateLimitSnapshots()
 			case <-s.stopCh:
-				// 退出前把未落库的余量快照写掉,容器重启后进度条不清零。
-				s.flushGrokRateLimitSnapshots()
 				return
 			case <-backgroundCtx.Done():
-				s.flushGrokRateLimitSnapshots()
 				return
 			}
 		}
 	}()
-}
-
-// flushGrokRateLimitSnapshots 把自上次落库后有更新的 Grok 配额余量快照批量写进
-// credentials(grok_rate_limit)。逐请求的 x-ratelimit 观测只更新内存并置脏位,
-// 由该函数按分钟节流落库;重启时在账号加载处恢复。
-func (s *Store) flushGrokRateLimitSnapshots() {
-	if s == nil || s.db == nil {
-		return
-	}
-	accounts := s.accountSnapshotAccounts()
-
-	for _, acc := range accounts {
-		if !acc.IsGrokAPI() {
-			continue
-		}
-		snap, version, dirty := acc.PeekGrokRateLimitSnapshotIfDirty()
-		if !dirty {
-			continue
-		}
-		raw, err := json.Marshal(snap)
-		if err != nil {
-			continue
-		}
-		ctx, cancel := context.WithTimeout(context.Background(), 3*time.Second)
-		if err := s.db.UpdateCredentials(ctx, acc.DBID, map[string]interface{}{"grok_rate_limit": string(raw)}); err != nil {
-			log.Printf("[账号 %d] 持久化 grok_rate_limit 失败: %v", acc.DBID, err)
-		} else {
-			acc.ConfirmGrokRateLimitSnapshotPersisted(version)
-		}
-		cancel()
-	}
 }
 
 // Stop 停止后台刷新
@@ -6745,10 +6684,6 @@ func (s *Store) Stop() {
 				acc.transientRateLimitTimer = nil
 			}
 			acc.mu.Unlock()
-		}
-		// 先停 Antigravity 配额调度器：字段未装配（未启动）时安全跳过。
-		if scheduler := s.antigravityQuotaSchedulerRef(); scheduler != nil {
-			scheduler.Stop()
 		}
 		if s.stopCh != nil {
 			close(s.stopCh)
@@ -7188,21 +7123,8 @@ func (s *Store) accountLazySelectable(acc *Account) bool {
 func (a *Account) lazySelectableLocked(now time.Time) bool {
 	// 与 isAvailableLocked 同一处硬门禁：lazy 模式是选号入口的另一条腿，漏掉它会让
 	// 被阻断账号在 lazy 部署下照常入选（含 401 窄恢复豁免路径）。
-	if a.antigravityQuotaBlockReasonLocked(now) != "" {
-		return false
-	}
 	if a.Status == StatusError {
 		return false
-	}
-	if a.isAntigravityAPILocked() {
-		unauthorizedRecovery := a.antigravityUnauthorizedRecoveryLocked(now)
-		if a.Status == StatusCooldown && now.Before(a.CooldownUtil) && !unauthorizedRecovery {
-			return false
-		}
-		if a.healthTierLocked() == HealthTierBanned && !unauthorizedRecovery {
-			return false
-		}
-		return a.hasDispatchCredentialLocked()
 	}
 	if a.healthTierLocked() == HealthTierBanned {
 		return false
@@ -7215,9 +7137,6 @@ func (a *Account) lazySelectableLocked(now time.Time) bool {
 	}
 	if a.quotaAutoPausedLocked(now) {
 		return false
-	}
-	if a.isRelayStyleLocked() {
-		return true
 	}
 	return strings.TrimSpace(a.AccessToken) != "" ||
 		strings.TrimSpace(a.RefreshToken) != "" ||
@@ -7240,10 +7159,9 @@ func (s *Store) lazyNeedsDispatchRefresh(acc *Account) bool {
 		return false
 	}
 	acc.mu.RLock()
-	openAIResponses := acc.isOpenAIResponsesAPILocked()
 	hasRefreshCredential := strings.TrimSpace(acc.RefreshToken) != "" || strings.TrimSpace(acc.SessionToken) != ""
 	acc.mu.RUnlock()
-	return !openAIResponses && hasRefreshCredential && acc.NeedsRefresh()
+	return hasRefreshCredential && acc.NeedsRefresh()
 }
 
 func (s *Store) triggerLazyRefreshAsync(acc *Account) {
@@ -7272,9 +7190,6 @@ func (s *Store) lazyCanRefreshForMetadata(acc *Account) bool {
 	}
 	acc.mu.RLock()
 	defer acc.mu.RUnlock()
-	if acc.isOpenAIResponsesAPILocked() {
-		return false
-	}
 	return acc.AccessToken == "" &&
 		(strings.TrimSpace(acc.RefreshToken) != "" || strings.TrimSpace(acc.SessionToken) != "") &&
 		acc.Status != StatusError &&
@@ -7556,9 +7471,6 @@ func (s *Store) nextForSessionWithFilter(key string, apiKeyID int64, exclude map
 		return nil, "", SessionAffinityGuard{}
 	}
 	policy := opts.Policy
-	// 模型级配额门禁：整号门禁只在所有配额族都耗尽时才移出账号，这里按本次请求模型所在
-	// 族补一道过滤，绑定复用、续链、借用与 Fresh 选号共用同一个包装后的 filter。
-	filter = withAntigravityModelQuotaFilter(filter, opts.Model)
 	key = strings.TrimSpace(key)
 	if key == "" {
 		return s.NextExcludingWithDispatch(apiKeyID, exclude, filter, policy), "", SessionAffinityGuard{}
@@ -7569,13 +7481,7 @@ func (s *Store) nextForSessionWithFilter(key string, apiKeyID int64, exclude map
 	binding, ok := s.sessionBindings[key]
 	s.sessionMu.RUnlock()
 
-	// 绑定账号是 Grok 时，用 Grok 专属粘性模式覆盖全局（默认 strict，减少中途换号致缓存失效）。
 	mode := s.GetAffinityMode()
-	if ok {
-		if override := s.resolveGrokAffinityOverride(binding.accountID); override != "" {
-			mode = override
-		}
-	}
 	if mode == AffinityModeOff && !preserveBinding {
 		return s.NextExcludingWithDispatch(apiKeyID, exclude, filter, policy), "", SessionAffinityGuard{}
 	}
@@ -7638,12 +7544,8 @@ func (s *Store) nextForSessionWithFilter(key string, apiKeyID int64, exclude map
 			s.UnbindSessionAffinity(key, binding.accountID)
 			return s.nextAccountForFreshAffinityWithDispatch(key, apiKeyID, exclude, filter, opts), "", SessionAffinityGuard{}
 		}
-		// 跨进程缓存的 binding 也按 bounded 逻辑校验账号健康；Grok 账号套用 Grok 专属模式。
-		cacheMode := mode
-		if override := s.resolveGrokAffinityOverride(binding.accountID); override != "" {
-			cacheMode = override
-		}
-		if cacheMode == AffinityModeBounded && !preserveBinding && !s.affinityAccountStillHealthy(binding.accountID) {
+		// 跨进程缓存的 binding 也按 bounded 逻辑校验账号健康。
+		if mode == AffinityModeBounded && !preserveBinding && !s.affinityAccountStillHealthy(binding.accountID) {
 			// 不复用,落到完整挑号
 		} else {
 			acc, capacityFull := s.takeByIDModeWithCapacity(binding.accountID, apiKeyID, exclude, filter, preserveBinding, key, policy)
@@ -7687,22 +7589,12 @@ func (s *Store) nextAccountForFreshAffinity(key string, apiKeyID int64, exclude 
 }
 
 // nextAccountForFreshAffinityWithDispatch 是 nextAccountForFreshAffinity 的带
-// DispatchPolicy 变体：Antigravity 加权避险接管时直接返回其结果（含号池无可用
-// 容量返回 nil 的情况），避免再次回退重扫并重复求值 filter；未接管时才按散列开关
-// 回退到 HRW / 调度器 / round-robin 重扫。
+// DispatchPolicy 变体：按散列开关回退到 HRW / 调度器 / round-robin 重扫。
 func (s *Store) nextAccountForFreshAffinityWithDispatch(key string, apiKeyID int64, exclude map[int64]bool, filter AccountFilter, opts SelectionOptions) *Account {
 	if s == nil {
 		return nil
 	}
 	policy := opts.Policy
-	// Antigravity 首绑 / Fresh 加权避险：handled=true 表示加权路径已接管本次选号（含号池
-	// 无可用容量返回 nil 的情况），此处必须直接返回，不能再走下面的 spread / HRW /
-	// round-robin 重扫——那会对同一批账号二次求值 filter，破坏「单次选号每个账号 filter
-	// 至多一次」的约束。handled=false（未开启 / 非 Antigravity / 非 round_robin）时才
-	// 平滑回退到既有散列逻辑。
-	if acc, handled := s.selectAntigravityBalancedAccount(key, apiKeyID, exclude, filter, opts); handled {
-		return acc
-	}
 	// Deadline priority governs fresh selection; an existing binding is handled
 	// before reaching this method and remains intact.
 	if !s.GetSessionAffinitySpread() || strings.TrimSpace(key) == "" ||
@@ -7968,12 +7860,6 @@ func (s *Store) takeByIDModeWithCapacity(id int64, apiKeyID int64, exclude map[i
 	target := s.lookupByIDLocked(id)
 	s.mu.RUnlock()
 	if target == nil {
-		return nil, false
-	}
-	// 配额硬门禁在这里复检（且先于 continuation/spark 豁免）：被阻断是「不可选」，
-	// 不是「并发满」，因此第二个返回值必须保持 false——续链据此保留绑定并返回 nil，
-	// 新请求据此 fallthrough 借用其他账号，两者都不得进入 WaitForDispatchAvailable。
-	if antigravityAccountQuotaBlocked(target) {
 		return nil, false
 	}
 	continuationEligible := continuation && target.UsageLimitContinuationEligible()
@@ -8332,11 +8218,8 @@ func (s *Store) waitForSessionAvailableWithFilter(ctx context.Context, key strin
 	if timeout <= 0 || ctx.Err() != nil {
 		return nil, "", SessionAffinityGuard{}, ctx.Err()
 	}
-	// 候选探测与选号同口径地看模型级配额门禁；选号本身由 nextForSessionWithFilter 自行
-	// 包装，这里传给它的仍是原始 filter，避免同一门禁叠两层。
-	candidateFilter := withAntigravityModelQuotaFilter(filter, opts.Model)
 	hasCandidate := func() bool {
-		return s.HasDispatchCandidate(key, apiKeyID, exclude, candidateFilter, preserveBinding, policy)
+		return s.HasDispatchCandidate(key, apiKeyID, exclude, filter, preserveBinding, policy)
 	}
 	// Indexed/shadow also wait on an empty snapshot: another replica may add
 	// an account and notify this process through the durable outbox.
@@ -8657,15 +8540,6 @@ func (s *Store) tryReclaimSessionSlot(acc *Account, sessionKey string, updateSch
 		return false
 	}
 	if accountDispatchBlocked(acc) {
-		if releaseOccupiedAccountSlot(acc) {
-			s.notifySchedulerAccountAvailability(acc, false)
-		}
-		return false
-	}
-	// 成功返回前复检配额硬门禁：预留槽的判定发生在选号入口，门禁可能在此期间被新的
-	// 观测置位。宁可回滚这次回收，也不得把请求交付给已耗尽的账号。唤醒等待者由置位
-	// 门禁的那次投影刷新负责，这里不再全局广播，避免每次回收都触发一轮空转重扫。
-	if antigravityAccountQuotaBlocked(acc) {
 		if releaseOccupiedAccountSlot(acc) {
 			s.notifySchedulerAccountAvailability(acc, false)
 		}
@@ -9185,19 +9059,6 @@ func (s *Store) SetGrokAffinityMode(mode string) {
 	s.grokAffinityMode.Store(mode)
 }
 
-// resolveGrokAffinityOverride 若绑定账号是 Grok 且配置了非 follow 的 Grok 粘性模式，
-// 返回该模式；否则返回空字符串（表示不覆盖、沿用全局）。
-func (s *Store) resolveGrokAffinityOverride(accountID int64) string {
-	mode := s.GetGrokAffinityMode()
-	if mode == "" || mode == AffinityModeFollow {
-		return ""
-	}
-	if acc := s.FindByID(accountID); acc != nil && acc.IsGrokAPI() {
-		return mode
-	}
-	return ""
-}
-
 type promptFilterConfigState struct {
 	Config      promptfilter.Config
 	AdvancedRaw string
@@ -9611,7 +9472,6 @@ func (s *Store) AddAccounts(accounts []*Account) {
 			acc.AddedAt.Store(now)
 		}
 		acc.mu.Lock()
-		acc.grokRuntimeSink = s
 		acc.recomputeEffectiveIgnoreUsageLimitStatus(ignoreUsageLimit)
 		acc.recomputeEffectiveGroupBaseConcurrency(s)
 		acc.recomputeSchedulerLocked(maxConcurrency)
@@ -9997,14 +9857,14 @@ func (s *Store) GetAPIKeyAllowedGroups(apiKeyID int64) []int64 {
 	return cloneInt64Slice(s.apiKeyAllowedGroups[apiKeyID])
 }
 
-// SetAPIKeyUpstreamChannel 设置某 API Key 的上游渠道限定（codex/grok/antigravity/claude，空=不限）。
+// SetAPIKeyUpstreamChannel 设置某 API Key 的上游渠道限定（codex，空=不限）。
 // 仅在取值真正变化时重建调度器。
 func (s *Store) SetAPIKeyUpstreamChannel(apiKeyID int64, channel string) {
 	if apiKeyID <= 0 {
 		return
 	}
 	channel = strings.ToLower(strings.TrimSpace(channel))
-	if channel != database.UpstreamChannelCodex && channel != database.UpstreamChannelGrok && channel != database.UpstreamChannelAntigravity && channel != database.UpstreamChannelClaude {
+	if channel != database.UpstreamChannelCodex {
 		channel = ""
 	}
 	s.apiKeyGroupsMu.Lock()
@@ -10066,7 +9926,7 @@ func (s *Store) LoadAPIKeyAllowedGroups(ctx context.Context) error {
 			s.apiKeyAllowedPlans[key.ID] = append([]string(nil), plans...)
 			s.apiKeyAllowedPlanSets[key.ID] = stringSet(plans)
 		}
-		if channel := key.Limits.ResolveUpstreamChannel(); channel != "" {
+		if channel := key.Limits.ResolveUpstreamChannel(); channel == database.UpstreamChannelCodex {
 			s.apiKeyUpstreamChannels[key.ID] = channel
 		}
 	}
@@ -10085,27 +9945,7 @@ func (s *Store) APIKeyAllowsAccount(apiKeyID int64, acc *Account) bool {
 	allowedGroups := s.apiKeyAllowedGroupSets[apiKeyID]
 	noAffinityGroups := s.apiKeyNoAffinityGroupSets[apiKeyID]
 	allowedPlans := s.apiKeyAllowedPlanSets[apiKeyID]
-	channel := s.apiKeyUpstreamChannels[apiKeyID]
 	s.apiKeyGroupsMu.RUnlock()
-	// 渠道限定是硬门：grok 渠道只允许 Grok 账号，codex 渠道排除 Grok 账号。
-	switch channel {
-	case database.UpstreamChannelGrok:
-		if !acc.IsGrokAPI() {
-			return false
-		}
-	case database.UpstreamChannelCodex:
-		if acc.IsGrokAPI() || acc.IsAntigravityAPI() || acc.IsClaudeOAuth() {
-			return false
-		}
-	case database.UpstreamChannelAntigravity:
-		if !acc.IsAntigravityAPI() {
-			return false
-		}
-	case database.UpstreamChannelClaude:
-		if !acc.IsClaudeOAuth() {
-			return false
-		}
-	}
 	if len(allowedGroups) == 0 && len(allowedPlans) == 0 {
 		return true
 	}
@@ -10113,23 +9953,6 @@ func (s *Store) APIKeyAllowsAccount(apiKeyID int64, acc *Account) bool {
 	defer acc.mu.RUnlock()
 	if len(allowedPlans) > 0 {
 		plan := lowerTrimPlan(acc.PlanType)
-		// Grok OAuth archive/JWT labels are not authorization facts. A plan
-		// whitelist is fail-closed unless /user returned an explicit fresh tier.
-		if acc.isGrokAPILocked() {
-			if strings.TrimSpace(acc.APIKey) != "" {
-				plan = "api"
-			} else if acc.GrokLivePlanKnown && acc.GrokFactsGeneration == acc.CredentialGeneration &&
-				!acc.GrokLivePlanExpiresAt.IsZero() && time.Now().Before(acc.GrokLivePlanExpiresAt) {
-				plan = CanonicalGrokLivePlanFilter(acc.GrokLivePlan)
-			} else {
-				return false
-			}
-		}
-		// Antigravity plan_type is Google's display name ("Google AI Pro");
-		// match the key derived from the entitlement tier id instead.
-		if acc.isAntigravityAPILocked() {
-			plan = acc.AntigravityPlanKey
-		}
 		if _, ok := allowedPlans[plan]; !ok {
 			return false
 		}
@@ -10869,7 +10692,7 @@ func (s *Store) UnsupportedModelCandidateSummary(apiKeyID int64, exclude map[int
 	}
 	now := time.Now()
 	for _, acc := range s.accountSnapshotAccounts() {
-		if acc == nil || (exclude != nil && exclude[acc.DBID]) || acc.IsRelayStyle() {
+		if acc == nil || (exclude != nil && exclude[acc.DBID]) {
 			continue
 		}
 		if !acc.dispatchableForPolicy(policy) || !s.accountAllowedForAPIKey(acc, apiKeyID) {
@@ -10922,12 +10745,6 @@ func (s *Store) ResolveModelCooldownPolicy(acc *Account) ModelCooldownPolicy {
 		Seconds:        settings.OAuthSeconds,
 		BackoffEnabled: settings.OAuthBackoffEnabled,
 		Source:         "oauth",
-	}
-	if acc != nil && acc.IsRelayStyle() && !acc.IsGrokAPI() {
-		policy.Mode = settings.RelayMode
-		policy.Seconds = settings.RelaySeconds
-		policy.BackoffEnabled = settings.RelayBackoffEnabled
-		policy.Source = "relay"
 	}
 	if acc != nil {
 		mode, seconds, backoff := acc.GetModelCooldownPolicyOverride()
@@ -12169,9 +11986,6 @@ func (s *Store) RefreshSingle(ctx context.Context, dbID int64) error {
 	if target == nil {
 		return fmt.Errorf("账号 %d 不存在", dbID)
 	}
-	if target.IsAntigravityAPI() {
-		return fmt.Errorf("Antigravity 账号请使用专用配额刷新")
-	}
 	return s.refreshAccountForced(ctx, target)
 }
 
@@ -12341,24 +12155,6 @@ func (s *Store) refreshAccountForced(ctx context.Context, acc *Account) error {
 
 // refreshAccountWithOptions 刷新单个账号的 AT（带缓存锁与 token 缓存）
 func (s *Store) refreshAccountWithOptions(ctx context.Context, acc *Account, forceRefresh bool) error {
-	if acc.IsAntigravityAPI() {
-		acc.mu.RLock()
-		apiKey := strings.TrimSpace(acc.APIKey)
-		acc.mu.RUnlock()
-		if apiKey != "" {
-			return nil
-		}
-		return s.RefreshAntigravityAccount(ctx, acc)
-	}
-	// Grok 账号走 auth.x.ai 的 OAuth 刷新流程，与 ChatGPT 的 RT 刷新完全不同。
-	if acc.IsGrokAPI() {
-		return s.refreshGrokAccount(ctx, acc, forceRefresh)
-	}
-	// Claude Code OAuth 账号走 platform.claude.com 的 RT 刷新，请求体与端点均与
-	// ChatGPT 不同，单独处理。对所有非 claude 账号此分支恒不进入。
-	if acc.IsClaudeOAuth() {
-		return s.refreshClaudeAccount(ctx, acc, forceRefresh)
-	}
 	return s.refreshCodexAccount(ctx, acc, forceRefresh)
 }
 
@@ -12941,7 +12737,7 @@ func (s *Store) propagateSharedOAuthCredentials(
 	source.mu.RUnlock()
 
 	for _, sibling := range s.accountSnapshotAccounts() {
-		if sibling == nil || sibling.DBID == sourceID || sibling.IsGrokAPI() || sibling.IsOpenAIResponsesAPI() {
+		if sibling == nil || sibling.DBID == sourceID {
 			continue
 		}
 
