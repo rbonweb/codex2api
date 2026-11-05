@@ -39,17 +39,17 @@ type codexToolSpec struct {
 	status   string
 }
 
-// newCodexAnalyticsEvent 创建携带发送身份的分析事件。
+// newCodexAnalyticsEvent creates an analytics event that carries the sending identity.
 func newCodexAnalyticsEvent(profile codexTelemetryProfile, eventType string, params map[string]any) codexAnalyticsEvent {
 	return codexAnalyticsEvent{EventType: eventType, EventParams: params, client: profile.client}
 }
 
-// buildCodexTelemetryProfile 从请求与客户端指纹构建本轮遥测上下文。
+// buildCodexTelemetryProfile builds this round's telemetry context from the request and the client fingerprint.
 func buildCodexTelemetryProfile(client codexTelemetryClient, input codexTelemetryRequest) codexTelemetryProfile {
 	metadata := codexTurnMetadata(input.body, input.headers)
 	convergedSession, convergedThread := ConvergedCodexSessionIdentity(client.account, input.headers)
-	// 不用 ResolveSessionID 的本地亲和键：它可能是下游 X-Codex2API-Affinity-Key 之类
-	// 从不上行的私有标识；遥测里的 session_id 只能取真正发往上游的身份。
+	// Do not use the local affinity key from ResolveSessionID: it may be a private identifier, such as the downstream X-Codex2API-Affinity-Key,
+	// that is never sent upstream; the session_id in telemetry may only use the identity that is actually sent upstream.
 	sessionID := firstNonEmptyString(convergedSession, gjson.GetBytes(input.body, "client_metadata.session_id").String(), metadata.Get("session_id").String(), input.sessionID)
 	threadID := firstNonEmptyString(convergedThread, gjson.GetBytes(input.body, "client_metadata.thread_id").String(), metadata.Get("thread_id").String(), sessionID)
 	if sessionID == "" {
@@ -69,7 +69,7 @@ func buildCodexTelemetryProfile(client codexTelemetryClient, input codexTelemetr
 	}
 }
 
-// codexTurnMetadata 读取请求体或请求头中的 turn metadata。
+// codexTurnMetadata reads the turn metadata from the request body or the request headers.
 func codexTurnMetadata(body []byte, headers map[string][]string) gjson.Result {
 	raw := gjson.GetBytes(body, "client_metadata.x-codex-turn-metadata")
 	if raw.Type == gjson.String && gjson.Valid(raw.String()) {
@@ -81,7 +81,7 @@ func codexTurnMetadata(body []byte, headers map[string][]string) gjson.Result {
 	return gjson.Result{}
 }
 
-// firstHeaderValue 以大小写不敏感方式读取首个请求头值。
+// firstHeaderValue reads the first request header value, matching the name case-insensitively.
 func firstHeaderValue(headers map[string][]string, name string) string {
 	for key, values := range headers {
 		if strings.EqualFold(key, name) && len(values) > 0 {
@@ -91,7 +91,7 @@ func firstHeaderValue(headers map[string][]string, name string) string {
 	return ""
 }
 
-// codexInitializationEvents 生成用户、guardian 与标题线程的初始化事件。
+// codexInitializationEvents generates the initialization events for the user, guardian and title threads.
 func codexInitializationEvents(profile codexTelemetryProfile) []codexAnalyticsEvent {
 	events := make([]codexAnalyticsEvent, 0, 4)
 	if profile.firstThread {
@@ -115,7 +115,7 @@ func codexInitializationEvents(profile codexTelemetryProfile) []codexAnalyticsEv
 	return events
 }
 
-// codexThreadInitialized 按线程规格生成初始化事件。
+// codexThreadInitialized generates initialization events according to the thread spec.
 func codexThreadInitialized(profile codexTelemetryProfile, spec codexThreadSpec) codexAnalyticsEvent {
 	appServer := codexAppServerClient(profile)
 	if spec.source == "guardian_review" {
@@ -131,7 +131,7 @@ func codexThreadInitialized(profile codexTelemetryProfile, spec codexThreadSpec)
 	return newCodexAnalyticsEvent(profile, "codex_thread_initialized", params)
 }
 
-// codexTitleTurnEvent 模拟首次会话的标题生成 turn。
+// codexTitleTurnEvent simulates the title-generation turn for a first session.
 func codexTitleTurnEvent(profile codexTelemetryProfile, threadID string) codexAnalyticsEvent {
 	duration := int64(800 + simulatedInt(profile.turnID+":title", 1800))
 	started := profile.started.Unix()
@@ -151,7 +151,7 @@ func codexTitleTurnEvent(profile codexTelemetryProfile, threadID string) codexAn
 	return newCodexAnalyticsEvent(profile, "codex_turn_event", params)
 }
 
-// codexTerminalEvents 生成工具、hook 与主 turn 的结束事件。
+// codexTerminalEvents generates the end events for tools, hooks and the main turn.
 func codexTerminalEvents(profile codexTelemetryProfile, result codexTelemetryTerminal) []codexAnalyticsEvent {
 	events := make([]codexAnalyticsEvent, 0, 9)
 	if profile.command {
@@ -170,7 +170,7 @@ func codexTerminalEvents(profile codexTelemetryProfile, result codexTelemetryTer
 	return events
 }
 
-// codexMainTurnEvent 使用真实响应状态与用量生成主 turn 事件。
+// codexMainTurnEvent builds the main turn event from the real response status and usage.
 func codexMainTurnEvent(profile codexTelemetryProfile, result codexTelemetryTerminal) codexAnalyticsEvent {
 	now := time.Now()
 	params := codexTurnEventBase(profile, codexTurnSpec{profile.threadID, profile.turnID, profile.model, profile.effort})
@@ -195,7 +195,7 @@ func codexMainTurnEvent(profile codexTelemetryProfile, result codexTelemetryTerm
 	return newCodexAnalyticsEvent(profile, "codex_turn_event", params)
 }
 
-// codexTurnEventBase 构造 Codex turn 事件的公共字段。
+// codexTurnEventBase builds the common fields of a Codex turn event.
 func codexTurnEventBase(profile codexTelemetryProfile, spec codexTurnSpec) map[string]any {
 	dynamicCount, commandCount, fileCount := boolInt(profile.dynamicTool), boolInt(profile.command), boolInt(profile.fileChange)
 	return map[string]any{
@@ -218,7 +218,7 @@ func codexTurnEventBase(profile codexTelemetryProfile, spec codexTurnSpec) map[s
 	}
 }
 
-// setCodexTurnUsage 将 Responses 用量写入 turn 参数。
+// setCodexTurnUsage writes the Responses usage into the turn parameters.
 func setCodexTurnUsage(params map[string]any, response gjson.Result) {
 	usage := response.Get("usage")
 	input, output := usage.Get("input_tokens").Int(), usage.Get("output_tokens").Int()
@@ -231,7 +231,7 @@ func setCodexTurnUsage(params map[string]any, response gjson.Result) {
 	params["reasoning_output_tokens"] = usage.Get("output_tokens_details.reasoning_tokens").Int()
 }
 
-// codexHookEvent 模拟一次 Stop 或 Interrupt hook 执行。
+// codexHookEvent simulates one Stop or Interrupt hook execution.
 func codexHookEvent(profile codexTelemetryProfile, status string) codexAnalyticsEvent {
 	hookName := "Stop"
 	if status != "completed" {
@@ -245,7 +245,7 @@ func codexHookEvent(profile codexTelemetryProfile, status string) codexAnalytics
 	return newCodexAnalyticsEvent(profile, "codex_hook_run", params)
 }
 
-// codexDynamicToolEvent 模拟一次动态工具调用事件。
+// codexDynamicToolEvent simulates one dynamic tool call event.
 func codexDynamicToolEvent(profile codexTelemetryProfile, terminal []byte) codexAnalyticsEvent {
 	itemID, duration := NewUpstreamSessionUUID(), int64(200+simulatedInt(profile.turnID+":dynamic", 1800))
 	status := "completed"
@@ -261,7 +261,7 @@ func codexDynamicToolEvent(profile codexTelemetryProfile, terminal []byte) codex
 	return newCodexAnalyticsEvent(profile, "codex_dynamic_tool_call_event", params)
 }
 
-// codexCommandEvent 模拟一次 unified exec 命令执行事件。
+// codexCommandEvent simulates one unified exec command execution event.
 func codexCommandEvent(profile codexTelemetryProfile, terminal []byte) codexAnalyticsEvent {
 	duration := int64(100 + simulatedInt(profile.turnID+":command-duration", 1200))
 	failed := simulatedInt(profile.turnID+":command-status", 10) == 0
@@ -278,7 +278,7 @@ func codexCommandEvent(profile codexTelemetryProfile, terminal []byte) codexAnal
 	return newCodexAnalyticsEvent(profile, "codex_command_execution_event", params)
 }
 
-// setCodexCommandCounts 设置模拟命令的动作类型计数。
+// setCodexCommandCounts sets the action-type counts for the simulated command.
 func setCodexCommandCounts(params map[string]any, kind int) {
 	params["command_total_action_count"] = 1
 	keys := []string{"command_read_action_count", "command_list_files_action_count", "command_search_action_count", "command_unknown_action_count"}
@@ -287,7 +287,7 @@ func setCodexCommandCounts(params map[string]any, kind int) {
 	}
 }
 
-// codexFileChangeEvent 模拟一次文件修改事件。
+// codexFileChangeEvent simulates one file modification event.
 func codexFileChangeEvent(profile codexTelemetryProfile, terminal []byte) codexAnalyticsEvent {
 	total := 1 + simulatedInt(profile.turnID+":file-total", 3)
 	kind := simulatedInt(profile.turnID+":file-kind", 4)
@@ -300,7 +300,7 @@ func codexFileChangeEvent(profile codexTelemetryProfile, terminal []byte) codexA
 	return newCodexAnalyticsEvent(profile, "codex_file_change_event", params)
 }
 
-// codexAcceptedLinesEvent 模拟接受代码行指纹的事件。
+// codexAcceptedLinesEvent simulates an event that accepts code-line fingerprints.
 func codexAcceptedLinesEvent(profile codexTelemetryProfile) codexAnalyticsEvent {
 	params := map[string]any{
 		"accepted_added_lines":   1 + simulatedInt(profile.turnID+":added", 120),
@@ -312,7 +312,7 @@ func codexAcceptedLinesEvent(profile codexTelemetryProfile) codexAnalyticsEvent 
 	return newCodexAnalyticsEvent(profile, "codex_accepted_line_fingerprints", params)
 }
 
-// codexToolEventBase 构造工具类事件共享的时序和身份字段。
+// codexToolEventBase builds the timing and identity fields shared by tool events.
 func codexToolEventBase(profile codexTelemetryProfile, spec codexToolSpec) map[string]any {
 	completed := time.Now()
 	params := map[string]any{
@@ -329,7 +329,7 @@ func codexToolEventBase(profile codexTelemetryProfile, spec codexToolSpec) map[s
 	return params
 }
 
-// codexTerminalResponse 从终止事件或非流式响应中提取 response 对象。
+// codexTerminalResponse extracts the response object from a terminal event or a non-streaming response.
 func codexTerminalResponse(terminal []byte) gjson.Result {
 	root := gjson.ParseBytes(terminal)
 	if response := root.Get("response"); response.Exists() {
@@ -338,7 +338,7 @@ func codexTerminalResponse(terminal []byte) gjson.Result {
 	return root
 }
 
-// codexResponseID 返回真实响应 ID，缺失时生成同形占位值。
+// codexResponseID returns the real response ID, and generates a placeholder value of the same shape when it is missing.
 func codexResponseID(terminal []byte) string {
 	if value := codexTerminalResponse(terminal).Get("id").String(); value != "" {
 		return value
@@ -346,7 +346,7 @@ func codexResponseID(terminal []byte) string {
 	return "resp_" + strings.ReplaceAll(NewUpstreamSessionUUID(), "-", "")
 }
 
-// simulatedInt 从随机 turn 标识稳定派生有界模拟值。
+// simulatedInt stably derives a bounded simulated value from the random turn identifier.
 func simulatedInt(seed string, limit int) int {
 	if limit <= 1 {
 		return 0
@@ -355,7 +355,7 @@ func simulatedInt(seed string, limit int) int {
 	return int(binary.BigEndian.Uint64(sum[:8]) % uint64(limit))
 }
 
-// boolInt 将布尔值转换为事件计数字段。
+// boolInt converts a boolean into an event count field.
 func boolInt(value bool) int {
 	if value {
 		return 1
@@ -363,7 +363,7 @@ func boolInt(value bool) int {
 	return 0
 }
 
-// elapsedMillis 计算非负毫秒间隔并处理缺失终点。
+// elapsedMillis computes a non-negative millisecond interval and handles a missing end point.
 func elapsedMillis(start, end, fallback time.Time) int64 {
 	if end.IsZero() {
 		end = fallback

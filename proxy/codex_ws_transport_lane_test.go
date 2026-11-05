@@ -66,7 +66,7 @@ func TestResolveCodexWebsocketTransportSessionKeyRequestKindLanes(t *testing.T) 
 		h.Set("X-Codex-Turn-Metadata", `{"session_id":"client-session","thread_id":"client-session","request_kind":"`+kind+`"}`)
 		return h
 	}
-	// 主道：turn / prewarm / compaction / 未声明都落回共享上游会话键。
+	// Main lane: turn / prewarm / compaction / undeclared all fall back to the shared upstream session key.
 	for _, kind := range []string{"turn", "prewarm", "compaction", ""} {
 		if got := ResolveCodexWebsocketTransportSessionKey(upstream, withKind(kind)); got != upstream {
 			t.Fatalf("request_kind=%q lane = %q, want shared upstream session", kind, got)
@@ -89,7 +89,7 @@ func TestResolveCodexWebsocketTransportSessionKeyRequestKindLanes(t *testing.T) 
 		t.Fatalf("raw lane label leaked into transport lane %q", memory)
 	}
 
-	// 子线程 + memory：与子线程 turn 也不同道。
+	// Sub-thread + memory: also a different lane from the sub-thread turn.
 	childTurn := http.Header{"Session-Id": []string{"client-session"}, "Thread-Id": []string{"client-child"}}
 	childMemory := childTurn.Clone()
 	childMemory.Set("X-Codex-Turn-Metadata", `{"thread_id":"client-child","request_kind":"memory"}`)
@@ -97,7 +97,7 @@ func TestResolveCodexWebsocketTransportSessionKeyRequestKindLanes(t *testing.T) 
 		t.Fatal("child-thread memory turn collapsed onto the child-thread user turn lane")
 	}
 
-	// 头里没有 turn 元数据时回退请求体 client_metadata 内嵌 JSON（Desktop 走 HTTP）。
+	// When the header has no turn metadata, fall back to the JSON embedded in the request body's client_metadata (Desktop uses HTTP).
 	headerOnly := http.Header{"Session-Id": []string{"client-session"}}
 	body := []byte(`{"model":"gpt-5.5","input":"x","client_metadata":{"session_id":"client-session","x-codex-turn-metadata":"{\"thread_id\":\"client-session\",\"request_kind\":\"memory\"}"}}`)
 	if got := ResolveCodexWebsocketTransportSessionKeyWithBody(upstream, headerOnly, body); got == upstream {
@@ -107,7 +107,7 @@ func TestResolveCodexWebsocketTransportSessionKeyRequestKindLanes(t *testing.T) 
 	if got := ResolveCodexWebsocketTransportSessionKeyWithBody(upstream, headerOnly, turnBody); got != upstream {
 		t.Fatalf("body-embedded request_kind=turn lane = %q, want shared upstream session", got)
 	}
-	// 头存在且合法时以头为准，不再看请求体。
+	// When the header is present and valid, the header wins and the request body is no longer checked.
 	if got := ResolveCodexWebsocketTransportSessionKeyWithBody(upstream, withKind("turn"), body); got != upstream {
 		t.Fatalf("valid header must win over body metadata, got %q", got)
 	}
@@ -133,7 +133,7 @@ func TestResolveCodexWebsocketTransportSessionKeySubagentLane(t *testing.T) {
 	if got := ResolveCodexWebsocketTransportSessionKey(upstream, upper); got != lane {
 		t.Fatalf("subagent value should be case-insensitive: %q vs %q", got, lane)
 	}
-	// 带线程标识的子代理请求走线程分道，不再按子代理值分道。
+	// Subagent requests with a thread identifier are split by thread, no longer by the subagent value.
 	threaded := guardian.Clone()
 	threaded.Set("Thread-Id", "client-session")
 	if got := ResolveCodexWebsocketTransportSessionKey(upstream, threaded); got != upstream {

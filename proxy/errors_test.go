@@ -7,7 +7,7 @@ import (
 	"testing"
 )
 
-// TestErrorMissingAPIKey 测试缺失 API Key 错误
+// TestErrorMissingAPIKey tests the missing API key error
 func TestErrorMissingAPIKey(t *testing.T) {
 	err := ErrMissingAPIKey()
 
@@ -25,7 +25,7 @@ func TestErrorMissingAPIKey(t *testing.T) {
 	}
 }
 
-// TestErrorRateLimited 测试限流错误
+// TestErrorRateLimited tests the rate-limit error
 func TestErrorRateLimited(t *testing.T) {
 	err := ErrRateLimited("custom rate limit message")
 
@@ -43,14 +43,14 @@ func TestErrorRateLimited(t *testing.T) {
 	}
 }
 
-// TestErrorAccountPoolUsageLimit 测试账号池使用限制错误
+// TestErrorAccountPoolUsageLimit tests the account pool usage limit error
 func TestErrorAccountPoolUsageLimit(t *testing.T) {
 	err := ErrAccountPoolUsageLimit("quota exhausted", "plus", 0, 60)
 
 	if err.Code != ErrorCodeAccountPoolUsageLimit {
 		t.Errorf("expected code %s, got %s", ErrorCodeAccountPoolUsageLimit, err.Code)
 	}
-	// 应包含 plan type 和 reset 信息
+	// Should include the plan type and reset information
 	if err.Message == "" {
 		t.Error("message should not be empty")
 	}
@@ -62,7 +62,7 @@ func TestErrorAccountPoolUsageLimit(t *testing.T) {
 	}
 }
 
-// TestErrorUpstream 测试上游错误
+// TestErrorUpstream tests the upstream error
 func TestErrorUpstream(t *testing.T) {
 	cause := errors.New("connection refused")
 	err := ErrUpstream(http.StatusBadGateway, "upstream failed", cause)
@@ -105,38 +105,38 @@ func TestUpstreamErrorBodyIsValidJSONForInvalidUTF8(t *testing.T) {
 	}
 }
 
-// TestErrorUnwrap 测试错误链 Unwrap
+// TestErrorUnwrap tests the error chain Unwrap
 func TestErrorUnwrap(t *testing.T) {
 	cause := errors.New("underlying error")
 	err := ErrUpstream(http.StatusInternalServerError, "server error", cause)
 
-	// 使用 errors.Unwrap
+	// Using errors.Unwrap
 	unwrapped := errors.Unwrap(err)
 	if unwrapped != cause {
 		t.Error("Unwrap should return the cause")
 	}
 
-	// 使用 errors.Is
+	// Using errors.Is
 	if !errors.Is(err, cause) {
 		t.Error("errors.Is should match the cause")
 	}
 }
 
-// TestIsRetryableError 测试 IsRetryableError 函数
+// TestIsRetryableError tests the IsRetryableError function
 func TestIsRetryableError(t *testing.T) {
-	// 可重试错误
+	// Retryable error
 	retryable := ErrRateLimited("rate limited")
 	if !IsRetryableError(retryable) {
 		t.Error("rate limited error should be retryable")
 	}
 
-	// 不可重试错误
+	// Non-retryable error
 	notRetryable := ErrMissingAPIKey()
 	if IsRetryableError(notRetryable) {
 		t.Error("missing API key error should not be retryable")
 	}
 
-	// nil 错误
+	// nil error
 	if IsRetryableError(nil) {
 		t.Error("nil error should not be retryable")
 	}
@@ -148,16 +148,16 @@ func TestIsRetryableError(t *testing.T) {
 	}
 }
 
-// TestStatusCodeFromError 测试 StatusCodeFromError 函数
+// TestStatusCodeFromError tests the StatusCodeFromError function
 func TestStatusCodeFromError(t *testing.T) {
-	// 有状态码的错误
+	// Error with a status code
 	err := ErrRateLimited("rate limited")
 	status := StatusCodeFromError(err)
 	if status != http.StatusTooManyRequests {
 		t.Errorf("expected status %d, got %d", http.StatusTooManyRequests, status)
 	}
 
-	// nil 错误
+	// nil error
 	status = StatusCodeFromError(nil)
 	if status != http.StatusOK {
 		t.Errorf("expected status %d for nil error, got %d", http.StatusOK, status)
@@ -171,9 +171,9 @@ func TestStatusCodeFromError(t *testing.T) {
 	}
 }
 
-// TestErrorErrorMethod 测试 Error 方法的字符串输出
+// TestErrorErrorMethod tests the string output of the Error method
 func TestErrorErrorMethod(t *testing.T) {
-	// 无 cause 的错误
+	// Error without a cause
 	err := ErrMissingAPIKey()
 	errStr := err.Error()
 	expected := "missing_api_key: Missing Authorization header"
@@ -181,7 +181,7 @@ func TestErrorErrorMethod(t *testing.T) {
 		t.Errorf("expected %s, got %s", expected, errStr)
 	}
 
-	// 有 cause 的错误
+	// Error with a cause
 	cause := errors.New("connection timeout")
 	err = ErrUpstream(http.StatusGatewayTimeout, "timeout", cause)
 	errStr = err.Error()

@@ -153,7 +153,7 @@ func (h *Handler) applyPromptRisk(c *gin.Context, verdict promptfilter.Verdict, 
 			_ = json.Unmarshal(raw, &record)
 			age := now.Sub(record.UpdatedAt)
 			if age > 0 && age < ttl {
-				// 按 int64 算:ttl 是纳秒,32 位平台上 int(ttl) 会溢出把衰减算成乱值。
+				// Compute in int64: ttl is in nanoseconds, and on 32-bit platforms int(ttl) would overflow and turn the decay into a garbage value.
 				record.Score = int(int64(record.Score) * int64(ttl-age) / int64(ttl))
 			} else if age >= ttl {
 				record.Score = 0

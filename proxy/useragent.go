@@ -9,23 +9,23 @@ import (
 	"unicode"
 )
 
-// ==================== 动态 User-Agent 生成 ====================
+// ==================== Dynamic User-Agent generation ====================
 //
-// 真实 Codex CLI/TUI 的 UA 格式（源码: codex-rs/login/src/auth/default_client.rs）：
+// Real Codex CLI/TUI UA format (source: codex-rs/login/src/auth/default_client.rs):
 //   {originator}/{version} ({OS} {OS_version}; {arch}) {terminal} ({originator}; {version})
 //
-// 示例：
+// Example:
 //   codex-tui/0.153.3 (Linux Unknown; x86_64) xterm-256color (codex-tui; 0.153.3)
 //   codex-tui/0.144.0-alpha.10 (Mac OS 13.7.8; arm64) xterm-256color (codex-tui; 0.144.0-alpha.10)
 //   Codex Desktop/0.153.3 (Windows 10.0.26100; x86_64) unknown (Codex Desktop; 26.901.41123)
 //
-// originator 可以含空格（ChatGPT 桌面端就是 "Codex Desktop"），且真实客户端的
-// UA 前缀与 Originator 头恒为同一标识。
+// originator may contain spaces (the ChatGPT desktop app is exactly "Codex Desktop"), and a real client's
+// UA prefix and Originator header are always the same identifier.
 
-// ClientProfile 表示一个模拟客户端的完整身份
+// ClientProfile represents the full identity of one simulated client
 type ClientProfile struct {
-	UserAgent string // 完整的 User-Agent 字符串
-	Version   string // codex CLI 版本（需与 UA 中的版本一致）
+	UserAgent string // full User-Agent string
+	Version   string // codex CLI version (must match the version in the UA)
 }
 
 const (
@@ -47,13 +47,13 @@ type CodexUserAgentConfig struct {
 	OSVersion     string `json:"os_version,omitempty"`
 	Arch          string `json:"arch,omitempty"`
 	Terminal      string `json:"terminal,omitempty"`
-	// ClientKind 是客户端形态预设(见 codex_ua_catalog.go);空则按 client_name 推断。
+	// ClientKind is the client kind preset (see codex_ua_catalog.go); when empty, it is inferred from client_name.
 	ClientKind string `json:"client_kind,omitempty"`
-	// AppName / AppVersion 是末尾标记 "(app名; app版本)";留空按形态自动推导,
-	// 桌面端与 VS Code 插件的构建号会按 CLI 版本从目录配对。
+	// AppName / AppVersion are the trailing marker "(app name; app version)"; when left empty, they are derived from the kind automatically,
+	// desktop and VS Code extension build numbers are paired from the catalog by CLI version.
 	AppName    string `json:"app_name,omitempty"`
 	AppVersion string `json:"app_version,omitempty"`
-	// Mode 为 "pool" 时忽略单画像字段,按 PoolMix 配比为每个账号确定性抽取目录画像。
+	// When Mode is "pool", single-profile fields are ignored, and each account deterministically draws a catalog profile according to the PoolMix ratio.
 	Mode    string         `json:"mode,omitempty"`
 	PoolMix map[string]int `json:"pool_mix,omitempty"`
 }
@@ -120,9 +120,9 @@ func LatestCodexCLIVersionForHeaders() string {
 	return effectiveLatestCodexCLIVersion()
 }
 
-// effectiveLatestCodexCLIVersion 返回当前生效的"最新 Codex CLI 版本"：
-// 取内置常量与远端同步版本(CodexSyncedCLIVersion)中的较大者，绝不低于内置常量，
-// 因此过期或非法的远端值不会导致降级。
+// effectiveLatestCodexCLIVersion returns the currently effective "latest Codex CLI version":
+// it takes the larger of the built-in constant and the remotely synced version (CodexSyncedCLIVersion), and is never below the built-in constant,
+// so an expired or invalid remote value never causes a downgrade.
 func effectiveLatestCodexCLIVersion() string {
 	synced := normalizeCodexClientVersionText(CurrentRuntimeSettings().CodexSyncedCLIVersion)
 	if synced == "" {
@@ -280,9 +280,9 @@ func validCodexUserAgentPlatformPart(value string) bool {
 	return !strings.ContainsAny(value, "();")
 }
 
-// validCodexUserAgentClientName 校验 UA 前缀里的客户端名。与 arch/terminal 不同，
-// 它允许空格：ChatGPT 桌面端的 originator 就是 "Codex Desktop"（issue #653）。
-// 仍然拒绝会破坏 "{name}/{version} (...)" 形状的括号、分号与控制字符。
+// validCodexUserAgentClientName validates the client name in the UA prefix. Unlike arch/terminal,
+// it allows spaces: the ChatGPT desktop app's originator is exactly "Codex Desktop" (issue #653).
+// It still rejects parentheses, semicolons, and control characters that would break the "{name}/{version} (...)" shape.
 func validCodexUserAgentClientName(value string) bool {
 	if !validHTTPHeaderValue(value) {
 		return false
@@ -290,17 +290,17 @@ func validCodexUserAgentClientName(value string) bool {
 	return !strings.ContainsAny(value, "\t();")
 }
 
-// normalizeCodexUserAgentClientName 去掉首尾空白并把内部连续空白折叠成单个空格，
-// 避免拼出 "Codex  Desktop/..." 这种真实客户端不会产生的双空格。
+// normalizeCodexUserAgentClientName trims leading and trailing whitespace and collapses internal runs of whitespace into a single space,
+// so it never builds a double space like "Codex  Desktop/..." that no real client would produce.
 func normalizeCodexUserAgentClientName(value string) string {
 	return strings.Join(strings.Fields(value), " ")
 }
 
-// CodexOriginatorForGeneratedUserAgent 返回与网关自行生成的 User-Agent 相匹配的
-// Originator 头。真实 Codex 客户端的 UA 前缀与 Originator 恒为同一标识（源码
-// codex-rs default_client.rs），模拟 "Codex Desktop" 之类客户端时两者必须一致，
-// 否则上游看到的是 UA 说桌面端、Originator 说 codex-tui 的自相矛盾指纹。
-// 前缀不是已知官方标识（例如自定义路由名）时回退到默认 Originator。
+// CodexOriginatorForGeneratedUserAgent returns the Originator header that matches the User-Agent the gateway generates itself
+// Originator header. A real Codex client's UA prefix and Originator are always the same identifier (source:
+// codex-rs default_client.rs). When simulating a client such as "Codex Desktop", the two must match,
+// otherwise upstream sees a self-contradictory fingerprint: the UA says desktop, while Originator says codex-tui.
+// When the prefix is not a known official identifier (for example a custom route name), it falls back to the default Originator.
 func CodexOriginatorForGeneratedUserAgent(userAgent string) string {
 	name := codexUserAgentClientName(userAgent)
 	if name != "" && IsCodexOfficialClientByHeaders("", name) {
@@ -309,7 +309,7 @@ func CodexOriginatorForGeneratedUserAgent(userAgent string) string {
 	return Originator
 }
 
-// codexUserAgentClientName 取 UA 首个 "/" 之前的客户端名；没有 "/" 视为无法识别。
+// codexUserAgentClientName takes the client name before the first "/" in the UA; without a "/" it is treated as unrecognized.
 func codexUserAgentClientName(userAgent string) string {
 	userAgent = strings.TrimSpace(userAgent)
 	idx := strings.IndexByte(userAgent, '/')
@@ -355,8 +355,8 @@ func validCodexClientVersionString(value string) bool {
 	return ok
 }
 
-// codexUserAgentFromConfigChecked 按全局 UA 配置生成出站身份。accountID 只在号池模式下参与
-// 画像抽取(同一账号恒得同一画像)。
+// codexUserAgentFromConfigChecked builds the outbound identity from the global UA config. accountID takes part only in account pool mode
+// in the profile draw (the same account always gets the same profile).
 func codexUserAgentFromConfigChecked(raw string, accountID int64, versionFloor string) (string, string, bool, error) {
 	cfg := codexUserAgentConfigFromJSON(raw)
 	if isEmptyCodexUserAgentConfig(cfg) {
@@ -371,9 +371,9 @@ func codexUserAgentFromConfigChecked(raw string, accountID int64, versionFloor s
 	return buildCodexStructuredUserAgent(cfg, versionFloor)
 }
 
-// buildCodexStructuredUserAgent 按形态预设填补留空字段并拼出 UA:客户端名、末尾标记名、
-// 平台与终端取形态默认值,CLI 版本与构建号由 resolveCodexCurrentVersions 选择完整配对。
-// 未指定形态且客户端名认不出时按 custom 处理,末尾标记复用客户端名与 CLI 版本。
+// buildCodexStructuredUserAgent fills blank fields from the kind preset and assembles the UA: client name, trailing marker name,
+// platform and terminal take the kind's defaults; the CLI version and build number are chosen as a complete pair by resolveCodexCurrentVersions.
+// When no kind is given and the client name is not recognized, it is treated as custom, and the trailing marker reuses the client name and CLI version.
 func buildCodexStructuredUserAgent(cfg CodexUserAgentConfig, versionFloor string) (userAgent, version string, ok bool, err error) {
 	kind := effectiveCodexClientKind(cfg)
 	spec, hasSpec := codexUAKindSpecFor(kind)
@@ -429,7 +429,7 @@ func formatCodexUserAgent(clientName, clientVersion, osName, osVersion, arch, te
 	return formatCodexUserAgentWithApp(clientName, clientVersion, osName, osVersion, arch, terminal, clientName, clientVersion)
 }
 
-// formatCodexUserAgentWithApp 拼出完整形状,末尾标记可与前缀不同(桌面端 / VS Code 插件)。
+// formatCodexUserAgentWithApp assembles the full shape; the trailing marker may differ from the prefix (desktop app / VS Code extension).
 func formatCodexUserAgentWithApp(clientName, clientVersion, osName, osVersion, arch, terminal, appName, appVersion string) string {
 	appName = firstNonEmptyString(appName, clientName)
 	appVersion = firstNonEmptyString(appVersion, clientVersion)
@@ -622,10 +622,10 @@ func matchCodexClientHeaderExact(value string, allowed []string) bool {
 	return false
 }
 
-// 预定义的真实客户端画像池
-// 按开发者常见环境分布：macOS（主力） > Linux > Windows
+// Predefined pool of real client profiles
+// Distributed by common developer environments: macOS (primary) > Linux > Windows
 var clientProfiles = []ClientProfile{
-	// ---- macOS arm64（最常见：Apple Silicon 开发者） ----
+	// ---- macOS arm64 (most common: Apple Silicon developers) ----
 	{codexProfileUserAgent("Mac OS", "15.5.0", "arm64", "xterm-256color"), latestCodexCLIVersion},
 	{codexProfileUserAgent("Mac OS", "15.4.1", "arm64", "xterm-256color"), latestCodexCLIVersion},
 	{codexProfileUserAgent("Mac OS", "15.3.0", "arm64", "xterm-256color"), latestCodexCLIVersion},
@@ -634,10 +634,10 @@ var clientProfiles = []ClientProfile{
 	{codexProfileUserAgent("Mac OS", "15.5.0", "arm64", "vscode/1.100.0"), latestCodexCLIVersion},
 	{codexProfileUserAgent("Mac OS", "15.4.0", "arm64", "tmux/3.5a"), latestCodexCLIVersion},
 	{codexProfileUserAgent("Mac OS", "14.7.4", "arm64", "xterm-256color"), latestCodexCLIVersion},
-	// ---- macOS x86_64（少量 Intel Mac） ----
+	// ---- macOS x86_64 (a few Intel Macs) ----
 	{codexProfileUserAgent("Mac OS", "15.4.0", "x86_64", "xterm-256color"), latestCodexCLIVersion},
 	{codexProfileUserAgent("Mac OS", "14.7.0", "x86_64", "iTerm.app/3.5.8"), latestCodexCLIVersion},
-	// ---- Linux（服务器和开发工作站） ----
+	// ---- Linux (servers and developer workstations) ----
 	{codexProfileUserAgent("Linux", "Unknown", "x86_64", "xterm-256color"), latestCodexCLIVersion},
 	{codexProfileUserAgent("Ubuntu", "24.04", "x86_64", "xterm-256color"), latestCodexCLIVersion},
 	{codexProfileUserAgent("Ubuntu", "24.10", "x86_64", "xterm-256color"), latestCodexCLIVersion},
@@ -646,15 +646,15 @@ var clientProfiles = []ClientProfile{
 	// ---- Windows ----
 	{codexProfileUserAgent("Windows", "10.0.26120", "x86_64", "xterm-256color"), latestCodexCLIVersion},
 	{codexProfileUserAgent("Windows", "10.0.22631", "x86_64", "WindowsTerminal"), latestCodexCLIVersion},
-	// ---- 备用终端画像（保持最新 Codex CLI 版本） ----
+	// ---- Fallback terminal profiles (kept at the latest Codex CLI version) ----
 	{codexProfileUserAgent("Mac OS", "15.5.0", "arm64", "xterm-256color"), latestCodexCLIVersion},
 	{codexProfileUserAgent("Mac OS", "15.3.0", "arm64", "Ghostty/1.1.0"), latestCodexCLIVersion},
 	{codexProfileUserAgent("Mac OS", "15.4.0", "arm64", "vscode/1.98.0"), latestCodexCLIVersion},
 	{codexProfileUserAgent("Ubuntu", "24.04", "x86_64", "xterm-256color"), latestCodexCLIVersion},
 }
 
-// ProfileForAccount 根据账号 ID 确定性地选择一个 ClientProfile
-// 同一个账号永远返回相同的 profile，不同账号大概率返回不同的 profile
+// ProfileForAccount deterministically selects one ClientProfile based on the account ID
+// The same account always returns the same profile; different accounts very likely return different profiles
 func ProfileForAccount(accountID int64) ClientProfile {
 	if len(clientProfiles) == 0 {
 		return ClientProfile{
@@ -663,7 +663,7 @@ func ProfileForAccount(accountID int64) ClientProfile {
 		}
 	}
 
-	// 用 FNV hash 将 accountID 映射到 profile 池，确保分布均匀
+	// Uses an FNV hash to map accountID to the profile pool, keeping the distribution even
 	h := fnv.New32a()
 	fmt.Fprintf(h, "codex2api:ua-profile:%d", accountID)
 	idx := int(h.Sum32()) % len(clientProfiles)

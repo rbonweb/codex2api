@@ -8,35 +8,35 @@ import (
 	"github.com/klauspost/compress/zstd"
 )
 
-// Codex 请求体压缩保真。
+// Fidelity of Codex request body compression.
 //
-// 真实 Codex CLI 对 ChatGPT 后端的 /responses 请求体默认做 zstd 压缩：特性
-// enable_request_compression 在 codex-rs/features/src/lib.rs 里是 Stage::Stable +
-// default_enabled=true，codex-rs/core/src/client.rs 的 responses_request_compression
-// 对「ChatGPT 后端 + OpenAI provider」一律返回 Compression::Zstd。编码点见
-// codex-rs/http-client/src/request.rs：zstd 级别 3、Content-Encoding: zstd、
-// 没有最小长度阈值（再小的 body 也压），Content-Type 仍是 application/json。
+// The real Codex CLI compresses /responses request bodies to the ChatGPT backend with zstd by default: the feature
+// enable_request_compression is Stage::Stable + in codex-rs/features/src/lib.rs, with
+// default_enabled=true, and responses_request_compression in codex-rs/core/src/client.rs
+// always returns Compression::Zstd for "ChatGPT backend + OpenAI provider". The encoding point is in
+// codex-rs/http-client/src/request.rs: zstd level 3, Content-Encoding: zstd,
+// no minimum length threshold (even a small body is compressed), and Content-Type stays application/json.
 //
-// 本网关出站一直发明文 JSON，于是「originator 报 Codex 系客户端、UA 带新版版本号，
-// 请求体却 100% 明文」构成一个每请求都在、零噪声的区分特征：上游只要按
-// content-encoding 分组统计就能把代理流量整体切出来，比任何单个标识字段都稳。
+// This gateway has always sent plaintext JSON outbound, so "originator reports a Codex-family client and the UA carries a new version number,
+// yet the body is 100% plaintext" forms a distinguishing feature present on every request with zero noise: the upstream only needs to
+// group statistics by content-encoding to separate the proxy traffic as a whole, which is more stable than any single identifying field.
 //
-// 默认开启（系统设置 codex_request_compression，DB 默认 true）：真实客户端本来就压，
-// 默认关等于默认不像真实客户端。开关在管理后台可热更新，出问题一键关、无需重启。
+// Enabled by default (system setting codex_request_compression, DB default true): real clients compress anyway,
+// so off-by-default means by default not looking like a real client. The switch can be hot-updated in the admin panel; if something goes wrong it is switched off in one click, with no restart.
 //
-// 只作用于 HTTP 路径，与 codex_force_websocket 正交——WS 走 permessage-deflate
-// （拨号器 EnableCompression 已开），两者可同时生效，不需要为了压缩去关 WS。
+// It only applies to the HTTP path and is orthogonal to codex_force_websocket. WS uses permessage-deflate
+// (the dialer's EnableCompression is already on), both can apply at the same time, and WS does not need to be turned off for compression.
 //
-// 一处已知的不完全保真：真实客户端用 libzstd，本网关用 klauspost/compress。
-// 两者产出的都是合法 zstd 帧且上游解压结果一致，但帧头（窗口描述符、
-// 内容长度字段的编码宽度）未必逐字节相同。这比"根本不压缩"接近得多，
-// 但不足以对抗针对压缩器实现的字节级指纹。
+// One known imperfect fidelity point: the real client uses libzstd, while this gateway uses klauspost/compress.
+// Both produce valid zstd frames and the upstream decompresses them to the same result, but the frame headers (window descriptor,
+// content-length field encoding width) are not necessarily byte-identical. This is much closer than "not compressing at all",
+// but it is not enough to defeat a byte-level fingerprint aimed at the compressor implementation.
 
-// codexRequestCompressionEnabled 判定本次请求是否压缩。
+// codexRequestCompressionEnabled decides whether this request is compressed.
 //
-// 环境变量 CODEX_REQUEST_COMPRESSION 显式设置时优先于系统设置：它是部署级逃生阀，
-// 在 DB 不可达、后台打不开、或需要整机强制回退时仍然有效。未设置（或取值无法识别）
-// 时以系统设置为准，由管理后台控制。
+// When the environment variable CODEX_REQUEST_COMPRESSION is set explicitly, it takes precedence over the system setting: it is a deployment-level escape hatch,
+// and it still works when the DB is unreachable, the admin panel cannot be opened, or the whole machine must be forced back. When unset (or the value is not recognized),
+// the system setting applies, controlled by the admin panel.
 func codexRequestCompressionEnabled() bool {
 	switch strings.ToLower(strings.TrimSpace(os.Getenv("CODEX_REQUEST_COMPRESSION"))) {
 	case "zstd", "on", "true", "1":
@@ -52,14 +52,14 @@ var (
 	codexZstdEncoder     *zstd.Encoder
 )
 
-// codexRequestZstdEncoder 返回进程级共享编码器。zstd.Encoder 的 EncodeAll 是并发
-// 安全的，因此不需要每请求新建（新建会分配整套窗口缓冲，在高 RPM 下代价显著）。
-// SpeedDefault 对应 zstd 级别 3，与真实客户端 encode_all(body, 3) 一致。
+// codexRequestZstdEncoder returns a process-wide shared encoder. zstd.Encoder's EncodeAll is
+// concurrency-safe, so there is no need to create one per request (that would allocate a full set of window buffers, a significant cost at high RPM).
+// SpeedDefault corresponds to zstd level 3, matching the real client's encode_all(body, 3).
 func codexRequestZstdEncoder() *zstd.Encoder {
 	codexZstdEncoderOnce.Do(func() {
 		encoder, err := zstd.NewWriter(nil, zstd.WithEncoderLevel(zstd.SpeedDefault))
 		if err != nil {
-			// 参数是常量，构造失败不可达；留 nil 让调用方降级到明文而不是 panic。
+			// The parameters are constants, so construction failure is unreachable; leave nil so the caller falls back to plaintext instead of panicking.
 			return
 		}
 		codexZstdEncoder = encoder
@@ -67,17 +67,17 @@ func codexRequestZstdEncoder() *zstd.Encoder {
 	return codexZstdEncoder
 }
 
-// CompressCodexRequestBody 按部署档位压缩 Codex 官方上游的请求体。
+// CompressCodexRequestBody compresses the request body for the official Codex upstream, according to the deployment tier.
 //
-// 返回 (出站字节, Content-Encoding 取值)。第二个返回值为空串表示未压缩，调用方
-// 不应设置 Content-Encoding 头。压缩失败一律降级为明文——请求发出去比形态完美重要。
+// Returns (outbound bytes, Content-Encoding value). An empty second return value means not compressed, and the caller
+// must not set the Content-Encoding header. Any compression failure falls back to plaintext: getting the request out matters more than a perfect shape.
 //
-// 只在 HTTP /responses 上调用。两条相邻路径都不该调：
-//   - /responses/compact：真实客户端这条路走 CompactClient::compact，压根没有
-//     compression 参数（codex-api/src/endpoint/compact.rs），发的是明文 JSON。
-//     两条路径都压反而比都不压更不像真实客户端。
-//   - WebSocket：载荷是 response.create 帧，压缩语义归 WS 协议层，与 HTTP 的
-//     Content-Encoding 不是一回事。
+// Only called on HTTP /responses. Neither of two adjacent paths should call it:
+//   - /responses/compact: the real client takes this path through CompactClient::compact, which has no
+//     compression parameter (codex-api/src/endpoint/compact.rs), and sends plaintext JSON.
+//     Compressing both paths would look less like a real client than compressing neither.
+//   - WebSocket: the payload is a response.create frame, compression semantics belong to the WS protocol layer, which is not the same as HTTP's
+//     Content-Encoding.
 func CompressCodexRequestBody(body []byte) ([]byte, string) {
 	if len(body) == 0 || !codexRequestCompressionEnabled() {
 		return body, ""

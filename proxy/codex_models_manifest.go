@@ -21,12 +21,12 @@ import (
 	"github.com/gin-gonic/gin"
 )
 
-// CodexModelsManifestHandler 向 Codex 客户端提供模型清单。
+// CodexModelsManifestHandler serves the model manifest to Codex clients.
 //
-// 有可调度的 ChatGPT OAuth 账号时，使用官方清单并按当前账号池的能力交集收窄。
-// 客户端缓存使用网关表示的 ETag，避免上游 304 绕过账号范围/凭据变化。
-// 没有 ChatGPT 账号时：把与 Cockpit 相同的 /v1/models 目录改写成 Codex 期望的
-// {"models":[{"slug":...}]}，避免客户端 503 后静默冻结在本地缓存（选单不全、模型信息联不通）。
+// When there are schedulable ChatGPT OAuth accounts, the official manifest is used and narrowed to the intersection of the current account pool's capabilities.
+// The client cache uses the ETag the gateway produces, so an upstream 304 cannot bypass account scope or credential changes.
+// When there are no ChatGPT accounts: rewrite the same /v1/models catalog as Cockpit into the format Codex expects,
+// {"models":[{"slug":...}]}, so the client does not silently freeze on its local cache after a 503 (the picker is incomplete and model info cannot be fetched).
 func (h *Handler) CodexModelsManifestHandler(c *gin.Context) {
 	row := apiKeyRowFromContext(c)
 	account := h.scopedCodexManifestAccount(row)
@@ -87,8 +87,8 @@ func (h *Handler) CodexModelsManifestHandler(c *gin.Context) {
 			http.StatusBadGateway)
 		return
 	}
-	// 顺手把清单里注册表不认识的新模型学习进注册表（只增不改不删），
-	// 让选单里出现的新模型立即通过请求侧模型校验，无需等手动同步。
+	// Also learn new models in the manifest that the registry does not recognize into the registry (add only; never modify or delete),
+	// so new models in the picker pass the request-side model validation right away, without waiting for a manual sync.
 	h.learnFetchedManifestAsync(manifest)
 	h.writeMergedCodexManifest(c, manifest.Body, manifest.ETag, extraModels)
 }
@@ -303,8 +303,8 @@ func scopedCodexManifestETag(body []byte) string {
 	return `"codex2api-` + hex.EncodeToString(sum[:]) + `"`
 }
 
-// manifestLearnKnown 缓存已确认在注册表里的模型 slug（小写），避免客户端每次
-// 刷新选单都对注册表做一次 DB 差集。带 TTL 是为了让管理端手动删除的行能被重新学习。
+// manifestLearnKnown caches the model slugs (lower-case) already confirmed in the registry, so that on every
+// picker refresh the client does not run a DB set difference against the registry. The TTL lets rows that an admin deleted by hand be learned again.
 var manifestLearnKnown = struct {
 	sync.Mutex
 	slugs   map[string]struct{}
@@ -313,8 +313,8 @@ var manifestLearnKnown = struct {
 
 const manifestLearnCacheTTL = 10 * time.Minute
 
-// learnManifestModelsAsync 判断清单里是否有缓存未见过的 slug，有则后台学习。
-// 学习失败只记日志，绝不影响清单透传本身。
+// learnManifestModelsAsync checks whether the manifest has slugs that are not in the cache, and learns them in the background if so.
+// A learning failure is only logged and never affects the manifest passthrough itself.
 func (h *Handler) learnManifestModelsAsync(manifestBody []byte, accounts ...*auth.Account) {
 	for _, account := range accounts {
 		h.learnModelCapabilitiesAsync(account, manifestBody)
@@ -343,8 +343,8 @@ func (h *Handler) learnManifestModelRegistryAsync(manifestBody []byte) {
 	if len(manifestBody) == 0 {
 		return
 	}
-	// lite 能力学习不依赖 DB：清单每次透传都刷新 use_responses_lite 真值，
-	// 供发出前剥离"非 lite 模型 + lite 信号"的必死组合。
+	// Learning lite capability does not depend on the DB: every manifest passthrough refreshes the true value of use_responses_lite,
+	// so the combination that always fails, "non-lite model + lite signal", is stripped before sending.
 	RecordResponsesLiteSupportFromManifest(manifestBody)
 	if h == nil || h.db == nil {
 		return
@@ -378,32 +378,32 @@ func (h *Handler) learnManifestModelRegistryAsync(manifestBody []byte) {
 		defer cancel()
 		added, err := LearnModelsFromManifest(ctx, h.db, body, time.Now().UTC())
 		if err != nil {
-			log.Printf("模型清单学习失败（不影响透传）: %v", err)
+			log.Printf("model manifest learning failed (passthrough not affected): %v", err)
 			return
 		}
-		// 学习成功（或全部已知）后，本轮清单的 slug 全部记入缓存。
+		// After learning succeeds (or everything is already known), all slugs in this round's manifest are recorded in the cache.
 		manifestLearnKnown.Lock()
 		for _, slug := range ExtractManifestModelSlugs(body) {
 			manifestLearnKnown.slugs[strings.ToLower(slug)] = struct{}{}
 		}
 		manifestLearnKnown.Unlock()
 		if len(added) > 0 {
-			log.Printf("已从上游模型清单学习 %d 个新模型进注册表: %s", len(added), strings.Join(added, ", "))
+			log.Printf("learned %d new models from the upstream model manifest into the registry: %s", len(added), strings.Join(added, ", "))
 		}
 	})
 }
 
-// CodexModelsManifestURL 是 ChatGPT 后端的 Codex 模型清单端点。
-// Codex CLI / Codex App 从 provider 的 GET {base_url}/models?client_version=...
-// （自定义 provider 模式）或 GET /backend-api/codex/models（chatgpt_base_url 模式）
-// 刷新模型选单，期望 manifest 格式（{"models":[{slug,...}]}）而非 OpenAI 兼容列表；
-// 解析失败时客户端会静默回落本地缓存，模型选单从此冻结、新模型永远不出现。
+// CodexModelsManifestURL is the Codex model manifest endpoint on the ChatGPT backend.
+// Codex CLI / Codex App sends GET {base_url}/models?client_version=... to the provider
+// (custom provider mode) or GET /backend-api/codex/models (chatgpt_base_url mode)
+// to refresh the model picker and expects the manifest format ({"models":[{slug,...}]}) rather than an OpenAI-compatible list;
+// when parsing fails, the client silently falls back to its local cache, the model picker freezes there, and new models never appear.
 const CodexModelsManifestURL = "https://chatgpt.com/backend-api/codex/models"
 
-// codexModelsManifestURLForTest 允许测试替换默认 URL。生产代码不要赋值。
+// codexModelsManifestURLForTest lets tests replace the default URL. Production code must not assign to it.
 var codexModelsManifestURLForTest = ""
 
-// CodexModelsManifest 承载上游清单原文与缓存元数据，供 handler 原样透传给客户端。
+// CodexModelsManifest holds the raw upstream manifest and cache metadata, so the handler can pass them through to the client unchanged.
 type CodexModelsManifest struct {
 	Body        []byte
 	ETag        string
@@ -413,14 +413,14 @@ type CodexModelsManifest struct {
 	capabilitySnapshot database.ModelCapabilitySnapshot
 }
 
-// FetchCodexModelsManifest 用账号凭据向 ChatGPT 后端实时拉取 Codex 模型清单。
+// FetchCodexModelsManifest fetches the Codex model manifest live from the ChatGPT backend using the account's credentials.
 //
-// 响应体原样透传，不在本地解析或维护清单：manifest schema 随 Codex 客户端版本
-// 演进，透传使网关无需跟进 schema 变化，且返回的始终是账号真实的模型权限
-// （区别于内置模型注册表的"理论列表"）。
+// The response body is passed through unchanged, and the manifest is neither parsed nor maintained locally: the manifest schema evolves with the Codex client version,
+// so passing it through means the gateway does not need to follow schema changes, and what it returns is always the account's real model permissions
+// (as opposed to the built-in registry's "theoretical list").
 //
-// downstream 是下游透传请求的原始头（后台拉取传 nil），参与
-// 出站身份解析，规则与对话请求一致。
+// downstream is the original headers of the downstream passthrough request (background fetches pass nil), used in
+// outbound identity resolution, with the same rules as conversation requests.
 func FetchCodexModelsManifest(ctx context.Context, account *auth.Account, proxyURL, clientVersion, ifNoneMatch string, downstream http.Header) (*CodexModelsManifest, error) {
 	endpoint := CodexModelsManifestURL
 	if codexModelsManifestURLForTest != "" {
@@ -441,7 +441,7 @@ func fetchCodexModelsManifestWithURL(ctx context.Context, account *auth.Account,
 		return nil, fmt.Errorf("account has no access token")
 	}
 
-	// 清单过滤版本与本次对话身份版本保持一致。
+	// The manifest filter version stays consistent with the identity version of this conversation.
 	identity, err := ResolveCodexMaintenanceIdentity(account, downstream)
 	if err != nil {
 		return nil, err
@@ -463,14 +463,14 @@ func fetchCodexModelsManifestWithURL(ctx context.Context, account *auth.Account,
 	if ifNoneMatch = strings.TrimSpace(ifNoneMatch); ifNoneMatch != "" {
 		req.Header.Set("If-None-Match", ifNoneMatch)
 	}
-	// 与 wham 查询一致:自定义头覆盖了工作区 ID 时,清单按覆盖后的空间查询。
+	// Consistent with the wham query: when a custom header overrides the workspace ID, the manifest is queried in the overridden workspace.
 	if accountID := account.EffectiveAccountID(); accountID != "" {
 		req.Header.Set("chatgpt-account-id", accountID)
 	}
 
-	// 复用网关同款 transport（支持 uTLS Chrome 指纹），与 /responses、wham 一致。
-	// 池化而非每次新建：Codex 客户端会周期性拉取清单，一次性 uTLS transport
-	// 会把连接与 goroutine 持续泄漏到进程结束（issue #446）。
+	// Reuse the same transport as the gateway (supports the uTLS Chrome fingerprint), consistent with /responses and wham.
+	// Pooled rather than created each time: the Codex client pulls the manifest periodically, and a one-off uTLS transport
+	// would keep leaking connections and goroutines until the process exits (issue #446).
 	client := getCodexMaintenanceClient(account, proxyURL)
 
 	resp, err := client.Do(req)

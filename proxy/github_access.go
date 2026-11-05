@@ -6,20 +6,20 @@ import (
 	"strings"
 )
 
-// GitHub 访问设置（issue #522）：部署方的代理链路访问 GitHub API 常被共享 IP 的
-// 60 次/小时匿名配额限流，导致 CLI 版本同步、定价同步、在线更新等功能失效。
+// GitHub access settings (issue #522): when a deployment's proxy chain reaches the GitHub API, it is often rate limited by a shared IP's
+// 60 requests/hour anonymous quota, which breaks CLI version sync, pricing sync, online updates and similar features.
 //
-//	github_token      对 api.github.com 的请求附加 Authorization，配额提升为
-//	                  5000 次/小时/token。token 只发给 api.github.com，绝不发给
-//	                  镜像或其他主机（定价同步 URL 可被改成任意地址，不能带 token）。
-//	github_proxy_url  GitHub 域名专用出站代理，与全局代理解耦：API 走脏 IP+token
-//	                  即可用，大流量的 release 下载不必占用受限的干净链路。
+//	github_token      adds Authorization to requests to api.github.com, raising the quota to
+//	                  5000 requests/hour/token. The token is only sent to api.github.com, never to
+//	                  mirrors or other hosts (the pricing sync URL can be changed to any address, so it must not carry the token).
+//	github_proxy_url  dedicated outbound proxy for GitHub domains, decoupled from the global proxy: the API goes through a dirty IP + token
+//	                  is enough, and high-volume release downloads do not have to use the limited clean link.
 
-// githubAPIHost 是唯一允许附加 token 的主机。
+// githubAPIHost is the only host allowed to receive the token.
 const githubAPIHost = "api.github.com"
 
-// isGithubHost 判断主机是否属于 GitHub 官方域（github.com / api.github.com /
-// *.githubusercontent.com）。
+// isGithubHost checks whether a host belongs to the official GitHub domains (github.com / api.github.com /
+// *.githubusercontent.com).
 func isGithubHost(host string) bool {
 	host = strings.ToLower(strings.TrimSpace(host))
 	if h, _, ok := strings.Cut(host, ":"); ok {
@@ -29,8 +29,8 @@ func isGithubHost(host string) bool {
 		host == "githubusercontent.com" || strings.HasSuffix(host, ".githubusercontent.com")
 }
 
-// GithubProxyOrDefault 返回访问 targetURL 应使用的代理：目标是 GitHub 域且配置了
-// 专用代理时用专用代理，否则用调用方传入的默认代理（全局代理等）。
+// GithubProxyOrDefault returns the proxy to use for accessing targetURL: if the target is a GitHub domain and a
+// dedicated proxy is configured, it uses the dedicated proxy; otherwise it uses the default proxy passed in by the caller (such as the global proxy).
 func GithubProxyOrDefault(targetURL, defaultProxy string) string {
 	parsed, err := url.Parse(strings.TrimSpace(targetURL))
 	if err != nil || parsed == nil || !isGithubHost(parsed.Host) {
@@ -42,8 +42,8 @@ func GithubProxyOrDefault(targetURL, defaultProxy string) string {
 	return defaultProxy
 }
 
-// ApplyGithubAuth 仅当请求指向 api.github.com 且配置了 token 时附加 Authorization。
-// 已带 Authorization 的请求不覆盖。
+// ApplyGithubAuth adds Authorization only when the request points to api.github.com and a token is configured.
+// Requests that already carry Authorization are not overwritten.
 func ApplyGithubAuth(req *http.Request) {
 	if req == nil || req.URL == nil {
 		return

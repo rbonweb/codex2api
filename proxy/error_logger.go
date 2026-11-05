@@ -13,7 +13,7 @@ import (
 	"github.com/codex2api/security"
 )
 
-// fileLogger 单个日志文件实例
+// fileLogger is a single log file instance
 type fileLogger struct {
 	once   sync.Once
 	logger *log.Logger
@@ -22,8 +22,8 @@ type fileLogger struct {
 }
 
 var (
-	badRequestLogger  = &fileLogger{path: "bad_request.log"}  // 400 错误
-	serverErrorLogger = &fileLogger{path: "server_error.log"} // 5xx 错误
+	badRequestLogger  = &fileLogger{path: "bad_request.log"}  // 400 errors
+	serverErrorLogger = &fileLogger{path: "server_error.log"} // 5xx errors
 )
 
 const defaultLogDir = "logs"
@@ -60,12 +60,12 @@ func (fl *fileLogger) init() *log.Logger {
 	fl.once.Do(func() {
 		dir := errorLogDir()
 		if err := os.MkdirAll(dir, 0o755); err != nil {
-			log.Printf("创建日志目录失败: %v", err)
+			log.Printf("failed to create log directory: %v", err)
 			return
 		}
 		f, err := os.OpenFile(filepath.Join(dir, fl.path), os.O_CREATE|os.O_WRONLY|os.O_APPEND, 0o644)
 		if err != nil {
-			log.Printf("打开日志文件 %s 失败: %v", fl.path, err)
+			log.Printf("failed to open log file %s: %v", fl.path, err)
 			return
 		}
 		fl.file = f
@@ -77,19 +77,19 @@ func (fl *fileLogger) init() *log.Logger {
 func (fl *fileLogger) close() {
 	if fl.file != nil {
 		if err := fl.file.Close(); err != nil {
-			fmt.Fprintf(os.Stderr, "关闭日志文件 %s 失败: %v\n", fl.path, err)
+			fmt.Fprintf(os.Stderr, "failed to close log file %s: %v\n", fl.path, err)
 		}
 	}
 }
 
-// writeEntry 写一条错误日志（自动脱敏敏感信息）
+// writeEntry writes one error log entry (sensitive information is automatically redacted)
 func (fl *fileLogger) writeEntry(endpoint string, statusCode int, model string, accountID int64, body []byte) {
 	l := fl.init()
 	if l == nil {
 		return
 	}
 
-	// 脱敏日志内容
+	// Redact the log content
 	safeEndpoint := security.SanitizeLog(endpoint)
 	safeModel := security.SanitizeLog(model)
 	bodyStr := upstreamErrorLogBody(body)
@@ -99,7 +99,7 @@ func (fl *fileLogger) writeEntry(endpoint string, statusCode int, model string, 
 		ts, safeEndpoint, statusCode, safeModel, accountID, bodyStr)
 }
 
-// logUpstreamError 根据状态码分发到对应日志文件
+// logUpstreamError routes to the matching log file based on the status code
 func logUpstreamError(endpoint string, statusCode int, model string, accountID int64, body []byte) {
 	switch {
 	case statusCode == 400:
@@ -109,7 +109,7 @@ func logUpstreamError(endpoint string, statusCode int, model string, accountID i
 	}
 }
 
-// CloseErrorLogger 关闭所有错误日志文件（程序退出时调用）
+// CloseErrorLogger closes all error log files (called when the program exits)
 func CloseErrorLogger() {
 	badRequestLogger.close()
 	serverErrorLogger.close()

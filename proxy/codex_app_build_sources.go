@@ -99,7 +99,7 @@ func codexReadSmallResponse(resp *http.Response, limit int64) ([]byte, error) {
 	return data, nil
 }
 
-// FetchCodexDesktopMacBuild 读取官方 Sparkle appcast 中最新正式版的应用构建号。
+// FetchCodexDesktopMacBuild reads the app build number of the latest stable release from the official Sparkle appcast.
 func FetchCodexDesktopMacBuild(ctx context.Context, proxyURL string) (string, error) {
 	client, closeClient := codexBuildHTTPClient(codexMacAppcastURL, proxyURL)
 	defer closeClient()
@@ -131,9 +131,9 @@ func FetchCodexDesktopMacBuild(ctx context.Context, proxyURL string) (string, er
 	return best, nil
 }
 
-// FetchCodexVSCodeBuild 只选择 Marketplace openai.chatgpt 的稳定版。
+// FetchCodexVSCodeBuild only selects the stable release of openai.chatgpt on the Marketplace.
 func FetchCodexVSCodeBuild(ctx context.Context, proxyURL string) (string, error) {
-	// 只获取最新稳定版与预览版，避免读取全部历史。
+	// Fetch only the latest stable and preview versions, to avoid reading the full history.
 	const query = codexLatestMarketplaceQuery
 	client, closeClient := codexBuildHTTPClient(codexMarketplaceURL, proxyURL)
 	defer closeClient()

@@ -15,11 +15,11 @@ var codexAttestationService = attestation.NewService(nil)
 type CodexAttestationInput struct {
 	Headers http.Header
 	Account *auth.Account
-	// 非 nil 表示恢复会话快照，空字符串也必须保留为“不发送”。
+	// Non-nil means a restored session snapshot; an empty string must also be kept as "do not send".
 	FrozenValue *string
 }
 
-// ApplyCodexAttestation 在最终身份装配后，仅使用本项目生成或冻结的证明。
+// ApplyCodexAttestation runs after the final identity assembly and uses only attestations generated or frozen by this project.
 func ApplyCodexAttestation(ctx context.Context, input CodexAttestationInput) error {
 	if ctx == nil {
 		ctx = context.Background()
@@ -65,7 +65,7 @@ func codexAttestationRequest(userAgent string) attestation.Request {
 }
 
 func setCodexAttestation(headers http.Header, value string) {
-	// 同时清理非规范大小写的残留，避免同名头被重复发送。
+	// Also clean up leftover headers with non-canonical casing, to avoid sending a header with the same name twice.
 	for name := range headers {
 		if strings.EqualFold(name, attestation.HeaderName) {
 			delete(headers, name)

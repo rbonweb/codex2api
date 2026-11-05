@@ -9,52 +9,52 @@ import (
 	"github.com/codex2api/auth"
 )
 
-// ==================== Codex 出口链路统一解析 ====================
+// ==================== Unified Codex egress resolution ====================
 //
-// Codex 渠道的出站有三套配置并存(issue #679):
+// Egress for the Codex channel has three outbound configurations that coexist (issue #679):
 //
-//  1. Resin 反向代理(全局,系统设置 resin_url + resin_platform_name)
-//  2. 代理池 / 分组代理 / 账号 proxy_url / 全局 proxy_url
-//     (由 auth.Store.ResolveProxyForAccount 按 账号 > 分组 > 代理池 > 全局 选出一条)
-//  3. 直连
+//  1. Resin reverse proxy (global, system settings resin_url + resin_platform_name)
+//  2. Proxy pool / group proxy / account proxy_url / global proxy_url
+//     (one chosen by auth.Store.ResolveProxyForAccount in the order account > group > proxy pool > global)
+//  3. Direct connection
 //
-// 优先级固定为 Resin > 代理 > 直连,且 Resin 是整层覆盖:一旦启用,Codex 渠道
-// 所有携带账号身份的出站(/responses、compact、WS、wham 用量、订阅查询、遥测、
-// 令牌刷新)全部改经 Resin,第 2 层选出的代理只保留在日志/审计里、不参与拨号。
-// 显式模板刷新可通过 ResolveCodexRequestEgress 使用专属签发代理,不改变以上默认链路。
+// Priority is fixed as Resin > proxy > direct connection, and Resin overrides the whole layer: once enabled, the Codex channel
+// All outbound traffic that carries account identity (/responses, compact, WS, wham usage, subscription queries, telemetry,
+// token refresh) all goes through Resin instead, and the proxy picked at layer 2 is kept only in logs and audit records and does not take part in dialing.
+// An explicit template refresh can use the dedicated issuing proxy through ResolveCodexRequestEgress, and does not change the default path above.
 //
-// 所有 Codex 出站选客户端的地方都必须经过本文件的解析器,禁止各自再写
-// `if IsResinEnabled()` 分支——分支散落正是"三套互相覆盖、看不出谁在生效"的根源。
+// Every place that chooses a client for Codex outbound traffic must go through this file's resolver, and nobody may write their own
+// `if IsResinEnabled()` branches: scattered branches are exactly the root cause of "three configurations overriding each other, and no one can tell which is in effect".
 
-// CodexEgressKind 标识一次 Codex 出站最终走的是哪条链路。
+// CodexEgressKind identifies which path a Codex outbound request finally takes.
 type CodexEgressKind string
 
 const (
-	// CodexEgressResin 经 Resin 反代;URL 已改写,请求头需带 X-Resin-Account。
+	// CodexEgressResin goes through the Resin reverse proxy; the URL is already rewritten, and the request header must carry X-Resin-Account.
 	CodexEgressResin CodexEgressKind = "resin"
-	// CodexEgressProxy 经第 2 层选出的代理直达上游。
+	// CodexEgressProxy goes straight to upstream through the proxy picked at layer 2.
 	CodexEgressProxy CodexEgressKind = "proxy"
-	// CodexEgressDirect 无代理直连上游。
+	// CodexEgressDirect connects directly to upstream without a proxy.
 	CodexEgressDirect CodexEgressKind = "direct"
 )
 
-// CodexEgress 描述解析后的出口:最终请求地址、拨号用代理与客户端。
+// CodexEgress describes the resolved egress: the final request address, the proxy used for dialing, and the client.
 type CodexEgress struct {
 	Kind CodexEgressKind
-	// URL 是最终请求地址;Resin 模式下已改写为反代路径。
+	// URL is the final request address; in Resin mode it has already been rewritten to the reverse-proxy path.
 	URL string
-	// ProxyURL 是第 2 层选出的代理。Resin 模式下保留原值用于审计,但拨号不使用。
+	// ProxyURL is the proxy picked at layer 2. In Resin mode the original value is kept for audit, but it is not used for dialing.
 	ProxyURL string
-	// DialProxyURL 是实际参与拨号的代理:Resin 模式恒为空。
+	// DialProxyURL is the proxy actually used for dialing: in Resin mode it is always empty.
 	DialProxyURL string
 
 	account *auth.Account
 	client  *http.Client
 }
 
-// ResolveCodexEgress 为一次携带账号身份的 Codex HTTP 出站决定链路。
-// proxyURL 是第 2 层已经解析好的代理(可为空);Resin 启用时被整层覆盖。
-// account 为 nil 时不可能走 Resin(Resin 按账号粘性,无身份无从粘),退回代理/直连。
+// ResolveCodexEgress decides the path for one Codex HTTP outbound request that carries account identity.
+// proxyURL is the proxy already resolved at layer 2 (may be empty); when Resin is enabled it is overridden for the whole layer.
+// When account is nil, Resin cannot be used (Resin sticks to an account, and without an identity there is nothing to stick to), so it falls back to proxy/direct.
 func ResolveCodexEgress(account *auth.Account, targetURL, proxyURL string) CodexEgress {
 	proxyURL = strings.TrimSpace(proxyURL)
 	if resinCarriesEgress(account) {
@@ -79,21 +79,21 @@ func ResolveCodexEgress(account *auth.Account, targetURL, proxyURL string) Codex
 	}
 }
 
-// resinCarriesEgress 判定该账号的出站是否由 Resin 承担:Resin 已启用、有账号身份
-// (Resin 按账号粘性,无身份无从粘)。
-// 与 auth.Store 的 fail-closed 放行、upstream_trace 的审计标签取同一口径。
+// resinCarriesEgress determines whether this account's outbound traffic is carried by Resin: Resin is enabled and the account has an identity
+// (Resin sticks to an account, and without an identity there is nothing to stick to).
+// It uses the same criteria as the fail-closed allow in auth.Store and the audit label in upstream_trace.
 func resinCarriesEgress(account *auth.Account) bool {
 	return IsResinEnabled() && account != nil
 }
 
-// ViaResin 报告本次出站是否经 Resin。
+// ViaResin reports whether this outbound request goes through Resin.
 func (e CodexEgress) ViaResin() bool {
 	return e.Kind == CodexEgressResin
 }
 
-// Client 返回本链路的 HTTP 客户端。Resin 模式复用按账号隔离的 Resin 连接池;
-// 其余模式复用网关主池(uTLS + 代理)。account 为 nil 且非 Resin 时返回 nil,
-// 由调用方按自己的兜底 transport 处理。
+// Client returns the HTTP client for this path. Resin mode reuses the per-account isolated Resin connection pool;
+// other modes reuse the gateway's main pool (uTLS + proxy). When account is nil and not Resin, it returns nil,
+// and the caller handles it with its own fallback transport.
 func (e CodexEgress) Client() *http.Client {
 	if e.client != nil {
 		return e.client
@@ -105,7 +105,7 @@ func (e CodexEgress) Client() *http.Client {
 	return e.client
 }
 
-// ApplyHeaders 补齐链路要求的请求头:Resin 模式注入账号身份头,其余模式不改。
+// ApplyHeaders adds the request headers this path requires: Resin mode injects the account identity header, and other modes leave headers unchanged.
 func (e CodexEgress) ApplyHeaders(h http.Header) {
 	if h == nil || !e.ViaResin() || e.account == nil {
 		return
@@ -113,9 +113,9 @@ func (e CodexEgress) ApplyHeaders(h http.Header) {
 	h.Set("X-Resin-Account", ResinAccountID(e.account))
 }
 
-// ResolveCodexWebsocketEgress 为 Codex WS 出站决定链路:返回最终 WS 地址与
-// 拨号用代理。Resin 模式下 WS 地址改写为 Resin 的 ws:// 反代路径、拨号不走代理;
-// 账号身份头由调用方用 ApplyHeaders 注入。
+// ResolveCodexWebsocketEgress decides the path for Codex WS outbound traffic: it returns the final WS address and
+// the proxy used for dialing. In Resin mode the WS address is rewritten to Resin's ws:// reverse-proxy path, and dialing does not go through a proxy;
+// the caller injects the account identity header with ApplyHeaders.
 func ResolveCodexWebsocketEgress(account *auth.Account, wsURL, proxyURL string) CodexEgress {
 	proxyURL = strings.TrimSpace(proxyURL)
 	if resinCarriesEgress(account) {
@@ -139,9 +139,9 @@ func ResolveCodexWebsocketEgress(account *auth.Account, wsURL, proxyURL string) 
 	}
 }
 
-// CodexDialProxyURL 返回拨号实际使用的代理:Resin 承担出站时恒为空(地址已是反代
-// 路径,再套代理只会把 Resin 本身推到代理后面)。供只需要"拨号走不走代理"、
-// 手里 URL 已经改写过的调用方(WS 连接建立)使用,避免对改写后的地址二次改写。
+// CodexDialProxyURL returns the proxy actually used for dialing: when Resin carries the outbound traffic it is always empty (the address is already the reverse-proxy
+// path, and wrapping it in another proxy would only push Resin itself behind a proxy). It serves callers that only need to know whether dialing goes through a proxy,
+// and whose URL has already been rewritten (WS connection setup), so the rewritten address is not rewritten a second time.
 func CodexDialProxyURL(account *auth.Account, proxyURL string) string {
 	if resinCarriesEgress(account) {
 		return ""
@@ -149,20 +149,20 @@ func CodexDialProxyURL(account *auth.Account, proxyURL string) string {
 	return strings.TrimSpace(proxyURL)
 }
 
-// CodexEgressSummary 是给设置接口/日志用的全局出口摘要:只回答"Codex 渠道现在
-// 由谁承担出站"。逐账号的代理选择仍由 auth.Store 决定,这里不展开。
+// CodexEgressSummary is the global egress summary for the settings API and logs: it only answers "who carries Codex channel egress now
+// carries egress?". Per-account proxy selection is still decided by auth.Store and is not expanded here.
 type CodexEgressSummary struct {
-	// Mode 是 resin 或 proxy_chain;proxy_chain 表示按 账号 > 分组 > 代理池 > 全局 > 直连 解析。
+	// Mode is resin or proxy_chain; proxy_chain means resolution in the order account > group > proxy pool > global > direct connection.
 	Mode string `json:"mode"`
-	// ResinEnabled 为 true 时 Codex 渠道的代理池/proxy_url 均不参与出站。
+	// When ResinEnabled is true, the Codex channel's proxy pool and proxy_url do not take part in outbound traffic.
 	ResinEnabled bool `json:"resin_enabled"`
-	// ResinEndpoint 是打码后的 Resin 地址(去掉路径里的 token),仅用于展示。
+	// ResinEndpoint is the masked Resin address (with the token in the path removed), used for display only.
 	ResinEndpoint string `json:"resin_endpoint,omitempty"`
-	// ResinPlatformName 是 Resin 侧平台标识。
+	// ResinPlatformName is the platform identifier on the Resin side.
 	ResinPlatformName string `json:"resin_platform_name,omitempty"`
 }
 
-// CurrentCodexEgressSummary 返回当前生效的 Codex 出口摘要。
+// CurrentCodexEgressSummary returns the Codex egress summary currently in effect.
 func CurrentCodexEgressSummary() CodexEgressSummary {
 	cfg := GetResinConfig()
 	if cfg == nil {
@@ -176,9 +176,9 @@ func CurrentCodexEgressSummary() CodexEgressSummary {
 	}
 }
 
-// MaskResinBaseURL 把 Resin 基础地址里的 token(路径段)打码,只保留 scheme 与
-// host:port,供日志与界面展示。resin_url 形如 http://host:port/<token>,整段
-// 打印等于把凭据写进日志(issue #679)。
+// MaskResinBaseURL masks the token (path segment) in the Resin base address, keeping only the scheme and
+// host:port, for display in logs and the UI. A resin_url looks like http://host:port/<token>, and printing the whole
+// string is the same as writing the credential into the log (issue #679).
 func MaskResinBaseURL(raw string) string {
 	raw = strings.TrimSpace(raw)
 	if raw == "" {

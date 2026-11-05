@@ -9,12 +9,12 @@ import (
 	"github.com/gin-gonic/gin"
 )
 
-// ws_acquire_ms（issue #413 跟进）：记录一次 attempt 内获取上游 WS 连接花费的
-// 墙钟时间（busy 排队 + 探活 + 握手，含发送失败后的重建）。挂在下游请求 ctx 上，
-// 由 wsrelay 累加、logUsageForRequest 统一回填 usage_logs，使 first_token_ms 中
-// "网关内取连排队"与"上游生成"可分离归因。HTTP/中转路径恒为 0。
-// 与 userAgentAudit 同构：每个 attempt 由 executor 入口清零，最终落库的是
-// 成功（或写了日志行的）那个 attempt 的取值。
+// ws_acquire_ms (follow-up to issue #413): records the time spent acquiring the upstream WS connection within one attempt,
+// wall-clock time (busy queueing + liveness probe + handshake, including a rebuild after a failed send). It is attached to the downstream request ctx,
+// wsrelay accumulates it and logUsageForRequest backfills usage_logs, so that in first_token_ms
+// "gateway-side connection queueing" and "upstream generation" can be attributed separately. The HTTP/relay path is always 0.
+// It mirrors userAgentAudit: the executor resets it to zero at each attempt's entry, and what finally gets stored is
+// the value from the attempt that succeeded (or wrote a log row).
 type wsAcquireAuditContextKey struct{}
 
 type wsAcquireAudit struct {
@@ -48,8 +48,8 @@ func resetWsAcquireAudit(ctx context.Context) {
 	}
 }
 
-// AddWsAcquireDuration 累加一次 WS 连接获取耗时（wsrelay 调用；一个 attempt 内
-// 发送失败重建连接会多次获取，累加取整体）。
+// AddWsAcquireDuration adds one WS connection acquisition duration (called by wsrelay; within one attempt
+// a rebuild after a failed send acquires more than once, so the durations are summed into the total).
 func AddWsAcquireDuration(ctx context.Context, d time.Duration) {
 	if d <= 0 {
 		return
@@ -83,9 +83,9 @@ func populateWsAcquireFromRequest(c *gin.Context, input *database.UsageLogInput)
 		return
 	}
 	input.WsAcquireMs = wsAcquireAuditMs(c.Request.Context())
-	// 可选口径（默认关）：first_token_ms 扣除取连耗时，只保留"上游生成首内容"部分，
-	// 与 HTTP 路径及取连恒为 0 的部署可比；原始值 = first_token_ms + ws_acquire_ms。
-	// 已打点的行扣除后下限钳 1ms，避免归零后被前端当作"未记录"显示为 -。
+	// Optional basis (off by default): first_token_ms subtracts the connection acquisition time and keeps only the "upstream generates first content" part,
+	// so it is comparable with the HTTP path and with deployments where acquisition is always 0; the raw value = first_token_ms + ws_acquire_ms.
+	// Rows that were recorded are clamped to a floor of 1ms after subtraction, so they are not zeroed and shown as "-" (not recorded) by the frontend.
 	if CurrentRuntimeSettings().FirstTokenExcludesWsAcquire &&
 		input.FirstTokenMs > 0 && input.WsAcquireMs > 0 {
 		input.FirstTokenMs = max(input.FirstTokenMs-input.WsAcquireMs, 1)

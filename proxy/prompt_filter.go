@@ -14,8 +14,8 @@ import (
 )
 
 const (
-	upstreamCyberPolicyUserMessage       = "此内容因可能存在网络安全风险而被标记，本次已记录。请重新表述请求；再次触发可能会停用账号。如果确认是误判，请联系管理员。"
-	upstreamCyberPolicyLockedUserMessage = "此内容因可能存在网络安全风险而被标记，本次已记录并锁定当前对话。请新建对话后继续；再次触发可能会停用账号。如果确认是误判，请联系管理员解锁。"
+	upstreamCyberPolicyUserMessage       = "This content was flagged for possible cybersecurity risk, and this attempt has been recorded. Please rephrase the request; triggering it again may deactivate the account. If you believe this is a false positive, contact an administrator."
+	upstreamCyberPolicyLockedUserMessage = "This content was flagged for possible cybersecurity risk, and this attempt has been recorded and the current conversation is locked. Please start a new conversation to continue; triggering it again may deactivate the account. If you believe this is a false positive, contact an administrator to unlock it."
 	defaultLocalPromptBlockMessage       = "Request contains content blocked by prompt filter"
 )
 
@@ -87,8 +87,8 @@ func (h *Handler) inspectPromptFilterOpenAIWithBlockWriter(c *gin.Context, rawBo
 	if verdict.Action != promptfilter.ActionBlock {
 		return false
 	}
-	// 在发往上游供应商之前锁定会话:本次已被拦下,后续绕过本地规则的等价变形
-	// 也不再有机会打到上游。
+	// Lock the session before sending it to the upstream provider: this request has been blocked, and later equivalent variants that bypass local rules
+	// will also no longer have a chance to reach upstream.
 	h.lockPromptConversationOnLocalBlock(c, cfg, signedBody, endpoint, model, evaluation.Decision, verdict)
 	if h.sendNewAPIPolicyDecision(c, cfg, evaluation.Decision, verdict, rawBody, endpoint, model, signedBody) {
 		return true
@@ -412,8 +412,8 @@ func (h *Handler) buildPromptFilterLogInput(auditContext promptFilterAuditContex
 		}
 		input.MatchContext = promptfilter.RedactedPreview(note, promptFilterMatchContextMaxRunes)
 	}
-	// 被拦截（block）的请求仅记录脱敏后的检查文本预览，便于排查触发原因，
-	// 同时避免把 Authorization/API Key/token 等敏感值持久化到日志。
+	// A blocked request records only a redacted preview of the checked text, to help troubleshoot the trigger reason,
+	// while avoiding persisting sensitive values such as Authorization/API Key/token to logs.
 	if verdict.Action == promptfilter.ActionBlock {
 		input.FullText = promptfilter.RedactedPreview(verdict.FullText, promptFilterFullTextMaxRunes)
 	}
@@ -484,8 +484,8 @@ func (h *Handler) logUpstreamCyberPolicy(c *gin.Context, endpoint string, model 
 	// storage failure must not turn a verified upstream CYB into an untracked one.
 	metadata, delegated := h.emitNewAPIUpstreamCyberPolicyDecision(c, endpoint, model, body)
 	if delegated {
-		// 明确的上游 CYB 始终保留会话锁与用户冷却；catch-all 不能把安全终态
-		// 降级成可透明轮换的中间失败。
+		// An explicit upstream CYB always keeps the session lock and the user cooldown; the catch-all must not turn a security terminal state
+		// into an intermediate failure that can be transparently rotated away.
 		// Explicit upstream CYB always retains the conversation lock and user
 		// cooldown; catch-all cannot downgrade this safety terminal.
 		metadata.ConversationLocked = h.lockPromptConversationAfterUpstreamCYB(c, endpoint, model, incidentID, metadata)

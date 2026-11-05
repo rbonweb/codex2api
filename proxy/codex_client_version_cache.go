@@ -47,7 +47,7 @@ func codexClientVersionTarget(kind, target string) CodexClientVersionTarget {
 	return CodexClientVersionTarget{}
 }
 
-// CurrentCodexClientVersions 返回副本，设置保存不会回滚版本快照。
+// CurrentCodexClientVersions returns a copy, so saving settings does not roll back the version snapshot.
 func CurrentCodexClientVersions() []CodexClientVersionTarget {
 	result := make([]CodexClientVersionTarget, 0)
 	snapshot := codexClientVersions.Load()

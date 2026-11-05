@@ -36,7 +36,7 @@ type requestContinuousRetryKeepalive struct {
 	cancel   context.CancelCauseFunc
 }
 
-// Activate 开始请求级保活时间窗；重复激活不会重置已有时间窗。
+// Activate starts the request-level keepalive window; repeated activation does not reset an existing window.
 func (k *requestContinuousRetryKeepalive) Activate() {
 	if k == nil {
 		return
@@ -48,14 +48,14 @@ func (k *requestContinuousRetryKeepalive) Activate() {
 	}
 	if !k.active {
 		k.active = true
-		// 从请求具备下游保活资格时开始计时；后续短等待共用同一时间窗，
-		// 不在每次重试时重新开始一个完整周期。
+		// Start timing once the request is eligible for downstream keepalive; later short waits share the same window,
+		// and a full cycle is not restarted on every retry.
 		k.last = time.Now()
 	}
 }
 
-// SetEnabled 保存端点的保活开关；准入和重试不能重新开启明确关闭的保活。
-// 重新允许保活后仍须单独通过额度准入检查并 Activate。
+// SetEnabled saves the endpoint's keepalive switch; admission and retries cannot re-enable keepalive that was explicitly turned off.
+// After keepalive is allowed again, it must still pass the quota admission check separately and then Activate.
 func (k *requestContinuousRetryKeepalive) SetEnabled(enabled bool) {
 	if k == nil {
 		return
@@ -68,12 +68,12 @@ func (k *requestContinuousRetryKeepalive) SetEnabled(enabled bool) {
 	}
 }
 
-// activeLocked 同时检查准入状态与下游生命周期，调用方须持有 mu。
+// activeLocked checks both the admission state and the downstream lifecycle; the caller must hold mu.
 func (k *requestContinuousRetryKeepalive) activeLocked() bool {
 	return k.active && !k.disabled && (k.ctx == nil || k.ctx.Err() == nil)
 }
 
-// Active 报告请求级保活当前是否处于激活状态。
+// Active reports whether request-level keepalive is currently active.
 func (k *requestContinuousRetryKeepalive) Active() bool {
 	if k == nil {
 		return false
@@ -83,7 +83,7 @@ func (k *requestContinuousRetryKeepalive) Active() bool {
 	return k.activeLocked()
 }
 
-// Keepalive 在心跳到期时写入一次协议保活，并在写失败时取消请求。
+// Keepalive writes one protocol keepalive when the heartbeat is due, and cancels the request if the write fails.
 func (k *requestContinuousRetryKeepalive) Keepalive() error {
 	if k == nil {
 		return nil
@@ -109,7 +109,7 @@ func (k *requestContinuousRetryKeepalive) Keepalive() error {
 	return nil
 }
 
-// installContinuousRetrySSEKeepalive 为流式端点安装 SSE 注释保活，非流式端点转用 102。
+// installContinuousRetrySSEKeepalive installs SSE comment keepalive for streaming endpoints; non-streaming endpoints use 102 instead.
 func installContinuousRetrySSEKeepalive(c *gin.Context, stream bool, contentType string) func() {
 	return installContinuousRetrySSEKeepaliveWithOptions(c, stream, continuousRetrySSEKeepaliveOptions{
 		contentType: contentType,
@@ -117,7 +117,7 @@ func installContinuousRetrySSEKeepalive(c *gin.Context, stream bool, contentType
 	})
 }
 
-// installContinuousRetryMessagesKeepalive 使用 Messages 协议要求的 ping 事件。
+// installContinuousRetryMessagesKeepalive uses the ping event that the Messages protocol requires.
 func installContinuousRetryMessagesKeepalive(c *gin.Context, stream bool) func() {
 	return installContinuousRetrySSEKeepaliveWithOptions(c, stream, continuousRetrySSEKeepaliveOptions{
 		contentType: "text/event-stream; charset=utf-8",
@@ -130,7 +130,7 @@ type continuousRetrySSEKeepaliveOptions struct {
 	payload     string
 }
 
-// installContinuousRetrySSEKeepaliveWithOptions 安装带指定内容类型和心跳载荷的请求保活。
+// installContinuousRetrySSEKeepaliveWithOptions installs request keepalive with a specified content type and heartbeat payload.
 func installContinuousRetrySSEKeepaliveWithOptions(c *gin.Context, stream bool, options continuousRetrySSEKeepaliveOptions) func() {
 	if !stream {
 		return installContinuousRetryHTTPInformationalKeepalive(c)
@@ -156,8 +156,8 @@ func installContinuousRetrySSEKeepaliveWithOptions(c *gin.Context, stream bool, 
 	keepalive := &requestContinuousRetryKeepalive{ctx: requestCtx, write: func() error {
 		setSSEStreamHeaders(c, options.contentType)
 		if !c.Writer.Written() {
-			// Cloudflare 对 102 之后的最终响应仍有 125s 限制；长期保活
-			// 必须建立 SSE 200，再持续写入协议内心跳帧。
+			// Cloudflare still limits the final response after 102 to 125s; for long-lived keepalive
+			// an SSE 200 must be established first, then protocol heartbeat frames are written continuously.
 			c.Writer.WriteHeaderNow()
 		}
 		if _, err := io.WriteString(responseWriter, options.payload); err != nil {
@@ -175,7 +175,7 @@ func installContinuousRetrySSEKeepaliveWithOptions(c *gin.Context, stream bool, 
 	}
 }
 
-// unwrapHTTPResponseWriter 解开中间件包装的 ResponseWriter，并报告是否发生了解包。
+// unwrapHTTPResponseWriter unwraps a ResponseWriter wrapped by middleware and reports whether it unwrapped anything.
 func unwrapHTTPResponseWriter(writer http.ResponseWriter) (http.ResponseWriter, bool) {
 	if writer == nil {
 		return nil, false
@@ -198,8 +198,8 @@ func unwrapHTTPResponseWriter(writer http.ResponseWriter) (http.ResponseWriter, 
 // keepalive for ordinary JSON endpoints. HTTP 102 is sent through the
 // unwrapped net/http writer so the final JSON status/body can still be chosen
 // later; calling Gin's WriteHeader or Flush here would commit an accidental
-// 200 response. 非流式 JSON 不能插入 SSE 注释，因此用标准 HTTP 102
-// Processing 保活，同时保留最终 JSON 的状态码和响应体语义。
+// 200 response. Non-streaming JSON cannot carry SSE comments, so the standard HTTP 102
+// Processing keepalive, while keeping the status code and body semantics of the final JSON.
 func installContinuousRetryHTTPInformationalKeepalive(c *gin.Context) func() {
 	if c == nil || c.Request == nil || c.Writer == nil || !c.Request.ProtoAtLeast(1, 1) {
 		return func() {}
@@ -267,7 +267,7 @@ func activateContinuousRetryKeepaliveForLimit(ctx context.Context, retryLimit in
 	}
 }
 
-// continuousRetryKeepaliveActive 报告上下文中的请求级保活是否已激活。
+// continuousRetryKeepaliveActive reports whether request-level keepalive is active in the context.
 func continuousRetryKeepaliveActive(ctx context.Context) bool {
 	if keepalive := continuousRetryKeepaliveForContext(ctx); keepalive != nil {
 		return keepalive.Active()
@@ -275,7 +275,7 @@ func continuousRetryKeepaliveActive(ctx context.Context) bool {
 	return false
 }
 
-// continuousRetryKeepaliveDelay 计算距离下一次请求级心跳的剩余等待时间。
+// continuousRetryKeepaliveDelay computes the remaining wait until the next request-level heartbeat.
 func continuousRetryKeepaliveDelay(keepalive continuousRetryKeepalive) time.Duration {
 	if continuousRetryKeepaliveInterval <= 0 {
 		return 0
@@ -306,7 +306,7 @@ func continuousRetryContextError(ctx context.Context) error {
 	return ctx.Err()
 }
 
-// stopContinuousRetryTimer 停止计时器并清空可能已排队的计时事件。
+// stopContinuousRetryTimer stops the timer and drains any timer event that may already be queued.
 func stopContinuousRetryTimer(timer *time.Timer) {
 	if timer == nil || timer.Stop() {
 		return
@@ -367,8 +367,8 @@ func executeHTTPWithContinuousRetryKeepalive(ctx context.Context, execute func()
 	}
 }
 
-// runWithContinuousRetryKeepalive 在阻塞操作运行期间继续写入请求级保活。
-// 操作结果仍由调用方线程消费，心跳写入失败或请求取消会作为错误返回。
+// runWithContinuousRetryKeepalive keeps writing request-level keepalive while a blocking operation runs.
+// The caller goroutine still consumes the operation result; a heartbeat write failure or request cancellation is returned as an error.
 func runWithContinuousRetryKeepalive[T any](ctx context.Context, operation func() T) (T, error) {
 	var zero T
 	if operation == nil {
@@ -415,8 +415,8 @@ type continuousRetryReadResult struct {
 	err  error
 }
 
-// keepaliveWhileReading 停止向断开的下游写入，但保留独立上游 context 的
-// 有界补读。持续重试使用下游 context，写失败仍会立即终止当前尝试。
+// keepaliveWhileReading stops writing to a disconnected downstream, but keeps the independent upstream context's
+// bounded catch-up read. Continuous retry uses the downstream context, and a write failure still ends the current attempt immediately.
 func keepaliveWhileReading(ctx context.Context, keepalive continuousRetryKeepalive) error {
 	err := keepalive.Keepalive()
 	if err != nil && ctx.Err() == nil {
@@ -430,8 +430,8 @@ func keepaliveWhileReading(ctx context.Context, keepalive continuousRetryKeepali
 
 // readAllWithContinuousRetryKeepalive keeps an active JSON retry alive while
 // the upstream response body is still being read. The worker owns the read;
-// the caller goroutine remains the sole downstream writer. 上游 JSON body
-// 读取也要纳入保活窗口，避免已进入持续重试后长时间卡在读体阶段无任何字节。
+// the caller goroutine remains the sole downstream writer. The upstream JSON body
+// read must also fall within the keepalive window, so that no long stretch is spent in the body-read stage with no bytes once continuous retry has begun.
 func readAllWithContinuousRetryKeepalive(ctx context.Context, reader io.Reader) ([]byte, error) {
 	keepalive := continuousRetryKeepaliveForContext(ctx)
 	if keepalive == nil || !keepalive.Active() || continuousRetryKeepaliveInterval <= 0 {
@@ -568,7 +568,7 @@ func waitWithContinuousRetryKeepalive(ctx context.Context, interval time.Duratio
 				return false
 			}
 			// A disabled or custom heartbeat may not advance its deadline.
-			// 心跳未推进截止时间时必须实际等待，避免处理协程零延迟忙等。
+			// When the heartbeat has not advanced the deadline, it must really wait, to avoid the processing goroutine busy-waiting with zero delay.
 			step = continuousRetryKeepaliveDelay(keepalive)
 			if step <= 0 {
 				step = continuousRetryKeepaliveInterval
@@ -689,8 +689,8 @@ func writeCommittedChatRetryError(c *gin.Context, message string) bool {
 // Replay can fail before a retry heartbeat commits HTTP. These helpers write a
 // protocol terminal to the real writer in either state: normal JSON after SSE
 // would corrupt the stream, while silence would look like success.
-// 回放可能在重试心跳提交 HTTP 前失败；这些 helper 会在两种状态下都向真实 writer
-// 写入协议终态，避免在 SSE 后追加普通 JSON 或静默返回造成错误语义。
+// Replay may fail before the retry heartbeat has committed HTTP; these helpers write the protocol terminal state to the real writer in both states
+// so that plain JSON is not appended after SSE and a silent return does not create wrong error semantics.
 func writeContinuousRetryLocalResponsesError(c *gin.Context) bool {
 	if c == nil || c.Writer == nil {
 		return false

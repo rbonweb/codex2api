@@ -12,56 +12,56 @@ import (
 	"github.com/gin-gonic/gin"
 )
 
-// ============ 核心数据结构 ============
+// ============ core data structures ============
 
-// RateLimitLevel 限流级别
+// RateLimitLevel is the rate limit level
 type RateLimitLevel int
 
 const (
-	LevelGlobal  RateLimitLevel = 0 // 全局限流
-	LevelAccount RateLimitLevel = 1 // 账号级限流
-	LevelModel   RateLimitLevel = 2 // 模型级限流
+	LevelGlobal  RateLimitLevel = 0 // global rate limit
+	LevelAccount RateLimitLevel = 1 // account-level rate limit
+	LevelModel   RateLimitLevel = 2 // model-level rate limit
 )
 
-// RateLimitStatus 限流状态
+// RateLimitStatus is the rate limit status
 type RateLimitStatus int
 
 const (
-	StatusAllow RateLimitStatus = 0 // 允许通过
-	StatusDeny  RateLimitStatus = 1 // 拒绝请求
+	StatusAllow RateLimitStatus = 0 // allowed
+	StatusDeny  RateLimitStatus = 1 // deny the request
 )
 
-// LimitSnapshot 限流快照（用于持久化）
+// LimitSnapshot is a rate limit snapshot (used for persistence)
 type LimitSnapshot struct {
-	Key        string    `json:"key"`         // 限流键
-	Level      string    `json:"level"`       // 级别: global/account/model
-	CurrentRPM int64     `json:"current_rpm"` // 当前RPM
-	LimitRPM   int64     `json:"limit_rpm"`   // 限制RPM
-	Blocked    bool      `json:"blocked"`     // 是否被阻塞
-	BlockedAt  time.Time `json:"blocked_at"`  // 阻塞时间
-	ResetAt    time.Time `json:"reset_at"`    // 重置时间
+	Key        string    `json:"key"`         // rate limit key
+	Level      string    `json:"level"`       // level: global/account/model
+	CurrentRPM int64     `json:"current_rpm"` // current RPM
+	LimitRPM   int64     `json:"limit_rpm"`   // RPM limit
+	Blocked    bool      `json:"blocked"`     // whether it is blocked
+	BlockedAt  time.Time `json:"blocked_at"`  // time of blocking
+	ResetAt    time.Time `json:"reset_at"`    // reset time
 }
 
-// LimitMetrics 限流指标
+// LimitMetrics is the rate limit metrics
 type LimitMetrics struct {
-	TotalRequests   int64     `json:"total_requests"`   // 总请求数
-	AllowedRequests int64     `json:"allowed_requests"` // 允许请求数
-	BlockedRequests int64     `json:"blocked_requests"` // 阻塞请求数
-	CurrentRPM      int64     `json:"current_rpm"`      // 当前RPM
-	LimitRPM        int64     `json:"limit_rpm"`        // 限制RPM
-	CooldownLevel   int       `json:"cooldown_level"`   // 当前冷却等级
-	NextResetAt     time.Time `json:"next_reset_at"`    // 下次重置时间
-	LastUpdatedAt   time.Time `json:"last_updated_at"`  // 最后更新时间
+	TotalRequests   int64     `json:"total_requests"`   // total requests
+	AllowedRequests int64     `json:"allowed_requests"` // allowed requests
+	BlockedRequests int64     `json:"blocked_requests"` // blocked requests
+	CurrentRPM      int64     `json:"current_rpm"`      // current RPM
+	LimitRPM        int64     `json:"limit_rpm"`        // RPM limit
+	CooldownLevel   int       `json:"cooldown_level"`   // current cooldown level
+	NextResetAt     time.Time `json:"next_reset_at"`    // next reset time
+	LastUpdatedAt   time.Time `json:"last_updated_at"`  // last update time
 }
 
-// ============ 令牌桶限流器 ============
+// ============ token bucket rate limiter ============
 
-// tokenBucket 令牌桶限流器
+// tokenBucket is a token bucket rate limiter
 type tokenBucket struct {
 	mu         sync.RWMutex
 	tokens     float64
 	maxTokens  float64
-	refillRate float64 // 每秒补充的令牌数
+	refillRate float64 // tokens refilled per second
 	lastRefill time.Time
 }
 
@@ -75,7 +75,7 @@ func newTokenBucket(rpm int) *tokenBucket {
 	}
 }
 
-// allow 尝试获取一个令牌
+// allow tries to take one token
 func (tb *tokenBucket) allow() bool {
 	tb.mu.Lock()
 	defer tb.mu.Unlock()
@@ -95,7 +95,7 @@ func (tb *tokenBucket) allow() bool {
 	return false
 }
 
-// allowN 尝试获取N个令牌
+// allowN tries to take N tokens
 func (tb *tokenBucket) allowN(n int) bool {
 	if n <= 0 {
 		return true
@@ -118,14 +118,14 @@ func (tb *tokenBucket) allowN(n int) bool {
 	return false
 }
 
-// getRate 获取当前速率
+// getRate returns the current rate
 func (tb *tokenBucket) getRate() float64 {
 	tb.mu.RLock()
 	defer tb.mu.RUnlock()
-	return tb.refillRate * 60 // 转换为 RPM
+	return tb.refillRate * 60 // convert to RPM
 }
 
-// getTokens 获取当前令牌数
+// getTokens returns the current token count
 func (tb *tokenBucket) getTokens() float64 {
 	tb.mu.RLock()
 	defer tb.mu.RUnlock()
@@ -138,17 +138,17 @@ func (tb *tokenBucket) getTokens() float64 {
 	return tokens
 }
 
-// updateRPM 动态更新RPM
+// updateRPM dynamically updates the RPM
 func (tb *tokenBucket) updateRPM(rpm int) {
 	tb.mu.Lock()
 	defer tb.mu.Unlock()
 
 	rps := float64(rpm) / 60.0
-	// 先保存旧值用于计算比例
+	// first save the old value to compute the ratio
 	oldMaxTokens := tb.maxTokens
 	tb.maxTokens = float64(rpm)
 	tb.refillRate = rps
-	// 保持当前令牌比例
+	// keep the current token ratio
 	if oldMaxTokens > 0 {
 		tb.tokens = (tb.tokens / oldMaxTokens) * float64(rpm)
 	} else {
@@ -160,18 +160,18 @@ func (tb *tokenBucket) updateRPM(rpm int) {
 	tb.lastRefill = time.Now()
 }
 
-// ============ 智能冷却策略 ============
+// ============ smart cooldown policy ============
 
-// cooldownManager 智能冷却管理器
+// cooldownManager is the smart cooldown manager
 type cooldownManager struct {
 	mu          sync.RWMutex
-	level       int           // 当前冷却等级
-	blockedAt   time.Time     // 阻塞开始时间
-	resetAt     time.Time     // 预计重置时间
-	lastBackoff time.Duration // 上次退避时间
+	level       int           // current cooldown level
+	blockedAt   time.Time     // time the blocking started
+	resetAt     time.Time     // expected reset time
+	lastBackoff time.Duration // last backoff time
 }
 
-// cooldownDurations 冷却时间配置（指数退避）
+// cooldownDurations is the cooldown time config (exponential backoff)
 var cooldownDurations = []time.Duration{
 	1 * time.Second,
 	2 * time.Second,
@@ -187,15 +187,15 @@ var cooldownDurations = []time.Duration{
 	1800 * time.Second, // 30min (max)
 }
 
-// newCooldownManager 创建冷却管理器
+// newCooldownManager creates a cooldown manager
 func newCooldownManager() *cooldownManager {
 	return &cooldownManager{
-		level: -1, // 初始无冷却
+		level: -1, // no cooldown initially
 	}
 }
 
-// computeCooldown 计算下次冷却时间和等级（参考CPA的backoff机制）
-// 返回值: (冷却时长, 新等级)
+// computeCooldown computes the next cooldown time and level (based on CPA's backoff mechanism)
+// Return values: (cooldown duration, new level)
 func (cm *cooldownManager) computeCooldown() (time.Duration, int) {
 	cm.mu.Lock()
 	defer cm.mu.Unlock()
@@ -209,7 +209,7 @@ func (cm *cooldownManager) computeCooldown() (time.Duration, int) {
 	return duration, newLevel
 }
 
-// enterCooldown 进入冷却状态
+// enterCooldown enters the cooldown state
 func (cm *cooldownManager) enterCooldown() time.Duration {
 	duration, level := cm.computeCooldown()
 
@@ -223,7 +223,7 @@ func (cm *cooldownManager) enterCooldown() time.Duration {
 	return duration
 }
 
-// reset 重置冷却状态
+// reset resets the cooldown state
 func (cm *cooldownManager) reset() {
 	cm.mu.Lock()
 	cm.level = -1
@@ -233,7 +233,7 @@ func (cm *cooldownManager) reset() {
 	cm.mu.Unlock()
 }
 
-// isInCooldown 检查是否在冷却中
+// isInCooldown reports whether it is cooling down
 func (cm *cooldownManager) isInCooldown() bool {
 	cm.mu.RLock()
 	defer cm.mu.RUnlock()
@@ -244,7 +244,7 @@ func (cm *cooldownManager) isInCooldown() bool {
 	return time.Now().Before(cm.resetAt)
 }
 
-// getRemainingCooldown 获取剩余冷却时间
+// getRemainingCooldown returns the remaining cooldown time
 func (cm *cooldownManager) getRemainingCooldown() time.Duration {
 	cm.mu.RLock()
 	defer cm.mu.RUnlock()
@@ -259,28 +259,28 @@ func (cm *cooldownManager) getRemainingCooldown() time.Duration {
 	return remaining
 }
 
-// getState 获取冷却状态
+// getState returns the cooldown state
 func (cm *cooldownManager) getState() (level int, blockedAt time.Time, resetAt time.Time) {
 	cm.mu.RLock()
 	defer cm.mu.RUnlock()
 	return cm.level, cm.blockedAt, cm.resetAt
 }
 
-// ============ 多级限流器 ============
+// ============ multi-level rate limiter ============
 
-// LevelLimiter 单级别限流器
+// LevelLimiter is a single-level rate limiter
 type LevelLimiter struct {
 	mu         sync.RWMutex
-	key        string           // 限流键
-	level      RateLimitLevel   // 限流级别
-	bucket     *tokenBucket     // 令牌桶
-	cooldown   *cooldownManager // 冷却管理器
-	metrics    LimitMetrics     // 指标
-	enabled    bool             // 是否启用
-	lastAccess atomic.Int64     // 最后访问时间（用于 TTL 清理）
+	key        string           // rate limit key
+	level      RateLimitLevel   // rate limit level
+	bucket     *tokenBucket     // token bucket
+	cooldown   *cooldownManager // cooldown manager
+	metrics    LimitMetrics     // metrics
+	enabled    bool             // whether it is enabled
+	lastAccess atomic.Int64     // last access time (used for TTL cleanup)
 }
 
-// newLevelLimiter 创建单级别限流器
+// newLevelLimiter creates a single-level rate limiter
 func newLevelLimiter(key string, level RateLimitLevel, rpm int) *LevelLimiter {
 	ll := &LevelLimiter{
 		key:      key,
@@ -296,13 +296,13 @@ func newLevelLimiter(key string, level RateLimitLevel, rpm int) *LevelLimiter {
 	return ll
 }
 
-// allow 尝试获取令牌
+// allow tries to take a token
 func (ll *LevelLimiter) allow() bool {
 	ll.lastAccess.Store(time.Now().UnixNano())
 	ll.mu.Lock()
 	defer ll.mu.Unlock()
 
-	// 在函数入口递增总请求数
+	// increment the total request count at function entry
 	ll.metrics.TotalRequests++
 	ll.metrics.LastUpdatedAt = time.Now()
 
@@ -310,32 +310,32 @@ func (ll *LevelLimiter) allow() bool {
 		return true
 	}
 
-	// 检查是否在冷却中
+	// check whether it is cooling down
 	if ll.cooldown.isInCooldown() {
 		ll.metrics.BlockedRequests++
 		return false
 	}
 
-	// 尝试获取令牌
+	// try to take a token
 	if ll.bucket.allow() {
 		ll.metrics.AllowedRequests++
 		ll.metrics.CurrentRPM = int64(ll.bucket.getRate())
 		return true
 	}
 
-	// 令牌不足，进入冷却
+	// not enough tokens, enter cooldown
 	ll.enterCooldown()
 	ll.metrics.BlockedRequests++
 	return false
 }
 
-// allowN 尝试获取N个令牌
+// allowN tries to take N tokens
 func (ll *LevelLimiter) allowN(n int) bool {
 	ll.lastAccess.Store(time.Now().UnixNano())
 	ll.mu.Lock()
 	defer ll.mu.Unlock()
 
-	// 在函数入口递增总请求数
+	// increment the total request count at function entry
 	ll.metrics.TotalRequests += int64(n)
 	ll.metrics.LastUpdatedAt = time.Now()
 
@@ -358,21 +358,21 @@ func (ll *LevelLimiter) allowN(n int) bool {
 	return false
 }
 
-// enterCooldown 进入冷却状态
+// enterCooldown enters the cooldown state
 func (ll *LevelLimiter) enterCooldown() time.Duration {
 	duration := ll.cooldown.enterCooldown()
 	ll.metrics.CooldownLevel, _, ll.metrics.NextResetAt = ll.cooldown.getState()
 	return duration
 }
 
-// resetCooldown 重置冷却状态
+// resetCooldown resets the cooldown state
 func (ll *LevelLimiter) resetCooldown() {
 	ll.cooldown.reset()
 	ll.metrics.CooldownLevel = -1
 	ll.metrics.NextResetAt = time.Time{}
 }
 
-// updateRPM 动态更新RPM
+// updateRPM dynamically updates the RPM
 func (ll *LevelLimiter) updateRPM(rpm int) {
 	ll.mu.Lock()
 	defer ll.mu.Unlock()
@@ -391,12 +391,12 @@ func (ll *LevelLimiter) updateRPM(rpm int) {
 	}
 }
 
-// getMetrics 获取指标
+// getMetrics returns the metrics
 func (ll *LevelLimiter) getMetrics() LimitMetrics {
 	ll.mu.RLock()
 	defer ll.mu.RUnlock()
 
-	// 构造拷贝避免数据竞争
+	// build a copy to avoid data races
 	metrics := ll.metrics
 	if ll.bucket != nil {
 		metrics.CurrentRPM = int64(ll.bucket.getRate())
@@ -405,7 +405,7 @@ func (ll *LevelLimiter) getMetrics() LimitMetrics {
 	return metrics
 }
 
-// getSnapshot 获取快照
+// getSnapshot returns a snapshot
 func (ll *LevelLimiter) getSnapshot() LimitSnapshot {
 	ll.mu.RLock()
 	defer ll.mu.RUnlock()
@@ -432,35 +432,35 @@ func (ll *LevelLimiter) getSnapshot() LimitSnapshot {
 	}
 }
 
-// ============ 增强型限流管理器 ============
+// ============ enhanced rate limit manager ============
 
-// EnhancedRateLimiter 增强型多级限流器
+// EnhancedRateLimiter is an enhanced multi-level rate limiter
 type EnhancedRateLimiter struct {
 	mu sync.RWMutex
 
-	// 各级别限流器
-	globalLimiter   *LevelLimiter            // 全局限流
-	accountLimiters map[string]*LevelLimiter // 账号级限流器 (key: accountID)
-	modelLimiters   map[string]*LevelLimiter // 模型级限流器 (key: modelName)
+	// rate limiters for each level
+	globalLimiter   *LevelLimiter            // global rate limit
+	accountLimiters map[string]*LevelLimiter // account-level rate limiters (key: accountID)
+	modelLimiters   map[string]*LevelLimiter // model-level rate limiters (key: modelName)
 
-	// 配置
-	globalRPM  int // 全局RPM限制
-	accountRPM int // 每账号RPM限制
-	modelRPM   int // 每模型RPM限制
+	// config
+	globalRPM  int // global RPM limit
+	accountRPM int // per-account RPM limit
+	modelRPM   int // per-model RPM limit
 	enabled    bool
 
-	// 持久化
+	// persistence
 	db              *database.DB
 	persistInterval time.Duration
 	stopCh          chan struct{}
-	stopOnce        sync.Once // 保护 stopCh 只被关闭一次
+	stopOnce        sync.Once // protects stopCh so it is only closed once
 
-	// 指标收集
+	// metrics collection
 	metricsEnabled bool
-	totalLimited   atomic.Int64 // 被限流的总请求数
+	totalLimited   atomic.Int64 // total number of rate-limited requests
 }
 
-// NewEnhancedRateLimiter 创建增强型限流器
+// NewEnhancedRateLimiter creates an enhanced rate limiter
 func NewEnhancedRateLimiter(db *database.DB, globalRPM, accountRPM, modelRPM int) *EnhancedRateLimiter {
 	erl := &EnhancedRateLimiter{
 		globalLimiter:   newLevelLimiter("global", LevelGlobal, globalRPM),
@@ -476,18 +476,18 @@ func NewEnhancedRateLimiter(db *database.DB, globalRPM, accountRPM, modelRPM int
 		metricsEnabled:  true,
 	}
 
-	// 启动持久化协程
+	// start the persistence goroutine
 	if db != nil {
 		go erl.persistenceLoop()
 	}
 
-	// 启动 limiter 清理协程（无论是否有 db 都需要）
+	// start the limiter cleanup goroutine (needed whether or not there is a db)
 	go erl.limiterEvictionLoop()
 
 	return erl
 }
 
-// Allow 检查请求是否允许通过（全局限流）
+// Allow checks whether the request is allowed through (global rate limit)
 func (erl *EnhancedRateLimiter) Allow() bool {
 	if !erl.enabled {
 		return true
@@ -495,7 +495,7 @@ func (erl *EnhancedRateLimiter) Allow() bool {
 	return erl.globalLimiter.allow()
 }
 
-// AllowWithContext 检查请求是否允许通过（带上下文的多级限流）
+// AllowWithContext checks whether the request is allowed through (multi-level rate limit with context)
 func (erl *EnhancedRateLimiter) AllowWithContext(accountID, model string) bool {
 	if !erl.enabled {
 		return true
@@ -504,17 +504,17 @@ func (erl *EnhancedRateLimiter) AllowWithContext(accountID, model string) bool {
 	erl.mu.RLock()
 	defer erl.mu.RUnlock()
 
-	// 1. 检查全局限流
+	// 1. check the global rate limit
 	if !erl.globalLimiter.allow() {
 		erl.totalLimited.Add(1)
 		return false
 	}
 
-	// 2. 检查账号级限流
+	// 2. check the account-level rate limit
 	if erl.accountRPM > 0 && accountID != "" {
 		accLimiter, exists := erl.accountLimiters[accountID]
 		if !exists {
-			// 需要升级锁来创建新的限流器
+			// need to upgrade the lock to create a new rate limiter
 			erl.mu.RUnlock()
 			erl.mu.Lock()
 			accLimiter, exists = erl.accountLimiters[accountID]
@@ -531,11 +531,11 @@ func (erl *EnhancedRateLimiter) AllowWithContext(accountID, model string) bool {
 		}
 	}
 
-	// 3. 检查模型级限流
+	// 3. check the model-level rate limit
 	if erl.modelRPM > 0 && model != "" {
 		modelLimiter, exists := erl.modelLimiters[model]
 		if !exists {
-			// 需要升级锁来创建新的限流器
+			// need to upgrade the lock to create a new rate limiter
 			erl.mu.RUnlock()
 			erl.mu.Lock()
 			modelLimiter, exists = erl.modelLimiters[model]
@@ -555,7 +555,7 @@ func (erl *EnhancedRateLimiter) AllowWithContext(accountID, model string) bool {
 	return true
 }
 
-// UpdateGlobalRPM 动态更新全局限流
+// UpdateGlobalRPM dynamically updates the global rate limit
 func (erl *EnhancedRateLimiter) UpdateGlobalRPM(rpm int) {
 	erl.mu.Lock()
 	defer erl.mu.Unlock()
@@ -565,33 +565,33 @@ func (erl *EnhancedRateLimiter) UpdateGlobalRPM(rpm int) {
 	erl.enabled = erl.globalRPM > 0 || erl.accountRPM > 0 || erl.modelRPM > 0
 }
 
-// UpdateAccountRPM 动态更新账号级限流
+// UpdateAccountRPM dynamically updates the account-level rate limit
 func (erl *EnhancedRateLimiter) UpdateAccountRPM(rpm int) {
 	erl.mu.Lock()
 	defer erl.mu.Unlock()
 
 	erl.accountRPM = rpm
-	// 更新所有已有账号限流器
+	// update all existing account rate limiters
 	for _, limiter := range erl.accountLimiters {
 		limiter.updateRPM(rpm)
 	}
 	erl.enabled = erl.globalRPM > 0 || erl.accountRPM > 0 || erl.modelRPM > 0
 }
 
-// UpdateModelRPM 动态更新模型级限流
+// UpdateModelRPM dynamically updates the model-level rate limit
 func (erl *EnhancedRateLimiter) UpdateModelRPM(rpm int) {
 	erl.mu.Lock()
 	defer erl.mu.Unlock()
 
 	erl.modelRPM = rpm
-	// 更新所有已有模型限流器
+	// update all existing model rate limiters
 	for _, limiter := range erl.modelLimiters {
 		limiter.updateRPM(rpm)
 	}
 	erl.enabled = erl.globalRPM > 0 || erl.accountRPM > 0 || erl.modelRPM > 0
 }
 
-// UpdateAllRPM 动态更新所有限流级别
+// UpdateAllRPM dynamically updates all rate limit levels
 func (erl *EnhancedRateLimiter) UpdateAllRPM(globalRPM, accountRPM, modelRPM int) {
 	erl.mu.Lock()
 	defer erl.mu.Unlock()
@@ -610,12 +610,12 @@ func (erl *EnhancedRateLimiter) UpdateAllRPM(globalRPM, accountRPM, modelRPM int
 	erl.enabled = globalRPM > 0 || accountRPM > 0 || modelRPM > 0
 }
 
-// GetGlobalMetrics 获取全局限流指标
+// GetGlobalMetrics returns the global rate limit metrics
 func (erl *EnhancedRateLimiter) GetGlobalMetrics() LimitMetrics {
 	return erl.globalLimiter.getMetrics()
 }
 
-// GetAccountMetrics 获取账号限流指标
+// GetAccountMetrics returns the account rate limit metrics
 func (erl *EnhancedRateLimiter) GetAccountMetrics(accountID string) LimitMetrics {
 	erl.mu.RLock()
 	limiter, exists := erl.accountLimiters[accountID]
@@ -627,7 +627,7 @@ func (erl *EnhancedRateLimiter) GetAccountMetrics(accountID string) LimitMetrics
 	return limiter.getMetrics()
 }
 
-// GetModelMetrics 获取模型限流指标
+// GetModelMetrics returns the model rate limit metrics
 func (erl *EnhancedRateLimiter) GetModelMetrics(model string) LimitMetrics {
 	erl.mu.RLock()
 	limiter, exists := erl.modelLimiters[model]
@@ -639,7 +639,7 @@ func (erl *EnhancedRateLimiter) GetModelMetrics(model string) LimitMetrics {
 	return limiter.getMetrics()
 }
 
-// GetAllMetrics 获取所有限流指标
+// GetAllMetrics returns all rate limit metrics
 func (erl *EnhancedRateLimiter) GetAllMetrics() map[string]interface{} {
 	erl.mu.RLock()
 	defer erl.mu.RUnlock()
@@ -664,7 +664,7 @@ func (erl *EnhancedRateLimiter) GetAllMetrics() map[string]interface{} {
 	return result
 }
 
-// GetAllSnapshots 获取所有限流快照（用于持久化）
+// GetAllSnapshots returns all rate limit snapshots (used for persistence)
 func (erl *EnhancedRateLimiter) GetAllSnapshots() []LimitSnapshot {
 	erl.mu.RLock()
 	defer erl.mu.RUnlock()
@@ -682,7 +682,7 @@ func (erl *EnhancedRateLimiter) GetAllSnapshots() []LimitSnapshot {
 	return snapshots
 }
 
-// persistenceLoop 持久化循环
+// persistenceLoop is the persistence loop
 func (erl *EnhancedRateLimiter) persistenceLoop() {
 	ticker := time.NewTicker(erl.persistInterval)
 	defer ticker.Stop()
@@ -697,7 +697,7 @@ func (erl *EnhancedRateLimiter) persistenceLoop() {
 	}
 }
 
-// limiterEvictionLoop 清理长时间未使用的限流器（30 分钟 TTL）
+// limiterEvictionLoop cleans up rate limiters unused for a long time (30 minute TTL)
 func (erl *EnhancedRateLimiter) limiterEvictionLoop() {
 	const (
 		evictionTTL      = 30 * time.Minute
@@ -717,7 +717,7 @@ func (erl *EnhancedRateLimiter) limiterEvictionLoop() {
 	}
 }
 
-// evictStaleLimiters 清理超过 TTL 未访问的限流器
+// evictStaleLimiters cleans up rate limiters not accessed within the TTL
 func (erl *EnhancedRateLimiter) evictStaleLimiters(ttl time.Duration) {
 	cutoff := time.Now().Add(-ttl).UnixNano()
 
@@ -737,10 +737,10 @@ func (erl *EnhancedRateLimiter) evictStaleLimiters(ttl time.Duration) {
 	}
 }
 
-// persistSnapshots 持久化快照到数据库
+// persistSnapshots persists snapshots to the database
 func (erl *EnhancedRateLimiter) persistSnapshots() {
-	// 当前实现仅获取快照但不实际持久化
-	// 如需持久化，请在这里实现具体的存储逻辑
+	// the current implementation only takes snapshots and does not actually persist them
+	// to persist them, implement the actual storage logic here
 	if erl.db == nil {
 		return
 	}
@@ -750,26 +750,26 @@ func (erl *EnhancedRateLimiter) persistSnapshots() {
 		return
 	}
 
-	// 存储到数据库（使用 system_settings 表存储）
+	// store in the database (using the system_settings table)
 	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
 	defer cancel()
 
-	// 这里我们使用一个简单的键值存储方式
-	// 实际项目中可以创建专门的限流状态表
+	// here we use a simple key-value storage approach
+	// a real project could create a dedicated rate limit state table
 	_, _ = erl.db.GetSystemSettings(ctx)
-	// 注：限流状态作为瞬态数据，通常不需要严格持久化
-	// 这里仅作演示，实际可根据需求决定是否持久化
+	// Note: rate limit state is transient data and usually does not need strict persistence
+	// this is only a demo, actual persistence can be decided based on requirements
 }
 
-// Stop 停止限流器
+// Stop stops the rate limiter
 func (erl *EnhancedRateLimiter) Stop() {
 	erl.stopOnce.Do(func() {
 		close(erl.stopCh)
 	})
 }
 
-// ComputeCooldown 计算冷却时间（参考CPA的nextQuotaCooldown）
-// 指数退避: 1s, 2s, 4s, 8s, ... max 30min
+// ComputeCooldown computes the cooldown time (based on CPA's nextQuotaCooldown)
+// Exponential backoff: 1s, 2s, 4s, 8s, ... max 30min
 func ComputeCooldown(prevLevel int) (time.Duration, int) {
 	if prevLevel < 0 {
 		prevLevel = -1
@@ -781,15 +781,15 @@ func ComputeCooldown(prevLevel int) (time.Duration, int) {
 	return cooldownDurations[newLevel], newLevel
 }
 
-// ============ 兼容旧版接口 ============
+// ============ backward-compatible interfaces ============
 
 const (
 	requestRateBucketSeconds = int64(5)
 	requestRateBucketCount   = 12
 )
 
-// requestRateMeter 用 12 个 5 秒原子桶记录最近一分钟代理请求数。
-// 请求热路径只有一次 CAS，不依赖全局 RPM 限流是否开启，也不增加互斥锁。
+// requestRateMeter uses 12 atomic 5-second buckets to record the proxy requests of the last minute.
+// The request hot path does a single CAS, does not depend on whether the global RPM limit is enabled, and adds no mutex.
 type requestRateMeter struct {
 	buckets [requestRateBucketCount]atomic.Uint64
 }
@@ -837,28 +837,28 @@ func (m *requestRateMeter) rpm(now time.Time) int64 {
 	return int64(total)
 }
 
-// RateLimiter 全局限流器（向后兼容）
+// RateLimiter is the global rate limiter (backward compatible)
 type RateLimiter struct {
 	enhanced *EnhancedRateLimiter
 	traffic  requestRateMeter
 	active   atomic.Int64
 }
 
-// NewRateLimiter 创建限流器（向后兼容）
+// NewRateLimiter creates a rate limiter (backward compatible)
 func NewRateLimiter(rpm int) *RateLimiter {
 	return &RateLimiter{
 		enhanced: NewEnhancedRateLimiter(nil, rpm, 0, 0),
 	}
 }
 
-// UpdateRPM 动态更新 RPM 限制（向后兼容）
+// UpdateRPM dynamically updates the RPM limit (backward compatible)
 func (rl *RateLimiter) UpdateRPM(rpm int) {
 	if rl.enhanced != nil {
 		rl.enhanced.UpdateGlobalRPM(rpm)
 	}
 }
 
-// GetRPM 获取当前 RPM（向后兼容）
+// GetRPM returns the current RPM (backward compatible)
 func (rl *RateLimiter) GetRPM() int {
 	if rl.enhanced != nil {
 		return rl.enhanced.globalRPM
@@ -866,7 +866,7 @@ func (rl *RateLimiter) GetRPM() int {
 	return 0
 }
 
-// GetCurrentRPM 返回最近 60 秒实际进入代理路由的请求数。
+// GetCurrentRPM returns the number of requests that actually entered the proxy routes in the last 60 seconds.
 func (rl *RateLimiter) GetCurrentRPM() int64 {
 	if rl == nil {
 		return 0
@@ -874,7 +874,7 @@ func (rl *RateLimiter) GetCurrentRPM() int64 {
 	return rl.traffic.rpm(time.Now())
 }
 
-// GetActiveRequests 返回当前仍在处理的代理请求数（包括长连接和流式响应）。
+// GetActiveRequests returns the number of proxy requests still being processed (including long connections and streaming responses).
 func (rl *RateLimiter) GetActiveRequests() int64 {
 	if rl == nil {
 		return 0
@@ -882,11 +882,11 @@ func (rl *RateLimiter) GetActiveRequests() int64 {
 	return rl.active.Load()
 }
 
-// Middleware 返回 Gin 中间件（向后兼容）
+// Middleware returns the Gin middleware (backward compatible)
 func (rl *RateLimiter) Middleware() gin.HandlerFunc {
 	return func(c *gin.Context) {
 		path := c.Request.URL.Path
-		// 只限制代理请求，不限制管理后台和健康检查
+		// only limit proxy requests, not the admin panel or health checks
 		if path == "/health" ||
 			(len(path) >= 4 && path[:4] == "/api") ||
 			(len(path) >= 6 && path[:6] == "/admin") {
@@ -900,7 +900,7 @@ func (rl *RateLimiter) Middleware() gin.HandlerFunc {
 		if rl.enhanced != nil && !rl.enhanced.Allow() {
 			c.JSON(http.StatusTooManyRequests, gin.H{
 				"error": gin.H{
-					"message": "请求过于频繁，请稍后重试",
+					"message": "Too many requests, please try again later",
 					"type":    "rate_limit_error",
 					"code":    "rate_limit_exceeded",
 				},
@@ -912,14 +912,14 @@ func (rl *RateLimiter) Middleware() gin.HandlerFunc {
 	}
 }
 
-// GetEnhancedLimiter 获取增强型限流器
+// GetEnhancedLimiter returns the enhanced rate limiter
 func (rl *RateLimiter) GetEnhancedLimiter() *EnhancedRateLimiter {
 	return rl.enhanced
 }
 
-// ============ 限流错误 ============
+// ============ rate limit errors ============
 
-// RateLimitError 限流错误
+// RateLimitError is a rate limit error
 type RateLimitError struct {
 	Level      RateLimitLevel
 	Key        string
@@ -939,7 +939,7 @@ func (e *RateLimitError) Error() string {
 	return fmt.Sprintf("rate limit exceeded: level=%s, key=%s, retry_after=%v", levelStr, e.Key, e.RetryAfter)
 }
 
-// HTTPStatusCode 返回HTTP状态码
+// HTTPStatusCode returns the HTTP status code
 func (e *RateLimitError) HTTPStatusCode() int {
 	return http.StatusTooManyRequests
 }

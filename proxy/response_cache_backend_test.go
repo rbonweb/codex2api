@@ -21,7 +21,7 @@ type recordingResponseContextBackend struct {
 	bounded    cache.ResponseContextReadResult
 	boundedErr error
 	writes     map[string][]json.RawMessage
-	// blockWrites 非 nil 时，SetResponseContext 先等它关闭再落盘，用于验证后台写入。
+	// When blockWrites is non-nil, SetResponseContext waits for it to close before persisting, used to verify background writes.
 	blockWrites chan struct{}
 }
 
@@ -428,8 +428,8 @@ func TestResponseCacheOversizeReplacementRemovesStaleLocalEntry(t *testing.T) {
 	}
 }
 
-// 聚合 Hits/Misses 是端到端口径：远端命中计 Hit 而非 Miss。
-// 钉住不变量 Hits = LocalHits + RemoteHits、Hits + Misses = LocalHits + LocalMisses。
+// Aggregate Hits/Misses are end-to-end counts: a remote hit counts as a Hit, not a Miss.
+// Pins the invariants Hits = LocalHits + RemoteHits and Hits + Misses = LocalHits + LocalMisses.
 func TestResponseCacheAggregateHitMissEndToEnd(t *testing.T) {
 	resetResponseCacheStateForTest(testResponseCacheConfig())
 	backend := newRecordingResponseContextBackend(true)
@@ -476,7 +476,7 @@ func TestResponseCacheAggregateHitMissEndToEnd(t *testing.T) {
 	}
 }
 
-// 后台写入：调用方不等共享后端往返，L1 立即可读；槽位耗尽时退回同步写（背压）。
+// Background write: the caller does not wait for the round trip to the shared backend, and L1 is readable immediately; when slots are exhausted it falls back to a synchronous write (backpressure).
 func TestResponseCacheBackendWritesAreAsynchronousWithBackpressure(t *testing.T) {
 	resetResponseCacheStateForTest(testResponseCacheConfig())
 	backend := newRecordingResponseContextBackend(true)
@@ -507,7 +507,7 @@ func TestResponseCacheBackendWritesAreAsynchronousWithBackpressure(t *testing.T)
 		t.Fatalf("backend write landed before release: %d", sets)
 	}
 
-	// 填满剩余槽位后，下一次写入必须同步等待，而不是丢弃。
+	// After the remaining slots are filled, the next write must wait synchronously rather than be dropped.
 	for i := 1; i < responseCacheBackendWriteSlots; i++ {
 		setResponseCache("key:1", fmt.Sprintf("fill-%d", i), []json.RawMessage{responseCacheTestItem(i+1, "fill")})
 	}

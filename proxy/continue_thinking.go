@@ -13,15 +13,15 @@ import (
 	"github.com/tidwall/sjson"
 )
 
-// 本文件实现「思考截断自动续想」：上游按特征指纹截断 reasoning 时
-// （reasoning_tokens == 518*n - 2，如 516、1034），自动携带本轮 reasoning
-// 续发请求，并把多轮上游响应折叠成一次下游 SSE 响应。
+// This file implements automatic continue-thinking for truncated reasoning: when upstream truncates reasoning by a feature fingerprint
+// (reasoning_tokens == 518*n - 2, e.g. 516, 1034), automatically carries this round's reasoning
+// resends the request, and folds multiple upstream responses into one downstream SSE response.
 //
-// 折叠规则：
-//   - reasoning 类 output item 的事件实时转发（重写 sequence_number/output_index）；
-//   - message / function_call 等其余 item 的事件先缓冲为「暂定输出」；
-//   - 收到 terminal 事件后检查指纹：命中则丢弃暂定输出、开续想轮，
-//     否则按原始字节冲刷暂定输出并重构 terminal 事件。
+// Folding rules:
+//   - events for reasoning-type output items are forwarded in real time (sequence_number/output_index rewritten);
+//   - events for message, function_call and other items are first buffered as "tentative output";
+//   - once the terminal event arrives, the fingerprint is checked: on a match, tentative output is discarded and a continue-thinking round opens,
+//     otherwise tentative output is flushed byte-for-byte and the terminal event is rebuilt.
 
 const (
 	reasoningTruncationStep    = 518
@@ -30,13 +30,13 @@ const (
 	continueKeepaliveComment = ": keepalive\n\n"
 )
 
-// isReasoningTruncationTokens 判断 reasoning token 数是否命中截断指纹（518*n - 2）。
+// isReasoningTruncationTokens reports whether the reasoning token count matches the truncation fingerprint (518*n - 2).
 func isReasoningTruncationTokens(tokens int) bool {
 	return tokens >= reasoningTruncationStep-2 && (tokens+2)%reasoningTruncationStep == 0
 }
 
-// continueKeepAllEncrypted 逃生阀：CODEX_CONTINUE_KEEP_ALL_ENCRYPTED=1 时恢复
-// 「折叠输出保留每轮全部 encrypted_content」的旧行为（issue #353 之前）。
+// continueKeepAllEncrypted is an escape hatch: with CODEX_CONTINUE_KEEP_ALL_ENCRYPTED=1 it restores
+// the old behavior of keeping every round's encrypted_content in the folded output (before issue #353).
 func continueKeepAllEncrypted() bool {
 	switch strings.ToLower(strings.TrimSpace(os.Getenv("CODEX_CONTINUE_KEEP_ALL_ENCRYPTED"))) {
 	case "1", "true", "yes", "y", "on":
@@ -46,8 +46,8 @@ func continueKeepAllEncrypted() bool {
 	}
 }
 
-// stripReasoningEncryptedContent 删除 reasoning item 的 encrypted_content 字段
-// （保留 summary 文本），非 reasoning item 原样返回。
+// stripReasoningEncryptedContent removes the encrypted_content field from reasoning items
+// (keeps the summary text); non-reasoning items are returned as they are.
 func stripReasoningEncryptedContent(item json.RawMessage) json.RawMessage {
 	if gjson.GetBytes(item, "type").String() != "reasoning" {
 		return item
@@ -61,18 +61,18 @@ func stripReasoningEncryptedContent(item json.RawMessage) json.RawMessage {
 	return item
 }
 
-// 续想折叠的停止原因。
+// Stop reasons for continue-thinking folds.
 const (
-	continueStopClean        = "clean"              // 上游干净结束（未命中指纹）
-	continueStopMaxRounds    = "max_rounds"         // 仍命中指纹但已达最大轮数
-	continueStopNoEncrypted  = "no_encrypted"       // 命中指纹但 reasoning 缺 encrypted_content
-	continueStopClientGone   = "client_gone"        // 客户端已断开，不再续想
-	continueStopUpstreamEOF  = "upstream_eof"       // 上游未发 terminal 就关闭
-	continueStopRoundError   = "continuation_error" // 续想轮请求失败（4xx/传输错误）
-	continueStopForwardAbort = "forward_abort"      // 下游回调要求中止（交还上层语义）
+	continueStopClean        = "clean"              // upstream ended cleanly (fingerprint not matched)
+	continueStopMaxRounds    = "max_rounds"         // fingerprint still matched, but the maximum number of rounds was reached
+	continueStopNoEncrypted  = "no_encrypted"       // fingerprint matched but reasoning lacks encrypted_content
+	continueStopClientGone   = "client_gone"        // client disconnected, no more continue-thinking
+	continueStopUpstreamEOF  = "upstream_eof"       // upstream closed without sending a terminal event
+	continueStopRoundError   = "continuation_error" // continue-thinking round request failed (4xx or transport error)
+	continueStopForwardAbort = "forward_abort"      // downstream callback requested abort (handed back to the upper-layer semantics)
 )
 
-// continueRoundStat 记录一轮上游请求的真实消耗，供逐轮 usage 记账。
+// continueRoundStat records the real cost of one upstream request round, for per-round usage accounting.
 type continueRoundStat struct {
 	Trace      upstreamTraceSnapshot
 	Usage      *UsageInfo
@@ -81,38 +81,38 @@ type continueRoundStat struct {
 	ErrMessage string
 }
 
-// continueFoldResult 是一次折叠的汇总结果。
+// continueFoldResult is the summary result of one fold.
 type continueFoldResult struct {
-	// Rounds 仅含「成功读到终态」的真实上游轮次，按顺序排列；最后一条对应 FinalUsage。
+	// Rounds holds only real upstream rounds that successfully read a terminal event, in order; the last entry corresponds to FinalUsage.
 	Rounds []continueRoundStat
-	// FailedContinuation 记录失败的续想开轮尝试（openRound 出错 / 非 200 / 组包失败），
-	// 与 Rounds 分开，避免逐轮记账时与最终成功轮混淆导致重复计费。
+	// FailedContinuation records failed continue-thinking open-round attempts (openRound error / non-200 / failed to build the body),
+	// kept apart from Rounds so per-round accounting does not mix them with the final successful round and bill twice.
 	FailedContinuation *continueRoundStat
-	FinalUsage         *UsageInfo     // 最终成功轮的真实 usage（终态计费用）
-	FinalResponse      *http.Response // 最终轮响应（body 已关，仅供读 header 做 cooldown/quota 同步）
-	GotTerminal        bool           // 客户端是否已收到终态事件（据此判定是否算正常结束）
+	FinalUsage         *UsageInfo     // real usage of the final successful round (used for terminal billing)
+	FinalResponse      *http.Response // final round response (body already closed, only used to read headers for cooldown/quota sync)
+	GotTerminal        bool           // whether the client has already received the terminal event (decides whether the stream counts as a normal end)
 	ReadErr            error
 	StopReason         string
 	RoundsRun          int
 }
 
-// continueFold 是折叠状态机的外部依赖与配置。
+// continueFold holds the external dependencies and configuration of the fold state machine.
 type continueFold struct {
 	trace     func() upstreamTraceSnapshot
-	baseBody  []byte // 本 attempt 实际发出的上游请求体（已过 prepare 管线）
-	maxRounds int    // 最大轮数（含首轮）
+	baseBody  []byte // upstream request body actually sent for this attempt (already through the prepare pipeline)
+	maxRounds int    // maximum number of rounds (including the first round)
 
-	forward    func(data []byte) bool                    // 现有下游事件回调，返回 false 表示中止
-	observe    func(data []byte)                         // 对被缓冲（未转发）的事件做旁路观察（TTFT 等）
-	openRound  func(body []byte) (*http.Response, error) // 用同一账号/通道开续想轮
-	clientGone func() bool                               // 客户端是否已断开
+	forward    func(data []byte) bool                    // existing downstream event callback; returns false to abort
+	observe    func(data []byte)                         // side observation of buffered (not forwarded) events, e.g. TTFT
+	openRound  func(body []byte) (*http.Response, error) // opens a continue-thinking round on the same account/channel
+	clientGone func() bool                               // whether the client has disconnected
 
-	// keepalive 折叠期间向下游写 SSE 注释保活,返回 false 表示下游已死、停止
-	// 保活(折叠本身继续,由 clientGone 语义收尾)。nil 关闭保活。回调运行在独立
-	// goroutine,与 forward 并发,由调用方负责写路径互斥;首个真实字节写出前
-	// 是否跳过也由回调自行判断(提前写会提交 200 header)。
+	// keepalive writes SSE comments downstream while folding; it returns false when the downstream is dead, and then stops
+	// keepalive (folding itself continues and is wrapped up by the clientGone semantics). nil disables keepalive. The callback runs in a separate
+	// goroutine, concurrent with forward; the caller is responsible for write-path mutual exclusion; before the first real byte is written
+	// whether to skip is also left to the callback itself (an early write would commit the 200 header).
 	keepalive func() bool
-	// keepaliveInterval 保活间隔;<=0 禁用。测试用。
+	// keepaliveInterval is the keepalive interval; <=0 disables it. For tests.
 	keepaliveInterval time.Duration
 }
 
@@ -123,29 +123,29 @@ func (f *continueFold) snapshotTrace() upstreamTraceSnapshot {
 	return upstreamTraceSnapshot{}
 }
 
-// bufferedOutputItem 缓冲一个非 reasoning output item 的完整事件序列。
+// bufferedOutputItem buffers the complete event sequence of one non-reasoning output item.
 type bufferedOutputItem struct {
 	upstreamOI int64
 	itemType   string
-	events     [][]byte        // 原始事件字节（未重写）
-	item       json.RawMessage // 最新的 item 快照（added 或 done 携带）
+	events     [][]byte        // raw event bytes (not rewritten)
+	item       json.RawMessage // latest item snapshot (carried by added or done)
 }
 
-// foldState 是跨轮的折叠内部状态。
+// foldState is the cross-round internal state of the fold.
 type foldState struct {
-	seq  int64 // 下游 sequence_number 单调计数
-	dsOI int64 // 下游 output_index 单调计数
+	seq  int64 // downstream sequence_number, monotonic counter
+	dsOI int64 // downstream output_index, monotonic counter
 
-	baseResponse json.RawMessage   // 第 1 轮 response.created 的 response 对象
-	finalOutput  []json.RawMessage // 已定稿的下游 output items（各轮 reasoning + 最终冲刷项）
-	replayTail   []json.RawMessage // 续想时追加到 input 的 items（剥 id 的 reasoning + marker）
-	firstUsage   *UsageInfo        // 第 1 轮 usage（重构下游 usage 的 input/cached 来源）
-	sumReasoning int               // 各轮 reasoning tokens 之和
-	flushedAny   bool              // 是否已向客户端冲刷过暂定输出
+	baseResponse json.RawMessage   // response object of round 1's response.created
+	finalOutput  []json.RawMessage // finalized downstream output items (reasoning from each round + the final flushed items)
+	replayTail   []json.RawMessage // items appended to input when continuing (reasoning with id stripped + marker)
+	firstUsage   *UsageInfo        // round 1 usage (source of input/cached for rebuilding downstream usage)
+	sumReasoning int               // sum of reasoning tokens across rounds
+	flushedAny   bool              // whether tentative output has already been flushed to the client
 
-	// lastRoundReasoningStart 是最后一轮 readRound 开始时 finalOutput 的长度。
-	// 该下标之前的项属于更早各轮的 reasoning：下发客户端时剥离其 encrypted_content，
-	// 只保留最后一轮的完整加密上下文（见 clientFacingOutput / issue #353）。
+	// lastRoundReasoningStart is the length of finalOutput when the last readRound started.
+	// items before this index belong to earlier rounds' reasoning: when sent to the client, their encrypted_content is stripped,
+	// only the last round keeps its full encrypted context (see clientFacingOutput / issue #353).
 	lastRoundReasoningStart int
 }
 
@@ -155,7 +155,7 @@ func (st *foldState) nextSeq() int64 {
 	return s
 }
 
-// rewriteEvent 重写事件的 sequence_number（及可选的 output_index）后返回新字节。
+// rewriteEvent rewrites the event's sequence_number (and optionally output_index) and returns the new bytes.
 func (st *foldState) rewriteEvent(data []byte, outputIndex int64, setOI bool) []byte {
 	out, err := sjson.SetBytes(data, "sequence_number", st.nextSeq())
 	if err != nil {
@@ -169,8 +169,8 @@ func (st *foldState) rewriteEvent(data []byte, outputIndex int64, setOI bool) []
 	return out
 }
 
-// continueMarkerItem 返回续想标记消息：一条 phase:"commentary" 的 assistant
-// message，促使模型基于回放的 reasoning 继续思考，而非把上一轮当作终稿。
+// continueMarkerItem returns the continue-thinking marker: an assistant message with phase:"commentary"
+// that prompts the model to keep thinking from the replayed reasoning, rather than treating the previous round as the final answer.
 func continueMarkerItem() json.RawMessage {
 	item := map[string]any{
 		"type": "message",
@@ -184,9 +184,9 @@ func continueMarkerItem() json.RawMessage {
 	return raw
 }
 
-// buildContinuationBody 在原始请求体基础上替换 input 为 originalInput + replayTail。
-// baseBody 已过 prepare 管线（stream=true、include 带 encrypted_content、无
-// previous_response_id），这里只需替换 input。
+// buildContinuationBody replaces input with originalInput + replayTail in the original request body.
+// baseBody has already gone through the prepare pipeline (stream=true, include carries encrypted_content, no
+// previous_response_id), so here we only need to replace input.
 func buildContinuationBody(baseBody []byte, replayTail []json.RawMessage) ([]byte, error) {
 	origInput := gjson.GetBytes(baseBody, "input")
 	items := make([]json.RawMessage, 0, 8+len(replayTail))
@@ -204,12 +204,12 @@ func buildContinuationBody(baseBody []byte, replayTail []json.RawMessage) ([]byt
 	return sjson.SetRawBytes(baseBody, "input", merged)
 }
 
-// clientFacingOutput 返回下发给客户端的 output items：只有最后一轮的 reasoning
-// 保留完整 encrypted_content，更早各轮的 reasoning 剥离该字段。续想把每轮
-// reasoning 全量累加进 finalOutput（正常单响应只含 1 份）；不收敛会让客户端把
-// N 份账号绑定的加密载荷回传，逐轮把上下文顶爆窗口、并在跨账号换号时成批被拒
-// （issue #353）。早期各轮的加密上下文已在折叠时经 replayTail 回放并产出最终答案，
-// 使命已尽，无需再让客户端驱动一遍。逃生阀见 continueKeepAllEncrypted。
+// clientFacingOutput returns the output items sent to the client: only the last round's reasoning
+// keeps its full encrypted_content, and earlier rounds' reasoning has that field stripped. Continue-thinking accumulates each round's
+// reasoning in full into finalOutput (a normal single response contains just one copy); without convergence the client would send back
+// N copies of account-bound encrypted payloads, growing the context past the window round by round and, when switching accounts, being rejected in bulk
+// (issue #353). The encrypted context of earlier rounds has already been replayed via replayTail and produced the final answer during folding,
+// so its job is done and the client does not need to drive it again. See continueKeepAllEncrypted for the escape hatch.
 func (st *foldState) clientFacingOutput() []json.RawMessage {
 	start := st.lastRoundReasoningStart
 	if continueKeepAllEncrypted() || start <= 0 || start > len(st.finalOutput) {
@@ -226,9 +226,9 @@ func (st *foldState) clientFacingOutput() []json.RawMessage {
 	return out
 }
 
-// rebuildTerminalEvent 重构折叠后的下游 terminal 事件：保留第 1 轮的响应
-// 身份（id/created_at），采用最终轮的 status/error/incomplete_details，output
-// 换成折叠后的完整列表，usage 换成单响应视角的重构值。
+// rebuildTerminalEvent rebuilds the downstream terminal event after folding: it keeps round 1's response
+// identity (id/created_at), takes the final round's status/error/incomplete_details, output
+// is replaced with the full folded list, and usage is replaced with a rebuilt single-response view.
 func (st *foldState) rebuildTerminalEvent(terminal []byte, finalRoundUsage *UsageInfo) []byte {
 	base := st.baseResponse
 	if len(base) == 0 {
@@ -261,10 +261,10 @@ func (st *foldState) rebuildTerminalEvent(terminal []byte, finalRoundUsage *Usag
 	return out
 }
 
-// rebuildUsage 把多轮 usage 重构成单响应视角：input/cached 取第 1 轮（客户端
-// 实际发送的内容），reasoning 各轮求和（都已转发给客户端），output = reasoning
-// 总和 + 最终冲刷轮的非 reasoning 部分。隐藏轮的 input 不求和，避免客户端误判
-// 上下文已爆窗。
+// rebuildUsage rebuilds multi-round usage into a single-response view: input/cached come from round 1 (what the client actually received),
+// reasoning is summed across rounds (all of it was forwarded to the client), output = sum of reasoning
+// plus the non-reasoning part of the final flushed round. The hidden rounds' input is not summed, to avoid the client wrongly concluding
+// the context has overflowed the window.
 func (st *foldState) rebuildUsage(finalRoundUsage *UsageInfo) []byte {
 	if st.firstUsage == nil {
 		return nil
@@ -298,8 +298,8 @@ func (st *foldState) rebuildUsage(finalRoundUsage *UsageInfo) []byte {
 	return raw
 }
 
-// syntheticIncompleteEvent 合成 response.incomplete terminal 事件（续想轮
-// 失败/上游 EOF 时兜底，避免客户端挂死在无终态的流上）。
+// syntheticIncompleteEvent synthesizes a response.incomplete terminal event (a fallback for a continue-thinking round
+// failure or upstream EOF, so the client does not hang on a stream with no terminal state).
 func (st *foldState) syntheticIncompleteEvent(reason string, finalRoundUsage *UsageInfo) []byte {
 	base := st.baseResponse
 	if len(base) == 0 {
@@ -323,20 +323,20 @@ func (st *foldState) syntheticIncompleteEvent(reason string, finalRoundUsage *Us
 	return out
 }
 
-// roundOutcome 是单轮读取的结果。
+// roundOutcome is the result of reading one round.
 type roundOutcome struct {
-	terminal       []byte            // terminal 事件原始字节（nil = EOF 无终态）
-	usage          *UsageInfo        // 本轮 usage
-	roundReasoning []json.RawMessage // 本轮 reasoning items（output_item.done 的快照）
+	terminal       []byte            // raw bytes of the terminal event (nil = EOF with no terminal)
+	usage          *UsageInfo        // this round's usage
+	roundReasoning []json.RawMessage // this round's reasoning items (snapshots from output_item.done)
 	buffered       []*bufferedOutputItem
-	aborted        bool  // forward 返回 false
-	readErr        error // SSE 读取错误
+	aborted        bool  // forward returned false
+	readErr        error // SSE read error
 }
 
-// readRound 读完一轮上游 SSE：reasoning 实时转发，其余 item 缓冲，terminal 截停。
+// readRound reads one upstream SSE round: reasoning is forwarded in real time, other items are buffered, and the terminal event stops the read.
 func (st *foldState) readRound(body io.Reader, roundNo int, f *continueFold) roundOutcome {
 	var out roundOutcome
-	// upstream output_index → 下游 output_index（reasoning 类）或缓冲槽
+	// upstream output_index → downstream output_index (reasoning type) or buffer slot
 	reasoningOI := map[int64]int64{}
 	bufferByOI := map[int64]*bufferedOutputItem{}
 
@@ -347,7 +347,7 @@ func (st *foldState) readRound(body io.Reader, roundNo int, f *continueFold) rou
 		switch eventType {
 		case "response.created", "response.in_progress":
 			if roundNo > 1 {
-				// 隐藏轮的生命周期事件不下发，但仍供 TTFT 观察。
+				// lifecycle events of hidden rounds are not sent downstream, but are still fed to TTFT observation.
 				f.observe(data)
 				return true
 			}
@@ -420,8 +420,8 @@ func (st *foldState) readRound(body io.Reader, roundNo int, f *continueFold) rou
 			}
 		}
 
-		// 未跟踪到所属 item 的事件（如 response.output_text.annotation 等），
-		// 尽力转发，保持与透传路径一致的行为。
+		// events that cannot be traced to an owning item (e.g. response.output_text.annotation),
+		// are forwarded on a best-effort basis, keeping behavior consistent with the passthrough path.
 		if !f.forward(st.rewriteEvent(data, 0, false)) {
 			out.aborted = true
 			return false
@@ -431,7 +431,7 @@ func (st *foldState) readRound(body io.Reader, roundNo int, f *continueFold) rou
 	return out
 }
 
-// flushBuffered 把一轮缓冲的暂定输出按原始字节冲刷给下游（重写 seq/oi）。
+// flushBuffered flushes one round's buffered tentative output to the downstream as raw bytes (rewriting seq/oi).
 func (st *foldState) flushBuffered(buffered []*bufferedOutputItem, f *continueFold) bool {
 	for _, entry := range buffered {
 		ds := st.dsOI
@@ -449,7 +449,7 @@ func (st *foldState) flushBuffered(buffered []*bufferedOutputItem, f *continueFo
 	return true
 }
 
-// shouldContinueRound 判断本轮结束后是否续想，返回 (继续?, 停止原因)。
+// shouldContinueRound decides after this round whether to continue, and returns (continue?, stop reason).
 func shouldContinueRound(terminal []byte, usage *UsageInfo, roundReasoning []json.RawMessage, roundNo, maxRounds int, clientGone bool) (bool, string) {
 	if gjson.GetBytes(terminal, "type").String() != "response.completed" {
 		return false, continueStopClean
@@ -473,14 +473,14 @@ func shouldContinueRound(terminal []byte, usage *UsageInfo, roundReasoning []jso
 	return true, ""
 }
 
-// runContinueThinkingFold 执行多轮折叠主循环。firstResp 是已确认 2xx 的第 1 轮
-// 上游响应（由调用方负责其生命周期外的资源），后续轮通过 f.openRound 打开。
+// runContinueThinkingFold runs the multi-round fold main loop. firstResp is the upstream response for round 1, already confirmed 2xx
+// (its resource lifecycle is managed by the caller); later rounds are opened via f.openRound.
 func runContinueThinkingFold(firstResp *http.Response, f *continueFold) continueFoldResult {
 	st := &foldState{}
 	var result continueFoldResult
 
-	// 保活覆盖整个折叠周期，包括可能长时间无输出的首轮。停止时同步等 goroutine 退出,
-	// 保证 fold 返回后不会再有保活回调与收尾 flush 并发。
+	// keepalive covers the whole fold, including round 1, which may stay silent for a long time. On stop it synchronously waits for the goroutine to exit,
+	// so that after fold returns no keepalive callback can run concurrently with the final flush.
 	var keepaliveStop, keepaliveDone chan struct{}
 	startKeepalive := func() {
 		if f.keepalive == nil || f.keepaliveInterval <= 0 || keepaliveStop != nil {
@@ -519,8 +519,8 @@ func runContinueThinkingFold(firstResp *http.Response, f *continueFold) continue
 		result.RoundsRun = roundNo
 		result.FinalResponse = resp
 		roundStart := time.Now()
-		// 记录本轮 reasoning 在 finalOutput 中的起点：若本轮成为最后一轮，
-		// 该起点之前（更早各轮）的 reasoning 下发时剥离 encrypted_content。
+		// record the start of this round's reasoning in finalOutput: if this round becomes the last round,
+		// reasoning from earlier rounds before this point has encrypted_content stripped when sent.
 		st.lastRoundReasoningStart = len(st.finalOutput)
 		outcome := st.readRound(resp.Body, roundNo, f)
 		resp.Body.Close()
@@ -528,8 +528,8 @@ func runContinueThinkingFold(firstResp *http.Response, f *continueFold) continue
 		statusCode := http.StatusOK
 		if outcome.terminal != nil {
 			if t := gjson.GetBytes(outcome.terminal, "type").String(); t == "response.failed" || t == "response.incomplete" {
-				// 非 completed 终态一定是最终轮（fold 只在 completed+命中指纹时续想），
-				// 这里记录真实状态而非一律 200，便于统计区分。
+				// a non-completed terminal state must be the final round (fold only continues on completed + fingerprint match),
+				// so record the real status rather than always 200, to make statistics distinguishable.
 				statusCode = 0
 			}
 		}
@@ -555,9 +555,9 @@ func runContinueThinkingFold(firstResp *http.Response, f *continueFold) continue
 		}
 
 		if outcome.terminal == nil {
-			// 上游 EOF 无终态。第 1 轮且从未产出任何输出（含缓冲）时保持静默，让上层的
-			// 透明断流重试接管；否则冲刷已缓冲内容 + 合成 incomplete 给客户端一个终态，
-			// 避免缓冲内容被丢弃或客户端收到空的 200 流。
+			// upstream EOF with no terminal. On round 1 with no output at all (including buffered), stay silent so that the upper layer's
+			// transparent stream-break retry takes over; otherwise flush the buffered content and synthesize incomplete to give the client a terminal state,
+			// so buffered content is not discarded and the client does not get an empty 200 stream.
 			result.StopReason = continueStopUpstreamEOF
 			if roundNo == 1 && len(st.finalOutput) == 0 && !st.flushedAny && len(outcome.buffered) == 0 {
 				return result
@@ -578,8 +578,8 @@ func runContinueThinkingFold(firstResp *http.Response, f *continueFold) continue
 		)
 
 		if !doContinue {
-			// 第 1 轮直接 failed 且从未向客户端写过折叠输出：原样透传 terminal，
-			// 保证现有的失败抑制 / 换号 / cooldown 语义字节级不变。
+			// round 1 failed directly and never wrote fold output to the client: pass the terminal through unchanged,
+			// so that the existing failure suppression / account switching / cooldown semantics stay byte-for-byte identical.
 			if roundNo == 1 && len(st.finalOutput) == 0 && !st.flushedAny && len(outcome.buffered) == 0 &&
 				gjson.GetBytes(outcome.terminal, "type").String() != "response.completed" {
 				f.forward(outcome.terminal)
@@ -595,7 +595,7 @@ func runContinueThinkingFold(firstResp *http.Response, f *continueFold) continue
 			return result
 		}
 
-		// 续想：本轮 reasoning 剥 id 后连同 marker 追加到回放尾巴。
+		// continue thinking: this round's reasoning, with id stripped, is appended to the replay tail along with the marker.
 		for _, ritem := range outcome.roundReasoning {
 			if stripped, ok := stripResponseItemID(ritem); ok {
 				st.replayTail = append(st.replayTail, stripped)

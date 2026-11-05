@@ -10,7 +10,7 @@ import (
 	"github.com/gorilla/websocket"
 )
 
-// TestDownstreamWSKeepaliveIntervalFromEnv 验证 WebSocket Ping 周期的配置解析。
+// TestDownstreamWSKeepaliveIntervalFromEnv verifies parsing of the WebSocket Ping period configuration.
 func TestDownstreamWSKeepaliveIntervalFromEnv(t *testing.T) {
 	const fallback = defaultDownstreamWSKeepaliveInterval
 	for _, test := range []struct {
@@ -30,7 +30,7 @@ func TestDownstreamWSKeepaliveIntervalFromEnv(t *testing.T) {
 	}
 }
 
-// TestStartDownstreamWSKeepaliveSendsPing 验证下游连接能收到空 Ping 控制帧。
+// TestStartDownstreamWSKeepaliveSendsPing verifies that the downstream connection receives an empty Ping control frame.
 func TestStartDownstreamWSKeepaliveSendsPing(t *testing.T) {
 	serverConn, clientConn, cleanup := newDownstreamWSPair(t)
 	defer cleanup()
@@ -70,7 +70,7 @@ func TestStartDownstreamWSKeepaliveSendsPing(t *testing.T) {
 	}
 }
 
-// TestStartDownstreamWSKeepaliveCancelsOnPingFailure 验证 Ping 写入失败会取消请求上下文。
+// TestStartDownstreamWSKeepaliveCancelsOnPingFailure verifies that a Ping write failure cancels the request context.
 func TestStartDownstreamWSKeepaliveCancelsOnPingFailure(t *testing.T) {
 	serverConn, _, cleanup := newDownstreamWSPair(t)
 	defer cleanup()
@@ -90,7 +90,7 @@ func TestStartDownstreamWSKeepaliveCancelsOnPingFailure(t *testing.T) {
 	}
 }
 
-// newDownstreamWSPair 创建用于下游 WebSocket 保活测试的本地连接对。
+// newDownstreamWSPair creates a local connection pair for the downstream WebSocket keepalive tests.
 func newDownstreamWSPair(t *testing.T) (*websocket.Conn, *websocket.Conn, func()) {
 	t.Helper()
 	upgrader := websocket.Upgrader{CheckOrigin: func(*http.Request) bool { return true }}

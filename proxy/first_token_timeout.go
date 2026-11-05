@@ -63,11 +63,11 @@ func (g *firstTokenTimeoutGuard) MarkFirstToken() {
 	g.Stop()
 }
 
-// MarkProgress 在首个非生命周期帧（response.created / response.in_progress 之外的
-// 任意帧）到来时解除首字看门狗。任何这样的帧都证明上游已经开始流式产出真实响应，
-// 因此一个先输出结构/推理帧、内容 token 延迟到来的长推理请求不应被首字超时中断
-// （issue #207）。当上游在超时内什么都不发（或只发 created/in_progress）时看门狗
-// 仍会触发，这与 v2.2.7 之前"首个响应迹象"的语义一致。
+// MarkProgress clears the first-token watchdog when the first non-lifecycle frame (any frame other than response.created / response.in_progress)
+// arrives. Any such frame proves that the upstream has started streaming a real response,
+// so a long reasoning request that emits structure/reasoning frames first and delivers its content tokens late should not be cut off by the first-token timeout
+// (issue #207). When the upstream sends nothing within the timeout (or only created/in_progress), the watchdog
+// still fires, which matches the "first response sign" semantics before v2.2.7.
 func (g *firstTokenTimeoutGuard) MarkProgress(eventType string) {
 	if g == nil || isPreContentLifecycleEvent(eventType) {
 		return
@@ -83,7 +83,7 @@ func firstTokenTimeoutOutcome(timeout time.Duration) streamOutcome {
 	return streamOutcome{
 		logStatusCode:  logStatusUpstreamStreamBreak,
 		failureKind:    "timeout",
-		failureMessage: fmt.Sprintf("上游首字超时：%s 内未收到首个响应事件", timeout.Round(time.Millisecond)),
+		failureMessage: fmt.Sprintf("upstream first token timeout: no first response event received within %s", timeout.Round(time.Millisecond)),
 		penalize:       true,
 	}
 }
@@ -92,12 +92,12 @@ func firstTokenTimeoutError(timeout time.Duration) error {
 	return ErrUpstreamTimeout(fmt.Errorf("first token timeout after %s", timeout.Round(time.Millisecond)))
 }
 
-// firstTokenTimeoutForRequest 返回本轮请求应使用的首字超时。上下文压缩轮
-// （请求体含 compaction_trigger）豁免看门狗：压缩需要先读入整段历史上下文
-// 才吐出首个 compaction 输出项，首帧天然可能超过用户配置的较短阈值（如 30s），
-// 而这一轮的 encrypted_content 绑定原账号，超时换号重试大概率继续失败并耗尽
-// attempt，导致会话彻底废掉（issue #381）。故对压缩轮返回 0（关闭看门狗），
-// 让其思考时间不受限；异常挂死仍由客户端自身超时兜底。
+// firstTokenTimeoutForRequest returns the first-token timeout to use for this request. Context compaction turns
+// (request body contains compaction_trigger) are exempt from the watchdog: compaction must first read the entire history context
+// before it emits its first compaction output item, so the first frame can naturally exceed a shorter user-configured threshold (such as 30s),
+// and the encrypted_content of this turn is bound to the original account, so a timeout retry on another account will most likely fail again and exhaust the
+// attempt budget, which ruins the session completely (issue #381). So compaction turns return 0 (the watchdog is off),
+// so their thinking time is unlimited; abnormal hangs are still covered by the client's own timeout.
 func firstTokenTimeoutForRequest(base time.Duration, isCompactionTrigger bool) time.Duration {
 	if isCompactionTrigger {
 		return 0

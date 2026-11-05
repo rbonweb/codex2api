@@ -20,13 +20,13 @@ func TestOverloadBreakerWindowCountsAndPrunes(t *testing.T) {
 		t.Fatalf("window counts = (%d,%d), want (5,1)", total, over)
 	}
 
-	// 窗口外的旧桶要被剔除：6 分钟后只剩最新一条。
+	// Old buckets outside the window must be dropped: after 6 minutes only the newest one remains.
 	total, over = b.record(1, true, 5, base.Add(8*time.Minute))
 	if total != 1 || over != 1 {
 		t.Fatalf("pruned counts = (%d,%d), want (1,1)", total, over)
 	}
 
-	// 账号维度隔离。
+	// Account-level isolation.
 	total, over = b.record(2, false, 5, base.Add(8*time.Minute))
 	if total != 1 || over != 0 {
 		t.Fatalf("isolated counts = (%d,%d), want (1,0)", total, over)
@@ -40,22 +40,22 @@ func TestOverloadBreakerWindowCountsAndPrunes(t *testing.T) {
 }
 
 func TestShouldTripOverloadHonorsMinSamplesAndRatio(t *testing.T) {
-	// 样本不足：1/1=100% 也不触发。
+	// Too few samples: 1/1 = 100% does not trip either.
 	if shouldTripOverload(1, 1, 20) {
 		t.Fatal("should not trip below min samples")
 	}
 	if shouldTripOverload(4, 4, 20) {
 		t.Fatal("should not trip below min samples (4)")
 	}
-	// 达样本 + 达比例：5 次里 1 次 = 20% ≥ 20%。
+	// Enough samples and enough ratio: 1 out of 5 = 20% ≥ 20%.
 	if !shouldTripOverload(5, 1, 20) {
 		t.Fatal("should trip at exactly the threshold")
 	}
-	// 比例不足。
+	// Ratio not met.
 	if shouldTripOverload(10, 1, 20) {
 		t.Fatal("10% should not trip a 20% threshold")
 	}
-	// 无过载错误永不触发。
+	// Without overload errors it never trips.
 	if shouldTripOverload(100, 0, 1) {
 		t.Fatal("zero overloads must never trip")
 	}
@@ -87,7 +87,7 @@ func TestNoteOverloadOutcomePausesAccountAndResetsWindow(t *testing.T) {
 		ErrorMessage: "server_is_overloaded · service_unavailable_error · Our servers are currently overloaded.",
 	}
 
-	// 4 成功 + 1 过载 = 5 样本、20% —— 恰好触发。
+	// 4 successes + 1 overload = 5 samples, 20% — trips exactly at the threshold.
 	for i := 0; i < 4; i++ {
 		handler.noteOverloadOutcome(okLog)
 	}
@@ -102,7 +102,7 @@ func TestNoteOverloadOutcomePausesAccountAndResetsWindow(t *testing.T) {
 		t.Fatalf("cooldown reason = %q, want %q", reason, overloadPauseReason)
 	}
 
-	// Grok 渠道与未启用开关都不参与统计。
+	// The Grok channel and the switch being off are both excluded from counting.
 	globalOverloadBreaker.reset(9101)
 	grokLog := &database.UsageLogInput{AccountID: 9101, StatusCode: 503, Channel: database.UpstreamChannelGrok,
 		ErrorMessage: "server_is_overloaded"}

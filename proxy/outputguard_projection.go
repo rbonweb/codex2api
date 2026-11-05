@@ -33,7 +33,7 @@ type Observation struct {
 	Kind          outputguard.ChannelKind
 	Action        ObservationAction
 	Payload       []byte
-	TerminalStage string // 严格限制为 3 种合法语义终态阶段: "arguments.done", "item.done", "response.completed"，其余普通帧置空
+	TerminalStage string // strictly limited to 3 legal semantic terminal stages: "arguments.done", "item.done", "response.completed"; ordinary frames leave it empty
 }
 
 type ProtocolProjector interface {
@@ -95,10 +95,10 @@ func (p *ResponsesProjector) Project(eventType string, data []byte) ([]Observati
 		}
 		cid := itemID + ":thinking:" + strconv.FormatInt(cIdx, 10)
 		aliasID := itemID + ".thinking"
-		// reasoning_summary_text.delta 的 part 分隔符是 summary_index（不携带 content_index），
-		// 必须按 summary_index 独立分通道，且 alias 也按 part 隔离：共享 alias 会在
-		// RequestGuard.resolveChannelLocked 中把后续 part 合并回首通道，使独立 part 的
-		// 字节/重复检查失去意义。
+		// The part separator for reasoning_summary_text.delta is summary_index (it does not carry content_index),
+		// so it must be channelized independently by summary_index, and alias is also isolated per part: a shared alias would, in
+		// RequestGuard.resolveChannelLocked would merge later parts back into the first channel, so the byte and repetition checks of independent parts
+		// would lose their meaning.
 		if t == "response.reasoning_summary_text.delta" {
 			sIdx := strconv.FormatInt(res[4].Int(), 10)
 			cid = itemID + ":thinking:summary:" + sIdx
@@ -269,7 +269,7 @@ func (p *ResponsesProjector) Project(eventType string, data []byte) ([]Observati
 		if !parsed.Exists() {
 			parsed = gjson.ParseBytes(data)
 		}
-		// SSE 终态事件的 output 通常内嵌于 response；非流式完整 body 则位于顶层。
+		// In SSE terminal events, output is usually embedded in response; a non-streaming full body has it at the top level.
 		outputs := parsed.Get("response.output")
 		if !outputs.Exists() {
 			outputs = parsed.Get("output")
@@ -279,7 +279,7 @@ func (p *ResponsesProjector) Project(eventType string, data []byte) ([]Observati
 		}
 
 	default:
-		// 兼容非流式完整响应 JSON（completed 与 incomplete 均为语义终态）
+		// Compatible with non-streaming full response JSON (completed and incomplete are both semantic terminal states)
 		if !parsed.Exists() {
 			parsed = gjson.ParseBytes(data)
 		}
@@ -394,7 +394,7 @@ func (p *ChatProjector) Project(eventType string, data []byte) ([]Observation, e
 		choiceIdx := choice.Get("index").Int()
 		finishReason := choice.Get("finish_reason").String()
 
-		// 流式 delta
+		// Streaming delta
 		delta := choice.Get("delta")
 		if delta.Exists() {
 			if content := delta.Get("content").String(); content != "" {
@@ -418,7 +418,7 @@ func (p *ChatProjector) Project(eventType string, data []byte) ([]Observation, e
 				})
 			}
 
-			// 标准 tool_calls
+			// Standard tool_calls
 			toolCalls := delta.Get("tool_calls").Array()
 			for _, tc := range toolCalls {
 				toolIdx := int(tc.Get("index").Int())
@@ -443,7 +443,7 @@ func (p *ChatProjector) Project(eventType string, data []byte) ([]Observation, e
 				}
 			}
 
-			// 兼容 legacy delta.function_call (Spec §4.1)
+			// Compatible with legacy delta.function_call (Spec §4.1)
 			if fnCall := delta.Get("function_call"); fnCall.Exists() {
 				args := fnCall.Get("arguments").String()
 				channelID := fmt.Sprintf("choice_%d.function_call", choiceIdx)
@@ -458,7 +458,7 @@ func (p *ChatProjector) Project(eventType string, data []byte) ([]Observation, e
 			}
 		}
 
-		// 非流式 message
+		// Non-streaming message
 		msg := choice.Get("message")
 		if msg.Exists() {
 			if content := msg.Get("content").String(); content != "" {
@@ -484,7 +484,7 @@ func (p *ChatProjector) Project(eventType string, data []byte) ([]Observation, e
 				})
 			}
 
-			// 标准 tool_calls
+			// Standard tool_calls
 			toolCalls := msg.Get("tool_calls").Array()
 			for idx, tc := range toolCalls {
 				callID := tc.Get("id").String()
@@ -500,7 +500,7 @@ func (p *ChatProjector) Project(eventType string, data []byte) ([]Observation, e
 				})
 			}
 
-			// 兼容 legacy message.function_call (Spec §4.1)
+			// Compatible with legacy message.function_call (Spec §4.1)
 			if fnCall := msg.Get("function_call"); fnCall.Exists() {
 				args := fnCall.Get("arguments").String()
 				channelID := fmt.Sprintf("choice_%d.function_call", choiceIdx)
@@ -514,7 +514,7 @@ func (p *ChatProjector) Project(eventType string, data []byte) ([]Observation, e
 			}
 		}
 
-		// finish_reason 尾检触发 ActionEnd
+		// The finish_reason tail check triggers ActionEnd
 		if finishReason != "" {
 			observations = append(observations, Observation{
 				ChannelID: fmt.Sprintf("choice_%d.text", choiceIdx),
@@ -547,17 +547,17 @@ func (p *ChatProjector) Project(eventType string, data []byte) ([]Observation, e
 }
 
 // -------------------------------------------------------------
-// 3. ObserveEvent Dispatcher (单上游事件严格计 1 次，流水线批调度)
+// 3. ObserveEvent Dispatcher (each upstream event counts exactly once; pipelined batch dispatch)
 // -------------------------------------------------------------
 
 func ObserveEvent(guard *outputguard.RequestGuard, projector ProtocolProjector, eventType string, data []byte) error {
-	// 心跳/注释帧直接放行，不计入业务事件预算
+	// Heartbeat and comment frames pass straight through and are not counted against the business event budget
 	trimmed := bytes.TrimSpace(data)
 	if bytes.HasPrefix(trimmed, []byte(":")) || eventType == "ping" {
 		return nil
 	}
 
-	// 步骤 1: 严格每上游业务事件计 1 次 requestEvents（即使是 control/unknown 帧）
+	// Step 1: each upstream business event counts exactly 1 against requestEvents (even control and unknown frames)
 	if err := guard.RecordEvent(); err != nil {
 		return err
 	}
@@ -570,8 +570,8 @@ func ObserveEvent(guard *outputguard.RequestGuard, projector ProtocolProjector, 
 		return nil
 	}
 
-	// 依次将 observations 推入 guard，执行判定流水线
-	// 单 event 所有 obs 检查通过再允许 consumer，一 obs 命中整 event 不可见
+	// Push the observations into the guard one by one and run the decision pipeline
+	// Only when all obs of a single event pass is the consumer allowed; if one obs trips, the whole event is invisible
 	for _, o := range obs {
 		switch o.Action {
 		case ActionAppend:
@@ -583,8 +583,8 @@ func ObserveEvent(guard *outputguard.RequestGuard, projector ProtocolProjector, 
 				return err
 			}
 		case ActionEnd:
-			// ActionEnd 目标解析：当 Observation 携带 AliasID（如 tool call_id）时优先使用；
-			// 依赖 RequestGuard.aliasMap 内部双向索引反查至对应 primary channel，保持解耦契约。
+			// ActionEnd target resolution: when an Observation carries an AliasID (such as a tool call_id), it is preferred;
+			// it relies on the bidirectional index inside RequestGuard.aliasMap to look up the primary channel, keeping the contract decoupled.
 			target := o.ChannelID
 			if o.AliasID != "" {
 				target = o.AliasID

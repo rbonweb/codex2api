@@ -112,7 +112,7 @@ func TestSimplifyConstUnionSchemas_NumericAndMixedConstants(t *testing.T) {
 	if got := gjson.GetBytes(encoded, "properties.n.enum").Raw; got != `[1,2.5,true,null,"s",-3,7,8]` {
 		t.Fatalf("enum = %s", got)
 	}
-	// 1 与 1.0 语义相同，视为重复。
+	// 1 and 1.0 have the same meaning and are treated as duplicates.
 	dup := `{"properties":{"n":{"oneOf":[{"const":1},{"const":1.0},{"const":3},{"const":4},{"const":5},{"const":6},{"const":7},{"const":8}]}}}`
 	var dupSchema map[string]any
 	_ = json.Unmarshal([]byte(dup), &dupSchema)

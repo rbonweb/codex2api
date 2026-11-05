@@ -35,7 +35,7 @@ func codexPersonaVersionSource(persona CodexUserAgentPersona, cfg CodexUserAgent
 	return persona
 }
 
-// CodexClientVersionCacheView 补全尚未同步的目标，展示其内置回退配对。
+// CodexClientVersionCacheView fills in targets that are not synced yet and shows their built-in fallback pairing.
 func CodexClientVersionCacheView() []CodexClientVersionTarget {
 	var view []CodexClientVersionTarget
 	for _, kind := range []CodexClientKind{CodexClientKindDesktop, CodexClientKindVSCode} {

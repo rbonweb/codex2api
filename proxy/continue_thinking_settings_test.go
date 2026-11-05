@@ -10,10 +10,10 @@ func TestCodexContinueThinkingSettingsFromRuntime(t *testing.T) {
 	previous := CurrentRuntimeSettings()
 	t.Cleanup(func() { ApplyRuntimeSettings(previous) })
 
-	// 默认：关闭，轮数为默认 8。
+	// default: disabled, round count is 8 by default.
 	ApplyRuntimeSettings(DefaultRuntimeSettings())
 	if enabled, rounds := codexContinueThinkingSettings(); enabled || rounds != 8 {
-		t.Fatalf("默认应关闭且轮数 8, got enabled=%v rounds=%d", enabled, rounds)
+		t.Fatalf("should be disabled by default with 8 rounds, got enabled=%v rounds=%d", enabled, rounds)
 	}
 
 	settings := DefaultRuntimeSettings()
@@ -21,7 +21,7 @@ func TestCodexContinueThinkingSettingsFromRuntime(t *testing.T) {
 	settings.CodexContinueMaxRounds = 5
 	ApplyRuntimeSettings(settings)
 	if enabled, rounds := codexContinueThinkingSettings(); !enabled || rounds != 5 {
-		t.Fatalf("开启后 got enabled=%v rounds=%d, want true/5", enabled, rounds)
+		t.Fatalf("after enabling: got enabled=%v rounds=%d, want true/5", enabled, rounds)
 	}
 }
 
@@ -33,12 +33,12 @@ func TestCodexContinueMaxRoundsClamp(t *testing.T) {
 		in   int
 		want int
 	}{
-		{0, 8},   // 非正 → 默认
-		{-3, 8},  // 负 → 默认
-		{1, 1},   // 下界
-		{8, 8},   // 常规
-		{32, 32}, // 上界
-		{99, 32}, // 超上界 → 截断
+		{0, 8},   // non-positive → default
+		{-3, 8},  // negative → default
+		{1, 1},   // lower bound
+		{8, 8},   // regular
+		{32, 32}, // upper bound
+		{99, 32}, // above upper bound → clamped
 	}
 	for _, c := range cases {
 		s := DefaultRuntimeSettings()
@@ -60,12 +60,12 @@ func TestApplyRuntimeSettingsFromSystemContinueThinking(t *testing.T) {
 		CodexWSSilentMaxRetries:      2,
 	})
 	if !next.CodexContinueThinking || next.CodexContinueMaxRounds != 12 {
-		t.Fatalf("SystemSettings → RuntimeSettings 映射错误: %+v", next)
+		t.Fatalf("SystemSettings → RuntimeSettings mapping is wrong: %+v", next)
 	}
-	// nil settings 回落默认值（关闭 + 8 轮）。
+	// nil settings fall back to the defaults (disabled + 8 rounds).
 	def := ApplyRuntimeSettingsFromSystem(nil)
 	if def.CodexContinueThinking || def.CodexContinueMaxRounds != 8 {
-		t.Fatalf("nil settings 应回落默认: %+v", def)
+		t.Fatalf("nil settings should fall back to the defaults: %+v", def)
 	}
 }
 

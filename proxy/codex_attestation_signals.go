@@ -61,7 +61,7 @@ func codexAttestationLocale(timezone string) string {
 }
 
 func codexAttestationDisplayForAccount(accountID int64) codexAttestationDisplay {
-	// 保留已有种子和档位映射，升级不会改变 Windows 账号画像。
+	// Keep existing seeds and tier mappings; the upgrade does not change the Windows account profile.
 	seed := fmt.Sprintf("codex2api:windows-desktop-display:v1:%d", accountID)
 	digest := sha256.Sum256([]byte(seed))
 	slot := binary.BigEndian.Uint64(digest[:8]) % attestationDisplaySlots

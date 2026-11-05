@@ -141,8 +141,8 @@ func TestExpandPreviousResponseUsesCachedCodexNativeToolContext(t *testing.T) {
 	}
 }
 
-// shell_call / apply_patch_call 是上游新版工具调用项，需与 function_call 一样
-// 参与 call_id 续链缓存，否则 store=false 回放会丢上下文。
+// shell_call / apply_patch_call are newer upstream tool call items; like function_call they must
+// participate in the call_id continuation cache, otherwise store=false replay would lose context.
 func TestExpandPreviousResponseCachesShellAndApplyPatchCalls(t *testing.T) {
 	resetResponseCacheForTest()
 
@@ -210,7 +210,7 @@ func TestExpandPreviousResponseSkipsInjectionWhenInputHasFunctionCall(t *testing
 		[]byte(`{"type":"response.completed","response":{"id":"resp_dup","output":[{"type":"function_call","call_id":"call_abc","name":"get_weather","arguments":"{}"}]}}`),
 	)
 
-	// 客户端续链时同时自带 function_call 和 function_call_output，再注入缓存里的 function_call 会让 call_abc 重复。
+	// When the client chains with both function_call and function_call_output, re-injecting the function_call from the cache would duplicate call_abc.
 	body := []byte(`{"model":"gpt-5.4","previous_response_id":"resp_dup","input":[` +
 		`{"type":"function_call","call_id":"call_abc","name":"get_weather","arguments":"{}"},` +
 		`{"type":"function_call_output","call_id":"call_abc","output":"sunny"}` +
@@ -310,9 +310,9 @@ func TestCacheCompletedResponseSkipsReasoningAndMessageOutputItems(t *testing.T)
 	}
 }
 
-// TestGetResponseCacheIsolatesOwners 验证 previous_response_id 缓存按 owner(下游
-// API Key)隔离：用户B拿着用户A的 response_id 查询必须 miss，杜绝跨用户注入他人
-// 对话历史（"用户2串到用户1的上下文"类泄露）。
+// TestGetResponseCacheIsolatesOwners verifies that the previous_response_id cache isolates by owner (downstream
+// API Key): user B querying with user A's response_id must miss, preventing injection of others'
+// conversation history (the "user 2 leaks into user 1's context" class of leak).
 func TestGetResponseCacheIsolatesOwners(t *testing.T) {
 	resetResponseCacheForTest()
 
@@ -332,8 +332,8 @@ func TestGetResponseCacheIsolatesOwners(t *testing.T) {
 	}
 }
 
-// TestExpandPreviousResponseCrossOwnerMiss 验证跨 owner 的 previous_response_id
-// 展开按缓存未命中处理，body 原样透传（不注入别人的历史）。
+// TestExpandPreviousResponseCrossOwnerMiss verifies that a cross-owner previous_response_id
+// expansion is treated as a cache miss, and the body is passed through as-is (no one else's history is injected).
 func TestExpandPreviousResponseCrossOwnerMiss(t *testing.T) {
 	resetResponseCacheForTest()
 

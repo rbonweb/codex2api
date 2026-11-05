@@ -16,52 +16,52 @@ import (
 	"github.com/codex2api/auth"
 )
 
-// 推荐邀请端点。上游已把 wham/ 前缀下的旧路径下线（GET 返回 404 Not Found），
-// 现在的三个端点都挂在 /backend-api/referrals/invite 下：
-//   - POST  ""            发送邀请，必填 program_id / entrypoint / emails
-//   - GET   /eligibility  资格门控 + 剩余配额 + 官方文案
-//   - GET   /tracking     已发邀请列表与兑换状态
+// Referral invite endpoints. The upstream has taken the old paths under the wham/ prefix offline (GET returns 404 Not Found),
+// the three endpoints now sit under /backend-api/referrals/invite:
+//   - POST  ""            send an invite; required: program_id / entrypoint / emails
+//   - GET   /eligibility  eligibility gate + remaining quota + official copy
+//   - GET   /tracking     list of sent invites and redemption status
 const (
 	codexInviteBaseURL = "https://chatgpt.com/backend-api/referrals/invite"
 
-	// CodexInviteURL 是发送邀请的端点。
+	// CodexInviteURL is the endpoint for sending invites.
 	CodexInviteURL = codexInviteBaseURL
-	// CodexInviteEligibilityURL 是邀请资格与配额查询端点。
+	// CodexInviteEligibilityURL is the endpoint for querying invite eligibility and quota.
 	CodexInviteEligibilityURL = codexInviteBaseURL + "/eligibility"
-	// CodexInviteTrackingURL 是已发邀请跟踪端点。
+	// CodexInviteTrackingURL is the endpoint for tracking sent invites.
 	CodexInviteTrackingURL = codexInviteBaseURL + "/tracking"
 )
 
-// 邀请计划标识。旧版单字段 referral_key 已被上游拆成 program_id + entrypoint 两个字段。
+// Invite program identifiers. The upstream split the old single referral_key field into two fields: program_id and entrypoint.
 const (
-	// DefaultProgramID 是 Codex 消费者版推荐计划。
+	// DefaultProgramID is the referral program for the Codex consumer edition.
 	DefaultProgramID = "codex_referral_consumer"
-	// DefaultEntrypoint 是常驻邀请入口（对应旧的 persistent invite）。
+	// DefaultEntrypoint is the standing invite entry point (corresponds to the old persistent invite).
 	DefaultEntrypoint = "persistent"
 )
 
-// 跟踪列表默认查询窗口与条数，与官方客户端一致。
+// Default query window and item count for the tracking list, matching the official client.
 const (
 	defaultTrackingPeriod = "past_90_days"
 	defaultTrackingLimit  = 100
 )
 
-// 邀请上游使用浏览器型 header（与 codex_cli_rs 探针不同），更贴近官方网页端调用。
-// 实测无需携带任何 Cookie（含 _devicecheck）即可通过上游校验。
+// The invite upstream uses browser-style headers (unlike the codex_cli_rs probe), which is closer to calls from the official web client.
+// Testing shows the upstream accepts requests without any cookie (including _devicecheck).
 const (
 	inviteOriginator = "Codex Desktop"
 	inviteLanguage   = "zh-CN"
 	inviteUserAgent  = "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/150.0.0.0 Safari/537.36"
 )
 
-// 测试替换用的端点覆盖。生产代码不要赋值。
+// Endpoint overrides for tests. Production code must not assign to these.
 var (
 	codexInviteURLForTest            = ""
 	codexInviteEligibilityURLForTest = ""
 	codexInviteTrackingURLForTest    = ""
 )
 
-// CodexInviteResult 是一次邀请调用的结构化结果。
+// CodexInviteResult is the structured result of one invite call.
 type CodexInviteResult struct {
 	OK         bool              `json:"ok"`
 	StatusCode int               `json:"status_code"`
@@ -70,27 +70,27 @@ type CodexInviteResult struct {
 	Entrypoint string            `json:"entrypoint"`
 	Emails     []string          `json:"emails"`
 	Invites    []CodexInviteItem `json:"invites,omitempty"`
-	// UpstreamMessage 是上游 detail 里的人类可读原因，FailedEmails 是被拒的收件人。
-	// 例如「此人已收到推荐邀请」——这与账号资格无关，只是该收件人不合规，
-	// 不能笼统按 403 报成「账号无邀请资格」。
+	// UpstreamMessage is the human-readable reason from the upstream detail, and FailedEmails are the recipients that were rejected.
+	// For example, "this person has already received a referral invite". This has nothing to do with account eligibility; it only means this recipient is not allowed,
+	// so it must not be reported as "account is not eligible for invites" just because of a 403.
 	UpstreamMessage string   `json:"upstream_message,omitempty"`
 	FailedEmails    []string `json:"failed_emails,omitempty"`
-	// Challenged 为真表示被 Cloudflare 挑战拦下，不是上游的业务结论——调用方应提示重试，
-	// 不能按 StatusCode 解读成「无资格」。
+	// Challenged is true when Cloudflare intercepted the request with a challenge. It is not a business decision from the upstream, so callers should ask the user to retry,
+	// and must not read it from StatusCode as "not eligible".
 	Challenged  bool            `json:"challenged,omitempty"`
 	Upstream    json.RawMessage `json:"upstream,omitempty"`
 	UpstreamRaw string          `json:"upstream_raw,omitempty"`
 }
 
-// CodexInviteItem 是上游返回的单条邀请记录。
+// CodexInviteItem is one invite record returned by the upstream.
 type CodexInviteItem struct {
 	ReferralID string `json:"referral_id,omitempty"`
 	Email      string `json:"email,omitempty"`
 	InviteURL  string `json:"invite_url,omitempty"`
 }
 
-// CodexInviteGrant 是一条奖励条目。同一次邀请通常给邀请人和受邀人各一条。
-// grant_type 目前实测为 personal_credits；rate_limit_* 字段在限流重置类计划下才有值。
+// CodexInviteGrant is one reward entry. One invite usually produces one entry each for the inviter and the invitee.
+// grant_type is currently observed to be personal_credits; the rate_limit_* fields only have values under rate-limit-reset plans.
 type CodexInviteGrant struct {
 	Recipient string  `json:"recipient,omitempty"`
 	GrantType string  `json:"grant_type,omitempty"`
@@ -98,8 +98,8 @@ type CodexInviteGrant struct {
 	RewardID  string  `json:"reward_id,omitempty"`
 }
 
-// CodexInviteTimeFrameRule 是一条配额规则。capacity_type 区分两种独立上限：
-// send 是发送次数上限，reward 是能拿到奖励的次数上限（后者通常远小于前者）。
+// CodexInviteTimeFrameRule is one quota rule. capacity_type distinguishes two independent limits:
+// send is the cap on the number of sends, and reward is the cap on the number of invites that can earn a reward (the latter is usually much smaller than the former).
 type CodexInviteTimeFrameRule struct {
 	InvitesSent  int    `json:"invites_sent"`
 	InvitesTotal int    `json:"invites_total"`
@@ -108,9 +108,9 @@ type CodexInviteTimeFrameRule struct {
 	CapacityType string `json:"capacity_type,omitempty"`
 }
 
-// CodexInviteEligibility 是邀请资格与配额查询结果。
-// RemainingSendCapacity / RemainingRewardCapacity 用指针区分「上游明确说 0」与
-// 「上游没给这个字段」——前者要拦住发送，后者只能放行。
+// CodexInviteEligibility is the result of querying invite eligibility and quota.
+// RemainingSendCapacity / RemainingRewardCapacity use pointers to tell apart "the upstream explicitly says 0" and
+// "the upstream did not send this field". The former must block sending; the latter can only allow it.
 type CodexInviteEligibility struct {
 	OK         bool   `json:"ok"`
 	StatusCode int    `json:"status_code"`
@@ -134,15 +134,15 @@ type CodexInviteEligibility struct {
 
 	RequiresExplicitConfirmation bool `json:"requires_explicit_confirmation,omitempty"`
 
-	// UpstreamMessage 见 CodexInviteResult.UpstreamMessage。
+	// UpstreamMessage: see CodexInviteResult.UpstreamMessage.
 	UpstreamMessage string `json:"upstream_message,omitempty"`
-	// Challenged 见 CodexInviteResult.Challenged。
+	// Challenged: see CodexInviteResult.Challenged.
 	Challenged  bool            `json:"challenged,omitempty"`
 	Upstream    json.RawMessage `json:"upstream,omitempty"`
 	UpstreamRaw string          `json:"upstream_raw,omitempty"`
 }
 
-// CodexInviteTrackingItem 是一条已发邀请记录。
+// CodexInviteTrackingItem is one sent-invite record.
 type CodexInviteTrackingItem struct {
 	ReferralID        string             `json:"referral_id,omitempty"`
 	Email             string             `json:"email,omitempty"`
@@ -155,7 +155,7 @@ type CodexInviteTrackingItem struct {
 	ExpiresAt         string             `json:"expires_at,omitempty"`
 }
 
-// CodexInviteTracking 是已发邀请列表查询结果。
+// CodexInviteTracking is the result of querying the sent-invite list.
 type CodexInviteTracking struct {
 	OK         bool   `json:"ok"`
 	StatusCode int    `json:"status_code"`
@@ -164,22 +164,22 @@ type CodexInviteTracking struct {
 	Items  []CodexInviteTrackingItem `json:"items"`
 	Cursor string                    `json:"cursor,omitempty"`
 
-	// UpstreamMessage 见 CodexInviteResult.UpstreamMessage。
+	// UpstreamMessage: see CodexInviteResult.UpstreamMessage.
 	UpstreamMessage string `json:"upstream_message,omitempty"`
-	// Challenged 见 CodexInviteResult.Challenged。
+	// Challenged: see CodexInviteResult.Challenged.
 	Challenged  bool            `json:"challenged,omitempty"`
 	Upstream    json.RawMessage `json:"upstream,omitempty"`
 	UpstreamRaw string          `json:"upstream_raw,omitempty"`
 }
 
-// parseInviteFailureDetail 解析上游失败响应里的 detail 字段。
+// parseInviteFailureDetail parses the detail field in an upstream failure response.
 //
-// 这个字段是多态的，两种形态都实测到过：
-//   - 字符串：{"detail":"Referral invites are not available for your plan"}  账号级无资格
-//   - 对象：  {"detail":{"message":"此人已收到推荐邀请","failed_emails":["x@y"]}}  收件人级被拒
+// This field is polymorphic; both forms have been observed in testing:
+//   - string: {"detail":"Referral invites are not available for your plan"}  account-level ineligibility
+//   - object: {"detail":{"message":"this person has already received a referral invite","failed_emails":["x@y"]}}  recipient-level rejection
 //
-// 后者与账号资格无关，必须把原因和失败邮箱透出来，否则调用方只看到一个 403，
-// 会把「这个收件人不合规」误报成「这个账号不能发邀请」。
+// The latter has nothing to do with account eligibility. The reason and the failed emails must be surfaced, otherwise callers see only a 403,
+// and would report "this recipient is not allowed" as "this account cannot send invites".
 func parseInviteFailureDetail(body []byte) (string, []string) {
 	var envelope struct {
 		Detail json.RawMessage `json:"detail"`
@@ -201,7 +201,7 @@ func parseInviteFailureDetail(body []byte) (string, []string) {
 	return "", nil
 }
 
-// normalizeInviteProgram 补齐空的计划标识为默认值。
+// normalizeInviteProgram fills empty program identifiers with the defaults.
 func normalizeInviteProgram(programID, entrypoint string) (string, string) {
 	if strings.TrimSpace(programID) == "" {
 		programID = DefaultProgramID
@@ -212,14 +212,14 @@ func normalizeInviteProgram(programID, entrypoint string) (string, string) {
 	return programID, entrypoint
 }
 
-// NormalizeInviteProgram 是 normalizeInviteProgram 的导出版本，供调用方在发起
-// 请求前先算出实际生效的计划标识——缓存键必须按归一化后的值拼，否则「空参数」
-// 与「显式传默认值」会各存一份内容相同的条目。
+// NormalizeInviteProgram is the exported version of normalizeInviteProgram, for callers to use before sending a
+// request to compute the program identifier that actually applies. Cache keys must be built from the normalized value, otherwise "empty parameter"
+// and "explicitly passing the default" each store a separate entry with the same content.
 func NormalizeInviteProgram(programID, entrypoint string) (string, string) {
 	return normalizeInviteProgram(programID, entrypoint)
 }
 
-// normalizeInviteTracking 补齐跟踪查询的窗口与条数为官方客户端默认值。
+// normalizeInviteTracking fills the tracking query's window and count with the official client's defaults.
 func normalizeInviteTracking(period string, limit int) (string, int) {
 	if strings.TrimSpace(period) == "" {
 		period = defaultTrackingPeriod
@@ -230,13 +230,13 @@ func normalizeInviteTracking(period string, limit int) (string, int) {
 	return period, limit
 }
 
-// NormalizeInviteTracking 是 normalizeInviteTracking 的导出版本。理由同
-// NormalizeInviteProgram：limit=0 与 limit=100 取回的是同一份数据，缓存键要一致。
+// NormalizeInviteTracking is the exported version of normalizeInviteTracking. The reason is the same as
+// NormalizeInviteProgram: limit=0 and limit=100 return the same data, so the cache keys must match.
 func NormalizeInviteTracking(period string, limit int) (string, int) {
 	return normalizeInviteTracking(period, limit)
 }
 
-// newInviteRequest 构造带邀请专用 header 的请求。body 为 nil 时发 GET。
+// newInviteRequest builds a request with the invite-specific headers. It sends GET when body is nil.
 func newInviteRequest(ctx context.Context, account *auth.Account, method, endpoint string, body []byte) (*http.Request, error) {
 	var reader io.Reader
 	if body != nil {
@@ -254,20 +254,20 @@ func newInviteRequest(ctx context.Context, account *auth.Account, method, endpoi
 	req.Header.Set("Oai-Language", inviteLanguage)
 	req.Header.Set("Originator", inviteOriginator)
 	req.Header.Set("User-Agent", inviteUserAgent)
-	// 邀请操作作用于自定义头覆盖后的空间,与实际流量指向一致。
+	// Invite operations act on the workspace after custom header overrides, matching where the real traffic points.
 	if accountID := account.EffectiveAccountID(); accountID != "" {
 		req.Header.Set("Chatgpt-Account-Id", accountID)
 	}
 	return req, nil
 }
 
-// inviteCookieJars 按账号缓存 cookie jar。这些端点走 Cloudflare 的 bot 管理，
-// 不带 cookie 的请求每次都是冷启动，实测约半数会被丢进 managed challenge（403 + 挑战页）。
-// 复用上一次成功响应里的 __cf_bm / _cfuvid 能显著降低被挑战概率。按账号隔离而非全局共用，
-// 避免把某个账号的会话 cookie（oai-sc）串到别的账号上。
+// inviteCookieJars caches a cookie jar per account. These endpoints go through Cloudflare bot management,
+// so requests without cookies always start cold. In testing, about half were sent to a managed challenge (403 + challenge page).
+// Reusing __cf_bm / _cfuvid from the last successful response significantly lowers the chance of a challenge. Jars are isolated per account instead of shared globally,
+// so one account's session cookie (oai-sc) does not leak into another account.
 var inviteCookieJars sync.Map
 
-// inviteCookieJarFor 取出账号对应的 cookie jar，没有则新建。
+// inviteCookieJarFor returns the account's cookie jar, creating it if missing.
 func inviteCookieJarFor(account *auth.Account) http.CookieJar {
 	key := fmt.Sprintf("%d|%s", account.DBID, account.EffectiveAccountID())
 	if cached, ok := inviteCookieJars.Load(key); ok {
@@ -281,24 +281,24 @@ func inviteCookieJarFor(account *auth.Account) http.CookieJar {
 	return actual.(http.CookieJar)
 }
 
-// cloudflareChallengeMarker 替换挑战页正文，避免把十几 KB 的 HTML 回给前端。
+// cloudflareChallengeMarker replaces the challenge page body so that tens of KB of HTML are not returned to the frontend.
 const cloudflareChallengeMarker = "cloudflare managed challenge (html challenge page omitted)"
 
-// isCloudflareChallenge 判定响应是否为 Cloudflare 的挑战页而非上游业务响应。
-// 挑战页会借用 403/429/503 状态码，直接按状态码解读会把「被拦下」误判成「无资格」。
+// isCloudflareChallenge reports whether a response is a Cloudflare challenge page rather than an upstream business response.
+// Challenge pages reuse 403/429/503 status codes, so reading the status code directly would mistake "intercepted" for "not eligible".
 func isCloudflareChallenge(status int, body []byte) bool {
 	switch status {
 	case http.StatusForbidden, http.StatusTooManyRequests, http.StatusServiceUnavailable:
 	default:
 		return false
 	}
-	// 先按「是不是 HTML」排除业务 JSON，避免对正常的 {"detail":...} 做全文扫描。
+	// First rule out business JSON by checking whether the body is HTML, so a normal {"detail":...} is not scanned in full.
 	trimmed := bytes.TrimLeft(body, " \t\r\n")
 	if len(trimmed) == 0 || trimmed[0] != '<' {
 		return false
 	}
-	// 特征标记必须全文匹配：挑战页把内联 SVG 图标放在脚本之前，实测 cf_chl_opt
-	// 出现在 7KB 之后，只扫开头会漏判（正文已由 LimitReader 限到 1MB）。
+	// The signature marker must be matched across the whole body: the challenge page puts inline SVG icons before the script, and in testing cf_chl_opt
+	// appears after 7KB, so scanning only the start would miss it (the body is already capped at 1MB by LimitReader).
 	for _, marker := range [][]byte{
 		[]byte("cf_chl_opt"),
 		[]byte("challenge-platform"),
@@ -311,13 +311,13 @@ func isCloudflareChallenge(status int, body []byte) bool {
 	return false
 }
 
-// inviteHTTPClient 返回邀请请求用的 Client。
+// inviteHTTPClient returns the Client used for invite requests.
 //
-// 这些端点是网页端 /backend-api 路径，挂在 Cloudflare bot 管理后面：用 Go 默认 TLS 指纹
-// 直连会被随机丢进 managed challenge（同一账号连续请求在 200 与 403 挑战页之间反复跳），
-// 因此和订阅同步一样强制 uTLS Chrome 指纹。transport 取自池子（连接由池持有，不会像
-// 一次性 uTLS 实例那样泄漏 h2 连接），jar 按账号另挂，让 __cf_bm 能在多次请求间复用。
-// useTestTransport 供 httptest（明文 HTTP）用，uTLS 无法对明文端口拨号。
+// These endpoints are web-client /backend-api paths behind Cloudflare bot management: with Go's default TLS fingerprint,
+// direct connections are randomly sent to a managed challenge (consecutive requests from one account bounce between 200 and a 403 challenge page),
+// so, like subscription sync, this forces the uTLS Chrome fingerprint. The transport comes from the pool, which holds the connections; unlike
+// one-off uTLS instances, it does not leak h2 connections, and the jar is attached per account so __cf_bm can be reused across requests.
+// useTestTransport is for httptest (plain HTTP), since uTLS cannot dial a plaintext port.
 func inviteHTTPClient(account *auth.Account, proxyURL string, useTestTransport bool) *http.Client {
 	jar := inviteCookieJarFor(account)
 	if useTestTransport {
@@ -327,7 +327,7 @@ func inviteHTTPClient(account *auth.Account, proxyURL string, useTestTransport b
 	return &http.Client{Transport: pooled.Transport, Jar: jar}
 }
 
-// doInviteRequest 执行请求并读回状态码、request id、响应体与是否被 Cloudflare 挑战。
+// doInviteRequest executes the request and reads back the status code, request id, response body, and whether Cloudflare challenged it.
 func doInviteRequest(req *http.Request, account *auth.Account, proxyURL string, useTestTransport bool) (int, string, []byte, bool, error) {
 	client := inviteHTTPClient(account, proxyURL, useTestTransport)
 	resp, err := client.Do(req)
@@ -339,7 +339,7 @@ func doInviteRequest(req *http.Request, account *auth.Account, proxyURL string, 
 	return resp.StatusCode, resp.Header.Get("x-oai-request-id"), body, isCloudflareChallenge(resp.StatusCode, body), nil
 }
 
-// inviteAccountReady 校验账号具备发起邀请所需的凭证。
+// inviteAccountReady checks that the account has the credentials needed to send invites.
 func inviteAccountReady(account *auth.Account) error {
 	if account == nil {
 		return fmt.Errorf("account is nil")
@@ -350,9 +350,9 @@ func inviteAccountReady(account *auth.Account) error {
 	return nil
 }
 
-// SendCodexInvite 通过账号凭证向 ChatGPT 推荐邀请端点发送邀请邮件。
-// programID / entrypoint 为空时使用默认的消费者版常驻入口。返回结构化结果；
-// 非 2xx 时 OK=false 且 Upstream/UpstreamRaw 保留上游响应，由调用方据 StatusCode 处理。
+// SendCodexInvite sends invite emails to the ChatGPT referral invite endpoint using the account's credentials.
+// When programID / entrypoint are empty, the default consumer standing entry point is used. Returns a structured result;
+// on non-2xx, OK=false and Upstream/UpstreamRaw keep the upstream response, and the caller handles it based on StatusCode.
 func SendCodexInvite(ctx context.Context, account *auth.Account, proxyURL, programID, entrypoint string, emails []string) (*CodexInviteResult, error) {
 	if err := inviteAccountReady(account); err != nil {
 		return nil, err
@@ -393,14 +393,14 @@ func SendCodexInvite(ctx context.Context, account *auth.Account, proxyURL, progr
 		Challenged: challenged,
 	}
 
-	// 被 Cloudflare 挑战时正文是挑战页 HTML，没有任何上游语义，丢掉只留标记。
+	// When Cloudflare challenges the request, the body is challenge-page HTML with no upstream meaning, so drop it and keep only the marker.
 	if challenged {
 		result.UpstreamRaw = cloudflareChallengeMarker
 		return result, nil
 	}
 
-	// 上游响应：能解析为 JSON 就放进 Upstream 并抽取邀请明细，否则留原始串。
-	// 明细字段名在两个端点间不一致（发送用 invites[]、跟踪用 items[]），两种都收。
+	// Upstream response: if it parses as JSON, put it in Upstream and extract the invite details; otherwise keep the raw string.
+	// The detail field name differs between the two endpoints (invites[] for sending, items[] for tracking), so accept both.
 	if json.Valid(body) {
 		result.Upstream = json.RawMessage(body)
 		if !result.OK {
@@ -424,7 +424,7 @@ func SendCodexInvite(ctx context.Context, account *auth.Account, proxyURL, progr
 	return result, nil
 }
 
-// QueryCodexInviteEligibility 查询账号在指定推荐计划下的资格与剩余配额。
+// QueryCodexInviteEligibility queries the account's eligibility and remaining quota under the given referral program.
 func QueryCodexInviteEligibility(ctx context.Context, account *auth.Account, proxyURL, programID, entrypoint string) (*CodexInviteEligibility, error) {
 	if err := inviteAccountReady(account); err != nil {
 		return nil, err
@@ -466,7 +466,7 @@ func QueryCodexInviteEligibility(ctx context.Context, account *auth.Account, pro
 		if !result.OK {
 			result.UpstreamMessage, _ = parseInviteFailureDetail(body)
 		}
-		// 解析进临时结构再拷贝，避免上游的 program_id/entrypoint 缺失时把请求参数覆盖成空。
+		// Parse into a temporary struct and then copy, so that a missing program_id/entrypoint from the upstream does not overwrite the request parameters with empty values.
 		var parsed struct {
 			ShouldShow           bool                       `json:"should_show"`
 			IneligibleReason     string                     `json:"ineligible_reason"`
@@ -510,8 +510,8 @@ func QueryCodexInviteEligibility(ctx context.Context, account *auth.Account, pro
 	return result, nil
 }
 
-// QueryCodexInviteTracking 查询账号已发出的邀请及其兑换状态。
-// period / limit 为空或非正时使用官方客户端默认值（past_90_days / 100）。
+// QueryCodexInviteTracking queries the invites the account has sent and their redemption status.
+// When period / limit is empty or not positive, the official client defaults are used (past_90_days / 100).
 func QueryCodexInviteTracking(ctx context.Context, account *auth.Account, proxyURL, programID, period string, limit int) (*CodexInviteTracking, error) {
 	if err := inviteAccountReady(account); err != nil {
 		return nil, err

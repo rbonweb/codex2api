@@ -62,7 +62,7 @@ func nativeWSLocalLookup(owner, responseID string) responseCacheLookupResult {
 	return responseCacheLookupResult{Kind: responseCacheLookupMiss}
 }
 
-// 终态暴露前建立屏障，跨下游重连须等提交完成再读取快照。
+// Set up a barrier before the terminal state is exposed; across downstream reconnects, a snapshot is read only after the commit completes.
 func beginNativeWSCommit(owner, responseID string) func() {
 	if !strings.HasPrefix(owner, nativeWSCachePrefix) || responseID == "" {
 		return func() {}
@@ -169,7 +169,7 @@ func cacheNativeWSContext(snapshot nativeWSCompletedContext) {
 			outputs = append(outputs, json.RawMessage(item.Raw))
 		}
 	}
-	// 保留不透明输出，恢复时核对账号兼容性；不能丢掉必要推理后声称上下文完整。
+	// Keep opaque output and check account compatibility on recovery; do not drop required reasoning and then claim the context is complete.
 	items = mergeResponsesWSContext(items, outputs)
 	key := responseCacheStoreKey(owner, responseID)
 	items, admitted, _, serial := admitResponseCacheWithTicket(key, items)

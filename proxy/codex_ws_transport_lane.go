@@ -10,22 +10,22 @@ import (
 )
 
 const (
-	// codexSubagentHeader 是 Codex 内部子请求（guardian 评分器等）携带的子代理标识头。
+	// codexSubagentHeader is the subagent identifier header carried by Codex internal sub-requests (such as the guardian scorer).
 	codexSubagentHeader = "X-Openai-Subagent"
 
-	// Codex 放在 x-codex-turn-metadata 里的 request_kind 取值（CLI 0.154 二进制实证）：
-	//   turn        用户轮次的采样请求，含工具调用后的每次续采样
-	//   prewarm     预热请求：预开的连接会被首个 turn 复用
-	//   compaction  上下文压缩：在两次采样之间顺序执行，复用当前 turn 的会话
-	//   memory      记忆整理：独立 root turn，后台并发发起，却沿用会话的 thread_id
-	// 前三种与用户 turn 是同一条连接或同一段顺序动作，必须同道；未声明的视同 turn。
-	// 其余取值各自成道：宁可只在同类间互相替换，也不让后台副请求切断用户在飞轮次。
+	// The request_kind values Codex puts in x-codex-turn-metadata (verified from the CLI 0.154 binary):
+	//   turn        sampling requests for a user turn, including each resample after a tool call
+	//   prewarm     warm-up request: the pre-opened connection is reused by the first turn
+	//   compaction  context compaction: runs sequentially between two samples, reusing the current turn's session
+	//   memory      memory consolidation: an independent root turn, started concurrently in the background, but it reuses the session's thread_id
+	// The first three share a connection or a sequential action with the user turn, so they must share its lane; undeclared values are treated as turn.
+	// Other values each get their own lane: it is better to replace only among the same kind than to let a background side request cut off a user turn that is in flight.
 	codexRequestKindTurn       = "turn"
 	codexRequestKindPrewarm    = "prewarm"
 	codexRequestKindCompaction = "compaction"
 )
 
-// IsCodexWebsocketPrewarmRequest 识别客户端明确声明的预热请求。
+// IsCodexWebsocketPrewarmRequest detects a warm-up request that the client explicitly declares.
 func IsCodexWebsocketPrewarmRequest(headers http.Header, body []byte) bool {
 	return extractCodexRequestKind(headers, body) == codexRequestKindPrewarm
 }
@@ -43,10 +43,10 @@ func ResolveCodexWebsocketTransportSessionKey(upstreamSessionID string, downstre
 	return ResolveCodexWebsocketTransportSessionKeyWithBody(upstreamSessionID, downstreamHeaders, nil)
 }
 
-// ResolveCodexWebsocketTransportSessionKeyWithBody 与 ResolveCodexWebsocketTransportSessionKey
-// 相同，另外按 request_kind / 子代理标识分道：同线程上与用户 turn 并发的后台请求
-// （memory 整理、guardian 评分）不再与用户轮次同键互相抢占或排队。头里没有 turn
-// 元数据时（Desktop 走 HTTP）回退读请求体 client_metadata 内嵌的同名 JSON。
+// ResolveCodexWebsocketTransportSessionKeyWithBody is the same as ResolveCodexWebsocketTransportSessionKey
+// except that it also splits lanes by request_kind / subagent identifier: background requests on the same thread that run concurrently with the user turn
+// (memory consolidation, guardian scoring) no longer preempt or queue behind the user turn on the same key. When the header has no turn
+// metadata (Desktop uses HTTP), it falls back to reading the same-named JSON embedded in the request body's client_metadata.
 func ResolveCodexWebsocketTransportSessionKeyWithBody(upstreamSessionID string, downstreamHeaders http.Header, body []byte) string {
 	upstreamSessionID = strings.TrimSpace(upstreamSessionID)
 	if upstreamSessionID == "" || IsStatelessWebsocketSessionID(upstreamSessionID) {
@@ -72,8 +72,8 @@ func ResolveCodexWebsocketTransportSessionKeyWithBody(upstreamSessionID string, 
 	return "ws-thread-" + hex.EncodeToString(sum[:16])
 }
 
-// resolveCodexExecutionLane 派生执行道后缀：主道（turn / prewarm / compaction / 未声明）
-// 返回空串；其余 request_kind 各自成道；没有线程标识但声明了子代理的按子代理值成道。
+// resolveCodexExecutionLane derives the execution lane suffix: the main lane (turn / prewarm / compaction / undeclared)
+// returns an empty string; other request_kind values each get their own lane; when there is no thread identifier but a subagent is declared, the lane is based on the subagent value.
 func resolveCodexExecutionLane(headers http.Header, body []byte, clientThreadID string) string {
 	if kind := extractCodexRequestKind(headers, body); kind != "" {
 		switch kind {
@@ -90,8 +90,8 @@ func resolveCodexExecutionLane(headers http.Header, body []byte, clientThreadID 
 	return ""
 }
 
-// extractCodexRequestKind 取 x-codex-turn-metadata 里的 request_kind：头优先，
-// 头缺失或不是合法 JSON 时回退请求体 client_metadata 内嵌的同名字符串。
+// extractCodexRequestKind takes request_kind from x-codex-turn-metadata: the header takes priority,
+// and when the header is missing or is not valid JSON, it falls back to the same-named string embedded in the request body's client_metadata.
 func extractCodexRequestKind(headers http.Header, body []byte) string {
 	if headers != nil {
 		if raw := strings.TrimSpace(headers.Get(codexTurnMetadataHeader)); raw != "" && gjson.Valid(raw) {

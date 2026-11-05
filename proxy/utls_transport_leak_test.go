@@ -9,38 +9,38 @@ import (
 	"golang.org/x/net/http2"
 )
 
-// issue #446 回归测试：utls_chrome 模式下短生命周期 HTTP Client 曾导致
-// HTTP/2 连接、goroutine 与内存持续泄漏。以下测试锁死四条修复不变量。
+// issue #446 regression test: in utls_chrome mode, short-lived HTTP clients used to cause
+// HTTP/2 connections, goroutines and memory to leak continuously. The tests below lock in four fix invariants.
 
-// TestUTLSConnCreationSetsIdleConnTimeout 是最关键的回归保护：
-// http2.Transport 只在 idleConnTimeout()!=0 时才为新连接安装空闲定时器
-// （NewClientConn → time.AfterFunc(d, cc.onIdleTimeout)）。缺失该配置时，
-// 健康空闲连接永不自动回收，readLoop goroutine 与 socket 常驻到进程结束。
+// TestUTLSConnCreationSetsIdleConnTimeout is the most important regression guard:
+// http2.Transport installs an idle timer for a new connection only when idleConnTimeout()!=0
+// (NewClientConn → time.AfterFunc(d, cc.onIdleTimeout)). Without that setting,
+// healthy idle connections are never reclaimed automatically, and the readLoop goroutine and socket stay alive until the process exits.
 func TestUTLSConnCreationSetsIdleConnTimeout(t *testing.T) {
 	if codexUTLSIdleConnTimeout <= 0 {
-		t.Fatalf("codexUTLSIdleConnTimeout = %s, want > 0（否则 h2 不装空闲定时器，连接永不回收）", codexUTLSIdleConnTimeout)
+		t.Fatalf("codexUTLSIdleConnTimeout = %s, want > 0 (otherwise h2 installs no idle timer and connections are never reclaimed)", codexUTLSIdleConnTimeout)
 	}
 
-	// 断言 createConnection 构造的 http2.Transport 三项保活/回收参数齐备。
+	// Asserts that the http2.Transport built by createConnection has all three keepalive/reclaim settings.
 	tr := &http2.Transport{
 		ReadIdleTimeout: codexHTTP2ReadIdleTimeout,
 		PingTimeout:     codexHTTP2PingTimeout,
 		IdleConnTimeout: codexUTLSIdleConnTimeout,
 	}
 	if tr.IdleConnTimeout == 0 {
-		t.Fatal("IdleConnTimeout 为 0：NewClientConn 会跳过空闲定时器安装")
+		t.Fatal("IdleConnTimeout is 0: NewClientConn would skip installing the idle timer")
 	}
 	if tr.ReadIdleTimeout == 0 {
-		t.Fatal("ReadIdleTimeout 为 0：无法感知被静默掐断的死连接")
+		t.Fatal("ReadIdleTimeout is 0: silently cut dead connections cannot be detected")
 	}
 }
 
-// TestUTLSTransportCloseIdleConnectionsClosesHealthyIdleConn 验证修复后的
-// CloseIdleConnections 会关闭「健康且空闲」的连接。
+// TestUTLSTransportCloseIdleConnectionsClosesHealthyIdleConn verifies that the fixed
+// CloseIdleConnections closes connections that are "healthy and idle".
 //
-// 修复前的判据是 !CanTakeNewRequest()，而健康空闲的 h2 连接恒为
-// CanTakeNewRequest()==true，因此真正需要回收的连接全部被跳过——
-// 上层连接池 TTL 淘汰路径（evictExpiredClients）因此完全失效。
+// Before the fix, the criterion was !CanTakeNewRequest(), but a healthy idle h2 connection is always
+// CanTakeNewRequest()==true, so every connection that needed reclaiming was skipped,
+// and the upper-layer TTL eviction path (evictExpiredClients) was therefore completely ineffective.
 func TestUTLSTransportCloseIdleConnectionsClosesHealthyIdleConn(t *testing.T) {
 	rt := NewUTLSTransport("").(*utlsRoundTripper)
 
@@ -49,27 +49,27 @@ func TestUTLSTransportCloseIdleConnectionsClosesHealthyIdleConn(t *testing.T) {
 
 	rt.mu.Lock()
 	entry := &utlsConn{conn: conn}
-	// 时间戳回拨到保护窗口之外，模拟「已空闲一段时间」。
+	// Rewinds the timestamp outside the protection window, simulating "idle for a while".
 	entry.lastUsed.Store(time.Now().Add(-time.Minute).UnixNano())
 	rt.connections["example.com"] = entry
 	rt.mu.Unlock()
 
 	if !conn.CanTakeNewRequest() {
-		t.Fatal("前置条件不成立：新建的 h2 连接应当是健康可用的")
+		t.Fatal("precondition failed: a newly created h2 connection should be healthy and usable")
 	}
 
 	rt.CloseIdleConnections()
 
 	if got := rt.connCountForTest(); got != 0 {
-		t.Fatalf("CloseIdleConnections 后池内连接数 = %d, want 0（健康空闲连接必须被回收）", got)
+		t.Fatalf("pool connection count after CloseIdleConnections = %d, want 0 (healthy idle connections must be reclaimed)", got)
 	}
 	if !conn.State().Closed {
-		t.Fatal("底层 h2 连接未关闭：socket 与 readLoop goroutine 仍在泄漏")
+		t.Fatal("underlying h2 connection was not closed: the socket and readLoop goroutine are still leaking")
 	}
 }
 
-// TestUTLSTransportCloseIdleConnectionsKeepsBusyConn 验证回收不会误杀在途请求。
-// 直接关闭所有连接会截断仍在传输的 HTTP/2 stream（例如长时间流式回答）。
+// TestUTLSTransportCloseIdleConnectionsKeepsBusyConn verifies that reclaiming does not wrongly kill in-flight requests.
+// Closing all connections directly would truncate HTTP/2 streams still in transit (for example a long streaming answer).
 func TestUTLSTransportCloseIdleConnectionsKeepsBusyConn(t *testing.T) {
 	rt := NewUTLSTransport("").(*utlsRoundTripper)
 
@@ -77,9 +77,9 @@ func TestUTLSTransportCloseIdleConnectionsKeepsBusyConn(t *testing.T) {
 	defer server.Close()
 	defer conn.Close()
 
-	// 预留一个 stream 槽位，等价于「已取出连接、请求在途」。
+	// Reserves one stream slot, equivalent to "connection already taken, request in flight".
 	if !conn.ReserveNewRequest() {
-		t.Fatal("ReserveNewRequest 失败，无法构造在途连接场景")
+		t.Fatal("ReserveNewRequest failed, cannot set up the in-flight connection case")
 	}
 
 	rt.mu.Lock()
@@ -91,16 +91,16 @@ func TestUTLSTransportCloseIdleConnectionsKeepsBusyConn(t *testing.T) {
 	rt.CloseIdleConnections()
 
 	if got := rt.connCountForTest(); got != 1 {
-		t.Fatalf("在途连接被回收：池内连接数 = %d, want 1", got)
+		t.Fatalf("in-flight connection was reclaimed: pool connection count = %d, want 1", got)
 	}
 	if conn.State().Closed {
-		t.Fatal("在途连接被关闭：会截断正在传输的响应体")
+		t.Fatal("in-flight connection was closed: this would truncate the response body being transferred")
 	}
 }
 
-// TestUTLSTransportCloseIdleConnectionsRespectsGrace 验证交付保护窗口：
-// 连接从池中取出到真正发起 RoundTrip 之间存在无锁窗口，此时 h2 侧尚无
-// 任何 stream，看起来「空闲」。若不设保护窗口，后台清理会关掉刚被取走待用的连接。
+// TestUTLSTransportCloseIdleConnectionsRespectsGrace verifies the hand-off protection window:
+// between a connection being taken from the pool and the RoundTrip actually starting there is a lock-free window, during which the h2 side has no
+// stream yet and looks "idle". Without a protection window, background cleanup would close a connection that was just taken for use.
 func TestUTLSTransportCloseIdleConnectionsRespectsGrace(t *testing.T) {
 	rt := NewUTLSTransport("").(*utlsRoundTripper)
 
@@ -110,20 +110,20 @@ func TestUTLSTransportCloseIdleConnectionsRespectsGrace(t *testing.T) {
 
 	rt.mu.Lock()
 	entry := &utlsConn{conn: conn}
-	entry.touch() // 刚刚交付
+	entry.touch() // just handed off
 	rt.connections["example.com"] = entry
 	rt.mu.Unlock()
 
 	rt.CloseIdleConnections()
 
 	if got := rt.connCountForTest(); got != 1 {
-		t.Fatalf("刚交付的连接被回收：池内连接数 = %d, want 1", got)
+		t.Fatalf("a just-handed-off connection was reclaimed: pool connection count = %d, want 1", got)
 	}
 }
 
-// TestUTLSTransportCloseAllConnectionsDrainsPool 验证一次性 transport 的
-// 完整生命周期收口：CloseAllConnections 必须摘除并关闭全部连接，
-// 否则 entry 从连接池 map 删除后就再无人持有该 transport，其连接会泄漏到进程结束。
+// TestUTLSTransportCloseAllConnectionsDrainsPool verifies the full lifecycle close of a one-off transport:
+// CloseAllConnections must remove and close all connections,
+// otherwise, once the entry is deleted from the pool map, nobody holds the transport any more and its connections leak until the process exits.
 func TestUTLSTransportCloseAllConnectionsDrainsPool(t *testing.T) {
 	rt := NewUTLSTransport("").(*utlsRoundTripper)
 
@@ -132,23 +132,23 @@ func TestUTLSTransportCloseAllConnectionsDrainsPool(t *testing.T) {
 
 	rt.mu.Lock()
 	entry := &utlsConn{conn: conn}
-	entry.touch() // 即便刚交付，销毁时也必须关闭
+	entry.touch() // even if just handed off, it must be closed on destroy
 	rt.connections["example.com"] = entry
 	rt.mu.Unlock()
 
 	rt.CloseAllConnections()
 
 	if got := rt.connCountForTest(); got != 0 {
-		t.Fatalf("CloseAllConnections 后池内连接数 = %d, want 0", got)
+		t.Fatalf("pool connection count after CloseAllConnections = %d, want 0", got)
 	}
 	if !conn.State().Closed {
-		t.Fatal("连接未被关闭：一次性 transport 仍会泄漏连接与 goroutine")
+		t.Fatal("connection was not closed: a one-off transport still leaks connections and goroutines")
 	}
 }
 
-// TestReleaseEvictedClientClosesUTLSConnections 验证连接池 TTL 淘汰路径在
-// uTLS 模式下真正释放连接。修复前该路径调用 client.CloseIdleConnections()，
-// 在 uTLS transport 上等同 no-op —— 每轮 TTL 淘汰都漏一条连接。
+// TestReleaseEvictedClientClosesUTLSConnections verifies that the pool TTL eviction path
+// really releases connections in uTLS mode. Before the fix, this path called client.CloseIdleConnections(),
+// which is a no-op on a uTLS transport, so every TTL eviction round leaked one connection.
 func TestReleaseEvictedClientClosesUTLSConnections(t *testing.T) {
 	rt := NewUTLSTransport("").(*utlsRoundTripper)
 
@@ -164,19 +164,19 @@ func TestReleaseEvictedClientClosesUTLSConnections(t *testing.T) {
 	releaseEvictedClient(&http.Client{Transport: rt})
 
 	if got := rt.connCountForTest(); got != 0 {
-		t.Fatalf("淘汰后池内连接数 = %d, want 0", got)
+		t.Fatalf("pool connection count after eviction = %d, want 0", got)
 	}
 	if !conn.State().Closed {
-		t.Fatal("TTL 淘汰未关闭 uTLS 连接：泄漏仍在")
+		t.Fatal("TTL eviction did not close the uTLS connection: the leak remains")
 	}
 }
 
-// TestUTLSTransportRepeatedCyclesReturnToBaseline 是 issue #446 「方案四」要求的
-// 回归测试：连续多轮「建连 → 用完 → 回收」后，连接数与 goroutine 数必须回到
-// 稳定区间，而不是随轮次线性增长。
+// TestUTLSTransportRepeatedCyclesReturnToBaseline is the regression test for the issue #446 "option four" requirement.
+// It requires that after repeated rounds of "connect → use → reclaim", the connection count and goroutine count return to
+// a stable range instead of growing linearly with the rounds.
 //
-// 修复前每轮都会残留一条 ESTABLISHED 连接与一个 readLoop goroutine
-// （goroutine 与 TCP 连接近似 1:1 增长），几十小时后累积到数万条并 OOM。
+// Before the fix, every round left behind one ESTABLISHED connection and one readLoop goroutine
+// (goroutines grew roughly 1:1 with TCP connections), piling up to tens of thousands after dozens of hours and causing OOM.
 func TestUTLSTransportRepeatedCyclesReturnToBaseline(t *testing.T) {
 	const rounds = 50
 
@@ -192,19 +192,19 @@ func TestUTLSTransportRepeatedCyclesReturnToBaseline(t *testing.T) {
 		rt.connections["example.com"] = entry
 		rt.mu.Unlock()
 
-		// 模拟一次性 Client 用完即弃：修复后由 CloseAllConnections 收口。
+		// Simulates a one-off client that is discarded after use: after the fix, CloseAllConnections cleans it up.
 		rt.CloseAllConnections()
 
 		if got := rt.connCountForTest(); got != 0 {
-			t.Fatalf("第 %d 轮回收后仍有 %d 条连接驻留", i+1, got)
+			t.Fatalf("round %d: %d connections still resident after reclaim", i+1, got)
 		}
 		if !conn.State().Closed {
-			t.Fatalf("第 %d 轮：底层连接未关闭，socket 与 readLoop 泄漏", i+1)
+			t.Fatalf("round %d: underlying connection not closed, socket and readLoop leak", i+1)
 		}
 		server.Close()
 	}
 
-	// readLoop 退出是异步的，给它收尾时间后再断言。
+	// readLoop exits asynchronously, so give it time to finish before asserting.
 	var leaked int
 	for attempt := 0; attempt < 50; attempt++ {
 		leaked = runtime.NumGoroutine() - baseline
@@ -214,10 +214,10 @@ func TestUTLSTransportRepeatedCyclesReturnToBaseline(t *testing.T) {
 		time.Sleep(20 * time.Millisecond)
 	}
 
-	// 修复前 leaked 会接近 rounds（每轮一个常驻 readLoop）；
-	// 修复后应回落到与轮次无关的小常数（容忍测试服务端的收尾抖动）。
+	// Before the fix, leaked would approach rounds (one resident readLoop per round);
+	// after the fix it should settle to a small constant unrelated to the round count (tolerating wind-down jitter in the test server).
 	if leaked > rounds/5 {
-		t.Fatalf("goroutine 未回落：baseline=%d 增量=%d（轮次=%d），疑似每轮泄漏一个 readLoop",
+		t.Fatalf("goroutines did not return to baseline: baseline=%d delta=%d (rounds=%d), suspected one readLoop leak per round",
 			baseline, leaked, rounds)
 	}
 }

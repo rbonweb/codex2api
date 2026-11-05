@@ -33,9 +33,9 @@ func issue696Frames(n int) [][]byte {
 	return frames
 }
 
-// issue #696:输出扫描器按字节扣安全窗时,底层流曾停在半个事件里,绕过写入器
-// 直写 ResponseWriter 的请求级保活注释会插进 JSON 中间。写入器现在把底层写入
-// 对齐到事件边界,直写的注释必须独占一行,且所有事件字节原样、有序地到达。
+// issue #696: when the output scanner deducts the safety window byte by byte, the underlying stream once stopped in the middle of an event, bypassing the writer
+// to write to ResponseWriter directly, a request-level keepalive comment got inserted into the middle of JSON. The writer now aligns the underlying write
+// to event boundaries; a directly written comment must occupy its own line, and all event bytes must arrive unchanged and in order.
 func TestStreamFlushWriterOutputScannerKeepsUnderlyingAtEventBoundary(t *testing.T) {
 	var sink bytes.Buffer
 	w := &streamFlushWriter{writer: &sink, policy: StreamFlushPolicyImmediate, outputScanner: newOutputScannerForTest(t, 512)}
@@ -53,7 +53,7 @@ func TestStreamFlushWriterOutputScannerKeepsUnderlyingAtEventBoundary(t *testing
 	if sink.Len() == 0 {
 		t.Fatal("scanner released nothing; test needs more frames than the safety window")
 	}
-	// 模拟请求级保活绕过写入器直写底层。
+	// Simulates a request-level keepalive writing directly to the underlying writer, bypassing the writer.
 	sink.WriteString(downstreamSSEKeepaliveComment)
 	if err := w.Finalize(); err != nil {
 		t.Fatal(err)
@@ -71,7 +71,7 @@ func TestStreamFlushWriterOutputScannerKeepsUnderlyingAtEventBoundary(t *testing
 	}
 }
 
-// 注释不是模型输出,输出扫描开启时也要立刻落到底层,否则上游静默期间保活失效。
+// A comment is not model output; even with output scanning on, it must reach the underlying writer immediately, or keepalive stops working during upstream silence.
 func TestStreamFlushWriterSSECommentBypassesOutputScanner(t *testing.T) {
 	var sink bytes.Buffer
 	w := &streamFlushWriter{writer: &sink, policy: StreamFlushPolicyImmediate, outputScanner: newOutputScannerForTest(t, 4096)}
@@ -95,7 +95,7 @@ func TestStreamFlushWriterSSECommentBypassesOutputScanner(t *testing.T) {
 	}
 }
 
-// 合并冲刷策略下也必须保持边界对齐:合并缓冲里只会有完整事件。
+// Under the coalesced flush strategy, boundary alignment must also hold: the coalesced buffer only ever holds complete events.
 func TestStreamFlushWriterOutputScannerCoalesceKeepsWholeEvents(t *testing.T) {
 	var sink bytes.Buffer
 	w := &streamFlushWriter{writer: &sink, policy: StreamFlushPolicyCoalesce, interval: 0, outputScanner: newOutputScannerForTest(t, 512)}

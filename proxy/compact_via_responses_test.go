@@ -12,20 +12,20 @@ func TestAppendCompactionTriggerToResponsesBody_ArrayInput(t *testing.T) {
 	out := appendCompactionTriggerToResponsesBody(body)
 
 	if !gjson.GetBytes(out, "stream").Bool() {
-		t.Fatalf("stream 应被强制为 true: %s", out)
+		t.Fatalf("stream should be forced to true: %s", out)
 	}
 	if store := gjson.GetBytes(out, "store"); !store.Exists() || store.Bool() {
-		t.Fatalf("store 应被强制为 false: %s", out)
+		t.Fatalf("store should be forced to false: %s", out)
 	}
 	if got := gjson.GetBytes(out, "include.0").String(); got != codexReasoningEncryptedContentInclude {
-		t.Fatalf("include 应补回 reasoning.encrypted_content, got %q", got)
+		t.Fatalf("include should add back reasoning.encrypted_content, got %q", got)
 	}
 	items := gjson.GetBytes(out, "input").Array()
 	if len(items) != 2 {
-		t.Fatalf("input 应追加触发器至 2 条, got %d: %s", len(items), out)
+		t.Fatalf("input should have the trigger appended to 2 items, got %d: %s", len(items), out)
 	}
 	if got := items[1].Get("type").String(); got != "compaction_trigger" {
-		t.Fatalf("末尾应为 compaction_trigger, got %q", got)
+		t.Fatalf("the last item should be compaction_trigger, got %q", got)
 	}
 }
 
@@ -40,7 +40,7 @@ func TestAppendCompactionTriggerToResponsesBody_NoDuplicateTrigger(t *testing.T)
 		}
 	}
 	if count != 1 {
-		t.Fatalf("已含触发器时不应重复注入, got %d 个", count)
+		t.Fatalf("the trigger should not be injected again when it is already present, got %d", count)
 	}
 }
 
@@ -55,13 +55,13 @@ func TestAppendCompactionTriggerToResponsesBody_MovesExistingTriggerToEnd(t *tes
 
 	items := gjson.GetBytes(out, "input").Array()
 	if len(items) != 3 {
-		t.Fatalf("重复触发器应合并为 1 个, got %d 条: %s", len(items), out)
+		t.Fatalf("duplicate triggers should be merged into 1, got %d items: %s", len(items), out)
 	}
 	if got := items[1].Get("type").String(); got != "function_call_output" {
-		t.Fatalf("非触发器 input 顺序应保持不变, got %q: %s", got, out)
+		t.Fatalf("the order of non-trigger input should stay unchanged, got %q: %s", got, out)
 	}
 	if got := items[2].Get("type").String(); got != "compaction_trigger" {
-		t.Fatalf("compaction_trigger 必须位于 input 末尾, got %q: %s", got, out)
+		t.Fatalf("compaction_trigger must be at the end of input, got %q: %s", got, out)
 	}
 }
 
@@ -128,13 +128,13 @@ func TestAppendCompactionTriggerToResponsesBody_StringInput(t *testing.T) {
 
 	items := gjson.GetBytes(out, "input").Array()
 	if len(items) != 2 {
-		t.Fatalf("字符串 input 应转成 message + 触发器, got %d 条: %s", len(items), out)
+		t.Fatalf("string input should be converted into a message + trigger, got %d items: %s", len(items), out)
 	}
 	if got := items[0].Get("content.0.text").String(); got != "please compact" {
-		t.Fatalf("原文应保留在 message item 中, got %q", got)
+		t.Fatalf("the original text should stay in the message item, got %q", got)
 	}
 	if got := items[1].Get("type").String(); got != "compaction_trigger" {
-		t.Fatalf("末尾应为 compaction_trigger, got %q", got)
+		t.Fatalf("the last item should be compaction_trigger, got %q", got)
 	}
 }
 
@@ -159,16 +159,16 @@ func TestCollectCompactResponsesSSE_AggregatesCompactionItem(t *testing.T) {
 	}
 	output := gjson.GetBytes(respJSON, "output").Array()
 	if len(output) != 1 {
-		t.Fatalf("output 应恰好包含 1 条 compaction item, got %d: %s", len(output), respJSON)
+		t.Fatalf("output should contain exactly 1 compaction item, got %d: %s", len(output), respJSON)
 	}
 	if got := output[0].Get("type").String(); got != "compaction" {
-		t.Fatalf("output item 类型应为 compaction, got %q", got)
+		t.Fatalf("output item type should be compaction, got %q", got)
 	}
 	if got := output[0].Get("encrypted_content").String(); got != "opaque-blob" {
-		t.Fatalf("应保留 done 事件的最终内容, got %q", got)
+		t.Fatalf("the final content of the done event should be kept, got %q", got)
 	}
 	if got := gjson.GetBytes(respJSON, "usage.total_tokens").Int(); got != 79 {
-		t.Fatalf("usage 应来自 response.completed, got %d", got)
+		t.Fatalf("usage should come from response.completed, got %d", got)
 	}
 }
 
@@ -185,10 +185,10 @@ func TestCollectCompactResponsesSSE_ReturnsFailedPayload(t *testing.T) {
 		t.Fatalf("unexpected error: %v", err)
 	}
 	if respJSON != nil {
-		t.Fatalf("失败流不应返回响应体: %s", respJSON)
+		t.Fatalf("a failed stream should not return a response body: %s", respJSON)
 	}
 	if got := gjson.GetBytes(failed, "response.error.code").String(); got != "rate_limit_exceeded" {
-		t.Fatalf("failed payload 应原样保留, got %q", got)
+		t.Fatalf("failed payload should be kept as is, got %q", got)
 	}
 }
 
@@ -197,6 +197,6 @@ func TestCollectCompactResponsesSSE_MissingTerminalIsError(t *testing.T) {
 
 	_, _, err := collectCompactResponsesSSE(strings.NewReader(sse))
 	if err == nil {
-		t.Fatal("缺少终止事件应返回错误")
+		t.Fatal("a missing terminal event should return an error")
 	}
 }

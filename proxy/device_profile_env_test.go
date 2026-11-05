@@ -51,13 +51,13 @@ func TestDeviceProfileConfigFromEnv(t *testing.T) {
 }
 
 func TestDeviceProfileConfigFromEnvDefaultStabilize(t *testing.T) {
-	// 未显式配置时默认为 true
+	// Defaults to true when not explicitly configured
 	cfgDefault := DeviceProfileConfigFromEnv(func(string) string { return "" })
 	if !cfgDefault.StabilizeDeviceProfile {
 		t.Fatal("expected default StabilizeDeviceProfile to be true when env is unset")
 	}
 
-	// 显式传 false 时为 false
+	// Returns false when false is passed explicitly
 	cfgDisabled := DeviceProfileConfigFromEnv(func(key string) string {
 		if key == "STABILIZE_DEVICE_PROFILE" {
 			return "false"

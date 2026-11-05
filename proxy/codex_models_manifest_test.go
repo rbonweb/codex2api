@@ -17,9 +17,9 @@ import (
 	"github.com/tidwall/gjson"
 )
 
-// TestListModelsOrManifest_DispatchesByClientVersion 验证 /models 分发:
-// 带 client_version 的请求走 manifest 透传(无可用账号时 fast-fail 503),
-// 不带的保持 OpenAI 兼容列表。
+// TestListModelsOrManifest_DispatchesByClientVersion verifies the /models dispatch:
+// requests with client_version go through the manifest passthrough (fast-fail 503 when no account is available),
+// requests without it keep the OpenAI-compatible list.
 func TestListModelsOrManifest_DispatchesByClientVersion(t *testing.T) {
 	gin.SetMode(gin.TestMode)
 	store := auth.NewStore(nil, nil, nil)
@@ -28,7 +28,7 @@ func TestListModelsOrManifest_DispatchesByClientVersion(t *testing.T) {
 	router := gin.New()
 	router.GET("/v1/models", handler.listModelsOrManifest)
 
-	// Codex 客户端形态:分发到 manifest 路径,空账号池 fast-fail。
+	// Codex client shape: dispatches to the manifest path, fast-fail on an empty account pool.
 	rec := httptest.NewRecorder()
 	req := httptest.NewRequest(http.MethodGet, "/v1/models?client_version=0.140.0", nil)
 	router.ServeHTTP(rec, req)
@@ -36,7 +36,7 @@ func TestListModelsOrManifest_DispatchesByClientVersion(t *testing.T) {
 		t.Errorf("manifest dispatch status = %d, want 503", rec.Code)
 	}
 
-	// 普通 OpenAI 客户端形态:返回兼容列表。
+	// Plain OpenAI client shape: returns the compatible list.
 	rec = httptest.NewRecorder()
 	req = httptest.NewRequest(http.MethodGet, "/v1/models", nil)
 	router.ServeHTTP(rec, req)

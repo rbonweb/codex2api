@@ -14,53 +14,53 @@ import (
 	"github.com/codex2api/auth"
 )
 
-// ==================== Resin 粘性代理池集成 ====================
+// ==================== Resin sticky proxy pool integration ====================
 
-// ResinConfig 保存 Resin 代理池连接配置
+// ResinConfig holds the Resin proxy pool connection settings
 type ResinConfig struct {
-	BaseURL      string // 完整基础地址，例如 http://127.0.0.1:2260/my-token
-	PlatformName string // 平台标识，例如 codex2api
+	BaseURL      string // full base address, for example http://127.0.0.1:2260/my-token
+	PlatformName string // platform identifier, for example codex2api
 }
 
-// 全局 Resin 配置（原子指针，支持热更新）
+// Global Resin config (atomic pointer, supports hot updates)
 var resinCfg atomic.Pointer[ResinConfig]
 
-// SetResinConfig 设置全局 Resin 配置；cfg 为 nil 或 BaseURL 为空时禁用 Resin。
-// 启用/禁用会同步到 auth 包的出口标记,让调度器的代理池 fail-closed 过滤知道
-// Codex 账号此时由 Resin 承担出站。日志里的地址只保留 scheme://host,路径段
-// 就是 Resin token,不能整段落盘(issue #679)。
+// SetResinConfig sets the global Resin config; Resin is disabled when cfg is nil or BaseURL is empty.
+// Enabling or disabling is synced to the egress flag in the auth package, so the scheduler's proxy pool fail-closed filter knows
+// Codex accounts egress through Resin at this point. Addresses in logs keep only scheme://host, and the path segment
+// is the Resin token, so it must not be written to disk in full (issue #679).
 func SetResinConfig(cfg *ResinConfig) {
 	wasEnabled := IsResinEnabled()
 	if cfg != nil && strings.TrimSpace(cfg.BaseURL) != "" && strings.TrimSpace(cfg.PlatformName) != "" {
 		resinCfg.Store(cfg)
 		auth.SetResinEgressEnabled(true)
-		log.Printf("[Resin] 已启用: platform=%s endpoint=%s;Codex 渠道出站全部经 Resin,代理池/分组代理/账号与全局 proxy_url 对 Codex 不再生效",
+		log.Printf("[Resin] enabled: platform=%s endpoint=%s;all Codex channel egress goes through Resin, proxy pool/group proxy/account and global proxy_url no longer apply to Codex",
 			cfg.PlatformName, MaskResinBaseURL(cfg.BaseURL))
 		return
 	}
 	resinCfg.Store(nil)
 	auth.SetResinEgressEnabled(false)
 	if wasEnabled {
-		log.Printf("[Resin] 已禁用;Codex 渠道出站恢复按 账号 > 分组 > 代理池 > 全局 > 直连 解析")
+		log.Printf("[Resin] disabled; Codex channel egress resolves again as account > group > proxy pool > global > direct")
 	}
 }
 
-// GetResinConfig 获取当前 Resin 配置，未配置时返回 nil
+// GetResinConfig returns the current Resin config, or nil when it is not configured
 func GetResinConfig() *ResinConfig {
 	return resinCfg.Load()
 }
 
-// IsResinEnabled 检查 Resin 代理池是否已启用
+// IsResinEnabled reports whether the Resin proxy pool is enabled
 func IsResinEnabled() bool {
 	return GetResinConfig() != nil
 }
 
-// resinMaintenanceTarget 为账号维护类旁路请求（wham 用量/重置券/订阅到期查询）
-// 决定最终 URL 与客户端。这类请求与 /responses 一样携带账号身份打 chatgpt.com，
-// Resin 启用时必须同样经反代访问并复用 Resin 连接池，否则全部账号共享本机
-// 出口 IP 直连（issue #372）。返回 viaResin=true 时调用方需在请求头设置
-// X-Resin-Account；未启用时返回原 URL 与 nil 客户端，由调用方按既有直连
-// transport 兜底。
+// resinMaintenanceTarget for account maintenance side requests (wham usage / reset coupon / subscription expiry queries)
+// decides the final URL and client. Like /responses, these requests carry the account identity to chatgpt.com,
+// when Resin is enabled they must also go through the reverse proxy and reuse the Resin connection pool, otherwise every account shares the local machine's
+// direct connection from the shared egress IP (issue #372). When it returns viaResin=true, the caller must set in the request headers
+// X-Resin-Account; when disabled it returns the original URL and a nil client, and the caller falls back to the existing direct
+// transport.
 func resinMaintenanceTarget(account *auth.Account, targetURL string) (finalURL string, client *http.Client, viaResin bool) {
 	egress := ResolveCodexEgress(account, targetURL, "")
 	if !egress.ViaResin() {
@@ -69,11 +69,12 @@ func resinMaintenanceTarget(account *auth.Account, targetURL string) (finalURL s
 	return egress.URL, egress.Client(), true
 }
 
-// ==================== 反向代理 URL 构建 ====================
+// ==================== reverse proxy URL building ====================
 
-// BuildReverseProxyURL 将目标 URL 转换为 Resin 反向代理 URL
-// 例如: https://chatgpt.com/backend-api/codex/responses
-//     → http://127.0.0.1:2260/my-token/codex2api/https/chatgpt.com/backend-api/codex/responses
+// BuildReverseProxyURL converts a target URL into a Resin reverse proxy URL
+// For example: https://chatgpt.com/backend-api/codex/responses
+//
+//	→ http://127.0.0.1:2260/my-token/codex2api/https/chatgpt.com/backend-api/codex/responses
 func BuildReverseProxyURL(targetURL string) string {
 	cfg := GetResinConfig()
 	if cfg == nil {
@@ -94,11 +95,12 @@ func BuildReverseProxyURL(targetURL string) string {
 	)
 }
 
-// BuildWebSocketURL 将目标 WSS URL 转换为 Resin WS 反向代理 URL
-// 例如: wss://chatgpt.com/backend-api/codex/responses
-//     → ws://127.0.0.1:2260/my-token/codex2api/https/chatgpt.com/backend-api/codex/responses
+// BuildWebSocketURL converts a target WSS URL into a Resin WS reverse proxy URL
+// For example: wss://chatgpt.com/backend-api/codex/responses
 //
-// Resin 约定: 客户端到 Resin 只支持 ws://；路径中 protocol 填 http/https 对应目标 ws/wss
+//	→ ws://127.0.0.1:2260/my-token/codex2api/https/chatgpt.com/backend-api/codex/responses
+//
+// Resin convention: the client-to-Resin side only supports ws://; the protocol path segment is http/https, matching the target ws/wss
 func BuildWebSocketURL(targetURL string) string {
 	cfg := GetResinConfig()
 	if cfg == nil {
@@ -113,7 +115,7 @@ func BuildWebSocketURL(targetURL string) string {
 		return targetURL
 	}
 
-	// wss → https, ws → http（Resin 路径中的 protocol 字段）
+	// wss → https, ws → http (the protocol field in the Resin path)
 	protocol := "https"
 	if parsed.Scheme == "ws" || parsed.Scheme == "http" {
 		protocol = "http"
@@ -129,17 +131,17 @@ func BuildWebSocketURL(targetURL string) string {
 	)
 }
 
-// ==================== 账号标识 ====================
+// ==================== account identity ====================
 
-// ResinAccountID 返回账号在 Resin 中的稳定标识（DBID 转字符串）
+// ResinAccountID returns the stable account identifier in Resin (DBID as a string)
 func ResinAccountID(account *auth.Account) string {
 	return fmt.Sprintf("%d", account.DBID)
 }
 
-// ==================== 租约继承 ====================
+// ==================== lease inheritance ====================
 
-// InheritLease 将临时身份的 IP 租约继承给正式账号身份
-// 用于 OAuth 场景：授权阶段使用临时标识，账号创建后切换为 DBID
+// InheritLease hands the IP lease of a temporary identity over to the formal account identity
+// Used for OAuth: the temporary identifier is used during authorization, then switched to the DBID after the account is created
 func InheritLease(tempAccount, newAccount string) {
 	cfg := GetResinConfig()
 	if cfg == nil {
@@ -158,29 +160,29 @@ func InheritLease(tempAccount, newAccount string) {
 
 	req, err := http.NewRequestWithContext(ctx, http.MethodPost, inheritURL, bytes.NewBufferString(body))
 	if err != nil {
-		log.Printf("[Resin] 构建 inherit-lease 请求失败: %v", err)
+		log.Printf("[Resin] failed to build inherit-lease request: %v", err)
 		return
 	}
 	req.Header.Set("Content-Type", "application/json")
 
 	resp, err := http.DefaultClient.Do(req)
 	if err != nil {
-		log.Printf("[Resin] inherit-lease 请求失败: %v", err)
+		log.Printf("[Resin] inherit-lease request failed: %v", err)
 		return
 	}
 	resp.Body.Close()
 
 	if resp.StatusCode < 200 || resp.StatusCode >= 300 {
-		log.Printf("[Resin] inherit-lease 返回非成功状态: %d (temp=%s new=%s)", resp.StatusCode, tempAccount, newAccount)
+		log.Printf("[Resin] inherit-lease returned non-success status: %d (temp=%s new=%s)", resp.StatusCode, tempAccount, newAccount)
 	} else {
-		log.Printf("[Resin] inherit-lease 成功: %s → %s", tempAccount, newAccount)
+		log.Printf("[Resin] inherit-lease succeeded: %s → %s", tempAccount, newAccount)
 	}
 }
 
-// ==================== Resin 连接池 ====================
+// ==================== Resin connection pool ====================
 
-// getResinHTTPClient 返回走 Resin 反代的标准 HTTP 客户端（无 uTLS）
-// 池键按 accountID 隔离，复用底层 TCP 连接
+// getResinHTTPClient returns a standard HTTP client that goes through the Resin reverse proxy (no uTLS)
+// pool keys are isolated by accountID, reusing the underlying TCP connections
 func getResinHTTPClient(account *auth.Account) *http.Client {
 	key := fmt.Sprintf("resin|%d", account.ID())
 
@@ -201,7 +203,7 @@ func getResinHTTPClient(account *auth.Account) *http.Client {
 	entry := &poolEntry{
 		client: &http.Client{
 			Transport: transport,
-			Timeout:   0, // 流式响应不设超时
+			Timeout:   0, // no timeout for streaming responses
 		},
 	}
 	entry.touch()

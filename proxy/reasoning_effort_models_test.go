@@ -2,7 +2,7 @@ package proxy
 
 import "testing"
 
-// 设置里的思考强度别名同样按模型放行 max:5.6+ 保留,旧模型钳到 xhigh。
+// The reasoning effort aliases in settings are also gated per model for max: 5.6+ keeps it, older models are clamped to xhigh.
 func TestParseReasoningEffortModelEntries_MaxGatedByModel(t *testing.T) {
 	supported := []string{"gpt-5.6-sol", "gpt-5.4"}
 	entries, err := parseReasoningEffortModelEntries(

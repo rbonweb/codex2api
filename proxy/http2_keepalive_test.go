@@ -5,9 +5,9 @@ import (
 	"testing"
 )
 
-// TestEnableCodexHTTP2KeepAlive 验证在标准 transport 上启用 HTTP/2 保活后，
-// 底层 http2.Transport 的 ReadIdleTimeout/PingTimeout 被设置为预期值，
-// 从而对被静默掐断的死连接做主动 PING 探测，避免请求挂到 TCP 重传超时。
+// TestEnableCodexHTTP2KeepAlive verifies that after enabling HTTP/2 keepalive on the standard transport,
+// the underlying http2.Transport's ReadIdleTimeout/PingTimeout are set to the expected values,
+// so that dead connections silently cut off are actively probed with PING, and requests do not hang until the TCP retransmission timeout.
 func TestEnableCodexHTTP2KeepAlive(t *testing.T) {
 	transport := http.DefaultTransport.(*http.Transport).Clone()
 
@@ -23,9 +23,9 @@ func TestEnableCodexHTTP2KeepAlive(t *testing.T) {
 	}
 }
 
-// TestNewCodexStandardTransportIsHTTP2 验证 newCodexStandardTransport 构造出的
-// transport 仍是可协商 HTTP/2 的 *http.Transport（回归保护：保活配置接入后
-// 未破坏 transport 类型与 h2 能力）。
+// TestNewCodexStandardTransportIsHTTP2 verifies that the transport built by newCodexStandardTransport
+// is still a *http.Transport that can negotiate HTTP/2 (regression guard: after the keepalive config is wired in,
+// the transport type and h2 capability are not broken).
 func TestNewCodexStandardTransportIsHTTP2(t *testing.T) {
 	rt := newCodexStandardTransport("")
 	transport, ok := rt.(*http.Transport)

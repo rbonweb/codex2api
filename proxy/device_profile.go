@@ -35,7 +35,7 @@ var (
 	deviceProfileCacheCleanupOnce sync.Once
 )
 
-// DeviceProfileConfig 设备指纹配置
+// DeviceProfileConfig is the device fingerprint configuration.
 type DeviceProfileConfig struct {
 	UserAgent              string
 	PackageVersion         string
@@ -46,7 +46,7 @@ type DeviceProfileConfig struct {
 	BetaFeatures           string
 }
 
-// CLIVersion 表示 Codex CLI 版本
+// CLIVersion is the Codex CLI version.
 type cliVersion struct {
 	major int
 	minor int
@@ -75,7 +75,7 @@ func (v cliVersion) Compare(other cliVersion) int {
 	}
 }
 
-// DeviceProfile 设备指纹配置
+// DeviceProfile is the device fingerprint configuration.
 type deviceProfile struct {
 	UserAgent      string
 	PackageVersion string
@@ -91,7 +91,7 @@ type deviceProfileCacheEntry struct {
 	expire  time.Time
 }
 
-// IsDeviceProfileStabilizationEnabled 检查设备指纹稳定化是否启用
+// IsDeviceProfileStabilizationEnabled checks whether device fingerprint stabilization is enabled
 func IsDeviceProfileStabilizationEnabled(cfg *DeviceProfileConfig) bool {
 	if cfg == nil {
 		return false
@@ -124,7 +124,7 @@ func DeviceProfileConfigFromEnv(lookup func(string) string) *DeviceProfileConfig
 }
 
 func defaultDeviceProfile(cfg *DeviceProfileConfig) deviceProfile {
-	// 如果 cfg 为 nil，使用默认空配置兜底
+	// If cfg is nil, fall back to the default empty configuration.
 	if cfg == nil {
 		cfg = &DeviceProfileConfig{}
 	}
@@ -299,8 +299,8 @@ func firstNonEmptyHeader(headers http.Header, name, fallback string) string {
 	return fallback
 }
 
-// deviceProfileScopeKey 生成设备指纹作用域键
-// 优先使用 apiKey（细粒度控制），其次是 auth ID（账号级），最后是 global
+// deviceProfileScopeKey generates the device fingerprint scope key
+// Prefer apiKey (fine-grained control), then the auth ID (account level), and finally global
 func deviceProfileScopeKey(account *auth.Account, apiKey string) string {
 	switch {
 	case strings.TrimSpace(apiKey) != "":
@@ -338,8 +338,8 @@ func purgeExpiredDeviceProfiles() {
 	deviceProfileCacheMu.Unlock()
 }
 
-// ResolveDeviceProfile 解析设备指纹配置
-// 这是主要的入口函数，根据配置和请求头返回稳定的设备指纹
+// ResolveDeviceProfile resolves the device fingerprint configuration
+// This is the main entry function; it returns a stable device fingerprint based on the configuration and request headers
 func ResolveDeviceProfile(account *auth.Account, apiKey string, headers http.Header, cfg *DeviceProfileConfig) deviceProfile {
 	if !IsDeviceProfileStabilizationEnabled(cfg) {
 		return defaultDeviceProfile(cfg)
@@ -401,7 +401,7 @@ func ResolveDeviceProfile(account *auth.Account, apiKey string, headers http.Hea
 	return baseline
 }
 
-// ApplyDeviceProfileHeaders 将设备指纹应用到 HTTP 请求头
+// ApplyDeviceProfileHeaders applies the device fingerprint to the HTTP request headers
 func ApplyDeviceProfileHeaders(r *http.Request, profile deviceProfile) {
 	if r == nil {
 		return
@@ -422,7 +422,7 @@ func ApplyDeviceProfileHeaders(r *http.Request, profile deviceProfile) {
 	r.Header.Set("X-Stainless-Arch", profile.Arch)
 }
 
-// ApplyLegacyDeviceHeaders 应用传统设备头（向后兼容）
+// ApplyLegacyDeviceHeaders applies the legacy device headers (for backward compatibility)
 func ApplyLegacyDeviceHeaders(r *http.Request, ginHeaders http.Header, cfg *DeviceProfileConfig) {
 	if r == nil {
 		return
@@ -460,7 +460,7 @@ func ApplyLegacyDeviceHeaders(r *http.Request, ginHeaders http.Header, cfg *Devi
 	r.Header.Set("User-Agent", profile.UserAgent)
 }
 
-// isCodexCodeClient 检查 User-Agent 是否是 Codex CLI 客户端
+// isCodexCodeClient checks whether the User-Agent is a Codex CLI client
 func isCodexCodeClient(userAgent string) bool {
 	_, ok := parseCodexClientVersion(userAgent)
 	return ok

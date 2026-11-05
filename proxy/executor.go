@@ -27,21 +27,21 @@ import (
 	"golang.org/x/net/http2"
 )
 
-// Codex/OpenAI HTTP/2 上游的连接健康探测参数。
+// Connection health probe parameters for the Codex/OpenAI HTTP/2 upstream.
 //
-// 标准库 net/http 会 ALPN 协商升级到 HTTP/2，但 http2.Transport 默认
-// ReadIdleTimeout=0（不发保活 PING），无法感知被代理/NAT 静默掐断的
-// “死连接”（两端都以为存活）。请求一旦落在死连接上，会一直挂到 OS TCP
-// 重传超时（分钟级）才失败——表现为超长 TTFT。启用主动 PING：连接空闲
-// ReadIdleTimeout 后发 PING，PingTimeout 内无响应即判定死连接并关闭，
-// 从源头剔除，请求得以在别的连接上重建，而非挂死。
+// The standard library net/http negotiates HTTP/2 via ALPN, but http2.Transport by default
+// has ReadIdleTimeout=0 (no keepalive PING), so it cannot detect connections silently cut off by a proxy or NAT
+// "dead connections" (both ends think they are alive). A request that lands on one hangs until the OS TCP
+// retransmission timeout (minutes) finally fails it, which shows up as a very long TTFT. Enable active PING: once the connection is idle for
+// ReadIdleTimeout, send a PING. If there is no reply within PingTimeout, the connection is judged dead and closed,
+// removed at the source, so the request can be rebuilt on another connection instead of hanging.
 //
-// 仅作用于 HTTP/2 直连（标准 transport 与 uTLS transport）；WebSocket
-// WebSocket 链路已有完整的 Ping/Pong 保活与复用前探活，不走这里。
-// 默认值对直连是合适的；经高延迟代理或弱网出口时 15s 偏激进——一次 PING 未按时
-// 应答就会拆掉整条连接及其上全部复用中的流（表现为 "http2: client connection
-// lost"）。故允许用 CODEX_HTTP2_READ_IDLE_TIMEOUT / CODEX_HTTP2_PING_TIMEOUT
-// 覆盖（Go duration 写法，如 "45s"；填 0 关闭主动 PING，退回标准库默认）。
+// Applies only to direct HTTP/2 connections (the standard transport and the uTLS transport); the WebSocket
+// WebSocket path already has full Ping/Pong keepalive and liveness checks before reuse, so it does not go through here.
+// The defaults suit direct connections. Through a high-latency proxy or weak-network egress, 15s is too aggressive: one PING that is not answered in time
+// will tear down the whole connection and every stream multiplexed on it (showing as "http2: client connection
+// lost"). So CODEX_HTTP2_READ_IDLE_TIMEOUT / CODEX_HTTP2_PING_TIMEOUT may be set to override them
+// Values use Go duration syntax, such as "45s"; 0 disables active PING and falls back to the standard library default.
 const (
 	defaultCodexHTTP2ReadIdleTimeout = 15 * time.Second
 	defaultCodexHTTP2PingTimeout     = 15 * time.Second
@@ -52,8 +52,8 @@ var (
 	codexHTTP2PingTimeout     = durationFromEnv("CODEX_HTTP2_PING_TIMEOUT", defaultCodexHTTP2PingTimeout)
 )
 
-// durationFromEnv 读取 Go duration 格式的环境变量；缺省或非法值回退默认值，
-// 显式的 "0" 是合法输入（用于关闭对应机制）。
+// durationFromEnv reads an environment variable in Go duration format; a missing or invalid value falls back to the default,
+// while an explicit "0" is valid input (it disables the corresponding mechanism).
 func durationFromEnv(key string, fallback time.Duration) time.Duration {
 	raw := strings.TrimSpace(os.Getenv(key))
 	if raw == "" {
@@ -61,20 +61,20 @@ func durationFromEnv(key string, fallback time.Duration) time.Duration {
 	}
 	d, err := time.ParseDuration(raw)
 	if err != nil || d < 0 {
-		log.Printf("[Config] %s=%q 非法，沿用默认 %s", key, raw, fallback)
+		log.Printf("[Config] %s=%q is invalid, keeping default %s", key, raw, fallback)
 		return fallback
 	}
 	return d
 }
 
-// enableCodexHTTP2KeepAlive 在标准 *http.Transport 上显式配置 HTTP/2 并
-// 开启连接健康探测（ReadIdleTimeout/PingTimeout），返回底层 *http2.Transport
-// 便于测试断言。配置失败（如该 transport 已注册过 h2）不影响 h1 回退，仅记录
-// 日志并返回 nil——此时沿用标准库默认（无主动 PING）。
+// enableCodexHTTP2KeepAlive explicitly configures HTTP/2 on a standard *http.Transport and
+// enables connection health probes (ReadIdleTimeout/PingTimeout), returning the underlying *http2.Transport
+// for test assertions. If configuration fails (for example, when this transport already has h2 registered), the h1 fallback is unaffected, and it only records
+// a log line and returns nil, in which case the standard library default (no active PING) is used.
 func enableCodexHTTP2KeepAlive(transport *http.Transport) *http2.Transport {
 	h2, err := http2.ConfigureTransports(transport)
 	if err != nil {
-		log.Printf("[CodexTransport] 启用 HTTP/2 保活失败，沿用默认(无 PING): err=%v", err)
+		log.Printf("[CodexTransport] enabling HTTP/2 keepalive failed, keeping default (no PING): err=%v", err)
 		return nil
 	}
 	if h2 != nil {
@@ -84,22 +84,22 @@ func enableCodexHTTP2KeepAlive(transport *http.Transport) *http2.Transport {
 	return h2
 }
 
-// ==================== HTTP 连接池（按账号隔离 + TTL 淘汰） ====================
+// ==================== HTTP connection pool (isolated per account + TTL eviction) ====================
 //
-// 设计要点：
-//   - 按账号隔离：避免同一 TCP 连接被不同 token 复用（会被服务端检测）
-//   - TTL 淘汰：只有活跃账号持有连接，不活跃的自动清理，几万账号也不爆内存
-//   - 空闲连接极简：每账号只保留 1 条空闲连接，空闲 30s 后自动关闭
+// Design points:
+//   - Isolated per account: prevents the same TCP connection from being reused by different tokens (which the server can detect)
+//   - TTL eviction: only active accounts hold connections; inactive ones are cleaned up automatically, so tens of thousands of accounts will not exhaust memory
+//   - Minimal idle connections: each account keeps only 1 idle connection, closed automatically after 30s idle
 
-// poolEntry 包装 http.Client，追踪最后使用时间用于 TTL 淘汰
+// poolEntry wraps http.Client and tracks the last-use time for TTL eviction
 type poolEntry struct {
 	client    *http.Client
-	lastUsed  atomic.Int64 // UnixNano 时间戳
-	createdAt int64        // UnixNano，用于最大寿命轮转
-	// rotatable 标记该 entry 可按寿命轮转。仅标准 transport 置位：轮转靠
-	// “移出池 + 关空闲连接”实现，在途请求继续跑在旧连接上直到自然结束；
-	// uTLS transport 自管连接池，释放路径会对在途连接发 GOAWAY 并在超时后
-	// 强制关闭，按寿命定期触发反而可能截断长回答，故不参与轮转。
+	lastUsed  atomic.Int64 // UnixNano timestamp
+	createdAt int64        // UnixNano, used for max-age rotation
+	// rotatable marks whether this entry can be rotated by age. Only the standard transport sets it: rotation works by
+	// "removing from the pool + closing idle connections"; in-flight requests keep running on the old connection until they finish naturally;
+	// the uTLS transport manages its own connection pool, and the release path sends GOAWAY for in-flight connections and, after a timeout,
+	// forcibly closes them. Periodic rotation by age could truncate long answers, so it does not take part in rotation.
 	rotatable bool
 }
 
@@ -116,22 +116,22 @@ func (e *poolEntry) expiredByAge(now int64, maxAge time.Duration) bool {
 
 var clientPool sync.Map // map[string]*poolEntry, key = accountID|proxyURL|transportMode
 
-// clientPoolTTL 未使用超过此时间的 Client 将被淘汰
+// clientPoolTTL: a Client unused for longer than this is evicted
 const clientPoolTTL = 5 * time.Minute
 
-// clientPoolMaxAge 是池化 Client 的最大寿命：持续繁忙的账号其连接永远不会
-// 空闲到触发 TTL 淘汰，一条 HTTP/2 连接可以承载上千个请求（issue #491 报告里
-// 出现过 stream ID 539，即同一条连接已复用约 270 次）。上游边缘对超长寿命连接
-// 有自己的回收策略，赶上回收窗口时在途流会被 RST。到点主动换新连接即可错开：
-// 轮转只是把 entry 移出池并关闭其空闲连接，新请求走新连接，在途请求不受影响。
-// WS 链路已有同类机制（50 分钟主动轮转，issue #346）。设为 0 关闭本机制。
+// clientPoolMaxAge is the maximum age of a pooled Client: a busy account's connection would never
+// sit idle long enough to trigger TTL eviction, and one HTTP/2 connection can carry thousands of requests (the issue #491 report saw
+// stream ID 539, meaning the same connection had been reused about 270 times). Upstream edges have
+// their own recycling policy for long-lived connections, and in-flight streams get RST when a recycle window is hit. Rotating proactively on schedule staggers this:
+// rotation only moves the entry out of the pool and closes its idle connections; new requests use a new connection, and in-flight requests are unaffected.
+// The WS path already has a similar mechanism (proactive rotation every 50 minutes, issue #346). Set to 0 to disable this mechanism.
 var clientPoolMaxAge = durationFromEnv("CODEX_HTTP_CLIENT_MAX_AGE", 30*time.Minute)
 
-// clientPoolCleanupInterval 清理协程执行间隔
+// clientPoolCleanupInterval: interval at which the cleanup goroutine runs
 const clientPoolCleanupInterval = 60 * time.Second
 
 func init() {
-	// 后台清理：每 60 秒扫描一次，淘汰过期的 Client
+	// Background cleanup: scan every 60 seconds and evict expired Clients
 	go func() {
 		ticker := time.NewTicker(clientPoolCleanupInterval)
 		defer ticker.Stop()
@@ -152,25 +152,25 @@ func evictExpiredClients() {
 		if !idle && !aged {
 			return true
 		}
-		// LoadAndDelete 保证只有一个清理者真正释放这个 entry；被并发的
-		// getPooledClient 换上的新 entry 不会被误删。
+		// LoadAndDelete guarantees that only one cleaner actually releases this entry; a concurrent
+		// new entry swapped in by getPooledClient is never deleted by mistake.
 		if actual, ok := clientPool.LoadAndDelete(key); ok {
 			released := actual.(*poolEntry)
 			releaseEvictedClient(released.client)
 			if aged && !idle {
-				log.Printf("[CodexTransport] 连接寿命到期轮转: key=%s age=%s", key, time.Duration(nowNanos-released.createdAt).Truncate(time.Second))
+				log.Printf("[CodexTransport] connection age expired, rotating: key=%s age=%s", key, time.Duration(nowNanos-released.createdAt).Truncate(time.Second))
 			}
 		}
 		return true
 	})
 }
 
-// releaseEvictedClient 彻底释放一个已从连接池逐出、后续不会再被取用的 Client。
+// releaseEvictedClient fully releases a Client that has been evicted from the pool and will not be taken again.
 //
-// 普通 transport 用 CloseIdleConnections 即可（剩下的在途请求结束后由
-// IdleConnTimeout 回收）。但 uTLS transport 自管连接池，此处需要连带在途连接
-// 一起摘掉（在途 stream 走优雅关闭）：否则 entry 一旦从 map 删除，就再没有
-// 任何人持有该 transport，它名下的连接会泄漏到进程结束（issue #446）。
+// For a normal transport, CloseIdleConnections is enough (the rest is reclaimed by
+// IdleConnTimeout after in-flight requests end). But the uTLS transport manages its own pool, so here it must also drop
+// the in-flight connections (in-flight streams close gracefully): otherwise, once the entry is deleted from the map, nobody
+// holds that transport any more, and the connections under it leak until the process ends (issue #446).
 func releaseEvictedClient(client *http.Client) {
 	if client == nil {
 		return
@@ -238,16 +238,16 @@ func recyclePooledClientForAccount(account *auth.Account) {
 	recyclePooledClient(account, proxyURL)
 }
 
-// codexTLSSessionCache 在所有标准 transport 间共享 TLS 会话缓存，
-// 让重连(连接池 TTL 淘汰或 30s 空闲关闭后)走 TLS resumption(1-RTT)，降低重连握手成本。
+// codexTLSSessionCache shares a TLS session cache across all standard transports,
+// so reconnects (after pool TTL eviction or a 30s idle close) use TLS resumption(1-RTT), lowering the reconnect handshake cost.
 var codexTLSSessionCache = tls.NewLRUClientSessionCache(256)
 
 func newCodexStandardTransport(proxyURL string) http.RoundTripper {
 	transport := http.DefaultTransport.(*http.Transport).Clone()
 	transport.MaxIdleConnsPerHost = 4
 	transport.IdleConnTimeout = 90 * time.Second
-	// 兜住"连接建立后上游迟迟不回响应头"的假死场景。响应头（含 SSE 的
-	// 200 头）在正常情况下远早于首 token 到达，5 分钟已非常宽裕。
+	// Guards against the silent-stall case where the upstream does not reply with headers after the connection is established. Response headers (including the SSE
+	// 200 header) normally arrive well before the first token, so 5 minutes is very generous.
 	transport.ResponseHeaderTimeout = 5 * time.Minute
 	if transport.TLSClientConfig == nil {
 		transport.TLSClientConfig = &tls.Config{}
@@ -256,12 +256,12 @@ func newCodexStandardTransport(proxyURL string) http.RoundTripper {
 	baseDialer := &net.Dialer{Timeout: 10 * time.Second, KeepAlive: 30 * time.Second}
 	transport.DialContext = baseDialer.DialContext
 	if err := auth.ConfigureTransportProxy(transport, proxyURL, baseDialer); err != nil {
-		log.Printf("[CodexTransport] 代理配置失败，回退直连: proxy=%s err_type=%T", security.MaskURLCredentials(proxyURL), err)
+		log.Printf("[CodexTransport] proxy configuration failed, falling back to direct connection: proxy=%s err_type=%T", security.MaskURLCredentials(proxyURL), err)
 		transport.Proxy = nil
 		transport.DialContext = baseDialer.DialContext
 	}
-	// 在代理/DialContext 敲定后再启用 HTTP/2 保活 PING，剔除被中间设备静默
-	// 掐断的死连接，避免请求挂到 TCP 重传超时。
+	// Enable HTTP/2 keepalive PING only after the proxy/DialContext is settled, to remove dead connections
+	// silently cut off by middleboxes, so requests do not hang until the TCP retransmission timeout.
 	enableCodexHTTP2KeepAlive(transport)
 	return transport
 }
@@ -319,7 +319,7 @@ func logCodexFingerprintDebug(kind string, account *auth.Account, proxyURL strin
 	)
 }
 
-// getPooledClient 获取或创建连接池中的 HTTP Client（按账号隔离，TTL 自动淘汰）
+// getPooledClient gets or creates an HTTP Client from the connection pool (isolated per account, with TTL auto-eviction)
 func getPooledClient(account *auth.Account, proxyURL string) *http.Client {
 	return getPooledClientForRoute(account, proxyURL, false)
 }
@@ -348,11 +348,11 @@ func getPooledClientForRoute(account *auth.Account, proxyURL string, accountBoun
 		rotatable: transportMode == codexTransportModeStandard,
 		client: &http.Client{
 			Transport: transport,
-			// 不设整体超时：http.Client.Timeout 覆盖包括读响应体在内的完整
-			// 生命周期，流式回答超过上限会在数据正常传输中被切断（issue #287，
-			// 复杂任务单回合可超过 10 分钟）。生命周期由请求 context 控制
-			// （下游断开即取消），假死场景由拨号超时 + ResponseHeaderTimeout
-			// + 流层断流检测兜底，与 uTLS 路径(NewUTLSHttpClient)语义一致。
+			// No overall timeout: http.Client.Timeout covers the full lifetime, including reading the response body, which
+			// would cut off a streamed answer over the limit mid-transfer (issue #287,
+			// a single turn of a complex task can exceed 10 minutes). The lifetime is controlled by the request context
+			// (cancelled when the downstream disconnects); silent-stall cases are covered by the dial timeout and ResponseHeaderTimeout
+			// + stream-level disconnect detection as a fallback, consistent with the uTLS path (NewUTLSHttpClient).
 			Timeout: 0,
 		},
 	}
@@ -366,7 +366,7 @@ func getPooledClientForRoute(account *auth.Account, proxyURL string, accountBoun
 	return entry.client
 }
 
-// Codex 上游常量
+// Codex upstream constants
 const (
 	CodexBaseURL                     = "https://chatgpt.com/backend-api/codex"
 	Originator                       = "codex-tui"
@@ -376,7 +376,7 @@ const (
 
 const (
 	codexBetaFeaturesHeader = "X-Codex-Beta-Features"
-	// defaultCodexBetaFeatures 是默认安装的真实 Codex 发出的会话级特性协商值。
+	// defaultCodexBetaFeatures is the session-level feature negotiation value that the real Codex installs by default.
 	defaultCodexBetaFeatures = "remote_compaction_v2"
 )
 
@@ -414,8 +414,8 @@ func prepareCodexResponsesLiteTransport(requestBody []byte, headers http.Header,
 				requestBody = updated
 			}
 		} else {
-			// 信号被模型门禁剥离（或下游标记非 true）时，清掉体内残留标记，
-			// 避免不支持 lite 的模型把标记带上 WS 上游触发 400。
+			// When the signal is stripped by the model gate (or the downstream marked it as not true), clear the leftover marker in the body,
+			// so a model that does not support lite does not carry the marker to the WS upstream and trigger a 400.
 			requestBody = jsonbody.DeletePath(requestBody, codexResponsesLiteWSMetadataPath)
 		}
 		return requestBody, forwardHeaders
@@ -434,12 +434,12 @@ func prepareCodexResponsesLiteTransport(requestBody []byte, headers http.Header,
 	return requestBody, forwardHeaders
 }
 
-// normalizeCodexResponsesLiteBody 按上游对 Responses Lite 请求的强制约束净化请求体：
-// reasoning.context 必须为 all_turns、parallel_tool_calls 必须为 false，否则上游
-// 400 unsupported_value（WS/HTTP 均校验）。HTTP 上游还要求 tools 仅含 function/
-// custom/客户端执行的 tool search——网关自动注入的 hosted image_generation 工具
-// （及其桥接 instructions）会让整个请求被拒，须在发出前剥除；WS 上游接受该工具、
-// 生图桥接可用，不剥除以免功能回退。
+// normalizeCodexResponsesLiteBody sanitizes the request body against the upstream's mandatory constraints for Responses Lite requests:
+// reasoning.context must be all_turns and parallel_tool_calls must be false, otherwise the upstream
+// returns 400 unsupported_value (checked by both WS and HTTP). The HTTP upstream also requires that tools contain only function/
+// custom/client-executed tool search. The hosted image_generation tool injected by the gateway
+// (and its bridge instructions) would get the whole request rejected, so it must be stripped before sending; the WS upstream accepts the tool,
+// and the image-generation bridge works there, so it is not stripped, to avoid a feature regression.
 func normalizeCodexResponsesLiteBody(requestBody []byte, stripHostedTools bool) []byte {
 	requestBody, _ = sjson.SetBytes(requestBody, "parallel_tool_calls", false)
 	requestBody, _ = sjson.SetBytes(requestBody, "reasoning.context", "all_turns")
@@ -474,25 +474,25 @@ func normalizeCodexResponsesLiteBody(requestBody []byte, stripHostedTools bool) 
 	return requestBody
 }
 
-// WebsocketExecuteFunc WebSocket 执行函数（由 wsrelay 包在 main.go 中注册，避免循环依赖）
-// poolRouteKey：本地连接池路由键（仅本地、永不发上游）。非空时 wsrelay 用它作 8 槽池的
-// baseKey，从而把"上游会话身份(每请求唯一)"与"连接复用(按 API Key 稳定)"解耦；空时沿用
-// headerSessionID 作 baseKey（显式会话 / per-api-key 模式的原有行为）。
+// WebsocketExecuteFunc is the WebSocket execution function (registered in main.go by the wsrelay package, to avoid an import cycle)
+// poolRouteKey: local connection-pool routing key (local only, never sent upstream). When non-empty, wsrelay uses it as the 8-slot pool's
+// baseKey, which decouples the upstream session identity (unique per request) from connection reuse (stable per API key); when empty it falls back to
+// headerSessionID as the baseKey (the original behavior for explicit sessions and per-api-key mode).
 var WebsocketExecuteFunc func(ctx context.Context, account *auth.Account, requestBody []byte, sessionID string, proxyOverride string, apiKey string, deviceCfg *DeviceProfileConfig, headers http.Header, poolRouteKey string) (*http.Response, error)
 
-// EnsureCodexAgentIdentityTaskFunc 由启动装配注册（store.EnsureCodexAgentIdentityTask），
-// 在构建 Agent Identity 请求前保证 task_id 就绪；forceRefresh=true 用于 401 task 失效重注册。
-// nil 时跳过（如嵌入式调用或初始化顺序问题）。
+// EnsureCodexAgentIdentityTaskFunc is registered by startup wiring (store.EnsureCodexAgentIdentityTask),
+// which ensures the task_id is ready before an Agent Identity request is built; forceRefresh=true is used for a 401 task-invalid re-registration.
+// When nil it is skipped (for example, embedded calls or an initialization-order issue).
 var EnsureCodexAgentIdentityTaskFunc func(ctx context.Context, account *auth.Account, forceRefresh bool) error
 
-// IsolateCodexSessionID 把下游会话种子确定性映射到一个按 API Key 隔离的上游会话身份。
+// IsolateCodexSessionID deterministically maps the downstream session seed to an upstream session identity isolated per API key.
 //
-// 产出取 UUIDv7 形态：真实 Codex 客户端的 session_id 就是 v7，而这里原本产出的是
-// 16 位裸十六进制，连 UUID 都不是——它同时出现在出站 session 头和请求体
-// prompt_cache_key 上，是比任何 metadata 字段都显眼的形状差异。
+// The output takes the UUIDv7 shape: the real Codex client's session_id is v7, whereas the original output here was a
+// 16-character bare hex string, not even a UUID. It appeared both in the outbound session header and in the
+// prompt_cache_key body field, a shape difference more conspicuous than any metadata field.
 //
-// 换格式会让既有部署的确定性 cache key 整体换代，升级后首轮请求上游 prompt cache
-// 必然 miss 一次，随后按新键重新聚合。这是一次性成本，换的是每个请求的形状正确。
+// Changing the format would replace every existing deployment's deterministic cache key, so the first request after an upgrade
+// would necessarily miss the upstream prompt cache once and then re-aggregate under the new key. That is a one-time cost, in exchange for the correct shape of every request.
 func IsolateCodexSessionID(apiKeyID int64, raw string) string {
 	raw = strings.TrimSpace(raw)
 	if raw == "" || apiKeyID <= 0 {
@@ -501,30 +501,30 @@ func IsolateCodexSessionID(apiKeyID int64, raw string) string {
 	return DeriveStableSessionUUIDv7(fmt.Sprintf("api-key:%d:%s", apiKeyID, raw))
 }
 
-// resolveUpstreamSessionID 决定传给上游的会话/缓存身份键。
-//   - 显式会话（用户带了 Session_id/Conversation_id/Idempotency-Key/prompt_cache_key）：
-//     保持 IsolateCodexSessionID 的确定性隔离行为，命中缓存、粘定会话。
-//   - 无显式会话 + 默认隔离(isolated)：HTTP 返回每请求唯一 UUID（隔离上游 prompt_cache_key/
-//     Session_id），WS 返回 ""（交给 ExecuteRequest 的 stateless 路径，连接池键单独稳定）。
-//   - 无显式会话 + per-api-key：WS 返回 ""、HTTP 走 IsolateCodexSessionID（恢复旧的按 Key 共享）。
+// resolveUpstreamSessionID decides the session/cache identity key passed to the upstream.
+//   - Explicit session (the user supplied Session_id/Conversation_id/Idempotency-Key/prompt_cache_key):
+//     keeps the deterministic isolation behavior of IsolateCodexSessionID, hitting the cache and sticking to the session.
+//   - No explicit session + default isolation: HTTP returns a per-request unique UUID (isolating the upstream prompt_cache_key/
+//     Session_id); WS returns "" (handed to the stateless path of ExecuteRequest, with the connection-pool key kept stable separately).
+//   - No explicit session + per-api-key: WS returns ""; HTTP uses IsolateCodexSessionID (restores the old per-key sharing).
 //
-// 注意：账号粘性键由 requestSessionIdentity.affinityID 派生；本函数只接收
-// upstreamSeed，因此本地 affinity header 不会影响上游身份。
+// Note: the account affinity key is derived from requestSessionIdentity.affinityID; this function only receives
+// upstreamSeed, so the local affinity header does not affect the upstream identity.
 func resolveUpstreamSessionID(apiKeyID int64, upstreamSeed, explicitSessionID string, useWebsocket bool) string {
 	if useWebsocket && explicitSessionID == "" {
 		return ""
 	}
 	if explicitSessionID == "" && CurrentRuntimeSettings().IsolateRequestsByDefault() {
-		// v7 而非 v4：这是默认路径，绝大多数出站请求的会话键都由这里产出。
+		// v7 rather than v4: this is the default path, and the session keys of the vast majority of outbound requests are produced here.
 		return NewUpstreamSessionUUID()
 	}
 	return IsolateCodexSessionID(apiKeyID, upstreamSeed)
 }
 
-// ExecuteRequest 向 Codex 上游发送请求
-// sessionID 可选，用于 prompt cache 会话绑定
-// useWebsocket 可选：未传时遵循全局强制 WS；传 true/false 时由调用方显式控制。
-// headers 下游请求头，用于设备指纹学习
+// ExecuteRequest sends a request to the Codex upstream
+// sessionID is optional, used for prompt cache session binding
+// useWebsocket is optional: when not passed, the global forced-WS setting applies; when true/false is passed, the caller controls it explicitly.
+// headers are the downstream request headers, used for device-fingerprint learning
 func ExecuteRequest(ctx context.Context, account *auth.Account, requestBody []byte, sessionID string, proxyOverride string, apiKey string, deviceCfg *DeviceProfileConfig, headers http.Header, useWebsocket ...bool) (upstreamResponse *http.Response, upstreamErr error) {
 	if account == nil {
 		return nil, ErrNoAvailableAccount()
@@ -542,15 +542,15 @@ func ExecuteRequest(ctx context.Context, account *auth.Account, requestBody []by
 	requestBody, encryptedAttempt = prepareEncryptedContentAttempt(ctx, account, requestBody, sessionID, headers)
 	defer func() { encryptedAttempt.observeResponse(upstreamResponse, requestBody) }()
 
-	// Payload 规则改写：在 WS/HTTP 分叉前统一应用，两条上游路径共享改写结果。
-	// 生图请求跳过——其 instructions/工具由网关自行构造，改写会破坏桥接协议。
+	// Payload rule rewriting: applied uniformly before the WS/HTTP split, so both upstream paths share the rewritten result.
+	// Image-generation requests are skipped: their instructions and tools are built by the gateway itself, and rewriting would break the bridge protocol.
 	detectorProbe := isCodexDetectorRequest(ctx)
 	if !responsesBodyRequestsImageGeneration(requestBody) && !detectorProbe {
 		RecordObservedInstructions(requestBody, headers)
 		requestBody = ApplyPayloadRulesToBody(requestBody, gjson.GetBytes(requestBody, "model").String(), headers, PayloadRuleIdentityFromContext(ctx))
-		// 规则改写发生在各 handler 的 service_tier 净化之后，规则注入的 flex/auto 等
-		// 上游不接受的层级会原样发出并触发 400，这里补一次净化兜底。用量日志的
-		// requested tier 归因走 EffectiveRequestedServiceTier（净化前取值），不受影响。
+		// Rule rewriting happens after each handler's service_tier sanitization, so tiers injected by rules (flex/auto etc.)
+		// that the upstream does not accept would be sent as-is and trigger a 400; this adds one more sanitization pass as a safety net. The usage log's
+		// requested-tier attribution goes through EffectiveRequestedServiceTier (the value taken before sanitization), so it is unaffected.
 		requestBody = sanitizeServiceTierForUpstream(requestBody)
 	}
 	var daybreakErr error
@@ -558,36 +558,36 @@ func ExecuteRequest(ctx context.Context, account *auth.Account, requestBody []by
 	if daybreakErr != nil {
 		return nil, daybreakErr
 	}
-	// 指纹收敛在 WS/HTTP 分叉前统一改写请求体，两条上游路径共享结果；请求头侧的
-	// 收敛（ApplyCodexFingerprintHeaders）从同一份「账号 + 下游头」推导，取值一致。
+	// Fingerprint convergence rewrites the request body uniformly before the WS/HTTP split, so both upstream paths share the result; on the header side the
+	// convergence (ApplyCodexFingerprintHeaders) derives from the same "account + downstream headers", so the values match.
 	headers = PrepareCodexFingerprintHeaders(account, headers, requestBody)
 	requestBody = ApplyCodexFingerprintToBody(requestBody, account, headers)
-	// 账号绑定时区：改写 environment_context 的时区/日期，与指纹收敛一样在分叉前统一处理。
+	// Account-bound timezone: rewrites the timezone/date in environment_context, handled uniformly before the split just like fingerprint convergence.
 	requestBody = ApplyCodexTimezoneToBody(requestBody, account, time.Now())
-	// Codex multi-agent v2 兼容层：仅在调用方显式安装状态、部署方开启开关、
-	// 且下游确实是 Codex 客户端时改写 collaboration 工具 schema。冲突、无效
-	// JSON 或结构超限的请求保持原生路径，绝不猜测任务正文。
+	// Codex multi-agent v2 compatibility layer: it rewrites the collaboration tool schema only when the caller explicitly installs state, the deployment has the switch turned on,
+	// and the downstream really is a Codex client. Requests with conflicts, invalid
+	// JSON, or structures over the limit keep the native path; the task body is never guessed.
 	if state := codexMultiAgentV2StateFromContext(ctx); state != nil &&
 		codexMultiAgentV2CompatEnabled() && isCodexMultiAgentV2Client(headers.Get("User-Agent")) {
 		model := gjson.GetBytes(requestBody, "model").String()
 		if updated, optimized, err := prepareCodexMultiAgentV2Request(requestBody); err != nil {
-			log.Printf("[multi-agent-v2] 兼容层跳过请求改写 (account=%d model=%s): %v", account.ID(), model, err)
+			log.Printf("[multi-agent-v2] compatibility layer skipped request rewrite (account=%d model=%s): %v", account.ID(), model, err)
 		} else if optimized {
 			requestBody = updated
 			state.markOptimized(account.ID(), model)
-			log.Printf("[multi-agent-v2] 父请求已切换为明文协作工具 (account=%d model=%s)", account.ID(), model)
+			log.Printf("[multi-agent-v2] parent request switched to plaintext collaboration tools (account=%d model=%s)", account.ID(), model)
 		}
 	}
-	// lite 信号收敛：签名在 payload 规则改写后采集（规则可注入/删除 WS 标记，改写
-	// 前采集会让注入失效、删除被回填），模型也已被入口映射/规则定稿——已知不支持
-	// lite 的模型带信号上游必 400，发出前剥离。
+	// lite signal convergence: the signature is collected after payload rule rewriting (rules can inject or delete the WS marker; collecting
+	// before rewriting would make injections ineffective and deletions get restored), and the model is already finalized by entry mapping and rules: a model known not to support
+	// lite that is sent with the signal always gets a 400 upstream, so the signal is stripped before sending.
 	responsesLite := gateResponsesLiteForAccount(codexResponsesLiteRequested(requestBody, headers), requestBody, account)
 	wantWebsocket := CurrentRuntimeSettings().CodexForceWebsocket
 	if len(useWebsocket) > 0 {
 		wantWebsocket = useWebsocket[0]
 	}
-	// Agent Identity 账号强制走 HTTP：其鉴权是每请求动态签名的 AgentAssertion 头，
-	// 长连接 WS 的一次握手鉴权模型不适配，v1 统一走 HTTP。
+	// Agent Identity accounts are forced onto HTTP: their auth is a per-request dynamically signed AgentAssertion header,
+	// and the one-handshake auth model of long-lived WS connections does not fit, so v1 uses HTTP uniformly.
 	if account.IsCodexAgentIdentity() {
 		wantWebsocket = false
 	}
@@ -603,26 +603,26 @@ func ExecuteRequest(ctx context.Context, account *auth.Account, requestBody []by
 	if wantWebsocket {
 		sessionID = strings.TrimSpace(sessionID)
 		if sessionID == "" {
-			// stateless 连接 ID 仅用于 WS 连接池隔离，保证同一 API Key 的并发请求
-			// 不挤在一条连接上排队。
+			// The stateless connection ID is used only for WS connection-pool isolation, so concurrent requests with the same API Key
+			// do not queue up on a single connection.
 			sessionID = statelessWebsocketSessionID()
 			if strings.TrimSpace(gjson.GetBytes(requestBody, "prompt_cache_key").String()) == "" {
 				det := deterministicPromptCacheKey(apiKey, account)
 				if CurrentRuntimeSettings().IsolateRequestsByDefault() {
-					// 默认隔离：每请求唯一的 prompt_cache_key 写入 response.create 帧体，实现上游
-					// 身份隔离（互不串味）；连接池 baseKey 用稳定的确定性键单独传，保住 8 槽复用与
-					// 抗握手限流(503)。注意：上游会话隔离靠帧体 prompt_cache_key，而非握手头
-					// Session_id/Conversation_id（后者对复用连接是逐连接、非逐请求）。
+					// Default isolation: the per-request unique prompt_cache_key is written into the response.create frame body, achieving upstream
+					// identity isolation (no cross-contamination); the connection-pool baseKey is passed separately as a stable deterministic key, keeping 8-slot reuse and
+					// resistance to handshake rate limiting (503). Note: upstream session isolation relies on the frame-body prompt_cache_key, not on handshake headers
+					// Session_id/Conversation_id (the latter is per-connection, not per-request, on a reused connection).
 					requestBody, _ = sjson.SetBytes(requestBody, "prompt_cache_key", NewUpstreamSessionUUID())
 					poolRouteKey = det
 					if poolRouteKey == "" {
-						// det 仅在既无 API Key 又无账号 ID 时为空（生产路径不可达）；用固定哨兵兜底，
-						// 避免 baseKey 退化为每请求唯一键而触发握手风暴。
+						// det is empty only when there is neither an API key nor an account ID (unreachable on the production path); a fixed sentinel is used as a fallback,
+						// to avoid degrading baseKey to a per-request unique key, which would trigger a handshake storm.
 						poolRouteKey = "ws-pool-default"
 					}
 				} else if det != "" {
-					// per-api-key：保留与 HTTP 路径同源的确定性 prompt cache key（既是上游身份也是
-					// baseKey），否则上游 prompt cache 每次请求都会 miss（v2.2.7 引入的回归）。
+					// per-api-key: keeps the same-source deterministic prompt cache key as the HTTP path (serving as both the upstream identity and the
+					// baseKey); otherwise the upstream prompt cache would miss on every request (a regression introduced in v2.2.7).
 					requestBody, _ = sjson.SetBytes(requestBody, "prompt_cache_key", det)
 				}
 			}
@@ -634,8 +634,8 @@ func ExecuteRequest(ctx context.Context, account *auth.Account, requestBody []by
 			requestBody = normalizeCodexResponsesLiteBody(requestBody, false)
 		}
 		requestBody = normalizeCodexStructuredOutputForTransport(requestBody, true, responsesLite)
-		// 出站前最后兜底：任何中间改写都不能把普通 input 项放到
-		// compaction_trigger 后面，否则上游直接返回 invalid_request_error。
+		// Final safety net before sending: no intermediate rewrite may place a normal input item
+		// after a compaction_trigger, otherwise the upstream returns invalid_request_error directly.
 		requestBody = normalizeCompactionTriggerFinal(requestBody, false)
 		traceProxy := proxyOverride
 		if traceProxy == "" {
@@ -649,9 +649,9 @@ func ExecuteRequest(ctx context.Context, account *auth.Account, requestBody []by
 		return resp, err
 	}
 	if wantWebsocket && WebsocketExecuteFunc == nil {
-		// 请求/配置要求走 WebSocket，但 WS 执行器未注册（如嵌入式调用或初始化顺序问题）。
-		// 静默落回 HTTP 会让“以为开了 WS 实际走 HTTP”难以排查，这里显式告警。
-		log.Printf("[WS] 警告: 期望走 WebSocket 上游，但 WebsocketExecuteFunc 未注册，已回退到 HTTP (account %d)", account.ID())
+		// The request or config requires WebSocket, but the WS executor is not registered (for example, embedded calls or an initialization-order issue).
+		// Silently falling back to HTTP would make "thinking WS is on but it is actually HTTP" hard to debug, so warn explicitly here.
+		log.Printf("[WS] warning: expected the WebSocket upstream, but WebsocketExecuteFunc is not registered; fell back to HTTP (account %d)", account.ID())
 	}
 	requestBody, headers = prepareCodexResponsesLiteTransport(requestBody, headers, false, responsesLite)
 	if responsesLite {
@@ -665,47 +665,47 @@ func ExecuteRequest(ctx context.Context, account *auth.Account, requestBody []by
 	proxyURL := account.ProxyURL
 	account.Mu().RUnlock()
 
-	// 代理池优先级: proxyOverride (来自 NextProxy) > account.ProxyURL
+	// Proxy pool priority: proxyOverride (from NextProxy) > account.ProxyURL
 	if proxyOverride != "" {
 		proxyURL = proxyOverride
 	}
 	proxyURL = requestProxyURL(ctx, proxyURL)
 
 	isAgentIdentity := account.IsCodexAgentIdentity()
-	// Agent Identity 无 access_token，鉴权靠 AgentAssertion；请求前确保 task 已注册。
+	// Agent Identity has no access_token; auth relies on AgentAssertion, so the task is ensured registered before the request.
 	if isAgentIdentity {
 		if EnsureCodexAgentIdentityTaskFunc != nil {
 			if err := EnsureCodexAgentIdentityTaskFunc(ctx, account, false); err != nil {
-				return nil, ErrUpstream(0, "agent identity task 注册失败", err)
+				return nil, ErrUpstream(0, "agent identity task registration failed", err)
 			}
 		}
 	} else if accessToken == "" {
 		return nil, ErrNoAvailableAccount()
 	}
 
-	// ==================== Codex 请求体优化 ====================
-	// 参考 CLIProxyAPI/codex_executor.go + sub2api 的实现
+	// ==================== Codex request body optimization ====================
+	// Referenced from CLIProxyAPI/codex_executor.go and sub2api's implementation
 
-	// 1. 确保 instructions 字段存在（Codex 后端要求）
+	// 1. Ensure the instructions field exists (required by the Codex backend)
 	if !gjson.GetBytes(requestBody, "instructions").Exists() {
 		requestBody, _ = sjson.SetBytes(requestBody, "instructions", "")
 	}
 
-	// 2. 清理可能导致上游报错的多余字段
+	// 2. Remove extra fields that could make the upstream error
 	requestBody = jsonbody.DeletePath(requestBody, "previous_response_id")
-	// 注意：HTTP /responses 上游不接受 prompt_cache_retention（会 400），必须删除；
-	// 该字段的 cache 收益只在 WS 路径注入（见 wsrelay 的 prepareWebsocketBody）。
+	// Note: the HTTP /responses upstream does not accept prompt_cache_retention (it returns 400), so it must be deleted;
+	// the cache benefit of this field is only injected on the WS path (see prepareWebsocketBody in wsrelay).
 	requestBody = jsonbody.DeletePath(requestBody, "prompt_cache_retention")
 	requestBody = jsonbody.DeletePath(requestBody, "safety_identifier")
 	requestBody = jsonbody.DeletePath(requestBody, "disable_response_storage")
-	// 顶层 type 是 Responses WS 事件信封字段（response.create），native WS ingress 的
-	// 1009 降级、生图强制 HTTP、Agent Identity 强制 HTTP 都会复用带信封的 body，而
-	// HTTP /responses 上游不接受它（400 Unsupported parameter: type）。此处为出站
-	// 收口兜底；sjson 只删顶层路径，input[] 等嵌套 type 不受影响（issue #548）。
+	// The top-level type is the Responses WS event envelope field (response.create). The native WS ingress
+	// 1009 downgrade, forced-HTTP image generation, and forced-HTTP Agent Identity all reuse the enveloped body, and
+	// the HTTP /responses upstream does not accept it (400 Unsupported parameter: type). This is the
+	// final outbound safety net; sjson deletes only the top-level path, so nested type fields such as in input[] are unaffected (issue #548).
 	requestBody = jsonbody.DeletePath(requestBody, "type")
 	requestBody = jsonbody.DeletePath(requestBody, "stream_id")
 
-	// 3. 注入 prompt_cache_key（如果请求体中没有，且 sessionID 不为空）
+	// 3. Inject prompt_cache_key (if the request body does not have one and sessionID is not empty)
 	existingCacheKey := strings.TrimSpace(gjson.GetBytes(requestBody, "prompt_cache_key").String())
 	cacheKey := existingCacheKey
 	if sessionID != "" {
@@ -715,9 +715,9 @@ func ExecuteRequest(ctx context.Context, account *auth.Account, requestBody []by
 
 	endpoint := CodexBaseURL + "/responses"
 
-	// 出站字节在选客户端之前定稿：send() 会因 Agent Identity 401 重注册而重放，
-	// 两次重放必须发同一份字节。routing hint 等需要读字段的改写点继续用明文
-	// requestBody——它们解析 JSON，拿到压缩帧只会静默失配。
+	// The outbound bytes are finalized before the client is selected: send() replays on an Agent Identity 401 re-registration,
+	// and the two replays must send the same bytes. Rewriting points that need to read fields, such as routing hints, keep using the plaintext
+	// requestBody: they parse JSON, and receiving a compressed frame would silently mismatch.
 	var outboundBody []byte
 	var contentEncoding string
 	if pipelineFromContext(ctx) != nil {
@@ -726,7 +726,7 @@ func ExecuteRequest(ctx context.Context, account *auth.Account, requestBody []by
 		outboundBody, contentEncoding = CompressCodexRequestBody(requestBody)
 	}
 
-	// 出口链路统一由 ResolveCodexEgress 决定(Resin > 代理 > 直连,见 egress.go)。
+	// The egress chain is decided uniformly by ResolveCodexEgress (Resin > proxy > direct, see egress.go).
 	egress := ResolveCodexRequestEgress(ctx, account, endpoint, proxyURL, false)
 	endpoint = egress.URL
 	client := egress.Client()
@@ -762,20 +762,20 @@ func ExecuteRequest(ctx context.Context, account *auth.Account, requestBody []by
 		}
 		req, err := http.NewRequestWithContext(ctx, http.MethodPost, endpoint, reader)
 		if err != nil {
-			return nil, ErrInternalError("创建请求失败", err)
+			return nil, ErrInternalError("failed to create request", err)
 		}
 
-		// ==================== 请求头（伪装 Codex CLI） ====================
+		// ==================== Request headers (disguised as the Codex CLI) ====================
 		if err := applyCodexRequestHeaders(req, account, accessToken, cacheKey, apiKey, deviceCfg, headers); err != nil {
 			return nil, err
 		}
-		// Content-Encoding 在通用头装配之后设置：真实客户端也是在编码完成时才补这个头
-		// （codex-rs/http-client/src/request.rs prepare_encoded_json），且账号自定义头
-		// 不该有能力声明一个与实际字节不符的编码。
+		// Content-Encoding is set after the common header assembly: real clients also add this header only when encoding finishes
+		// (codex-rs/http-client/src/request.rs prepare_encoded_json), and an account's custom headers
+		// must not be able to declare an encoding that does not match the actual bytes.
 		if contentEncoding != "" {
 			req.Header.Set("Content-Encoding", contentEncoding)
 		}
-		// routing hint 由网关按最终出站 body 合成，须在账号自定义头之后设置。
+		// The routing hint is synthesized by the gateway from the final outbound body, so it must be set after the account's custom headers.
 		if pipelineFile != nil {
 			stat, err := input.Stat()
 			if err != nil {
@@ -806,7 +806,7 @@ func ExecuteRequest(ctx context.Context, account *auth.Account, requestBody []by
 			if shouldRecyclePooledClient(err) {
 				recycleRequestClient(ctx, account, proxyURL)
 			}
-			return nil, ErrUpstream(0, "请求上游失败", err)
+			return nil, ErrUpstream(0, "upstream request failed", err)
 		}
 		return resp, nil
 	}
@@ -816,7 +816,7 @@ func ExecuteRequest(ctx context.Context, account *auth.Account, requestBody []by
 		return nil, err
 	}
 
-	// Agent Identity：task 失效（401 invalid_task_id 等）时重注册并重试一次。
+	// Agent Identity: when the task is invalid (401 invalid_task_id etc.), re-register and retry once.
 	if isAgentIdentity && resp != nil && resp.StatusCode == http.StatusUnauthorized && EnsureCodexAgentIdentityTaskFunc != nil {
 		peeked, _ := io.ReadAll(io.LimitReader(resp.Body, 64*1024))
 		_ = resp.Body.Close()
@@ -825,7 +825,7 @@ func ExecuteRequest(ctx context.Context, account *auth.Account, requestBody []by
 				return send()
 			}
 		}
-		// 非 task 失效或重注册失败：把已读走的 body 还原后原样返回给上层错误处理。
+		// Not a task invalidation, or re-registration failed: restore the body that was already read and return it as-is to the upper-layer error handling.
 		resp.Body = io.NopCloser(bytes.NewReader(peeked))
 	}
 
@@ -836,8 +836,8 @@ func isCodexAccessRestrictedResponse(resp *http.Response) bool {
 	if resp == nil || resp.StatusCode != http.StatusForbidden || resp.Body == nil {
 		return false
 	}
-	// 只读取用于识别的前缀，再把前缀和剩余流拼回去，避免把巨大的错误体
-	// 整体读进内存（上游可能由第三方中转控制）。
+	// Read only the prefix needed for identification, then splice the prefix and the rest of the stream back together, to avoid
+	// reading the whole error body into memory (the upstream may be controlled by a third-party relay).
 	const peekLimit = 64 << 10
 	peek, err := io.ReadAll(io.LimitReader(resp.Body, peekLimit))
 	resp.Body = struct {
@@ -850,9 +850,9 @@ func isCodexAccessRestrictedResponse(resp *http.Response) bool {
 	if strings.EqualFold(strings.TrimSpace(gjson.GetBytes(peek, "error.code").String()), "codex_access_restricted") {
 		return true
 	}
-	// 部分中转（sub2api 的 codex_cli_only、zzzcoding 等第三方网关）用
+	// Some relays (sub2api's codex_cli_only, zzzcoding and other third-party gateways) use
 	// {"error":{"message":"This account only allows Codex official clients",
-	// "type":"forbidden_error"}} 表达同样的官方客户端限制。
+	// "type":"forbidden_error"}} to express the same official-client restriction.
 	if !strings.EqualFold(strings.TrimSpace(gjson.GetBytes(peek, "error.type").String()), "forbidden_error") {
 		return false
 	}
@@ -862,7 +862,7 @@ func isCodexAccessRestrictedResponse(resp *http.Response) bool {
 		strings.Contains(msg, "codex 客户端")
 }
 
-// ExecuteCompactRequest 向 Codex 上游发送 /responses/compact 请求（非流式压缩接口）
+// ExecuteCompactRequest sends a /responses/compact request to the Codex upstream (the non-streaming compaction endpoint)
 func ExecuteCompactRequest(ctx context.Context, account *auth.Account, requestBody []byte, sessionID string, proxyOverride string, apiKey string, deviceCfg *DeviceProfileConfig, headers http.Header) (upstreamResponse *http.Response, upstreamErr error) {
 	if account == nil {
 		return nil, ErrNoAvailableAccount()
@@ -894,24 +894,24 @@ func ExecuteCompactRequest(ctx context.Context, account *auth.Account, requestBo
 		return nil, ErrNoAvailableAccount()
 	}
 
-	// 与 ExecuteRequest 相同的请求体优化
+	// Same request body optimization as ExecuteRequest
 	if !gjson.GetBytes(requestBody, "instructions").Exists() {
 		requestBody, _ = sjson.SetBytes(requestBody, "instructions", "")
 	}
 	requestBody = jsonbody.DeletePath(requestBody, "previous_response_id")
-	// compact 端点同样走 HTTP，不接受 prompt_cache_retention，必须删除。
+	// The compact endpoint also goes over HTTP and does not accept prompt_cache_retention, so it must be deleted.
 	requestBody = jsonbody.DeletePath(requestBody, "prompt_cache_retention")
 	requestBody = jsonbody.DeletePath(requestBody, "safety_identifier")
 	requestBody = jsonbody.DeletePath(requestBody, "disable_response_storage")
-	// 顶层 type 是 WS 事件信封字段，compact HTTP 端点同样不接受，兜底删除(issue #548)。
+	// The top-level type is a WS event envelope field; the compact HTTP endpoint does not accept it either, so it is deleted as a fallback (issue #548).
 	requestBody = jsonbody.DeletePath(requestBody, "type")
 	requestBody = jsonbody.DeletePath(requestBody, "stream_id")
 	requestBody, headers = prepareCodexResponsesLiteTransport(requestBody, headers, false, responsesLite)
-	// 指纹收敛：与 ExecuteRequest 同样在请求体定稿后、构造出站请求前改写
-	// client_metadata。漏掉这一步会让 compact 路径只收敛请求头、请求体仍带客户端
-	// 真实标识，上游看到「头说设备 A、体说设备 B」这种真实客户端不会有的矛盾。
-	// 必须用 prepareCodexResponsesLiteTransport 之后的 headers（它可能返回克隆），
-	// 与下方 applyCodexRequestHeaders 取同一份下游头，两处推导结果才一致。
+	// Fingerprint convergence: like ExecuteRequest, rewrite client_metadata after the body is finalized and before building the outbound request.
+	// If this step is missed, the compact path converges only the headers while the body still carries the client's real identifiers, so
+	// the upstream sees a contradiction that a real client never produces: the header says device A, the body says device B.
+	// Must use the headers returned after prepareCodexResponsesLiteTransport (it may return a clone),
+	// taking the same downstream headers as applyCodexRequestHeaders below, so both derivations match.
 	headers = PrepareCodexFingerprintHeaders(account, headers, requestBody)
 	requestBody = ApplyCodexFingerprintToBody(requestBody, account, headers)
 	requestBody = ApplyCodexTimezoneToBody(requestBody, account, time.Now())
@@ -922,23 +922,23 @@ func ExecuteCompactRequest(ctx context.Context, account *auth.Account, requestBo
 		requestBody = jsonbody.SetString(requestBody, "prompt_cache_key", cacheKey)
 	}
 
-	// compact 端点
+	// compact endpoint
 	endpoint := CodexBaseURL + "/responses/compact"
 
-	// 出口链路统一由 ResolveCodexEgress 决定(Resin > 代理 > 直连,见 egress.go)。
+	// The egress chain is decided uniformly by ResolveCodexEgress (Resin > proxy > direct, see egress.go).
 	egress := ResolveCodexEgress(account, endpoint, proxyURL)
 	endpoint = egress.URL
 	client := egress.Client()
 
 	req, err := http.NewRequestWithContext(ctx, http.MethodPost, endpoint, bytes.NewReader(requestBody))
 	if err != nil {
-		return nil, ErrInternalError("创建请求失败", err)
+		return nil, ErrInternalError("failed to create request", err)
 	}
 
 	if err := applyCodexRequestHeaders(req, account, accessToken, cacheKey, apiKey, deviceCfg, headers); err != nil {
 		return nil, err
 	}
-	// routing hint 由网关按最终出站 body 合成，须在账号自定义头之后设置。
+	// The routing hint is synthesized by the gateway from the final outbound body, so it must be set after the account's custom headers.
 	ApplyCodexRoutingHint(req.Header, account, requestBody)
 
 	egress.ApplyHeaders(req.Header)
@@ -952,7 +952,7 @@ func ExecuteCompactRequest(ctx context.Context, account *auth.Account, requestBo
 		if shouldRecyclePooledClient(err) {
 			recyclePooledClient(account, proxyURL)
 		}
-		return nil, ErrUpstream(0, "请求上游失败", err)
+		return nil, ErrUpstream(0, "upstream request failed", err)
 	}
 
 	return resp, nil
@@ -1029,7 +1029,7 @@ func applyCodexRequestHeaders(req *http.Request, account *auth.Account, accessTo
 	userAgent, version, usedGeneratedHeaders := identity.UserAgent, identity.Version, identity.Generated
 	req.Header.Set("User-Agent", userAgent)
 
-	// Agent Identity 账号用动态签名的 AgentAssertion 头替代 Bearer（task 已由调用方确保就绪）。
+	// Agent Identity accounts use a dynamically signed AgentAssertion header in place of the Bearer (the task is already ensured ready by the caller).
 	if account != nil && account.IsCodexAgentIdentity() {
 		if assertion, err := account.BuildCodexAgentAssertion(time.Now()); err == nil {
 			req.Header.Set("Authorization", assertion)
@@ -1039,14 +1039,14 @@ func applyCodexRequestHeaders(req *http.Request, account *auth.Account, accessTo
 	}
 	req.Header.Set("Content-Type", "application/json")
 	req.Header.Set("Accept", "text/event-stream")
-	// 不发 Connection：这是 HTTP/2 明令禁止的 connection-specific 头（RFC 9113 §8.2.2），
-	// 而 Codex 官方上游走的就是 h2——Go 的 http2 transport 会把它剥掉，剥不掉的代理
-	// 链路上它则是个真实客户端不会有的多余头。真实 Codex 用 reqwest，同样不发。
+	// Do not send Connection: it is a connection-specific header that HTTP/2 explicitly forbids (RFC 9113 §8.2.2),
+	// while the official Codex upstream uses h2. Go's http2 transport strips it, but on a proxy chain that cannot strip it,
+	// it is an extra header that a real client would never send. Real Codex uses reqwest, which does not send it either.
 	if version != "" {
 		req.Header.Set("Version", version)
 	}
-	// Originator 必须与出站 UA 的客户端前缀一致：网关自行生成 UA 时跟随生成结果
-	// （模拟 "Codex Desktop" 就发 "Codex Desktop"），透传官方客户端时沿用下游值。
+	// Originator must match the client prefix of the outbound UA: when the gateway generates the UA itself, it follows the generated result
+	// (when simulating "Codex Desktop", send "Codex Desktop"); when passing through an official client, keep the downstream value.
 	if usedGeneratedHeaders {
 		req.Header.Set("Originator", CodexOriginatorForGeneratedUserAgent(userAgent))
 	} else if originator := strings.TrimSpace(downstreamHeaders.Get("Originator")); originator != "" && IsCodexOfficialClientByHeaders("", originator) {
@@ -1055,11 +1055,11 @@ func applyCodexRequestHeaders(req *http.Request, account *auth.Account, accessTo
 		req.Header.Set("Originator", Originator)
 	}
 	applyCodexAllowedForwardHeaders(req, downstreamHeaders)
-	// 会话级 beta-features:真实 Codex 每个 /responses 请求、WS 握手与 compact 都带
-	// x-codex-beta-features,默认恰为 remote_compaction_v2(codex-rs
-	// build_model_client_beta_features_header,无实验特性默认开启)。下游声明的原样
-	// 保留——非空但无 v2 表示用户显式关闭,不改写;未声明时补默认,避免"只有部分
-	// 请求带头"这种真实客户端不会产生的模式。
+	// Session-level beta-features: real Codex sends x-codex-beta-features on every /responses request, the WS handshake and compact.
+	// The header defaults to remote_compaction_v2(codex-rs
+	// build_model_client_beta_features_header; enabled by default when there are no experimental features). A downstream-declared value is kept as-is.
+	// Kept as-is: a non-empty value without v2 means the user explicitly turned it off, so it is not rewritten; when undeclared, the default is added to avoid
+	// a pattern where only some requests carry the header, which a real client never produces.
 	if strings.TrimSpace(req.Header.Get(codexBetaFeaturesHeader)) == "" {
 		value := defaultCodexBetaFeatures
 		if deviceCfg != nil && strings.TrimSpace(deviceCfg.BetaFeatures) != "" {
@@ -1067,15 +1067,15 @@ func applyCodexRequestHeaders(req *http.Request, account *auth.Account, accessTo
 		}
 		req.Header.Set(codexBetaFeaturesHeader, value)
 	}
-	// 指纹收敛必须在白名单透传之后（覆盖客户端原值）、账号自定义头之前（运维显式
-	// 配置保持最终优先）。off 档为空操作。
+	// Fingerprint convergence must come after the passthrough whitelist (so it overrides the client's original values), and before the account's custom headers (so an operator's explicit
+	// configuration keeps final priority). The off level is a no-op.
 	ApplyCodexFingerprintHeaders(req.Header, account, downstreamHeaders)
 	if accountID != "" {
 		req.Header.Set("Chatgpt-Account-Id", accountID)
 	}
-	// 会话标识头按真实客户端形态写出（session-id / thread-id / x-client-request-id）；
-	// 收敛开启时与 turn metadata 报同一组身份。CODEX_SESSION_HEADER_MODE=legacy
-	// 可整体退回旧的 Session_id 形态。
+	// Session identity headers are written in the shape a real client uses (session-id / thread-id / x-client-request-id);
+	// when convergence is on, they report the same identity set as the turn metadata. CODEX_SESSION_HEADER_MODE=legacy
+	// can revert the whole thing to the old Session_id shape.
 	ApplyCodexSessionHeaders(req.Header, account, cacheKey, downstreamHeaders, false)
 	applyAccountCustomHeaders(req, account)
 	if err := ApplyCodexAttestation(req.Context(), CodexAttestationInput{Headers: req.Header, Account: account}); err != nil {
@@ -1099,22 +1099,22 @@ type requestSessionIdentity struct {
 	hasRequestFingerprint bool
 }
 
-// ResolveSessionID 从下游请求提取或生成 session ID
-// 优先级：
-//  1. Header: X-Codex2API-Affinity-Key（仅本地使用，先哈希再参与绑定）
+// ResolveSessionID extracts or generates a session ID from the downstream request
+// Priority:
+//  1. Header: X-Codex2API-Affinity-Key (local use only; it is hashed before taking part in binding)
 //  2. Header: Session_id
 //  3. Header: Conversation_id
 //  4. Header: Idempotency-Key
-//  5. Header: X-Session-Id / X-Session-Affinity（opencode 等第三方客户端）
+//  5. Header: X-Session-Id / X-Session-Affinity (third-party clients such as opencode)
 //  6. Body:   prompt_cache_key
-//  7. Body:   内容派生种子（model+instructions+system+首条 user 消息，见
-//     deriveContentSessionSeed；带 previous_response_id 的续链请求跳过）
-//  8. 基于 Bearer API Key 的确定性 UUID
+//  7. Body: content-derived seed (model+instructions+system+first user message, see
+//     deriveContentSessionSeed; continuation requests that carry previous_response_id are skipped)
+//  8. Deterministic UUID based on the Bearer API key
 //
-// 第 7 级让"同一段对话的多轮请求"收敛到同一账号粘性键：单 API Key 供多终端
-// 用户共用时，粘性粒度从"整个 Key 挤一个账号"细化为"每段对话独立粘定"。
-// 专用 affinity header 永不参与上游 session ID / prompt_cache_key，也不会被转发；
-// 下游网关可用它传稳定的最终用户/对话标识，在共享 Bearer Key 时仍实现一人一号式绑定。
+// Level 7 lets the multi-turn requests of one conversation converge on the same account affinity key: when a single API key is shared by multiple terminal
+// users, stickiness is refined from "the whole key pinned to one account" to "each conversation pinned independently".
+// The dedicated affinity header never takes part in the upstream session ID or prompt_cache_key, and it is never forwarded;
+// a downstream gateway can use it to pass a stable end-user or conversation identifier, achieving one-user-one-account binding even when the Bearer key is shared.
 func ResolveSessionID(headers http.Header, body []byte) string {
 	return resolveRequestSessionIdentity(headers, body).affinityID
 }
@@ -1127,21 +1127,21 @@ func resolveRequestSessionIdentity(headers http.Header, body []byte) requestSess
 		upstreamSeed = deriveContentSessionSeed(body)
 	}
 	if upstreamSeed == "" {
-		// 基于下游用户的 API Key 生成确定性 cache key（参考 CLIProxyAPI codex_executor.go:621）
+		// Generate a deterministic cache key from the downstream user's API key (reference: CLIProxyAPI codex_executor.go:621)
 		authHeader := ""
 		if headers != nil {
 			authHeader = headers.Get("Authorization")
 		}
 		apiKey := strings.TrimSpace(strings.TrimPrefix(authHeader, "Bearer "))
 		if apiKey != "" {
-			// 必须与 deterministicPromptCacheKey 用同一条派生：两处共享种子字符串，
-			// 产出不同就会让 HTTP 与 WS 路径对同一个 API Key 算出两个上游身份。
+			// Must use the same derivation as deterministicPromptCacheKey: the two share the seed string,
+			// since different outputs would give the HTTP and WS paths two upstream identities for the same API key.
 			upstreamSeed = DeriveStableSessionUUIDv7("codex2api:prompt-cache:" + apiKey)
 		}
 	}
 	if upstreamSeed == "" {
-		// 最后兜底：本地路由和上游 seed 共享同一个随机 UUID。取 v7——apiKeyID<=0 时
-		// IsolateCodexSessionID 会原样返回这个种子，它就直接成了出站会话身份。
+		// Final fallback: the local route and the upstream seed share one random UUID. Use v7: when apiKeyID<=0,
+		// IsolateCodexSessionID returns this seed unchanged, so it becomes the outbound session identity directly.
 		upstreamSeed = NewUpstreamSessionUUID()
 	}
 
@@ -1178,24 +1178,24 @@ func resolveDownstreamAffinityID(headers http.Header) string {
 
 func ResolveExplicitSessionID(headers http.Header, body []byte) string {
 	if headers != nil {
-		// 注意：Codex CLI 发的是连字符头 session-id / conversation-id（HTTP/2 全小写，
-		// 服务端规范化成 Session-Id / Conversation-Id），与旧的下划线写法 Session_id 不同，
-		// 两种都要认，否则取不到显式会话 id、affinity 只能退回内容种子。
+		// Note: Codex CLI sends the hyphenated headers session-id / conversation-id (over HTTP/2 lowercased,
+		// normalized by the server to Session-Id / Conversation-Id), which differ from the old underscore form Session_id.
+		// Accept both, otherwise the explicit session id cannot be read and affinity falls back to the content seed.
 		for _, key := range []string{"Session-Id", "Session_id", "Conversation-Id", "Conversation_id", "Idempotency-Key"} {
 			if v := strings.TrimSpace(headers.Get(key)); v != "" {
 				return v
 			}
 		}
-		// opencode 等第三方 CLI 客户端用 x-session-id / x-session-affinity 标识会话
-		// （值为 ses_...，非 UUID，出站上由 claudeUpstreamSessionID 等确定性派生为
-		// UUIDv7）。优先级低于既有显式头，高于 body prompt_cache_key。
+		// Third-party CLI clients such as opencode identify sessions with x-session-id / x-session-affinity
+		// (the value is ses_..., not a UUID; on the outbound side it is deterministically derived to
+		// UUIDv7 by claudeUpstreamSessionID and similar functions). Lower priority than the existing explicit headers, higher than the body prompt_cache_key.
 		for _, key := range []string{"X-Session-Id", "X-Session-Affinity"} {
 			if v := strings.TrimSpace(headers.Get(key)); v != "" {
 				return v
 			}
 		}
 	}
-	// 没有显式会话头时，从 body 的 prompt_cache_key 提取。
+	// When there is no explicit session header, extract it from the body's prompt_cache_key.
 	if v := strings.TrimSpace(gjson.GetBytes(body, "prompt_cache_key").String()); v != "" {
 		return v
 	}
@@ -1209,18 +1209,18 @@ func statelessWebsocketSessionID() string {
 	return statelessWebsocketSessionPrefix + uuid.NewString()
 }
 
-// IsStatelessWebsocketSessionID 判断是否为 WS 路径生成的一次性连接 ID。
-// 这类 ID 只用于连接池隔离，不能当作 prompt cache key 发往上游。
+// IsStatelessWebsocketSessionID reports whether an ID is a one-off connection ID generated by the WS path.
+// Such IDs are used only for connection-pool isolation and must not be sent upstream as a prompt cache key.
 func IsStatelessWebsocketSessionID(sessionID string) bool {
 	return strings.HasPrefix(sessionID, statelessWebsocketSessionPrefix)
 }
 
-// deterministicPromptCacheKey 生成与 ResolveSessionID 兜底逻辑同源的确定性
-// prompt cache key：优先按下游 API Key 派生，无 API Key 时按账号派生。
+// deterministicPromptCacheKey generates a deterministic prompt cache key from the same source as the ResolveSessionID fallback logic:
+// it derives from the downstream API key first, and from the account when there is no API key.
 //
-// 产出取 UUIDv7 形态而非 uuid.NewSHA1 的 v5：v5 的版本 nibble 是 5，真实客户端
-// 的 session_id / prompt_cache_key 恒为 v7，这个差异对任何解析 UUID 版本位的
-// 一侧都是直接可见的。同 IsolateCodexSessionID，换格式的代价是一次性 cache miss。
+// The output takes the UUIDv7 shape rather than uuid.NewSHA1's v5: the version nibble of v5 is 5, whereas the real client's
+// session_id / prompt_cache_key is always v7, and this difference is directly visible to any
+// side that parses the UUID version bits. As with IsolateCodexSessionID, the cost of changing the format is a one-time cache miss.
 func deterministicPromptCacheKey(apiKey string, account *auth.Account) string {
 	apiKey = strings.TrimSpace(apiKey)
 	if apiKey != "" {
@@ -1234,8 +1234,8 @@ func deterministicPromptCacheKey(apiKey string, account *auth.Account) string {
 	return ""
 }
 
-// ReadSSEStream 从上游 SSE 响应读取事件流
-// callback 返回 true 表示继续读取，false 表示停止
+// ReadSSEStream reads the event stream from an upstream SSE response
+// callback returns true to keep reading and false to stop
 func ReadSSEStream(body io.Reader, callback func(data []byte) bool) error {
 	return ReadSSEStreamWithEvent(body, func(_ string, data []byte) bool {
 		return callback(data)
@@ -1245,14 +1245,14 @@ func ReadSSEStream(body io.Reader, callback func(data []byte) bool) error {
 // ReadSSEStreamWithEvent preserves the optional SSE event field while keeping
 // ReadSSEStream's data-only API compatible for existing callers.
 func ReadSSEStreamWithEvent(body io.Reader, callback func(event string, data []byte) bool) error {
-	// 使用 sync.Pool 复用缓冲区，减少 GC 压力
+	// Use a sync.Pool to reuse buffers and reduce GC pressure
 	buf := sseBufferPool.Get().([]byte)
 	defer sseBufferPool.Put(buf)
 
 	lineBufPtr := sseLineBufPool.Get().(*[]byte)
 	lineBuf := (*lineBufPtr)[:0]
 	defer func() {
-		// 归还时限制容量，避免异常大的缓冲区长期驻留池中
+		// Cap the capacity on return, so an abnormally large buffer does not stay in the pool for long
 		if cap(lineBuf) <= 256*1024 {
 			*lineBufPtr = lineBuf[:0]
 			sseLineBufPool.Put(lineBufPtr)
@@ -1271,16 +1271,16 @@ func ReadSSEStreamWithEvent(body io.Reader, callback func(event string, data []b
 			return true, nil
 		}
 
-		// 绝大多数上游事件只有一条 data: 行，直接交给 callback，避免
-		// bytes.Join 为每个 token 事件再复制一遍 payload。多行 SSE 才合并。
+		// Most upstream events have a single data: line, which is handed straight to the callback, avoiding
+		// a bytes.Join that copies the payload again for every token event. Multi-line SSE events are merged only.
 		data := dataLines[0]
 		if len(dataLines) > 1 {
 			data = bytes.Join(dataLines, []byte("\n"))
 		}
 		isDone := bytes.Equal(data, []byte("[DONE]"))
 		keepReading := !isDone && callback(event, data)
-		// 清掉 backing array 中的切片引用，避免最后一个大事件一直被
-		// dataLines 的容量槽位持有到整条流结束。
+		// Clear the slice reference in the backing array, so the last large event is not kept
+		// in the capacity slots of dataLines until the whole stream ends.
 		for i := range dataLines {
 			dataLines[i] = nil
 		}
@@ -1292,12 +1292,12 @@ func ReadSSEStreamWithEvent(body io.Reader, callback func(event string, data []b
 		if bytes.HasPrefix(line, []byte("data:")) {
 			data := bytes.TrimPrefix(line, []byte("data:"))
 			data = bytes.TrimPrefix(data, []byte(" "))
-			// 单行与多行累积事件都必须在 wire 层硬性受限，避免超大事件
-			// 长期占用内存。计量必须严格对齐 bytes.Join 交付给 callback 的
-			// 实际字节数：第一条 data 行计 len(data)，之后每条计 1 + len(data)
-			// （含 1 字节 '\n' 分隔符）。空 data 行（len(data)==0）从第二条起
-			// 每行计入 1 字节分隔符，累积到 maxSSEEventBytes 时同样受硬上限
-			// 约束，既防止无界增长，又保证恰好 8MiB 的合法事件不被误拒。
+			// Single-line and multi-line accumulated events must both be hard-limited on the wire, to keep oversized events
+			// from occupying memory for long. The accounting must strictly match the actual bytes that bytes.Join hands to the callback:
+			// the first data line counts len(data), and each subsequent one counts 1 + len(data)
+			// (including the 1-byte newline separator). Empty data lines (len(data)==0) from the second one onward
+			// each count 1 byte for the separator, and accumulation is also bounded by the hard limit at maxSSEEventBytes,
+			// which both prevents unbounded growth and guarantees that a legal event of exactly 8MiB is not wrongly rejected.
 			lineBytes := len(data)
 			if len(dataLines) > 0 {
 				lineBytes++
@@ -1306,7 +1306,7 @@ func ReadSSEStreamWithEvent(body io.Reader, callback func(event string, data []b
 				return errSSEEventTooLarge
 			}
 			currentEventBytes += lineBytes
-			// 使用 copy 避免底层数组共享导致的内存泄漏
+			// Use copy to avoid memory leaks caused by sharing the underlying array.
 			dataCopy := make([]byte, len(data))
 			copy(dataCopy, data)
 			dataLines = append(dataLines, dataCopy)
@@ -1325,16 +1325,16 @@ func ReadSSEStreamWithEvent(body io.Reader, callback func(event string, data []b
 		if n > 0 {
 			lineBuf = append(lineBuf, buf[:n]...)
 
-			// 按行处理。用偏移量扫描，最后一次性把未完成行搬到缓冲区头部；
-			// 不能反复 lineBuf = lineBuf[idx+1:]，否则每消费一行都会缩短 cap，
-			// 下一次 64KB Read 几乎必然重新分配，池化缓冲区形同失效。
+			// Process by line. Scan using offsets, and move the unfinished line to the head of the buffer in one go at the end;
+			// do not repeatedly do lineBuf = lineBuf[idx+1:], since each consumed line would shrink the cap,
+			// and the next 64KB Read would almost certainly reallocate, which makes the pooled buffer effectively useless.
 			consumed := 0
 			for {
 				idx := bytes.IndexByte(lineBuf[consumed:], '\n')
 				if idx < 0 {
-					// 无换行：只约束这条未完成行的内容长度。每次 Read 最多再
-					// 追加 len(buf) 字节，因此内存增长有界（<= 行上限 + 一次
-					// Read），不会因无换行的巨量数据无限增长。
+					// No newline: only constrain the length of this unfinished line. Each Read appends at most len(buf) more
+					// bytes, so memory growth is bounded (at most the line limit plus one
+					// Read), and it does not grow without limit on a huge amount of data with no newline.
 					if len(lineBuf)-consumed > maxSSELineBytes {
 						return errSSELineTooLong
 					}
@@ -1342,10 +1342,10 @@ func ReadSSEStreamWithEvent(body io.Reader, callback func(event string, data []b
 				}
 
 				lineEnd := consumed + idx
-				// 行长检查必须放在找到换行之后、按完整行判断：本次读取可能
-				// 恰好补完一条接近上限的合法行，其后还跟着其他行/事件；若在
-				// append 前按"未完成缓冲区 + 本次读取"的总长度判断，会把这条
-				// 合法行误判为超长。
+				// The line-length check must come after a newline is found and judge complete lines: this read may
+				// exactly complete a legal line close to the limit, followed by other lines or events; if the check is done before
+				// append, based on the total of "unfinished buffer + this read", that legal line
+				// would be misjudged as over-long.
 				if lineEnd-consumed > maxSSELineBytes {
 					return errSSELineTooLong
 				}
@@ -1367,7 +1367,7 @@ func ReadSSEStreamWithEvent(body io.Reader, callback func(event string, data []b
 					continue
 				}
 
-				// 解析 SSE event/data 字段，支持标准多行 data 聚合。
+				// Parse the SSE event/data fields, supporting standard multi-line data aggregation.
 				if err := consumeField(line); err != nil {
 					return err
 				}
@@ -1382,9 +1382,9 @@ func ReadSSEStreamWithEvent(body io.Reader, callback func(event string, data []b
 		if err != nil {
 			if err == io.EOF {
 				if len(lineBuf) > 0 {
-					// 深度防御（defense in depth）：扫描循环的无换行分支已把
-					// 未完成行限制在 maxSSELineBytes 内，此处数学上不可达，仅
-					// 作为未来改动的兜底。
+					// Defense in depth: the no-newline branch of the scan loop already caps the unfinished line
+					// within maxSSELineBytes, so this is mathematically unreachable; it is only
+					// a fallback for future changes.
 					if len(lineBuf) > maxSSELineBytes {
 						return errSSELineTooLong
 					}
@@ -1403,14 +1403,14 @@ func ReadSSEStreamWithEvent(body io.Reader, callback func(event string, data []b
 	}
 }
 
-// sseBufferPool 用于复用 SSE 读取缓冲区（64KB 以适应 reasoning 模型的大 thinking block）
+// sseBufferPool reuses SSE read buffers (64KB, to fit the large thinking blocks of reasoning models)
 var sseBufferPool = sync.Pool{
 	New: func() interface{} {
 		return make([]byte, 64*1024)
 	},
 }
 
-// sseLineBufPool 用于复用行缓冲区，减少频繁分配
+// sseLineBufPool reuses line buffers, reducing frequent allocation
 var sseLineBufPool = sync.Pool{
 	New: func() interface{} {
 		b := make([]byte, 0, 64*1024)

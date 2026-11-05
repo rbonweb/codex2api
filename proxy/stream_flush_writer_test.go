@@ -10,15 +10,15 @@ import (
 func TestWriteSSECommentDrainsBufferFirstAndBypassesScanner(t *testing.T) {
 	var out bytes.Buffer
 	w := &streamFlushWriter{writer: &out, policy: StreamFlushPolicyCoalesce, interval: time.Hour}
-	// lastFlush 零值会让首次写立即冲刷;置为当前时刻让合并缓冲真正囤住事件。
+	// A zero lastFlush value would flush the first write immediately; setting it to the current time lets the coalesce buffer really hold the event.
 	w.lastFlush = time.Now()
 
-	// 合并缓冲里囤着一个完整事件(interval 极长,不会自行冲刷)。
+	// The coalesce buffer holds one complete event (the interval is very long, so it never flushes on its own).
 	if err := w.WriteSSEData([]byte(`{"type":"response.output_text.delta"}`)); err != nil {
 		t.Fatalf("WriteSSEData: %v", err)
 	}
 	if out.Len() != 0 {
-		t.Fatalf("coalesce 策略下事件不应立即落底层: %q", out.String())
+		t.Fatalf("events should not reach the underlying writer immediately under the coalesce strategy: %q", out.String())
 	}
 
 	if err := w.WriteSSEComment(continueKeepaliveComment); err != nil {
@@ -28,10 +28,10 @@ func TestWriteSSECommentDrainsBufferFirstAndBypassesScanner(t *testing.T) {
 	idxEvent := strings.Index(got, `data: {"type":"response.output_text.delta"}`)
 	idxComment := strings.Index(got, ": keepalive\n\n")
 	if idxEvent < 0 || idxComment < 0 {
-		t.Fatalf("输出缺事件或注释: %q", got)
+		t.Fatalf("output is missing an event or comment: %q", got)
 	}
 	if idxComment < idxEvent {
-		t.Fatalf("注释先于已缓冲事件落地,事件顺序被打乱: %q", got)
+		t.Fatalf("comment landed before the buffered event, so the event order was broken: %q", got)
 	}
 }
 
@@ -46,6 +46,6 @@ func TestWriteSSECommentNilAndEmptySafe(t *testing.T) {
 		t.Fatalf("empty comment: %v", err)
 	}
 	if out.Len() != 0 {
-		t.Fatalf("空注释不应写任何字节: %q", out.String())
+		t.Fatalf("an empty comment should not write any bytes: %q", out.String())
 	}
 }

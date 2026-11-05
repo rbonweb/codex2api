@@ -42,10 +42,10 @@ type codexClientSyncCall struct {
 var codexClientSyncMu sync.Mutex
 var codexClientSyncCalls = make(map[codexClientSyncKey]*codexClientSyncCall)
 
-// SyncCodexClientVersions 合并并发同步，单个来源失败不丢弃已验证配对。
+// SyncCodexClientVersions merges concurrent syncs; a failure from a single source does not discard verified pairings.
 func SyncCodexClientVersions(ctx context.Context, db *database.DB, proxyURL string) (*CodexClientVersionsSyncResult, error) {
 	if db == nil {
-		return nil, fmt.Errorf("数据库不可用，无法同步 Codex 客户端版本")
+		return nil, fmt.Errorf("database unavailable, cannot sync Codex client versions")
 	}
 	key := codexClientSyncKey{db: db, proxyURL: proxyURL}
 	codexClientSyncMu.Lock()
@@ -53,7 +53,7 @@ func SyncCodexClientVersions(ctx context.Context, db *database.DB, proxyURL stri
 	if call == nil {
 		call = &codexClientSyncCall{done: make(chan struct{})}
 		codexClientSyncCalls[key] = call
-		// 合并后的同步由所有调用者共享，不能随发起者取消而中断，因此脱离调用者 ctx 在后台执行。
+		// The merged sync is shared by all callers and must not be interrupted when the initiator cancels, so it runs in the background detached from the caller's ctx.
 		runCtx, cancel := context.WithTimeout(context.WithoutCancel(ctx), codexClientSyncTimeout)
 		go func() {
 			defer cancel()
@@ -65,7 +65,7 @@ func SyncCodexClientVersions(ctx context.Context, db *database.DB, proxyURL stri
 		}()
 	}
 	codexClientSyncMu.Unlock()
-	// 发起者与等待者一视同仁：各自按自己的 ctx 停止等待。
+	// Initiators and waiters are treated equally: each stops waiting according to its own ctx.
 	select {
 	case <-ctx.Done():
 		return nil, ctx.Err()

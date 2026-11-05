@@ -16,8 +16,8 @@ func readUpstreamErrorBody(ctx context.Context, reader io.Reader) ([]byte, error
 	return readAllWithContinuousRetryKeepalive(ctx, io.LimitReader(reader, maxUpstreamErrorBodyBytes))
 }
 
-// upstreamResponseReadContext 保留普通请求取消后的有界 usage 补读窗口。
-// 持续重试的私有尝试则随下游立即结束，不能因补读而延长重试生命周期。
+// upstreamResponseReadContext keeps a bounded usage catch-up read window after a normal request is canceled.
+// A private continuous-retry attempt ends immediately with the downstream, and must not extend the retry lifetime because of the catch-up read.
 func upstreamResponseReadContext(downstreamCtx, upstreamCtx context.Context, policy database.ContinuousRetryPolicy) context.Context {
 	if continuousRetryBuffersAttempts(policy) || upstreamCtx == nil {
 		return downstreamCtx
@@ -25,8 +25,8 @@ func upstreamResponseReadContext(downstreamCtx, upstreamCtx context.Context, pol
 	return upstreamCtx
 }
 
-// readAllLimitedWithContinuousRetryKeepalive 将读取上限与请求级保活组合，
-// 用于非流式成功响应及原生协议 JSON 聚合，避免读体阶段长时间没有下游活动。
+// readAllLimitedWithContinuousRetryKeepalive combines the read limit with request-level keepalive
+// for non-streaming successful responses and native protocol JSON aggregation, so there is no long stretch without downstream activity during body reading.
 func readAllLimitedWithContinuousRetryKeepalive(ctx context.Context, reader io.Reader, limit int64) ([]byte, error) {
 	if limit < 0 {
 		return nil, fmt.Errorf("response body limit must be non-negative")
@@ -41,7 +41,7 @@ func readAllLimitedWithContinuousRetryKeepalive(ctx context.Context, reader io.R
 	return body, nil
 }
 
-// setContinuousRetryKeepaliveActive 在重试换号时按需启用或关闭下游保活。
+// setContinuousRetryKeepaliveActive enables or disables downstream keepalive as needed when a retry switches accounts.
 func setContinuousRetryKeepaliveActive(ctx context.Context, active bool) {
 	keepalive := continuousRetryKeepaliveForContext(ctx)
 	if keepalive == nil {

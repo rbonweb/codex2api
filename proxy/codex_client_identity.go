@@ -21,7 +21,7 @@ type CodexOutboundClientIdentity struct {
 	Generated bool
 }
 
-// ResolveCodexOutboundClientIdentity 将版本不可用错误传到出站前的调用者。
+// ResolveCodexOutboundClientIdentity passes version-unavailable errors up to the caller before egress.
 func ResolveCodexOutboundClientIdentity(input CodexClientIdentityInput) (CodexOutboundClientIdentity, error) {
 	if IsDeviceProfileStabilizationEnabled(input.DeviceConfig) {
 		return codexDeviceClientIdentity(input), nil
@@ -84,16 +84,16 @@ func generatedCodexClientHeadersChecked(account *auth.Account, settings RuntimeS
 	return replaceCodexUserAgentVersion(ua, version), version, nil
 }
 
-// CodexMaintenanceIdentity 是网关自发的 Codex 维护请求（wham 用量/重置券、每日用量、
-// token 明细、订阅同步、模型清单、中转模型发现）携带的客户端身份。
+// CodexMaintenanceIdentity is the client identity carried by the gateway's own Codex maintenance requests (wham usage/reset vouchers, daily usage,
+// token details, subscription sync, model list and relay model discovery).
 type CodexMaintenanceIdentity struct {
 	UserAgent  string
 	Originator string
 	Version    string
 }
 
-// Apply 写入维护请求的身份头。Version 只由已经发送它的调用方自行写入：
-// 维护请求不凭空补发真实客户端不会带的头。
+// Apply writes the identity headers of maintenance requests. Version is written only by the caller that already sends it:
+// Maintenance requests never add headers out of nowhere that a real client would not send.
 func (id CodexMaintenanceIdentity) Apply(headers http.Header) {
 	if headers == nil {
 		return
@@ -102,7 +102,7 @@ func (id CodexMaintenanceIdentity) Apply(headers http.Header) {
 	headers.Set("Originator", id.Originator)
 }
 
-// ResolveCodexMaintenanceIdentity 与对话请求共用身份解析和账号覆盖规则。
+// ResolveCodexMaintenanceIdentity shares the identity resolution and account override rules with conversation requests.
 func ResolveCodexMaintenanceIdentity(account *auth.Account, downstream http.Header) (CodexMaintenanceIdentity, error) {
 	identity, err := ResolveCodexOutboundClientIdentity(CodexClientIdentityInput{Account: account, Headers: downstream})
 	if err == nil && strings.TrimSpace(identity.UserAgent) == "" {
@@ -123,8 +123,8 @@ func ResolveCodexMaintenanceIdentity(account *auth.Account, downstream http.Head
 	if resolved.Version == "" {
 		resolved.Version = codexVersionFromUserAgent(resolved.UserAgent, effectiveLatestCodexCLIVersion())
 	}
-	// 账号自定义头在对话出站里最后应用（applyAccountCustomHeaders），钉死的身份头
-	// 同样作用于维护请求，否则对话与探针又是两套身份。
+	// Account custom headers are applied last in conversation egress (applyAccountCustomHeaders), and the pinned identity headers
+	// also apply to maintenance requests; otherwise conversations and probes would have two different identities.
 	for name, value := range account.GetCustomHeaders() {
 		value = strings.TrimSpace(value)
 		if value == "" {
@@ -144,7 +144,7 @@ func ResolveCodexMaintenanceIdentity(account *auth.Account, downstream http.Head
 
 var errEmptyCodexMaintenanceUserAgent = errors.New("resolved empty User-Agent")
 
-// OAuth 默认客户端只需要 UA 和 Originator，不复用对话 attestation。
+// The default OAuth client only needs UA and Originator and does not reuse the conversation attestation.
 func CodexOAuthIdentityHeaders(account *auth.Account) (http.Header, error) {
 	identity, err := ResolveCodexMaintenanceIdentity(account, nil)
 	if err != nil {

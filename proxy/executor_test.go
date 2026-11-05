@@ -160,7 +160,7 @@ func TestShouldFallbackWebsocketMessageTooBigToHTTP(t *testing.T) {
 	outcome := streamOutcome{
 		logStatusCode:  logStatusUpstreamStreamBreak,
 		failureKind:    upstreamErrorKindMessageTooBig,
-		failureMessage: "上游流读取失败: websocket read error: websocket: close 1009 (message too big)",
+		failureMessage: "failed to read upstream stream: websocket read error: websocket: close 1009 (message too big)",
 		penalize:       false,
 	}
 
@@ -249,10 +249,10 @@ func TestClassifyResponseFailedOutcomeUsageLimit(t *testing.T) {
 	}
 }
 
-// issue #310: context_length_exceeded 是确定性客户端错误（换号重试必然失败），
-// 不得归为 500 触发透明重试并惩罚账号健康度。
+// issue #310: context_length_exceeded is a deterministic client error (retrying on another account always fails),
+// must not be classified as 500, which would trigger a transparent retry and penalize account health.
 func TestClassifyResponseFailedOutcomeContextLengthExceeded(t *testing.T) {
-	// 上游真实形态：code 在 response.error.code，无显式 status_code
+	// Real upstream shape: code is at response.error.code, with no explicit status_code
 	payload := []byte(`{"type":"response.failed","response":{"status":"failed","error":{"code":"context_length_exceeded","message":"Your input exceeds the context window of this model. Please adjust your input and try again."}}}`)
 
 	outcome := classifyResponseFailedOutcome(payload)
@@ -271,8 +271,8 @@ func TestClassifyResponseFailedOutcomeContextLengthExceeded(t *testing.T) {
 	}
 }
 
-// 中转上游把超窗回成 code:null / type:"upstream_error"，只有 message 说明了真实
-// 原因。仅匹配 code/type 会落进 default 500，把号池挨个试一遍并惩罚每个健康账号。
+// The relay upstream returns the context overflow as code:null / type:"upstream_error", and only the message reveals the real
+// cause. Matching only code/type falls through to the default 500, which retries through every account in the pool and penalizes each healthy account.
 func TestClassifyResponseFailedOutcomeContextLengthExceededMessageOnly(t *testing.T) {
 	for name, payload := range map[string][]byte{
 		"nested null code": []byte(`{"type":"response.failed","response":{"status":"failed","error":{"code":null,"type":"upstream_error","message":"Your input exceeds the context window of this model. Please adjust your input and try again."}}}`),
@@ -294,7 +294,7 @@ func TestClassifyResponseFailedOutcomeContextLengthExceededMessageOnly(t *testin
 	}
 }
 
-// 回显的请求内容不得改变判定：只有固定的 error 字段是权威的。
+// Echoed request content must not change the verdict: only the fixed error field is authoritative.
 func TestClassifyResponseFailedOutcomeIgnoresEchoedContextWindowText(t *testing.T) {
 	payload := []byte(`{"type":"response.failed","response":{"status":"failed","error":{"code":"server_error","type":"upstream_error","message":"boom"},"echo":"my prompt explains that input exceeds the context window"}}`)
 
@@ -418,19 +418,19 @@ func TestApplyCodexRequestHeadersUsesSessionIDWithoutConversationID(t *testing.T
 	if got := req.Header.Get("Authorization"); got != "Bearer token-123" {
 		t.Fatalf("Authorization = %q", got)
 	}
-	// 真实客户端发 session-id / thread-id（连字符），不发下划线写法，也不发
-	// Conversation_id。单线程会话里 thread-id 与 session-id 同值。
+	// Real clients send session-id / thread-id (hyphenated), not the underscore form, and do not send
+	// Conversation_id. In a single-threaded session, thread-id and session-id have the same value.
 	if got := req.Header.Get("Session-Id"); got != "cache-key-1" {
 		t.Fatalf("Session-Id = %q", got)
 	}
 	if got := req.Header.Get("Thread-Id"); got != "cache-key-1" {
-		t.Fatalf("Thread-Id = %q, want 与 session 同值", got)
+		t.Fatalf("Thread-Id = %q, want same as session", got)
 	}
 	if got := req.Header.Get("X-Client-Request-Id"); got != "cache-key-1" {
-		t.Fatalf("X-Client-Request-Id = %q, want 等于 thread id", got)
+		t.Fatalf("X-Client-Request-Id = %q, want equal to thread id", got)
 	}
 	if got := req.Header.Get("Session_id"); got != "" {
-		t.Fatalf("Session_id = %q, want empty（下划线写法不属于真实形态）", got)
+		t.Fatalf("Session_id = %q, want empty (the underscore form is not a real shape)", got)
 	}
 	if got := req.Header.Get("Conversation_id"); got != "" {
 		t.Fatalf("Conversation_id = %q, want empty", got)
@@ -483,7 +483,7 @@ func TestApplyCodexRequestHeadersAppliesAccountCustomHeadersLast(t *testing.T) {
 	}
 }
 
-// TestApplyCodexRequestHeadersUsesProjectAttestation 验证证明仅由本项目生成。
+// TestApplyCodexRequestHeadersUsesProjectAttestation verifies that attestation is generated only by this project.
 func TestApplyCodexRequestHeadersUsesProjectAttestation(t *testing.T) {
 	acc := &auth.Account{DBID: 42, AccountID: "acct-42", CustomHeaders: map[string]string{
 		"X-Oai-Attestation": "v1.account-override",
@@ -498,7 +498,7 @@ func TestApplyCodexRequestHeadersUsesProjectAttestation(t *testing.T) {
 		t.Fatalf("X-Oai-Attestation = %q, want project-generated envelope", got)
 	}
 
-	// Linux 出站身份清除所有外部证明。
+	// The Linux outbound identity clears all external attestations.
 	without, _ := http.NewRequest(http.MethodPost, "https://example.com/v1/responses", nil)
 	applyCodexRequestHeaders(without, acc, "token-123", "cache-key-1", "api-key-1", nil, http.Header{
 		"User-Agent":        {"codex-tui/0.164.0 (Linux Ubuntu 24.04; x86_64) unknown"},
@@ -608,8 +608,8 @@ func TestPrepareCodexResponsesLiteTransportBridgesRequestScopedSignal(t *testing
 		t.Fatalf("HTTP body retained false WS-only Lite metadata: %s", nonLiteBody)
 	}
 
-	// 模型门禁剥离信号后（enabled=false），WS 路径必须清掉下游带来的体内标记，
-	// 否则非 lite 模型仍会把标记带上 WS 上游触发 400。
+	// After the model gate strips the signal (enabled=false), the WS path must clear the in-body markers that came from downstream,
+	// otherwise non-lite models still carry the markers to the WS upstream and trigger a 400.
 	gatedWSBody := []byte(`{"model":"gpt-5.5","client_metadata":{"other":"kept","ws_request_header_x_openai_internal_codex_responses_lite":"true"}}`)
 	gatedWSHeaders := make(http.Header)
 	gatedWSHeaders.Set(codexResponsesLiteHeader, "true")
@@ -760,8 +760,8 @@ func TestApplyCodexRequestHeadersUsesCustomGeneratedUserAgentConfig(t *testing.T
 }
 
 func TestApplyCodexRequestHeadersGeneratedDesktopClientSendsMatchingOriginator(t *testing.T) {
-	// issue #653：强制模拟 ChatGPT 桌面端时，Originator 必须跟随生成的 UA 前缀，
-	// 而不是照旧发 codex-tui——真实客户端两者恒为同一标识。
+	// issue #653: when forcing the ChatGPT desktop client to be emulated, Originator must follow the generated UA prefix,
+	// instead of still sending codex-tui; real clients always use the same identifier for both.
 	prev := CurrentRuntimeSettings()
 	normalized, err := NormalizeCodexUserAgentConfigJSON(`{"client_name":"Codex Desktop","client_version":"0.153.3","os_name":"Windows","os_version":"10.0.26100","arch":"x86_64","terminal":"unknown"}`)
 	if err != nil {
@@ -1117,10 +1117,6 @@ func TestApplyCodexRequestHeadersPreservesOpenCodeClient(t *testing.T) {
 	}
 }
 
-
-
-
-
 func TestCodexTransportModeDefaultsToStandard(t *testing.T) {
 	t.Setenv("CODEX_TRANSPORT_MODE", "")
 	if _, ok := newCodexTransport("").(*http.Transport); !ok {
@@ -1292,8 +1288,8 @@ func TestLocalAffinityPreservesExplicitAndAPIKeyUpstreamSeeds(t *testing.T) {
 		headers := http.Header{"Authorization": []string{"Bearer shared-key"}}
 		headers.Set("X-Codex2API-Affinity-Key", "user-a")
 		identity := resolveRequestSessionIdentity(headers, []byte(`{}`))
-		// 与 deterministicPromptCacheKey 共享种子与派生：两处算出不同值，会让同一个
-		// API Key 在 HTTP 与 WS 路径上得到两个互不相干的上游身份。
+		// It shares the seed and derivation with deterministicPromptCacheKey: if the two compute different values, the same
+		// API key would get two unrelated upstream identities on the HTTP and WS paths.
 		wantSeed := DeriveStableSessionUUIDv7("codex2api:prompt-cache:shared-key")
 		if identity.upstreamSeed != wantSeed || identity.explicitUpstreamID != "" {
 			t.Fatalf("API-key upstream fallback changed: seed=%q explicit=%q want=%q", identity.upstreamSeed, identity.explicitUpstreamID, wantSeed)
@@ -1344,7 +1340,7 @@ func TestExecuteRequestForcedWebsocketUsesStatelessSessionWhenMissing(t *testing
 	t.Cleanup(func() { ApplyRuntimeSettings(previousSettings) })
 	nextSettings := previousSettings
 	nextSettings.CodexForceWebsocket = true
-	// per-api-key 模式：恢复 v2 旧行为，断言 prompt_cache_key 跨请求确定性（回归保护 8ea79aa）。
+	// per-api-key mode: restores the v2 behavior and asserts that prompt_cache_key is deterministic across requests (regression guard for 8ea79aa).
 	nextSettings.RequestIsolationMode = RequestIsolationModePerAPIKey
 	ApplyRuntimeSettings(nextSettings)
 
@@ -1379,22 +1375,22 @@ func TestExecuteRequestForcedWebsocketUsesStatelessSessionWhenMissing(t *testing
 	if gotSessionIDs[0] == gotSessionIDs[1] {
 		t.Fatalf("stateless sessionIDs should differ per request, both = %q", gotSessionIDs[0])
 	}
-	// per-api-key 模式下 prompt cache key 必须确定性：两次请求一致，且不等于一次性连接 ID。
+	// In per-api-key mode the prompt cache key must be deterministic: two requests match, and it does not equal the one-off connection ID.
 	if gotCacheKeys[0] == "" || gotCacheKeys[0] != gotCacheKeys[1] {
 		t.Fatalf("prompt_cache_key = %q / %q, want identical deterministic key", gotCacheKeys[0], gotCacheKeys[1])
 	}
 	if strings.HasPrefix(gotCacheKeys[0], "stateless-") {
 		t.Fatalf("prompt_cache_key = %q, must not be a stateless connection ID", gotCacheKeys[0])
 	}
-	// per-api-key 模式不拆分连接池键（cache key 本身既是上游身份也是 baseKey）。
+	// per-api-key mode does not split the connection pool key (the cache key is both the upstream identity and the baseKey).
 	if gotPoolKeys[0] != "" {
 		t.Fatalf("per-api-key mode poolRouteKey = %q, want empty", gotPoolKeys[0])
 	}
 }
 
-// TestExecuteRequestForcedWebsocketIsolatedMode 验证默认隔离模式：无显式会话时
-// 上游 prompt_cache_key 每请求唯一（隔离），但连接池路由键(poolRouteKey)按 API Key
-// 稳定，从而保住 8 槽池复用与抗握手限流。
+// TestExecuteRequestForcedWebsocketIsolatedMode verifies the default isolated mode: when there is no explicit session,
+// the upstream prompt_cache_key is unique per request (isolated), but the pool route key (poolRouteKey) is stable per API key
+// so that the 8-slot pool reuse and protection against handshake rate limiting are kept.
 func TestExecuteRequestForcedWebsocketIsolatedMode(t *testing.T) {
 	previousSettings := CurrentRuntimeSettings()
 	t.Cleanup(func() { ApplyRuntimeSettings(previousSettings) })
@@ -1424,24 +1420,24 @@ func TestExecuteRequestForcedWebsocketIsolatedMode(t *testing.T) {
 		}
 		resp.Body.Close()
 	}
-	// 上游身份隔离：两次 prompt_cache_key 不同，且都非空、非 stateless 连接 ID。
+	// Upstream identity isolation: the two prompt_cache_key values differ, and both are non-empty and not a stateless connection ID.
 	if gotCacheKeys[0] == "" || gotCacheKeys[0] == gotCacheKeys[1] {
 		t.Fatalf("isolated prompt_cache_key = %q / %q, want distinct per request", gotCacheKeys[0], gotCacheKeys[1])
 	}
 	if strings.HasPrefix(gotCacheKeys[0], "stateless-") {
 		t.Fatalf("prompt_cache_key = %q, must not be a stateless connection ID", gotCacheKeys[0])
 	}
-	// 连接池键稳定：两次 poolRouteKey 一致且非空，按 API Key 派生（抗握手风暴）。
+	// Connection pool key is stable: the two poolRouteKey values match and are non-empty, derived from the API key (guards against handshake storms).
 	if gotPoolKeys[0] == "" || gotPoolKeys[0] != gotPoolKeys[1] {
 		t.Fatalf("isolated poolRouteKey = %q / %q, want identical stable key", gotPoolKeys[0], gotPoolKeys[1])
 	}
-	// 池键不能等于每请求唯一的上游身份键，否则槽位池失效。
+	// The pool key must not equal the per-request unique upstream identity key, or the slot pool breaks.
 	if gotPoolKeys[0] == gotCacheKeys[0] {
 		t.Fatalf("poolRouteKey must not equal per-request upstream cache key")
 	}
 }
 
-// TestResolveUpstreamSessionID 覆盖上游身份键派生的各分支。
+// TestResolveUpstreamSessionID covers each branch of the upstream identity key derivation.
 func TestResolveUpstreamSessionID(t *testing.T) {
 	previousSettings := CurrentRuntimeSettings()
 	t.Cleanup(func() { ApplyRuntimeSettings(previousSettings) })
@@ -1452,7 +1448,7 @@ func TestResolveUpstreamSessionID(t *testing.T) {
 		ApplyRuntimeSettings(next)
 	}
 
-	// 1. WS + 无显式会话：恒为 ""（交给 stateless 路径），与隔离模式无关。
+	// 1. WS with no explicit session: always "" (handed to the stateless path), regardless of the isolation mode.
 	setMode(RequestIsolationModeIsolated)
 	if got := resolveUpstreamSessionID(7, "sess-abc", "", true); got != "" {
 		t.Fatalf("WS no-explicit isolated: got %q, want empty", got)
@@ -1462,7 +1458,7 @@ func TestResolveUpstreamSessionID(t *testing.T) {
 		t.Fatalf("WS no-explicit per-api-key: got %q, want empty", got)
 	}
 
-	// 2. HTTP + 无显式会话 + isolated：每请求唯一（两次不同、均非空）。
+	// 2. HTTP with no explicit session + isolated: unique per request (the two values differ and are both non-empty).
 	setMode(RequestIsolationModeIsolated)
 	a := resolveUpstreamSessionID(7, "sess-abc", "", false)
 	b := resolveUpstreamSessionID(7, "sess-abc", "", false)
@@ -1470,7 +1466,7 @@ func TestResolveUpstreamSessionID(t *testing.T) {
 		t.Fatalf("HTTP isolated: got %q / %q, want distinct non-empty", a, b)
 	}
 
-	// 3. HTTP + 无显式会话 + per-api-key：确定性（两次一致，= IsolateCodexSessionID）。
+	// 3. HTTP with no explicit session + per-api-key: deterministic (the two values match and equal IsolateCodexSessionID).
 	setMode(RequestIsolationModePerAPIKey)
 	c := resolveUpstreamSessionID(7, "sess-abc", "", false)
 	d := resolveUpstreamSessionID(7, "sess-abc", "", false)
@@ -1481,7 +1477,7 @@ func TestResolveUpstreamSessionID(t *testing.T) {
 		t.Fatalf("HTTP per-api-key: got %q, want %q", c, want)
 	}
 
-	// 4. 显式会话：两模式都走确定性 IsolateCodexSessionID（不隔离用户主动声明的会话）。
+	// 4. Explicit session: both modes use the deterministic IsolateCodexSessionID (a session the user declared explicitly is not isolated).
 	for _, mode := range []string{RequestIsolationModeIsolated, RequestIsolationModePerAPIKey} {
 		setMode(mode)
 		got := resolveUpstreamSessionID(7, "sess-xyz", "sess-xyz", false)
@@ -1491,9 +1487,9 @@ func TestResolveUpstreamSessionID(t *testing.T) {
 	}
 }
 
-// HTTP 出站收口必须兜底剥离 WS 事件信封的顶层 type，即使上层 prepare 被绕过
-// （native WS ingress 的 1009 降级 / 生图强制 HTTP / Agent Identity 强制 HTTP
-// 都会带信封 body 走到这里）；嵌套 type 不受影响 (issue #548)。
+// The HTTP outbound path must strip the top-level type of the WS event envelope as a fallback, even when the upper-layer prepare is bypassed
+// (the 1009 degrade of native WS ingress / image generation forcing HTTP / Agent Identity forcing HTTP
+// all of them send an envelope body that reaches this point); nested types are not affected (issue #548).
 func TestExecuteRequestHTTPStripsTopLevelEnvelopeType(t *testing.T) {
 	previousResin := resinCfg.Load()
 	t.Cleanup(func() { resinCfg.Store(previousResin) })

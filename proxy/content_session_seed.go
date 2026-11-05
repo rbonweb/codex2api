@@ -7,33 +7,33 @@ import (
 	"github.com/tidwall/gjson"
 )
 
-// deriveContentSessionSeed 从请求体派生稳定的会话种子（参考 sub2api 的
-// deriveOpenAIContentSessionSeed）。仅取对话全程不变的字段：model、instructions、
-// 对话开头的 system/developer 前缀、tools 定义、首条 user 消息。
+// deriveContentSessionSeed derives a stable session seed from the request body (modeled on sub2api's
+// deriveOpenAIContentSessionSeed). It only takes fields that stay unchanged throughout the conversation: model, instructions,
+// the system/developer prefix at the start of the conversation, the tools definitions, and the first user message.
 //
-// 参与哈希的每个文本字段都先过 normalizeClientScaffolding，把客户端逐轮注入的
-// 脚手架（<system-reminder> 环境块、git attribution、"powered by the model" 等）
-// 排除在外。两个理由：
+// Each text field that goes into the hash first passes through normalizeClientScaffolding, which removes the scaffolding
+// that the client injects every turn (<system-reminder> environment blocks, git attribution, "powered by the model", etc.)
+// is excluded. Two reasons:
 //
-//  1. 这些块逐轮变化（工作目录、git 状态、文件列表），留在哈希里会把同一段对话
-//     错误地漂移到另一个账号，账号粘性丢失、上游 prompt cache 随之失效；
-//  2. 身份键应当由「真正发往上游的内容」派生。脚手架在出站时已被剥离，留在身份键里
-//     只会让身份与载荷对同一段对话给出两种答案。
+//  1. These blocks change every turn (working directory, git status, file list); if left in the hash, they would move the same conversation
+//     to another account by mistake, losing account stickiness, and the upstream prompt cache would be invalidated along with it;
+//  2. The identity key should be derived from "the content that is actually sent upstream". The scaffolding is already stripped on the way out; leaving it in the identity key
+//     would only make the identity and the payload give two different answers for the same conversation.
 //
-// 首个非 system/developer 项之后的动态系统消息同样不参与哈希，避免客户端逐轮注入
-// 时间、环境或状态提示时把同一会话错误地漂移。真实内容仍然参与，因此不同对话
-// 依旧互不干扰。
+// Dynamic system messages after the first non-system/developer item are likewise excluded from the hash, so that when the client injects
+// time, environment, or status hints every turn, the same session does not drift by mistake. Real content still takes part, so different conversations
+// still do not interfere with each other.
 //
-// 用途：客户端未携带任何显式会话标识（Session_id/Conversation_id/Idempotency-Key/
-// prompt_cache_key）时，让"同一段对话的多轮请求"收敛到同一个本地账号粘性键，
-// 不同对话互不干扰。单 API Key 供多终端用户共用的部署下，粘性粒度从"整个 Key
-// 挤一个账号"细化为"每段对话独立粘定一个账号"。该种子只参与本地路由
-// （账号粘性 affinityKey），默认隔离模式下不会发往上游。
+// Purpose: when the client carries no explicit session identifier (Session_id/Conversation_id/Idempotency-Key/
+// prompt_cache_key), multi-turn requests of "the same conversation" converge on the same local account stickiness key,
+// and different conversations do not interfere with each other. In deployments where a single API Key is shared by multiple terminal users, the stickiness granularity moves from "the whole Key
+// piles onto one account" to "each conversation is pinned to its own account". This seed only takes part in local routing
+// (account stickiness affinityKey); in the default isolation mode it is not sent upstream.
 //
-// 返回 "" 表示无法派生（调用方回退到按 API Key 派生）：
-//   - 请求带 previous_response_id：不重发历史的续链客户端 input 逐轮变化，
-//     内容种子会逐轮漂移导致换号、破坏续链，保持稳定的按 Key 兜底；
-//   - 没有可锚定的首条 user 消息：种子质量不足，不如按 Key 兜底可预测。
+// Returns "" when it cannot be derived (the caller falls back to deriving from the API Key):
+//   - the request has previous_response_id: the client's continuation input, which does not resend history, changes every turn,
+//     so a content seed would drift every turn, causing account switches and breaking the continuation; a stable per-Key fallback is kept;
+//   - there is no first user message to anchor on: the seed quality is too low, and a per-Key fallback is more predictable.
 func deriveContentSessionSeed(body []byte) string {
 	if len(body) == 0 {
 		return ""
@@ -82,7 +82,7 @@ func deriveContentSessionSeed(body []byte) string {
 		})
 	}
 
-	// Responses 格式（input 为 string 或数组）优先；回退 Chat Completions 的 messages。
+	// The Responses format (input as a string or array) takes priority; fall back to Chat Completions messages.
 	if input := gjson.GetBytes(body, "input"); input.Exists() {
 		if input.Type == gjson.String {
 			if s := normalizeClientScaffolding(input.String()); s != "" {

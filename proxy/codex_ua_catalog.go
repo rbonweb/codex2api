@@ -7,18 +7,18 @@ import (
 	"strings"
 )
 
-// ==================== Codex 客户端形态目录 ====================
+// ==================== Codex client shape catalog ====================
 //
-// 真实 Codex 客户端的 User-Agent 形状是
-//   {originator}/{cli版本} ({os} {os版本}; {arch}) {terminal} ({app名}; {app版本})
-// 末尾标记按形态各不相同:codex-tui / codex_exec 复用前缀与 CLI 版本;ChatGPT 桌面端固定
-// "Codex Desktop" 加桌面端构建号;VS Code 插件写宿主 IDE 名(VS Code / Cursor / Windsurf)
-// 加插件构建号。目录中的历史版本对仅用作未同步时的默认画像。
+// The User-Agent shape of a real Codex client is
+//   {originator}/{cli version} ({os} {os version}; {arch}) {terminal} ({app name}; {app version})
+// The trailing marker differs by shape: codex-tui / codex_exec reuse the prefix and CLI version; the ChatGPT desktop app is fixed
+// "Codex Desktop" plus the desktop build number; the VS Code extension writes the host IDE name (VS Code / Cursor / Windsurf)
+// plus the extension build number. Historical versions in the catalog are only used as the default profile when not yet synced.
 //
-// 下面的权重来自 2026-09-07~08 约 6.5 万条去重请求的下游 UA 统计(按百分比取整),
-// 用于:预设默认值、管理页的搭配候选和号池画像分布。
+// The weights below come from downstream UA statistics on about 65,000 de-duplicated requests from 2026-09-07~08 (rounded to whole percentages),
+// used for: preset defaults, the pairing candidates on the admin page, and the account pool persona distribution.
 
-// CodexClientKind 是可模拟的 Codex 客户端形态。
+// CodexClientKind is a Codex client shape that can be simulated.
 type CodexClientKind string
 
 const (
@@ -46,7 +46,7 @@ type codexUAPlatform struct {
 	Weight    int
 }
 
-// codexUAVersionPair 是一组真实出现过的 (CLI 版本, 末尾标记版本) 配对;Weight 为观测占比。
+// codexUAVersionPair is one real observed (CLI version, trailing marker version) pair; Weight is the observed share.
 type codexUAVersionPair struct {
 	CLIVersion string
 	AppVersion string
@@ -55,19 +55,19 @@ type codexUAVersionPair struct {
 
 type codexUAKindSpec struct {
 	Kind          CodexClientKind
-	ClientName    string // UA 前缀,同时作为 Originator
-	AppFollowsCLI bool   // 末尾标记 = (client_name; cli_version),无独立构建号
-	// 默认值:单画像模式下字段留空时使用。TUI 沿用历史常量,保证既有部署出站字节不变。
+	ClientName    string // UA prefix, also used as the Originator
+	AppFollowsCLI bool   // trailing marker = (client_name; cli_version), with no separate build number
+	// Default values: used when a field is left empty in single-profile mode. The TUI keeps the historical constant, so the outbound bytes of existing deployments do not change.
 	DefaultPlatform codexUAPlatform
 	DefaultTerminal string
-	AppNames        []codexUAWeighted // 末尾标记名候选,首个为默认
+	AppNames        []codexUAWeighted // candidates for the trailing marker name; the first is the default
 	Terminals       []codexUAWeighted
-	// ReferenceTerminals 只作管理页预设与搭配校验,不参与号池抽样,因此不会改变既有账号画像。
+	// ReferenceTerminals is only used for admin page presets and pairing validation; it does not take part in account pool sampling, so it does not change existing account profiles.
 	ReferenceTerminals []string
 	Platforms          []codexUAPlatform
-	// ReferencePlatforms 同 ReferenceTerminals:只作预设与搭配校验,不参与号池抽样。
+	// ReferencePlatforms is the same as ReferenceTerminals: only for presets and pairing validation, not part of account pool sampling.
 	ReferencePlatforms []codexUAPlatform
-	VersionPairs       []codexUAVersionPair // 未同步时的画像默认值;AppFollowsCLI 时为空
+	VersionPairs       []codexUAVersionPair // profile defaults when not synced; empty when AppFollowsCLI is set
 }
 
 var codexUAKindOrder = []CodexClientKind{
@@ -77,9 +77,9 @@ var codexUAKindOrder = []CodexClientKind{
 	CodexClientKindExec,
 }
 
-// codexUAReferenceTerminals 是流量统计里没出现、但真实终端会产生的 token,按 Codex
-// terminal-detection 规则推导:有 TERM_PROGRAM 时取 "TERM_PROGRAM/TERM_PROGRAM_VERSION",
-// 其次是 Konsole / VTE 等专属环境变量,最后回退 TERM。版本取 2026-09 各终端最新稳定版。
+// codexUAReferenceTerminals are tokens that do not appear in the traffic statistics but that real terminals produce, derived per Codex
+// terminal-detection rules: when TERM_PROGRAM is set, use "TERM_PROGRAM/TERM_PROGRAM_VERSION",
+// then the dedicated environment variables such as Konsole / VTE, and finally fall back to TERM. Versions are the latest stable release of each terminal as of 2026-09.
 var codexUAReferenceTerminals = []string{
 	"iTerm.app/3.7.3",
 	"Apple_Terminal/470.2",
@@ -88,7 +88,7 @@ var codexUAReferenceTerminals = []string{
 	"WezTerm/20240203-110809-5046fc22",
 	"WezTerm/20260819-012343-33891b4a",
 	"vscode/1.139.1",
-	"vscode/3.19.19", // Cursor:TERM_PROGRAM=vscode,版本为 Cursor 自身版本
+	"vscode/3.19.19", // Cursor:TERM_PROGRAM=vscode, the version is Cursor's own version
 	"zed/1.21.0",
 	"kitty",
 	"Alacritty",
@@ -102,12 +102,12 @@ var codexUAReferenceTerminals = []string{
 	"screen-256color",
 }
 
-// codexUAReferencePlatforms 是流量统计之后发布、尚未观测到的平台。
+// codexUAReferencePlatforms are platforms released after the traffic statistics and not yet observed.
 var codexUAReferencePlatforms = []codexUAPlatform{
 	{OSName: "Mac OS", OSVersion: "27.0.0", Arch: "arm64"},
 }
 
-// 默认号池配比(按真实流量占比取整):桌面端过半,VS Code 次之,TUI 再次。
+// Default account pool mix (rounded from real traffic share): the desktop app is over half, VS Code is next, then the TUI.
 var defaultCodexUAPoolMix = map[CodexClientKind]int{
 	CodexClientKindDesktop: 50,
 	CodexClientKindVSCode:  30,
@@ -153,8 +153,8 @@ var codexUACatalog = map[CodexClientKind]*codexUAKindSpec{
 			{"Mac OS", "26.4.0", "arm64", 1},
 		},
 		ReferencePlatforms: codexUAReferencePlatforms,
-		// 只收录正式版配对;alpha 构建不进预设。0.160.0 配对取自官方 appcast,
-		// 保证未同步的部署也能越过 gpt-6.1-sol 的上游版本门槛(实测 0.159.0)。
+		// Only stable release pairings are included; alpha builds are not in the presets. The 0.160.0 pairing is taken from the official appcast,
+		// so that even unsynced deployments can get past the gpt-6.1-sol upstream version gate (measured 0.159.0).
 		VersionPairs: []codexUAVersionPair{
 			{"0.160.0", "26.930.51102", 1},
 			{"0.153.4", "26.901.51231", 63}, {"0.153.4", "26.901.41600", 7}, {"0.153.3", "26.901.41123", 2},
@@ -177,8 +177,8 @@ var codexUACatalog = map[CodexClientKind]*codexUAKindSpec{
 			{"Windows", "10.0.22631", "aarch64", 1}, {"Mac OS", "26.5.2", "arm64", 1},
 		},
 		ReferencePlatforms: codexUAReferencePlatforms,
-		// 插件主力仍是 0.153.0,与 CLI 最新版 0.153.4 不同步。0.160.0 配对取自官方
-		// marketplace,作用同桌面端。
+		// The extension's main line is still 0.153.0, out of sync with the latest CLI 0.153.4. The 0.160.0 pairing is taken from the official
+		// marketplace, serving the same purpose as the desktop app.
 		VersionPairs: []codexUAVersionPair{
 			{"0.160.0", "26.930.41038", 1},
 			{"0.153.4", "26.901.22334", 1}, {"0.153.0", "26.901.22334", 96}, {"0.147.0", "26.519.32039", 1},
@@ -208,7 +208,7 @@ func codexUAKindSpecFor(kind CodexClientKind) (*codexUAKindSpec, bool) {
 	return spec, ok
 }
 
-// normalizeCodexClientKind 规范化配置里的 client_kind;空串表示"未指定,按 client_name 推断"。
+// normalizeCodexClientKind normalizes client_kind in the config; an empty string means "not specified, infer from client_name".
 func normalizeCodexClientKind(value string) (CodexClientKind, bool) {
 	kind := CodexClientKind(strings.ToLower(strings.TrimSpace(value)))
 	switch kind {
@@ -221,8 +221,8 @@ func normalizeCodexClientKind(value string) (CodexClientKind, bool) {
 	}
 }
 
-// inferCodexClientKind 按客户端名推断形态:未指定 kind 的旧配置与手填 "Codex Desktop"
-// 都能自动落到对应预设;认不出的名字视为 custom。
+// inferCodexClientKind infers the shape from the client name: old configs without a kind, and a manually entered "Codex Desktop",
+// both automatically map to the matching preset; unrecognized names are treated as custom.
 func inferCodexClientKind(clientName string) CodexClientKind {
 	name := strings.ToLower(strings.TrimSpace(clientName))
 	if name == "" {
@@ -304,7 +304,7 @@ func codexVersionAtLeast(version, floor string) bool {
 	return ok && cmp >= 0
 }
 
-// resolveCodexVersionPair 为历史调用者提供默认平台的配对选择。
+// resolveCodexVersionPair provides the default-platform pairing choice for legacy callers.
 func resolveCodexVersionPair(spec *codexUAKindSpec, cliVersion, appVersion, versionFloor string) (string, string) {
 	choice := codexVersionSelection{CLIOverride: cliVersion, AppOverride: appVersion, VersionFloor: versionFloor}
 	if spec != nil {
@@ -314,7 +314,7 @@ func resolveCodexVersionPair(spec *codexUAKindSpec, cliVersion, appVersion, vers
 	return cli, app
 }
 
-// codexPoolMix 返回生效的号池配比;未配置时用默认配比。
+// codexPoolMix returns the effective account pool mix; when not configured, the default mix is used.
 func codexPoolMix(cfg CodexUserAgentConfig) []codexUAWeighted {
 	mix := cfg.PoolMix
 	if len(mix) == 0 {
@@ -337,8 +337,8 @@ func codexPoolMix(cfg CodexUserAgentConfig) []codexUAWeighted {
 	return out
 }
 
-// codexPoolPersona 按账号确定性地从目录抽取一套完整画像:同一账号永远得到同一画像,
-// 不同账号按配比与真实分布散开。
+// codexPoolPersona deterministically draws a full persona from the catalog for each account: the same account always gets the same persona,
+// while different accounts are spread out according to the mix and the real distribution.
 func codexPoolPersona(cfg CodexUserAgentConfig, accountID int64, versionFloor string) (userAgent, version string, ok bool, err error) {
 	mix := codexPoolMix(cfg)
 	if len(mix) == 0 {

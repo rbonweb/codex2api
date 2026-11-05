@@ -71,7 +71,7 @@ func TestExplicitUpstreamCYBLocksOnlyTheSignedConversation(t *testing.T) {
 	if !delegated || !responseMetadata.ConversationLocked {
 		t.Fatalf("first CYB response metadata = %+v delegated=%t", responseMetadata, delegated)
 	}
-	if message := newAPIPolicyDecisionAPIError(responseMetadata).Message; message != upstreamCyberPolicyLockedUserMessage || !strings.Contains(message, "再次触发可能会停用账号") {
+	if message := newAPIPolicyDecisionAPIError(responseMetadata).Message; message != upstreamCyberPolicyLockedUserMessage || !strings.Contains(message, "triggering it again may deactivate the account") {
 		t.Fatalf("first locked CYB message = %q", message)
 	}
 	policyContext, verified := handler.verifyNewAPIPolicyContext(first, handler.promptFilterConfigForRequest(first).Advanced.NewAPI, body)
@@ -93,7 +93,7 @@ func TestExplicitUpstreamCYBLocksOnlyTheSignedConversation(t *testing.T) {
 	if repeatMetadata.ReasonCode != promptConversationLockedReasonCode || repeatMetadata.StrikeEligible {
 		t.Fatalf("locked retry metadata = %+v", repeatMetadata)
 	}
-	if message := newAPIPolicyDecisionAPIError(repeatMetadata).Message; !strings.Contains(message, "不会重复累计") || !strings.Contains(message, "再次触发 CYB 可能会停用账号") {
+	if message := newAPIPolicyDecisionAPIError(repeatMetadata).Message; !strings.Contains(message, "count penalties again") || !strings.Contains(message, "Triggering CYB again after the lock is lifted may get the account deactivated") {
 		t.Fatalf("locked retry message = %q", message)
 	}
 	if got := gjson.GetBytes(repeatRecorder.Body.Bytes(), "error.code").String(); got != promptConversationLockedReasonCode {
@@ -111,7 +111,7 @@ func TestExplicitUpstreamCYBLocksOnlyTheSignedConversation(t *testing.T) {
 	if retryAfter := repeat.Writer.Header().Get("Retry-After"); retryAfter == "" {
 		t.Fatalf("locked retry missing Retry-After header: %v", repeat.Writer.Header())
 	}
-	if message := gjson.GetBytes(repeatRecorder.Body.Bytes(), "error.message").String(); !strings.Contains(message, "会话详情") || !strings.Contains(message, promptConversationLockedReasonCode) {
+	if message := gjson.GetBytes(repeatRecorder.Body.Bytes(), "error.message").String(); !strings.Contains(message, "session details") || !strings.Contains(message, promptConversationLockedReasonCode) {
 		t.Fatalf("locked retry actionable message=%q", message)
 	}
 	lock, err = db.GetActivePromptConversationLock(t.Context(), lockIdentity.LockKey)
@@ -174,10 +174,10 @@ func TestPromptCyberRestrictionDerivesAuditReferenceForLegacyLocalLock(t *testin
 	if restriction.AuditReference != requestID {
 		t.Fatalf("audit reference = %q, want %q", restriction.AuditReference, requestID)
 	}
-	if !strings.Contains(restriction.Message, "审计编号："+requestID) {
+	if !strings.Contains(restriction.Message, "audit ID: "+requestID) {
 		t.Fatalf("restriction message lacks audit reference: %q", restriction.Message)
 	}
-	if !strings.Contains(restriction.Message, "本地高风险规则") || strings.Contains(restriction.Message, "因上游 CYB 已锁定") {
+	if !strings.Contains(restriction.Message, "local high-risk rule") || strings.Contains(restriction.Message, "because of upstream CYB") {
 		t.Fatalf("local restriction origin is misleading: %q", restriction.Message)
 	}
 	details := promptCyberRestrictionDetails(restriction, nil)
@@ -206,7 +206,7 @@ func TestUpstreamCYBCoolsVerifiedUserAcrossSessionChurn(t *testing.T) {
 	if metadata.ReasonCode != promptUserCyberCooldownReasonCode || metadata.StrikeEligible {
 		t.Fatalf("user cooldown metadata = %+v", metadata)
 	}
-	if message := newAPIPolicyDecisionAPIError(metadata).Message; !strings.Contains(message, "安全冷却期") || strings.Contains(message, "30 分钟") || !strings.Contains(message, "不会重复累计处罚") {
+	if message := newAPIPolicyDecisionAPIError(metadata).Message; !strings.Contains(message, "security cooldown period") || strings.Contains(message, "30 minutes") || !strings.Contains(message, "count penalties again") {
 		t.Fatalf("user cooldown message = %q", message)
 	}
 	if got := gjson.GetBytes(churnedRecorder.Body.Bytes(), "error.code").String(); got != promptUserCyberCooldownReasonCode {
@@ -222,7 +222,7 @@ func TestUpstreamCYBCoolsVerifiedUserAcrossSessionChurn(t *testing.T) {
 	if got := gjson.GetBytes(churnedRecorder.Body.Bytes(), "error.details.retry_after_seconds").Int(); got <= 0 || got > int64(cooldownTTL/time.Second) {
 		t.Fatalf("user cooldown remaining=%d body=%s", got, churnedRecorder.Body.String())
 	}
-	if message := gjson.GetBytes(churnedRecorder.Body.Bytes(), "error.message").String(); !strings.Contains(message, "用户详情") || !strings.Contains(message, promptUserCyberCooldownReasonCode) {
+	if message := gjson.GetBytes(churnedRecorder.Body.Bytes(), "error.message").String(); !strings.Contains(message, "user details") || !strings.Contains(message, promptUserCyberCooldownReasonCode) {
 		t.Fatalf("user cooldown actionable message=%q", message)
 	}
 }
@@ -348,7 +348,7 @@ func TestConversationLockRequiresStableSignedFingerprintAndCanBeDisabled(t *test
 	if !delegated || withoutSessionMetadata.ConversationLocked {
 		t.Fatalf("CYB without session response metadata = %+v delegated=%t", withoutSessionMetadata, delegated)
 	}
-	if message := newAPIPolicyDecisionAPIError(withoutSessionMetadata).Message; message != upstreamCyberPolicyUserMessage || strings.Contains(message, "已锁定当前对话") || !strings.Contains(message, "再次触发可能会停用账号") {
+	if message := newAPIPolicyDecisionAPIError(withoutSessionMetadata).Message; message != upstreamCyberPolicyUserMessage || strings.Contains(message, "current conversation is locked") || !strings.Contains(message, "triggering it again may deactivate the account") {
 		t.Fatalf("CYB without session message = %q", message)
 	}
 
@@ -413,9 +413,9 @@ func TestUnsignedUpstreamCYUsesScopedFingerprintReplayLock(t *testing.T) {
 	}
 }
 
-// 指纹提取按端点协议分派(images 读 prompt,responses 读 messages)。检查路径
-// 必须携带真实端点:曾经硬编码 /v1/responses,导致 images 端点触发的冷却锁
-// 建得出来却永远命中不了(静默失效)。
+// Fingerprint extraction is dispatched by endpoint protocol (images reads prompt, responses reads messages). The check path
+// must carry the real endpoint: it was once hard-coded to /v1/responses, so cooldown locks triggered by the images endpoint
+// could be created but never matched (silent failure).
 func TestFingerprintReplayCooldownCoversImagesEndpoint(t *testing.T) {
 	handler, db := newPromptConversationLockTestHandler(t)
 	body := []byte(`{"model":"gpt-image-1","prompt":"repeat this exact image request"}`)
@@ -461,7 +461,7 @@ func TestConversationLockStorageFailureDoesNotClaimConversationWasLocked(t *test
 	if metadata.ConversationLocked {
 		t.Fatal("database failure was reported as a successful conversation lock")
 	}
-	if message := newAPIPolicyDecisionAPIError(metadata).Message; message != upstreamCyberPolicyUserMessage || strings.Contains(message, "已锁定当前对话") {
+	if message := newAPIPolicyDecisionAPIError(metadata).Message; message != upstreamCyberPolicyUserMessage || strings.Contains(message, "current conversation is locked") {
 		t.Fatalf("database failure CYB message = %q", message)
 	}
 }
@@ -522,8 +522,8 @@ func TestSignedConversationLockSeparatesNewAPIChannels(t *testing.T) {
 	}
 }
 
-// 纯外部审核命中(如 moderation 分类阈值越线)与 fail-closed 审核失败没有本地
-// 检测证据,只应拒绝当次请求;本地规则命中才升级为会话锁(issue #527)。
+// External-only review hits (such as a moderation category threshold being crossed) and fail-closed review failures have no local
+// detection evidence and should only reject that request; only a local rule hit escalates to a session lock (issue #527).
 func TestReviewOnlyBlockDoesNotLockConversation(t *testing.T) {
 	handler, db := newPromptConversationLockTestHandler(t)
 	body := []byte(`{"model":"gpt-5.5","input":"ordinary request"}`)

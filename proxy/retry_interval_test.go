@@ -30,7 +30,7 @@ func newRetryTestHandler(t *testing.T) (*Handler, *auth.Store) {
 func TestWaitBeforeRetry(t *testing.T) {
 	h, store := newRetryTestHandler(t)
 
-	t.Run("间隔为 0 立即返回", func(t *testing.T) {
+	t.Run("interval of 0 returns immediately", func(t *testing.T) {
 		store.SetRetryIntervalMS(0)
 		start := time.Now()
 		if !h.waitBeforeRetry(context.Background()) {
@@ -41,7 +41,7 @@ func TestWaitBeforeRetry(t *testing.T) {
 		}
 	})
 
-	t.Run("ctx 已取消返回 false", func(t *testing.T) {
+	t.Run("returns false when ctx is already cancelled", func(t *testing.T) {
 		store.SetRetryIntervalMS(0)
 		ctx, cancel := context.WithCancel(context.Background())
 		cancel()
@@ -50,7 +50,7 @@ func TestWaitBeforeRetry(t *testing.T) {
 		}
 	})
 
-	t.Run("按配置间隔等待", func(t *testing.T) {
+	t.Run("waits for the configured interval", func(t *testing.T) {
 		store.SetRetryIntervalMS(60)
 		start := time.Now()
 		if !h.waitBeforeRetry(context.Background()) {
@@ -61,7 +61,7 @@ func TestWaitBeforeRetry(t *testing.T) {
 		}
 	})
 
-	t.Run("等待中客户端断开返回 false", func(t *testing.T) {
+	t.Run("returns false when the client disconnects while waiting", func(t *testing.T) {
 		store.SetRetryIntervalMS(5000)
 		ctx, cancel := context.WithCancel(context.Background())
 		go func() {
@@ -77,7 +77,7 @@ func TestWaitBeforeRetry(t *testing.T) {
 		}
 	})
 
-	t.Run("unlimited Retry-After 等待可被客户端取消", func(t *testing.T) {
+	t.Run("unlimited Retry-After wait can be cancelled by the client", func(t *testing.T) {
 		store.SetRetryIntervalMS(0)
 		resp := &http.Response{Header: make(http.Header)}
 		resp.Header.Set("Retry-After", "60")
@@ -300,8 +300,8 @@ func TestRetrySettingsNormalization(t *testing.T) {
 	}
 }
 
-// runWSTransportRetryScenario 驱动入站 WS:首次上游连接报传输错误,第二次成功,
-// 返回两次尝试使用的账号 ID。用于验证 rotate/sticky 两种传输错误重试策略。
+// runWSTransportRetryScenario drives the inbound WS: the first upstream connection reports a transport error and the second succeeds,
+// and returns the account IDs used by the two attempts. Used to verify the rotate and sticky transport error retry strategies.
 func runWSTransportRetryScenario(t *testing.T, policy string) (first, second int64) {
 	t.Helper()
 	gin.SetMode(gin.TestMode)
@@ -360,7 +360,7 @@ func runWSTransportRetryScenario(t *testing.T, policy string) (first, second int
 		t.Fatalf("write request: %v", err)
 	}
 
-	// 读到 response.completed 为止,确认第二次尝试的流被正常转发
+	// Read up to response.completed, and confirm that the second attempt's stream was forwarded normally
 	deadline := time.Now().Add(2 * time.Second)
 	for {
 		_ = conn.SetReadDeadline(deadline)
@@ -385,19 +385,19 @@ func runWSTransportRetryScenario(t *testing.T, policy string) (first, second int
 	return readAttempt(), readAttempt()
 }
 
-// 传输错误 + sticky 策略:同号重试(不换号、保留会话亲和)。issue #331
+// Transport error + sticky strategy: retry on the same account (no switching, keeping session affinity). issue #331
 func TestResponsesWebSocketTransportRetrySticky(t *testing.T) {
 	first, second := runWSTransportRetryScenario(t, "sticky")
 	if first != second {
-		t.Fatalf("sticky 策略应同号重试: first=%d second=%d", first, second)
+		t.Fatalf("sticky strategy should retry on the same account: first=%d second=%d", first, second)
 	}
 }
 
-// 传输错误 + rotate 策略(默认):换号重试,保持旧行为。
+// Transport error + rotate strategy (default): retry on a different account, keeping the old behavior.
 func TestResponsesWebSocketTransportRetryRotate(t *testing.T) {
 	first, second := runWSTransportRetryScenario(t, "rotate")
 	if first == second {
-		t.Fatalf("rotate 策略应换号重试: first=%d second=%d", first, second)
+		t.Fatalf("rotate strategy should retry on a different account: first=%d second=%d", first, second)
 	}
 }
 

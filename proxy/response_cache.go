@@ -19,35 +19,35 @@ import (
 	"github.com/tidwall/sjson"
 )
 
-// ==================== 响应上下文缓存 ====================
-// 用于解决 previous_response_id 场景下 tool calling 上下文丢失的问题。
-// 代理层设置 store=false 并删除 previous_response_id，导致上游无法恢复历史 function_call。
-// 本模块在本地缓存每次响应的累积对话上下文，当下一个请求带 previous_response_id 时，
-// 自动将历史 items 注入回 input，使上游无需依赖服务端存储即可匹配 call_id。
+// ==================== Response context cache ====================
+// Fixes the loss of tool calling context in the previous_response_id scenario.
+// The proxy layer sets store=false and deletes previous_response_id, so upstream cannot recover the historical function_call.
+// This module caches the accumulated conversation context of each response locally. When the next request carries previous_response_id,
+// it automatically injects the historical items back into input, so upstream can match call_id without relying on server-side storage.
 //
-// 隔离：缓存键 = owner(下游 API Key ID) + response_id。没有 owner 维度时，任何请求
-// 只要带上（猜到/复用了）别人的 response_id 就能把别人的对话历史注入自己的 input，
-// 造成跨用户上下文泄露。owner 不匹配一律按缓存未命中处理。
+// Isolation: cache key = owner (downstream API Key ID) + response_id. Without an owner dimension, any request
+// that carries (guessed or reused) someone else's response_id can inject their conversation history into its own input,
+// causing cross-user context leakage. An owner mismatch is always treated as a cache miss.
 
 const (
 	responseCacheTTL        = 45 * time.Minute
 	responseCacheMaxBytes   = 64 << 20
 	responseCacheMaxEntry   = 8 << 20
-	responseCacheMaxItems   = 2000 // 缓存条目上限，防止内存膨胀
-	responseCacheMaxPerItem = 200  // 单条缓存最大 raw items 数
+	responseCacheMaxItems   = 2000 // maximum number of cache entries, to prevent memory bloat
+	responseCacheMaxPerItem = 200  // maximum number of raw items per cache entry
 	responseCacheMaxMarkers = 2000
 	responseCleanupInterval = 2 * time.Minute
 
-	// on_demand 写入策略下，owner 发过 previous_response_id 后保持写入资格的
-	// 滑动窗口。续链客户端逐轮续链（间隔秒级），1 小时足以覆盖会话间隙；
-	// 窗口过后闸门重新关闭，该 owner 的下一次续链会先未命中一次（与缓存
-	// TTL 过期后的行为一致），随后恢复写入。
+	// Under the on_demand write policy, the sliding window in which an owner that has sent previous_response_id keeps its write eligibility.
+	// Chained clients continue the chain turn by turn (seconds apart), so 1 hour is enough to cover session gaps;
+	// after the window expires the gate closes again, and the owner's next chained request misses once first (consistent with
+	// the behaviour after TTL expiry), then writes resume.
 	responseCacheChainOwnerTTL  = time.Hour
 	responseCacheMaxChainOwners = 4096
 )
 
-// responseCacheOwner 生成响应上下文缓存的归属命名空间。
-// 以下游 API Key ID 为主；无鉴权上下文(0)时退化到共享匿名空间（仅测试/内嵌场景）。
+// responseCacheOwner generates the owner namespace for the response context cache.
+// Mainly the downstream API Key ID; when there is no auth context (0), it falls back to a shared anonymous namespace (tests and embedded scenarios only).
 func responseCacheOwner(apiKeyID int64) string {
 	if apiKeyID > 0 {
 		return fmt.Sprintf("key:%d", apiKeyID)
@@ -55,7 +55,7 @@ func responseCacheOwner(apiKeyID int64) string {
 	return "anon"
 }
 
-// responseCacheStoreKey 组合 owner 与 response_id 作为缓存键（本地 map 与 Redis 共用）。
+// responseCacheStoreKey combines owner and response_id into the cache key (shared by the local map and Redis).
 func responseCacheStoreKey(owner, responseID string) string {
 	if owner == "" {
 		owner = "anon"
@@ -98,9 +98,9 @@ func defaultResponseCacheConfig() responseCacheConfig {
 
 // ResponseCacheStats is a point-in-time snapshot of the bounded local cache.
 // Bytes are logical retained JSON payload bytes; they are not an RSS estimate.
-// Hits/Misses 是端到端口径：本次查询最终拿到上下文（本地或共享后端）计 Hit，
-// 否则计 Miss（含负标记、后端错误/损坏、重建超限）。Local*/Remote* 是分层口径。
-// 不变量：Hits = LocalHits + RemoteHits；Hits + Misses = LocalHits + LocalMisses。
+// Hits/Misses are end-to-end counts: a query that finally gets the context (locally or from the shared backend) counts as a Hit,
+// otherwise it counts as a Miss (including negative markers, backend errors/corruption, and rebuilds over the limit). Local*/Remote* are tiered counts.
+// Invariants: Hits = LocalHits + RemoteHits; Hits + Misses = LocalHits + LocalMisses.
 type ResponseCacheStats struct {
 	// Unique retained payload bytes, excluding slice/map overhead and active
 	// readers. Bytes below remains the conservative logical eviction budget.
@@ -122,8 +122,8 @@ type ResponseCacheStats struct {
 	OversizeBypasses       uint64
 	OversizeRejections     uint64
 	KnownUnavailableErrors uint64
-	// SkippedWrites 是 on_demand 写入策略下因 owner 未续链而跳过的写入次数
-	// （本地与 Redis 一并跳过）；ChainOwners 是当前处于写入资格窗口内的 owner 数。
+	// SkippedWrites is the number of writes skipped under the on_demand write policy because the owner did not chain
+	// (both local and Redis writes are skipped); ChainOwners is the number of owners currently inside the write-eligibility window.
 	SkippedWrites uint64
 	ChainOwners   int
 	// BackendWriteFailures includes explicit admission failures and backend
@@ -149,8 +149,8 @@ type responseCacheState struct {
 	lastSyncErr  string
 }
 
-// responseCacheChainOwner 记录某 owner 最近一次发起 previous_response_id 续链
-// 的到期时间，是 on_demand 写入策略的准入依据。
+// responseCacheChainOwner records the expiry time of an owner's most recent previous_response_id chained request,
+// which is the admission basis for the on_demand write policy.
 type responseCacheChainOwner struct {
 	owner     string
 	expiresAt time.Time
@@ -186,8 +186,8 @@ type responseCacheLookupResult struct {
 	Promoted         bool
 	Err              error
 	nativeProvenance *nativeWSReplayProvenance
-	// 记账辅助位：由 lookupResponseCacheResult 填写，getResponseCacheResult
-	// 在单一临界区内据此更新全部计数器，保证快照不变量任意瞬间成立。
+	// Bookkeeping helper: filled in by lookupResponseCacheResult; getResponseCacheResult
+	// uses it to update all counters inside a single critical section, keeping the snapshot invariant true at every instant.
 	remoteMiss     bool
 	oversizeBypass bool
 }
@@ -248,7 +248,7 @@ func GetResponseCacheStats() ResponseCacheStats {
 // resetResponseCacheStateForTest replaces all local state with a deterministic
 // test configuration. It deliberately remains package-private.
 func resetResponseCacheStateForTest(config responseCacheConfig) {
-	// 上一个测试的后台写入必须先落地，否则会写进重置后的后端。
+	// Background writes from the previous test must land first, otherwise they would write into the reset backend.
 	drainResponseCacheBackendWrites()
 	responseCacheBackendWriter.mu.Lock()
 	responseCacheBackendWriter.draining = false
@@ -287,8 +287,8 @@ func configureResponseCacheForTest(config responseCacheConfig) {
 	respCache.mu.Unlock()
 }
 
-// markResponseCacheChainOwnerLocked 把 owner 标记为"近期续链者"，续期滑动窗口。
-// 容量满时按 LRU 逐出最久未续链的 owner。
+// markResponseCacheChainOwnerLocked marks the owner as a "recent chainer" and renews its sliding window.
+// When at capacity, the owner that chained least recently is evicted by LRU.
 func markResponseCacheChainOwnerLocked(owner string) {
 	if owner == "" {
 		owner = "anon"
@@ -325,8 +325,8 @@ func removeResponseCacheChainOwnerLocked(owner string) {
 	respCache.stats.ChainOwners = len(respCache.chainOwners)
 }
 
-// markResponseCacheChainOwnerIfOnDemand 在 on_demand 写入策略下把 owner 标为
-// 近期续链者；always 策略下写入本就放行，不占 LRU 名额。
+// markResponseCacheChainOwnerIfOnDemand marks the owner as a
+// recent chainer under the on_demand write policy; under the always policy writes are already allowed and do not take an LRU slot.
 func markResponseCacheChainOwnerIfOnDemand(owner string) {
 	respCache.mu.Lock()
 	defer respCache.mu.Unlock()
@@ -336,8 +336,8 @@ func markResponseCacheChainOwnerIfOnDemand(owner string) {
 	markResponseCacheChainOwnerLocked(owner)
 }
 
-// responseCacheWriteAllowed 判断当前写入策略下 owner 是否有写入资格。
-// on_demand 下过期记录按不合格处理（惰性删除交给清理循环）。
+// responseCacheWriteAllowed reports whether the owner is eligible to write under the current write policy.
+// Under on_demand, expired records are treated as ineligible (lazy deletion is left to the cleanup loop).
 func responseCacheWriteAllowed(owner string) bool {
 	if owner == "" {
 		owner = "anon"
@@ -351,8 +351,8 @@ func responseCacheWriteAllowed(owner string) bool {
 	return record != nil && time.Now().Before(record.expiresAt)
 }
 
-// setResponseCache 存储响应上下文（按 owner 命名空间隔离）。
-// on_demand 写入策略下，未续链过的 owner 直接跳过（本地与 Redis 一并跳过）。
+// setResponseCache stores the response context (isolated by owner namespace).
+// Under the on_demand write policy, owners that have never chained are skipped directly (both local and Redis).
 func setResponseCache(owner, responseID string, items []json.RawMessage) {
 	if skipResponseCacheWrite(owner) {
 		return
@@ -775,8 +775,8 @@ func responseContextPairType(typ string) (callType string, isCall, isOutput bool
 	}
 }
 
-// getResponseCache 查找缓存的响应上下文；owner 不匹配等同缓存未命中，
-// 防止跨 API Key 用 response_id 拉取他人对话历史。
+// getResponseCache looks up the cached response context; an owner mismatch is equivalent to a cache miss,
+// preventing cross-API-Key use of a response_id to fetch someone else's conversation history.
 func getResponseCache(owner, responseID string) []json.RawMessage {
 	result := getResponseCacheResult(owner, responseID)
 	if result.Kind != responseCacheLookupHit {
@@ -793,8 +793,8 @@ func getResponseCacheForReplay(owner, responseID string) responseCacheLookupResu
 
 // getResponseCacheResult preserves enough lookup state for the HTTP handlers
 // to distinguish a reconstructable hit from a final local/backend failure.
-// 命中/未命中计数只在这个出口、单一临界区内记账一次：聚合 Hits/Misses 是
-// 端到端口径，Local*/Remote* 是分层口径，两组在任意快照瞬间保持一致。
+// Hit/miss counts are recorded only once at this exit, inside a single critical section: the aggregate Hits/Misses are
+// end-to-end counts, Local*/Remote* are tiered counts, and the two groups stay consistent at any snapshot instant.
 func getResponseCacheResult(owner, responseID string) responseCacheLookupResult {
 	return getResponseCacheResultWithOwnership(owner, responseID, false)
 }
@@ -807,8 +807,8 @@ func getResponseCacheResultWithOwnership(owner, responseID string, borrow bool) 
 
 func recordResponseCacheLookup(owner string, result responseCacheLookupResult) {
 	respCache.mu.Lock()
-	// 任何续链查询（无论命中与否）都赋予 owner 写入资格：这是 on_demand
-	// 写入策略的准入信号，命中率与之无关。
+	// Any chained query (hit or not) grants the owner write eligibility: this is the admission signal
+	// for the on_demand write policy, and the hit rate is unrelated to it.
 	markResponseCacheChainOwnerLocked(owner)
 	if result.Kind == responseCacheLookupHit {
 		respCache.stats.Hits++
@@ -852,8 +852,8 @@ func lookupResponseCacheResultWithOwnership(owner, responseID string, borrow boo
 			expired = true
 		} else {
 			respCache.lru.MoveToFront(entry.element)
-			// entry.items 插入后不可变（admit 时已存私有克隆），
-			// 取引用后在锁外克隆，避免大条目命中时锁内做兆级拷贝。
+			// entry.items is immutable after insertion (a private clone is stored at admit time),
+			// so take the reference and clone outside the lock, to avoid a megabyte-scale copy under the lock on large-entry hits.
 			items := entry.items
 			respCache.mu.Unlock()
 			if borrow {
@@ -903,7 +903,7 @@ func lookupResponseCacheResultWithOwnership(owner, responseID string, borrow boo
 	defer cancel()
 	backendResult, err := readResponseContextBackend(ctx, runtimeCache, storeKey, config)
 	if err != nil {
-		log.Printf("读取 response context 后端失败: response_id=%s err=%v", responseID, err)
+		log.Printf("failed to read response context from backend: response_id=%s err=%v", responseID, err)
 		return responseCacheLookupResult{Kind: responseCacheLookupBackendError, Err: err}
 	}
 	switch backendResult.Status {
@@ -986,7 +986,7 @@ func responseContextLogicalBytes(items []json.RawMessage) int64 {
 	return total
 }
 
-// respCacheCleanupLoop 后台清理过期条目
+// respCacheCleanupLoop removes expired entries in the background
 func respCacheCleanupLoop() {
 	ticker := time.NewTicker(responseCleanupInterval)
 	defer ticker.Stop()
@@ -1015,9 +1015,9 @@ func cleanupResponseCacheExpired(now time.Time) {
 	respCache.mu.Unlock()
 }
 
-// expandPreviousResponse 检查请求中是否有 previous_response_id，
-// 如果有且缓存命中（且归属于同一 owner），则将历史对话 items 注入到 input 头部。
-// 返回处理后的 body 和提取到的 previous_response_id（用于后续缓存链路）。
+// expandPreviousResponse checks whether the request has previous_response_id,
+// and if so, and the cache hits (and belongs to the same owner), injects the historical conversation items at the head of input.
+// Returns the processed body and the extracted previous_response_id (for the subsequent cache chain).
 func expandPreviousResponse(codexBody []byte, owner string) ([]byte, string) {
 	prevID := gjson.GetBytes(codexBody, "previous_response_id").String()
 	if prevID == "" {
@@ -1026,28 +1026,28 @@ func expandPreviousResponse(codexBody []byte, owner string) ([]byte, string) {
 
 	currentInput := gjson.GetBytes(codexBody, "input")
 
-	// 客户端已经自带 function_call 等续链项时，跳过注入。
-	// 缓存里只会存 function_call 类项（见 cacheCompletedResponse + isCodexToolCallContextType），
-	// 再注入会让同一 call_id 出现两次，上游会以 "duplicate call_id" 等 400 拒绝。
-	// 仍返回 prevID，让 cacheCompletedResponse 能把这一轮响应链入缓存。
+	// When the client already carries function_call and other chaining items, skip injection.
+	// The cache only stores function_call-type items (see cacheCompletedResponse + isCodexToolCallContextType),
+	// so injecting again would make the same call_id appear twice, and upstream rejects it with a 400 such as "duplicate call_id".
+	// Still return prevID so cacheCompletedResponse can link this turn's response into the cache.
 	if currentInput.IsArray() && inputHasToolCallContext(currentInput) {
-		log.Printf("input 已自带工具续链项，跳过 previous_response_id=%s 的历史注入", prevID)
+		log.Printf("input already carries tool continuation items, skipping history injection for previous_response_id=%s", prevID)
 		return codexBody, prevID
 	}
 
 	cached := getResponseCache(owner, prevID)
 	if cached == nil {
-		// 缓存未命中（首次请求 / 过期 / 其他实例），无法展开，按原样继续。
-		// 若 input 仅含 function_call_output 又拿不到对应的 function_call，
-		// 上游通常会返回 "No tool call found for function call output" 400，
-		// 这里打日志便于诊断（不阻断，让上游错误透传给客户端）。
+		// Cache miss (first request / expired / another instance); cannot expand, continue as-is.
+		// If input contains only function_call_output and no matching function_call can be found,
+		// upstream usually returns a 400 "No tool call found for function call output",
+		// so log here for diagnosis (not blocking; let the upstream error pass through to the client).
 		if currentInput.IsArray() && inputHasFunctionCallOutput(currentInput) {
-			log.Printf("缓存未命中且 input 含 function_call_output，previous_response_id=%s，上游可能返回 400", prevID)
+			log.Printf("cache miss and input contains function_call_output, previous_response_id=%s, upstream may return 400", prevID)
 		}
 		return codexBody, prevID
 	}
 
-	// 构建新 input: 缓存的历史 items + 当前 input items
+	// Build new input: cached history items + current input items
 	var merged []json.RawMessage
 	merged = append(merged, cached...)
 	if currentInput.IsArray() {
@@ -1059,17 +1059,17 @@ func expandPreviousResponse(codexBody []byte, owner string) ([]byte, string) {
 
 	mergedJSON, err := json.Marshal(merged)
 	if err != nil {
-		log.Printf("展开 previous_response_id 失败: %v", err)
+		log.Printf("failed to expand previous_response_id: %v", err)
 		return codexBody, prevID
 	}
 
 	codexBody, _ = sjson.SetRawBytes(codexBody, "input", mergedJSON)
-	log.Printf("已展开 previous_response_id=%s，注入 %d 条历史 items", prevID, len(cached))
+	log.Printf("expanded previous_response_id=%s, injected %d history items", prevID, len(cached))
 	return codexBody, prevID
 }
 
-// inputHasToolCallContext 判断 input 数组里是否已包含 function_call 类续链项，
-// 这类项一旦同时出现在缓存里会造成 call_id 冲突。
+// inputHasToolCallContext reports whether the input array already contains function_call-type continuation items,
+// which would cause a call_id conflict if they also appeared in the cache.
 func inputHasToolCallContext(input gjson.Result) bool {
 	found := false
 	input.ForEach(func(_, v gjson.Result) bool {
@@ -1082,7 +1082,7 @@ func inputHasToolCallContext(input gjson.Result) bool {
 	return found
 }
 
-// inputHasFunctionCallOutput 判断 input 数组里是否含 *_output 项（缺少配对的 function_call 时上游会 400）。
+// inputHasFunctionCallOutput reports whether the input array contains *_output items (upstream returns 400 when the paired function_call is missing).
 func inputHasFunctionCallOutput(input gjson.Result) bool {
 	found := false
 	input.ForEach(func(_, v gjson.Result) bool {
@@ -1095,8 +1095,8 @@ func inputHasFunctionCallOutput(input gjson.Result) bool {
 	return found
 }
 
-// isCodexToolCallOutputType 判断 item 类型是否属于工具调用输出项（*_call_output），
-// 与 isCodexToolCallContextType 的调用项集合一一对应。
+// isCodexToolCallOutputType reports whether an item type is a tool call output item (*_call_output),
+// in one-to-one correspondence with the call item set of isCodexToolCallContextType.
 func isCodexToolCallOutputType(typ string) bool {
 	switch typ {
 	case "function_call_output",
@@ -1113,24 +1113,24 @@ func isCodexToolCallOutputType(typ string) bool {
 	}
 }
 
-// cacheCompletedResponse 从 response.completed 事件中提取 response.id 和 response.output，
-// 与当前请求的 expanded input 合并后存入 owner 命名空间的缓存。
-// 仅在响应包含需要 call_id 续链的 Codex 工具调用时才缓存，避免为普通对话浪费内存。
+// cacheCompletedResponse extracts response.id and response.output from the response.completed event,
+// and merges them with the current request's expanded input before storing in the owner-namespaced cache.
+// Caches only when the response contains Codex tool calls that need call_id continuation, to avoid wasting memory on ordinary conversation.
 func cacheCompletedResponse(owner string, expandedInputRaw []byte, completedData []byte) {
 	cacheCompletedResponseWithOutputItems(owner, expandedInputRaw, completedData, nil)
 }
 
-// cacheCompletedResponseWithOutputItems 在 response.completed.output 未携带工具调用时，
-// 使用流式 response.output_item.done 中已收集的 outputItems 作为兜底。
+// cacheCompletedResponseWithOutputItems, when response.completed.output carries no tool calls,
+// uses the outputItems already collected from streaming response.output_item.done as a fallback.
 func cacheCompletedResponseWithOutputItems(owner string, expandedInputRaw []byte, completedData []byte, outputItems []json.RawMessage) {
 	respID := gjson.GetBytes(completedData, "response.id").String()
 	if respID == "" {
 		return
 	}
 
-	// 仅在响应包含可安全回放的 Codex 工具调用时才缓存（普通对话无需
-	// previous_response_id 展开）。image_generation_call / web_search_call
-	// 虽然也是 *_call 结尾，但不属于 call_id 工具续链体系。
+	// Cache only when the response contains Codex tool calls that can be safely replayed (ordinary conversation does not need
+	// previous_response_id expansion). image_generation_call / web_search_call
+	// also end in *_call, but they do not belong to the call_id tool continuation system.
 	output := gjson.GetBytes(completedData, "response.output")
 	if !output.IsArray() && len(outputItems) == 0 {
 		return
@@ -1161,8 +1161,8 @@ func cacheCompletedResponseWithOutputItems(owner string, expandedInputRaw []byte
 
 	var items []json.RawMessage
 
-	// 添加展开后的请求 input items。先成对移除参数被截断的普通
-	// function_call/function_call_output，避免缓存把毒历史延长到下一轮。
+	// Add the expanded request input items. First remove, in pairs, the ordinary function_call/function_call_output whose arguments were truncated,
+	// to avoid the cache prolonging poisoned history into the next turn.
 	inputItems := gjson.ParseBytes(sanitizeResponseCacheInput(expandedInputRaw))
 	if inputItems.IsArray() {
 		inputItems.ForEach(func(_, v gjson.Result) bool {
@@ -1173,8 +1173,8 @@ func cacheCompletedResponseWithOutputItems(owner string, expandedInputRaw []byte
 		})
 	}
 
-	// 添加响应 output 中真正需要续链且已验证的工具上下文；reasoning/message
-	// 等服务端输出 item 带有 rs_/msg_ id，store=false 时回灌会触发 item not found。
+	// Add the tool context from the response output that truly needs continuation and has been verified; reasoning/message
+	// and other server output items carry rs_/msg_ ids, and replaying them with store=false triggers item not found.
 	items = append(items, replayableOutput...)
 
 	if len(items) > 0 {

@@ -1,15 +1,15 @@
-// Package proxy: API Key × 账号分组/账号 维度的用量预算（issue #439）。
+// Package proxy: usage budgets per API Key × account group/account scope (issue #439).
 //
-// 与 apikey_limits.go 里的 Key 级限额不同,这里的限额只统计「该 Key 打到该 scope 的用量」,
-// 因此判定结果不是简单的放行/拒绝,而是**调度候选过滤**:
+// Unlike the key-level limits in apikey_limits.go, these limits only count "usage this key sends to this scope",
+// so the result is not a simple allow/deny but **scheduling candidate filtering**:
 //
-//   - on_exhausted=skip(默认): 耗尽的 scope 从本次请求的候选池剔除,请求自动落到该 Key
-//     允许的其它分组/账号;候选被剔空时返回 429 并说明是 scope 预算耗尽(而不是 503)。
-//   - on_exhausted=reject:     只要该 scope 耗尽,这个 Key 的请求一律 429,不换号。
+//   - on_exhausted=skip (default): an exhausted scope is removed from this request's candidate pool, and the request falls through to the key's
+//     other allowed groups/accounts; when no candidates remain it returns 429 and states the scope budget is exhausted (not 503).
+//   - on_exhausted=reject:     once this scope is exhausted, requests from this key always get 429 and do not switch accounts.
 //
-// 数据来源:usage_logs 按账号拆分的窗口聚合(每窗口每 60s 一次查询,与配了多少个 scope 无关)
-// + 本进程内的增量事件修正。后者用于压掉 60s 缓存滞后带来的超支——高并发下没有它,
-// 预算耗尽后仍会继续打满一整个缓存周期。
+// Data source: window aggregates of usage_logs split by account (one query per window every 60s, regardless of how many scopes are configured)
+// + in-process incremental event corrections. The latter suppresses the overspend caused by the 60s cache lag; without it under high concurrency,
+// requests keep flowing for a full cache cycle after the budget is exhausted.
 package proxy
 
 import (
@@ -33,21 +33,21 @@ import (
 const (
 	apiKeyScopeUsageCacheNamespace = "api-key-scope-usage"
 	apiKeyScopeUsageCacheTTL       = 60 * time.Second
-	// 本地增量只需覆盖缓存滞后窗口,留 5 分钟余量即可,不需要按限额窗口(最长 30d)保留。
+	// Local increments only need to cover the cache lag window; a 5-minute margin is enough, no need to retain them for the limit window (up to 30d).
 	apiKeyScopeDeltaRetention = 5 * time.Minute
-	// 单个 Key 保留的增量事件上限。超过后丢弃最旧的一半:极端速率下增量修正会偏低,
-	// 但兜底的 DB 聚合仍然准确,不会漏判。
+	// Cap on incremental events kept per key. Beyond it the oldest half is dropped: at extreme rates the incremental correction will run low,
+	// but the fallback DB aggregate stays accurate and no violation is missed.
 	apiKeyScopeDeltaMaxEvents = 4096
 )
 
-// apiKeyScopeUsageSnapshot 是缓存里的按账号窗口用量快照。SnapshotAt 用于和本地增量
-// 拼接:只把快照时间之后发生的事件叠加上去,避免重复计数。
+// apiKeyScopeUsageSnapshot is the cached per-account window usage snapshot. SnapshotAt is used to combine with local increments
+// by adding only events that occur after the snapshot time, to avoid double counting.
 type apiKeyScopeUsageSnapshot struct {
 	SnapshotAt time.Time                            `json:"snapshot_at"`
 	Accounts   map[int64]database.APIKeyWindowUsage `json:"accounts"`
 }
 
-// ==================== 本地增量事件 ====================
+// ==================== local incremental events ====================
 
 type apiKeyScopeUsageEvent struct {
 	at        time.Time
@@ -56,8 +56,8 @@ type apiKeyScopeUsageEvent struct {
 	cost      float64
 }
 
-// apiKeyScopeUsageTracker 记录最近若干分钟内、按 (API Key, 账号) 拆分的用量事件。
-// 只跟踪确实配了 scope 限额的 Key(由 buildScopeBudgetGate 标记),其余 Key 零开销。
+// apiKeyScopeUsageTracker records usage events split by (API Key, account) from the last few minutes.
+// Only tracks keys that actually have scope limits configured (marked by buildScopeBudgetGate); other keys have zero overhead.
 type apiKeyScopeUsageTracker struct {
 	mu          sync.Mutex
 	events      map[int64][]apiKeyScopeUsageEvent
@@ -67,13 +67,13 @@ type apiKeyScopeUsageTracker struct {
 	sharedLoads singleflight.Group
 }
 
-// scopeCounterCache 缓存一次累计计数器读取的结果(见 apiKeyScopeCounterCacheTTL)。
+// scopeCounterCache caches the result of one cumulative counter read (see apiKeyScopeCounterCacheTTL).
 type scopeCounterCache struct {
 	counters  map[database.APIKeyScopeCounterKey]database.APIKeyScopeCounter
 	expiresAt time.Time
 }
 
-// sharedScopeBucketCache 缓存一次跨实例分钟桶读取的结果(见 apiKeyScopeSharedReadTTL)。
+// sharedScopeBucketCache caches the result of one cross-instance minute-bucket read (see apiKeyScopeSharedReadTTL).
 type sharedScopeBucketCache struct {
 	buckets   map[int64]map[int64]database.APIKeyWindowUsage
 	readAt    time.Time
@@ -89,8 +89,8 @@ func newAPIKeyScopeUsageTracker() *apiKeyScopeUsageTracker {
 	}
 }
 
-// isTracked 判断某 Key 是否已被登记为「配了 scope 限额」。未登记的 Key 不记增量,
-// 也不写跨实例桶。
+// isTracked reports whether a key is registered as having scope limits configured. Unregistered keys record no increments,
+// and do not write to cross-instance buckets.
 func (t *apiKeyScopeUsageTracker) isTracked(apiKeyID int64) bool {
 	if t == nil || apiKeyID <= 0 {
 		return false
@@ -152,7 +152,7 @@ func (t *apiKeyScopeUsageTracker) storeCounters(apiKeyID int64, counters map[dat
 	}
 }
 
-// markTracked 声明某 Key 需要增量跟踪。每次请求构造闸门时调用,顺带清理长期不活跃的 Key。
+// markTracked declares that a key needs increment tracking. Called each time a request builds its gate, and also cleans up keys that have been inactive for a long time.
 func (t *apiKeyScopeUsageTracker) markTracked(apiKeyID int64) {
 	if t == nil || apiKeyID <= 0 {
 		return
@@ -164,7 +164,7 @@ func (t *apiKeyScopeUsageTracker) markTracked(apiKeyID int64) {
 	t.sweepLocked(now)
 }
 
-// record 追加一条用量事件。未被跟踪的 Key 直接忽略。
+// record appends one usage event. Keys that are not tracked are ignored.
 func (t *apiKeyScopeUsageTracker) record(apiKeyID, accountID int64, tokens int64, cost float64) {
 	if t == nil || apiKeyID <= 0 || accountID <= 0 {
 		return
@@ -190,7 +190,7 @@ func (t *apiKeyScopeUsageTracker) record(apiKeyID, accountID int64, tokens int64
 	t.events[apiKeyID] = events
 }
 
-// deltaSince 返回某 Key 在 since 之后的增量用量(按账号)。since 为零值时返回 nil。
+// deltaSince returns the incremental usage (per account) of a key after since. Returns nil when since is the zero value.
 func (t *apiKeyScopeUsageTracker) deltaSince(apiKeyID int64, since time.Time) map[int64]database.APIKeyWindowUsage {
 	if since.IsZero() {
 		return nil
@@ -198,11 +198,11 @@ func (t *apiKeyScopeUsageTracker) deltaSince(apiKeyID int64, since time.Time) ma
 	return t.deltaSelect(apiKeyID, func(at time.Time) bool { return at.After(since) })
 }
 
-// deltaWithSharedBuckets 在跨实例共享增量已启用时挑本地事件,避免与共享桶重复计数:
-//   - 落在快照那一分钟、且晚于快照时刻的事件:共享桶跳过了这一分钟,必须由本地补;
-//   - 晚于共享桶读取时刻的事件:还没进(或没被读到)共享桶,同样要补。
+// deltaWithSharedBuckets, when cross-instance shared increments are enabled, picks local events to avoid double counting with the shared buckets:
+//   - events in the snapshot's minute that come after the snapshot time: the shared bucket skipped that minute, so local must fill it in;
+//   - events after the shared bucket read time: not yet in (or not read from) the shared bucket, also to be filled in.
 //
-// 其余事件都已被共享桶覆盖。
+// All other events are already covered by the shared buckets.
 func (t *apiKeyScopeUsageTracker) deltaWithSharedBuckets(apiKeyID int64, snapshotAt, sharedReadAt time.Time) map[int64]database.APIKeyWindowUsage {
 	if snapshotAt.IsZero() {
 		return nil
@@ -286,9 +286,9 @@ func (h *Handler) apiKeyScopeUsageTracker() *apiKeyScopeUsageTracker {
 	return h.scopeUsage
 }
 
-// recordAPIKeyScopeUsage 在用量落库前把这笔消耗登记进本地增量。计费口径与
-// InsertUsageLog 完全一致(共用 database.UsageLogUserBilledCost)。
-// 运行态缓存跨实例共享(Redis)时同时写一份分钟桶,让其它实例也看得到这笔消耗。
+// recordAPIKeyScopeUsage records this consumption into local increments before usage is persisted. The billing basis matches
+// InsertUsageLog exactly (sharing database.UsageLogUserBilledCost).
+// When the runtime cache is shared across instances (Redis), also write a minute bucket so other instances can see this consumption.
 func (h *Handler) recordAPIKeyScopeUsage(input *database.UsageLogInput) {
 	if h == nil || input == nil || input.APIKeyID <= 0 || input.AccountID <= 0 {
 		return
@@ -306,23 +306,23 @@ func (h *Handler) recordAPIKeyScopeUsage(input *database.UsageLogInput) {
 	h.publishSharedScopeDelta(input.APIKeyID, input.AccountID, tokens, cost)
 }
 
-// ==================== 跨实例共享增量 ====================
+// ==================== cross-instance shared increments ====================
 
 const (
 	apiKeyScopeSharedDeltaNamespace = "api-key-scope-delta"
-	// 分钟桶各自带 TTL,自然过期即清理,不需要额外的字段回收逻辑。
+	// Each minute bucket carries its own TTL and is cleaned up on natural expiry, so no extra field reclamation logic is needed.
 	apiKeyScopeSharedDeltaTTL = 5 * time.Minute
-	// 读取当前分钟 + 前两个分钟桶:覆盖 60s 聚合缓存的滞后即够。
+	// Read the current minute plus the previous two minute buckets: that covers the lag of the 60s aggregate cache.
 	apiKeyScopeSharedDeltaLookback = 3
-	// 共享桶的本地读缓存:把每请求 3 次 Redis 往返压到每 5 秒 3 次。
+	// Local read cache for shared buckets: cuts 3 Redis round trips per request down to 3 every 5 seconds.
 	apiKeyScopeSharedReadTTL = 5 * time.Second
-	// 累计额度计数器的本地读缓存。
+	// Local read cache for cumulative quota counters.
 	apiKeyScopeCounterCacheTTL = 5 * time.Second
 	apiKeyScopeDeltaWriteSlots = 16
 )
 
-// sharedScopeDeltaEnabled 判断是否值得走跨实例共享增量。单实例(内存缓存)时
-// 本地增量已经完全准确,不必付 Redis 往返。
+// sharedScopeDeltaEnabled decides whether cross-instance shared increments are worth using. With a single instance (memory cache),
+// local increments are already fully accurate, so there is no need to pay the Redis round trip.
 func (h *Handler) sharedScopeDeltaEnabled() bool {
 	return h != nil && h.cache != nil && h.cache.SharedAcrossInstances()
 }
@@ -331,8 +331,8 @@ func apiKeyScopeSharedDeltaKey(apiKeyID int64, minute int64) string {
 	return fmt.Sprintf("%d:%d", apiKeyID, minute)
 }
 
-// publishSharedScopeDelta 把这笔消耗累加到当前分钟桶。异步写:记账不该让请求收尾
-// 等一次 Redis 往返,丢一次也只是短暂少算,DB 聚合仍会兜住。
+// publishSharedScopeDelta adds this consumption to the current minute bucket. The write is async: billing should not make the request wait
+// for a Redis round trip; if one write is lost, the count is only briefly low and the DB aggregate still catches it.
 func (h *Handler) publishSharedScopeDelta(apiKeyID, accountID, tokens int64, cost float64) {
 	if !h.sharedScopeDeltaEnabled() {
 		return
@@ -365,9 +365,9 @@ func (h *Handler) publishSharedScopeDelta(apiKeyID, accountID, tokens int64, cos
 	}
 }
 
-// sharedScopeBuckets 读最近几个分钟桶(全部实例的贡献),带 5s 本地缓存。
-// 缓存的是**原始分钟桶**而不是过滤后的结果:同一个 Key 的不同窗口(5h/1d/...)快照时刻不同,
-// 过滤条件也不同,缓存成品会串。
+// sharedScopeBuckets reads the most recent minute buckets (contributions from all instances), with a 5s local cache.
+// It caches the **raw minute buckets**, not the filtered result: the same key's different windows (5h/1d/...) have different snapshot times,
+// and their filter conditions differ too, so a cached filtered result would mix them up.
 func (h *Handler) sharedScopeBuckets(ctx context.Context, apiKeyID int64) (map[int64]map[int64]database.APIKeyWindowUsage, time.Time) {
 	if !h.sharedScopeDeltaEnabled() {
 		return nil, time.Time{}
@@ -443,9 +443,9 @@ func (h *Handler) loadSharedScopeBuckets(ctx context.Context, apiKeyID int64) (m
 	return buckets, readAt
 }
 
-// sharedScopeDeltaAfterSnapshot 汇总「严格晚于快照分钟」的共享桶。
-// 刻意跳过跨越快照时刻的那个桶:桶里既有快照已包含的用量、也有之后的用量,整桶相加会
-// 重复计数。代价是最多漏算其它实例在快照那一分钟内的消耗(本实例的那部分由本地事件补上)。
+// sharedScopeDeltaAfterSnapshot sums the shared buckets "strictly later than the snapshot minute".
+// It deliberately skips the bucket that spans the snapshot time: the bucket holds usage already included in the snapshot as well as usage after it, so adding the whole bucket would
+// double count. The cost is that at most, consumption by other instances in the snapshot minute is under-counted (this instance's part is filled in by local events).
 func sharedScopeDeltaAfterSnapshot(buckets map[int64]map[int64]database.APIKeyWindowUsage, snapshotAt time.Time) map[int64]database.APIKeyWindowUsage {
 	if len(buckets) == 0 {
 		return nil
@@ -482,18 +482,18 @@ func parseSharedScopeDeltaField(field string) (int64, string, bool) {
 	return accountID, field[idx+1:], true
 }
 
-// ==================== 命中统计与日志 ====================
+// ==================== hit statistics and logs ====================
 
-// scopeSkipKey 标识一条 scope 预算的命中统计。
+// scopeSkipKey identifies the hit statistics of one scope budget.
 type scopeSkipKey struct {
 	apiKeyID  int64
 	scopeType string
 	scopeID   int64
 }
 
-// APIKeyScopeSkipStat 是某条 scope 预算被判定「已耗尽」的运行态统计。
-// 只存在进程内(重启清零),用于回答「这条预算真的在生效吗、影响了多少请求」——
-// 预算耗尽后请求会静默落到其它账号,没有这个统计只能靠 429 才看出来。
+// APIKeyScopeSkipStat is the runtime statistic for a scope budget judged "exhausted".
+// It lives only in the process (reset on restart) and answers "is this budget really in effect, and how many requests did it affect" -
+// after a budget is exhausted, requests silently fall through to other accounts; without this statistic you can only notice through 429s.
 type APIKeyScopeSkipStat struct {
 	Requests    int64     `json:"requests"`
 	FirstAt     time.Time `json:"first_at"`
@@ -508,19 +508,19 @@ type scopeSkipStats struct {
 	logged  map[scopeSkipKey]time.Time
 }
 
-// apiKeyScopeSkipStats 是进程级单例:/v1 流量与管理端读取的可能不是同一个 Handler 实例,
-// 统计必须共享才能在管理界面看到。
+// apiKeyScopeSkipStats is a process-level singleton: /v1 traffic and the admin side may not read the same Handler instance,
+// the statistics must be shared to be visible in the admin UI.
 var apiKeyScopeSkipStats = &scopeSkipStats{
 	entries: make(map[scopeSkipKey]*APIKeyScopeSkipStat),
 	logged:  make(map[scopeSkipKey]time.Time),
 }
 
-// scopeSkipLogInterval 是同一条 scope 预算打日志的最小间隔:预算耗尽期间每个请求都会命中,
-// 不节流会直接刷屏。
+// scopeSkipLogInterval is the minimum interval between log lines for the same scope budget: while the budget is exhausted every request hits it,
+// so without throttling the log would flood.
 const scopeSkipLogInterval = time.Minute
 
-// record 登记一次命中(每个请求最多一次,由 evaluateAPIKeyScopeBudgets 调用),
-// 并按间隔打一条日志。返回是否需要打日志。
+// record registers one hit (at most once per request, called by evaluateAPIKeyScopeBudgets),
+// and logs one line per interval. Returns whether a log line is needed.
 func (s *scopeSkipStats) record(key scopeSkipKey, message string, reject bool, now time.Time) bool {
 	s.mu.Lock()
 	defer s.mu.Unlock()
@@ -542,7 +542,7 @@ func (s *scopeSkipStats) record(key scopeSkipKey, message string, reject bool, n
 	return true
 }
 
-// snapshot 返回某 Key 的全部命中统计副本。
+// snapshot returns a copy of all hit statistics for a key.
 func (s *scopeSkipStats) snapshot(apiKeyID int64) map[string]APIKeyScopeSkipStat {
 	s.mu.Lock()
 	defer s.mu.Unlock()
@@ -567,8 +567,8 @@ func (s *scopeSkipStats) reset(apiKeyID int64) {
 	}
 }
 
-// APIKeyScopeSkipSnapshot 返回某 API Key 各条 scope 预算的命中统计(键为 "type:id")。
-// 供管理端展示"这条预算已生效、影响了多少请求"。
+// APIKeyScopeSkipSnapshot returns the hit statistics of each scope budget of an API Key (keyed by "type:id").
+// For the admin UI to show "this budget is in effect and affected N requests".
 func APIKeyScopeSkipSnapshot(apiKeyID int64) map[string]APIKeyScopeSkipStat {
 	if apiKeyID <= 0 {
 		return map[string]APIKeyScopeSkipStat{}
@@ -576,17 +576,17 @@ func APIKeyScopeSkipSnapshot(apiKeyID int64) map[string]APIKeyScopeSkipStat {
 	return apiKeyScopeSkipStats.snapshot(apiKeyID)
 }
 
-// ResetAPIKeyScopeSkipStats 清掉某 API Key 的命中统计(配置改动后重新观察时用)。
+// ResetAPIKeyScopeSkipStats clears the hit statistics of an API Key (used when re-observing after a config change).
 func ResetAPIKeyScopeSkipStats(apiKeyID int64) {
 	if apiKeyID > 0 {
 		apiKeyScopeSkipStats.reset(apiKeyID)
 	}
 }
 
-// ==================== 请求级闸门 ====================
+// ==================== request-level gate ====================
 
-// scopeBudgetGate 是单次请求的 scope 预算闸门:记录哪些分组/账号因预算耗尽被剔除,
-// 以及被剔除时给下游的说明。nil 闸门表示本次请求没有任何 scope 被剔除。
+// scopeBudgetGate is the per-request scope budget gate: it records which groups/accounts were removed because their budget was exhausted,
+// and the note given downstream when they are removed. A nil gate means no scope was removed for this request.
 type scopeBudgetGate struct {
 	apiKeyID        int64
 	blockedGroups   map[int64]struct{}
@@ -594,10 +594,10 @@ type scopeBudgetGate struct {
 	message         string
 	blocked         atomic.Int64
 
-	// concurrencyScopes 是配了并发上限的 scope。它与预算耗尽无关——即使全部预算都还有余额，
-	// 只要配了并发上限就需要闸门存在（过滤时判位、选中后占位）。
+	// concurrencyScopes are the scopes with a concurrency limit configured. They have nothing to do with budget exhaustion: even when every budget still has balance,
+	// the gate must exist as long as a concurrency limit is configured (checking slots while filtering, taking a slot after selection).
 	concurrencyScopes []database.APIKeyScopeLimit
-	// concurrencyMessage 记录最近一次因并发位已满剔除候选的说明。
+	// concurrencyMessage records the note for the most recent candidate removed because its concurrency slots were full.
 	concurrencyMu      sync.Mutex
 	concurrencyMessage string
 	leases             []scopeConcurrencyLease
@@ -634,7 +634,7 @@ func (g *scopeBudgetGate) noteConcurrencyBlock(message string) {
 	g.concurrencyMu.Unlock()
 }
 
-// concurrencyFullFor 判断账号是否因某条 scope 的并发位已满而不可用。
+// concurrencyFullFor reports whether an account is unavailable because the concurrency slots of some scope are full.
 func (g *scopeBudgetGate) concurrencyFullFor(account *auth.Account) bool {
 	if g == nil || account == nil || len(g.concurrencyScopes) == 0 {
 		return false
@@ -663,11 +663,11 @@ func (g *scopeBudgetGate) blocks(account *auth.Account) bool {
 	return account.InAnyGroup(g.blockedGroups)
 }
 
-// filter 把闸门包成账号过滤器,叠在既有过滤链最外层。
+// filter wraps the gate as an account filter, layered on the outermost part of the existing filter chain.
 //
-// 刻意先跑内层过滤器再判预算:只有「本来选得上、仅因预算被拒」的账号才计入 blocked,
-// 这样「无可用账号」时才敢把 503 换成 scope 预算耗尽的 429——否则模型不匹配之类的
-// 拒绝也会被归因到预算上。
+// It deliberately runs the inner filter before checking the budget: only accounts that "would otherwise be selectable and were rejected only by the budget" count toward blocked,
+// so that a "no usable account" result is turned into a 429 for scope budget exhaustion only when it is safe to do so; otherwise a model mismatch and similar
+// rejections would also be blamed on the budget.
 func (g *scopeBudgetGate) filter(inner auth.AccountFilter) auth.AccountFilter {
 	if g == nil {
 		return inner
@@ -688,8 +688,8 @@ func (g *scopeBudgetGate) filter(inner auth.AccountFilter) auth.AccountFilter {
 	}
 }
 
-// exhaustedMessage 在「无可用账号」时返回 scope 预算耗尽的说明;本次请求没有任何候选
-// 因预算被剔除时返回 ""(说明确实是账号池本身没货,应沿用原有 503)。
+// exhaustedMessage returns the scope budget exhaustion note when there are "no usable accounts"; if this request had no candidates
+// removed by the budget, it returns "" (meaning the account pool itself is empty, so the original 503 should stand).
 func (g *scopeBudgetGate) exhaustedMessage() string {
 	if g == nil || g.blocked.Load() == 0 {
 		return ""
@@ -702,8 +702,8 @@ func (g *scopeBudgetGate) exhaustedMessage() string {
 	return g.concurrencyMessage
 }
 
-// applyScopeBudgetFilter 把本次请求的 scope 预算闸门叠加到账号过滤链上。
-// 未配 scope 限额或全部 scope 都有余额时原样返回。
+// applyScopeBudgetFilter layers this request's scope budget gate onto the account filter chain.
+// Returns the input unchanged when no scope limit is configured or every scope still has balance.
 func (h *Handler) applyScopeBudgetFilter(c *gin.Context, filter auth.AccountFilter) auth.AccountFilter {
 	filter = daybreakAccountFilter(c, filter)
 	gate := scopeBudgetGateFromContext(c)
@@ -713,8 +713,8 @@ func (h *Handler) applyScopeBudgetFilter(c *gin.Context, filter auth.AccountFilt
 	return gate.filter(filter)
 }
 
-// scopeBudgetExhaustedMessage 返回本次请求因 scope 预算耗尽而剔除候选的说明,
-// 供各 handler 在「无可用账号」分支把 503 换成语义准确的 429。
+// scopeBudgetExhaustedMessage returns the note that this request removed candidates because a scope budget was exhausted,
+// so each handler can turn a 503 into an accurately worded 429 in its "no usable account" branch.
 func scopeBudgetExhaustedMessage(c *gin.Context) string {
 	return scopeBudgetGateFromContext(c).exhaustedMessage()
 }
@@ -731,9 +731,9 @@ func scopeBudgetGateFromContext(c *gin.Context) *scopeBudgetGate {
 	return gate
 }
 
-// evaluateAPIKeyScopeBudgets 计算该 Key 的 scope 预算状态。
-// 返回 rejectMsg 非空表示存在 on_exhausted=reject 的 scope 已耗尽,调用方应直接 429;
-// 返回的 gate 非空表示有 skip 类 scope 被剔除,需要挂到账号过滤链上。
+// evaluateAPIKeyScopeBudgets computes the scope budget status of this key.
+// A non-empty rejectMsg means a scope with on_exhausted=reject is exhausted, and the caller should return 429 directly;
+// a non-nil gate means skip-type scopes were removed and it must be attached to the account filter chain.
 func (h *Handler) evaluateAPIKeyScopeBudgets(ctx context.Context, row *database.APIKeyRow) (*scopeBudgetGate, string) {
 	if h == nil || row == nil || row.ID <= 0 {
 		return nil, ""
@@ -744,7 +744,7 @@ func (h *Handler) evaluateAPIKeyScopeBudgets(ctx context.Context, row *database.
 	}
 	h.apiKeyScopeUsageTracker().markTracked(row.ID)
 
-	// 按需拉取窗口快照:只有真的被某条 scope 用到的窗口才查。
+	// Fetch window snapshots on demand: only windows actually used by some scope are queried.
 	usageByWindow := make(map[string]map[int64]database.APIKeyWindowUsage, len(database.APIKeyScopeWindows))
 	for _, window := range database.APIKeyScopeWindows {
 		needed := false
@@ -759,12 +759,12 @@ func (h *Handler) evaluateAPIKeyScopeBudgets(ctx context.Context, row *database.
 		}
 		usage, err := h.apiKeyScopeWindowUsage(ctx, row.ID, window)
 		if err != nil {
-			// 读不到用量时不阻断请求:与 Key 级限额一致,可用性优先。
+			// If usage cannot be read, do not block the request: consistent with the key-level limits, favoring availability.
 			continue
 		}
 		usageByWindow[window.Label] = usage
 	}
-	// 只配了累计额度 / 并发上限（没有任何滑动窗口）的 scope 也要处理，不能在这里就退出。
+	// Scopes with only a cumulative quota / concurrency limit (no sliding window at all) must also be handled and must not exit here.
 	concurrencyScopes := scopesWithConcurrencyLimit(scopes)
 	if len(usageByWindow) == 0 && !anyCumulativeQuota(scopes) && len(concurrencyScopes) == 0 {
 		return nil, ""
@@ -777,8 +777,8 @@ func (h *Handler) evaluateAPIKeyScopeBudgets(ctx context.Context, row *database.
 	for _, scope := range scopes {
 		hit, ok := h.checkScopeBudget(scope, usageByWindow, groupsByAccount)
 		if !ok {
-			// 累计额度（不随时间回落）单独判定：它读 api_key_scope_counters，
-			// 与窗口聚合是两套数据源。
+			// The cumulative quota (which does not decline over time) is judged separately: it reads api_key_scope_counters,
+			// a different data source from the window aggregates.
 			hit, ok = scope.CheckCumulative(counters[database.APIKeyScopeCounterKey{
 				ScopeType: scope.ResolveScopeType(),
 				ScopeID:   scope.ScopeID,
@@ -789,8 +789,8 @@ func (h *Handler) evaluateAPIKeyScopeBudgets(ctx context.Context, row *database.
 		}
 		message := hit.Describe(h.describeScope(scope))
 		reject := scope.ResolveOnExhausted() == database.APIKeyScopeOnExhaustedReject
-		// 每个请求对每条耗尽的 scope 只登记一次(这里是每请求执行一次的路径),
-		// 因此统计就是"受影响请求数",而不是候选剔除次数。
+		// Each request registers each exhausted scope only once (this is the path that runs once per request),
+		// so the statistic is the number of affected requests, not the number of candidate removals.
 		if apiKeyScopeSkipStats.record(scopeSkipKey{
 			apiKeyID:  row.ID,
 			scopeType: scope.ResolveScopeType(),
@@ -843,8 +843,8 @@ func scopesWithConcurrencyLimit(scopes []database.APIKeyScopeLimit) []database.A
 	return out
 }
 
-// scopeLabelForMessage 是不依赖 store 的 scope 标签(并发提示在过滤热路径上生成,
-// 不便再去解析分组名)。
+// scopeLabelForMessage is a scope label that does not depend on the store (the concurrency hint is generated on the hot filter path,
+// so it is inconvenient to resolve the group name again).
 func scopeLabelForMessage(scope database.APIKeyScopeLimit) string {
 	if scope.ResolveScopeType() == database.APIKeyScopeTypeAccount {
 		return fmt.Sprintf("account #%d", scope.ScopeID)
@@ -861,7 +861,7 @@ func anyCumulativeQuota(scopes []database.APIKeyScopeLimit) bool {
 	return false
 }
 
-// checkScopeBudget 按窗口顺序判定一条 scope 是否耗尽。命中即返回,短窗口优先。
+// checkScopeBudget checks whether a scope is exhausted, window by window. It returns on the first hit, with shorter windows first.
 func (h *Handler) checkScopeBudget(
 	scope database.APIKeyScopeLimit,
 	usageByWindow map[string]map[int64]database.APIKeyWindowUsage,
@@ -896,8 +896,8 @@ func (h *Handler) checkScopeBudget(
 	return database.APIKeyScopeExhaustion{}, false
 }
 
-// accountGroupLookup 为快照里出现过的账号解析当前所属分组。已从账号池移除的账号
-// 解析不到分组,其历史用量在分组维度上被忽略(账号维度仍然准确)。
+// accountGroupLookup resolves the current group of accounts that appear in the snapshot. Accounts already removed from the account pool
+// cannot be resolved to a group, so their historical usage is ignored at the group level (it remains accurate at the account level).
 func (h *Handler) accountGroupLookup(usageByWindow map[string]map[int64]database.APIKeyWindowUsage) map[int64][]int64 {
 	if h == nil || h.store == nil {
 		return nil
@@ -919,7 +919,7 @@ func (h *Handler) accountGroupLookup(usageByWindow map[string]map[int64]database
 	return out
 }
 
-// describeScope 生成 scope 的可读标签,用于错误文案。分组名解析失败时退回 ID。
+// describeScope builds a readable label for the scope, used in error text. Falls back to the ID when the group name cannot be resolved.
 func (h *Handler) describeScope(scope database.APIKeyScopeLimit) string {
 	if scope.ResolveScopeType() == database.APIKeyScopeTypeAccount {
 		return fmt.Sprintf("account #%d", scope.ScopeID)
@@ -932,11 +932,11 @@ func (h *Handler) describeScope(scope database.APIKeyScopeLimit) string {
 	return fmt.Sprintf("group #%d", scope.ScopeID)
 }
 
-// apiKeyScopeCounters 读取累计额度计数器,带 5s 本地缓存。
+// apiKeyScopeCounters reads the cumulative quota counters, with a 5s local cache.
 //
-// 刻意不叠加进程内增量:累计计数器和 api_keys.quota_used 一样在批量落库的同一事务里累加,
-// 因此判定天然滞后一个 flush 周期(秒级),与既有 Key 级累计额度语义一致。
-// 5s 缓存把「每请求一次查库」压下来,同时保证耗尽后很快生效。
+// It deliberately does not add in-process increments: the cumulative counters, like api_keys.quota_used, are summed in the same transaction as the batch write,
+// so the check naturally lags by one flush cycle (seconds), consistent with the existing key-level cumulative quota semantics.
+// The 5s cache removes "one DB query per request" while ensuring the limit takes effect quickly after exhaustion.
 func (h *Handler) apiKeyScopeCounters(ctx context.Context, apiKeyID int64, scopes []database.APIKeyScopeLimit) map[database.APIKeyScopeCounterKey]database.APIKeyScopeCounter {
 	needed := false
 	for _, scope := range scopes {
@@ -954,14 +954,14 @@ func (h *Handler) apiKeyScopeCounters(ctx context.Context, apiKeyID int64, scope
 	}
 	counters, err := h.db.ListAPIKeyScopeCounters(ctx, apiKeyID)
 	if err != nil {
-		// 读不到就当没用量:与窗口限额一致,可用性优先。
+		// If it cannot be read, treat it as no usage: consistent with the window limits, favoring availability.
 		return nil
 	}
 	tracker.storeCounters(apiKeyID, counters)
 	return counters
 }
 
-// apiKeyScopeWindowUsage 返回某窗口内按账号拆分的用量:缓存快照(≤60s)+ 本地增量修正。
+// apiKeyScopeWindowUsage returns the usage within a window split by account: cached snapshot (≤60s) + local increment corrections.
 func (h *Handler) apiKeyScopeWindowUsage(ctx context.Context, apiKeyID int64, window database.APIKeyScopeWindow) (map[int64]database.APIKeyWindowUsage, error) {
 	snapshot, ok := h.readAPIKeyScopeUsageCache(ctx, apiKeyID, window.Label)
 	if !ok {

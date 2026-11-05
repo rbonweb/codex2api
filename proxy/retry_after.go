@@ -7,7 +7,7 @@ import (
 	"time"
 )
 
-// parseRetryAfterHeader 解析 Retry-After 头（秒数或 HTTP 日期）。
+// parseRetryAfterHeader parses the Retry-After header (seconds or an HTTP date).
 func parseRetryAfterHeader(value string) time.Duration {
 	return parseRetryAfterHeaderAt(value, time.Now())
 }

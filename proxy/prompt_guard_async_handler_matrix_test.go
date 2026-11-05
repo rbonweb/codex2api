@@ -430,7 +430,6 @@ func chatHistoryBody(stream bool, malicious string, normal string) string {
 	return `{"model":"gpt-5.5"` + streamField + `,"messages":[{"role":"user","content":"` + malicious + `"},{"role":"assistant","content":"我不能协助。"},{"role":"user","content":"` + normal + `"}]}`
 }
 
-
 func imageEditJSONBody(prompt string, style string) string {
 	styleField := ""
 	if style != "" {

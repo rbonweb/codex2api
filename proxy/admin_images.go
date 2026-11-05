@@ -37,9 +37,9 @@ func (h *Handler) GenerateImageOnceForAdmin(ctx context.Context, rawBody []byte,
 	}
 	ginCtx.Request = req
 
-	// 每个批量输出都是一次真实上游请求，因此复用标准 Images handler 的
-	// API Key 限额。并发槽由调用方决定：入队时已经为整个任务占过槽的路径
-	// 传 true，否则这里会为同一个 Key 再占一次，把上限打对折。
+	// Each batch output is one real upstream request, so it reuses the standard Images handler's
+	// API key limit. The caller decides the concurrency slot: on paths where the whole task already took a slot at enqueue
+	// pass true, otherwise this would take another slot for the same key and halve the limit.
 	if sharedAPIKeyConcurrency {
 		ginCtx.Set(contextAPIKeyConcurrencyInherited, true)
 	}
@@ -140,8 +140,8 @@ func (w *adminImageResponseRecorder) WriteHeader(code int) {
 	w.ResponseRecorder.WriteHeader(code)
 }
 
-// applyAdminScopeBudget 为 in-process 的管理端生图任务计算 scope 预算闸门：
-// reject 类超额直接返回 429，skip 类挂到该 gin context 上供账号过滤链剔除候选。
+// applyAdminScopeBudget computes the scope budget gate for in-process admin image generation jobs:
+// over-limit "reject" results return 429 directly; "skip" results are attached to the gin context so the account filter chain can remove candidates.
 func (h *Handler) applyAdminScopeBudget(ctx context.Context, ginCtx *gin.Context, apiKey *database.APIKeyRow) (int, string) {
 	if apiKey == nil || len(apiKey.Limits.ScopeLimits) == 0 {
 		return 0, ""

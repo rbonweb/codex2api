@@ -21,8 +21,8 @@ const (
 	OutputGuardConfigReadTimeout  = 3 * time.Second
 )
 
-// OutputGuardAppliedConfig 是模型输出失控防护运行时配置的不可变值快照。
-// 调用方持有副本后，后台轮询器应用新 generation 也不会篡改在途请求的视图。
+// OutputGuardAppliedConfig is an immutable value snapshot of the runtime configuration of the model output guard.
+// After the caller holds a copy, the background poller applying a new generation does not alter that request's view.
 type OutputGuardAppliedConfig struct {
 	Enabled               bool
 	MaxToolArgumentBytes  int64
@@ -79,11 +79,11 @@ func GetOutputGuardConfigSyncStatus() OutputGuardConfigSyncStatus {
 	}
 }
 
-// ApplyOutputGuardSettings 校验并应用一份数据库快照。
-// 非法配置或陈旧/重复 generation 均被拒绝，保留 last-known-good (LKG)。
+// ApplyOutputGuardSettings validates and applies one database snapshot.
+// Invalid configs, and stale or duplicate generations, are rejected, and the last-known-good (LKG) config is kept.
 func ApplyOutputGuardSettings(settings database.OutputGuardSettings) bool {
 	if err := database.ValidateOutputGuardSettings(settings); err != nil {
-		log.Printf("[output-guard] 非法配置已被拒绝，保留 LKG: %v", err)
+		log.Printf("[output-guard] invalid config rejected, keeping LKG: %v", err)
 		recordOutputGuardConfigSyncError(err)
 		return false
 	}
@@ -112,15 +112,15 @@ func ApplyOutputGuardSettings(settings database.OutputGuardSettings) bool {
 	return true
 }
 
-// LoadOutputGuardSettings 执行冷启动同步读取。失败时保持未就绪，
-// 由后台轮询器在数据库恢复后自愈，绝不阻断进程启动。
+// LoadOutputGuardSettings performs a synchronous cold-start read. On failure it stays not ready,
+// and the background poller self-heals once the database recovers. It never blocks process startup.
 func LoadOutputGuardSettings(ctx context.Context, reader OutputGuardSettingsReader) error {
 	settings, err := readOutputGuardSettings(ctx, reader, OutputGuardConfigReadTimeout)
 	if err != nil {
-		// 冷启动失败必须留下同步错误：outputGuardHTTPGateArmed 依据
-		// LastSyncError 判断 readiness 已有结论。若此处因父 ctx 超时/取消而
-		// 跳过记录，首次后台轮询（约 5s）之前 HTTP 入口会以 guard 关闭状态
-		// 放行请求，冷启动 503 门禁形同虚设。
+		// A cold-start failure must leave a sync error: outputGuardHTTPGateArmed decides
+		// readiness from LastSyncError. If the record is skipped here because the parent ctx timed out or was cancelled,
+		// then before the first background poll (about 5s) the HTTP entry lets requests through with the guard off,
+		// so the cold-start 503 gate is ineffective.
 		recordOutputGuardConfigSyncError(err)
 		return err
 	}
@@ -240,7 +240,7 @@ func recordOutputGuardConfigSyncError(err error) {
 	globalOutputGuardState.mu.Unlock()
 }
 
-// RequireOutputGuardReadyHTTP 在冷启动配置未加载成功时以 503 强阻断请求。
+// RequireOutputGuardReadyHTTP hard-blocks requests with 503 when the cold-start config failed to load.
 func RequireOutputGuardReadyHTTP(c *gin.Context) bool {
 	if IsOutputGuardReady() {
 		return true
@@ -254,8 +254,8 @@ func RequireOutputGuardReadyHTTP(c *gin.Context) bool {
 	return false
 }
 
-// RequireOutputGuardReadyWS 在未就绪时先写协议 JSON 错误帧，
-// 再以 1013 CloseTryAgainLater 控制帧关闭连接。
+// RequireOutputGuardReadyWS, when not ready, first writes a protocol JSON error frame,
+// then closes the connection with a 1013 CloseTryAgainLater control frame.
 func RequireOutputGuardReadyWS(conn *websocket.Conn) bool {
 	if IsOutputGuardReady() {
 		return true
@@ -278,7 +278,7 @@ func RequireOutputGuardReadyWS(conn *websocket.Conn) bool {
 	return false
 }
 
-// RequireOutputGuardReadyStream 在未就绪时向关联 stream 发送 503 错误帧。
+// RequireOutputGuardReadyStream, when not ready, sends a 503 error frame to the associated stream.
 func RequireOutputGuardReadyStream(conn *websocket.Conn, streamID string) bool {
 	if IsOutputGuardReady() {
 		return true

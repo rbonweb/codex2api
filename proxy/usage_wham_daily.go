@@ -13,50 +13,50 @@ import (
 	"github.com/codex2api/auth"
 )
 
-// WhamDailyUsageURL 是 ChatGPT 后端按天返回工作区用量统计的端点。
-// 与 wham/usage 一样零额度成本，但给的是官方结算口径的绝对值（credits 与 token 数），
-// 且能按客户端（CLI / Desktop / IDE / 网关流量）与模型拆分。
+// WhamDailyUsageURL is the ChatGPT backend endpoint that returns per-day workspace usage statistics.
+// Like wham/usage, it costs no quota, but it gives absolute values on the official settlement basis (credits and token counts),
+// and can split them by client (CLI / Desktop / IDE / gateway traffic) and by model.
 //
-// 上游可回溯的深度实测至少 84 天（2026-09-06 用 plus 号查到 12 周前；2026-08 首次
-// 接入时只回 7 天）。稳态同步仍只滚动回补最近 WhamDailyUsageRetentionDays 天，
-// 首次同步（本地没有任何快照）用 WhamDailyUsageBackfillDays 深回补一次；
-// 更久的历史仍然只存在于本地库。
+// The upstream lookback depth has been measured at at least 84 days (on 2026-09-06, a plus account returned data 12 weeks back; at the first integration in 2026-08,
+// only 7 days came back). Steady-state sync still backfills only the most recent WhamDailyUsageRetentionDays days, as a rolling window,
+// The first sync (when there is no local snapshot at all) does one deep backfill over WhamDailyUsageBackfillDays;
+// older history still exists only in the local database.
 const WhamDailyUsageURL = "https://chatgpt.com/backend-api/wham/analytics/daily-workspace-usage-counts"
 
-// WhamDailyUsageRetentionDays 是稳态同步每轮回补的滚动窗口（含当天）。当天与前几天
-// 的数值会随结算变化，每轮整窗覆盖顺带修复漏跑的空洞。名字沿用「保留期」是历史
-// 原因：2026-08 接入时上游确实只回 7 天。
+// WhamDailyUsageRetentionDays is the rolling window that each steady-state sync round backfills (including today). Today's and the previous few days'
+// values change as they settle, so each round overwrites the whole window and fixes any gaps from missed runs along the way. The name "retention period" is kept for historical reasons:
+// in 2026-08, at first integration, the upstream really only returned 7 days.
 const WhamDailyUsageRetentionDays = 7
 
-// WhamDailyUsageBackfillDays 是首次同步的深回补窗口。2026-09-06 实测 plus 号能查到
-// 抓包前 84 天（恰为 12 周、且起点是周日，疑似「最近 12 周」截断）；更早是否可查
-// 未验证，所以按已证实的深度取值。
+// WhamDailyUsageBackfillDays is the deep backfill window for the first sync. Measured on 2026-09-06, a plus account could query back
+// 84 days before the capture (exactly 12 weeks, starting on a Sunday, which looks like a "last 12 weeks" truncation); whether older data can be queried
+// is unverified, so the verified depth is used.
 const WhamDailyUsageBackfillDays = 84
 
-// WhamCreditsPerUSD 是官方 credits 与美元的换算比例（1 美元 = 25 credits）。
-// 2026-09-06 实测：单模型已结算日的 token × 官方目录价 恰等于 credits/25，
-// 即 credits 就是按当时目录价计的 API 等价成本。
+// WhamCreditsPerUSD is the official conversion rate between credits and US dollars (1 USD = 25 credits).
+// Measured on 2026-09-06: for a single model on a settled day, token × official catalog price equals exactly credits/25,
+// meaning credits are the API-equivalent cost at the catalog price of that time.
 const WhamCreditsPerUSD = 25.0
 
-// whamDailyUsageURLForTest 允许测试替换默认 URL。生产代码不要赋值。
+// whamDailyUsageURLForTest lets tests replace the default URL. Production code must not assign it.
 var whamDailyUsageURLForTest = ""
 
-// SetWhamDailyUsageURLForTest 供测试替换按天用量端点 URL，返回恢复函数。
-// 生产代码不要调用。
+// SetWhamDailyUsageURLForTest lets tests replace the per-day usage endpoint URL and returns a restore function.
+// Production code must not call it.
 func SetWhamDailyUsageURLForTest(u string) (restore func()) {
 	old := whamDailyUsageURLForTest
 	whamDailyUsageURLForTest = u
 	return func() { whamDailyUsageURLForTest = old }
 }
 
-// WhamDailyUsageResponse 是 daily-workspace-usage-counts 的响应结构。
+// WhamDailyUsageResponse is the response structure of daily-workspace-usage-counts.
 type WhamDailyUsageResponse struct {
 	Data    []WhamDailyUsageDay `json:"data"`
 	GroupBy string              `json:"group_by"`
 }
 
-// WhamDailyUsageDay 是单个统计周期（group_by=day 时为一天，week 时为周起始日）。
-// 这个端点是稀疏的：没有消耗的日子不返回行。
+// WhamDailyUsageDay is a single statistics period (one day when group_by=day, the week's start date when week).
+// This endpoint is sparse: days with no usage return no row.
 type WhamDailyUsageDay struct {
 	Date    string                 `json:"date"`
 	Totals  WhamDailyUsageCounts   `json:"totals"`
@@ -64,21 +64,21 @@ type WhamDailyUsageDay struct {
 	Models  []WhamDailyUsageModel  `json:"models"`
 }
 
-// SettledOn 判断这一天的记录是否已结算：日期早于 today（UTC 日期，YYYY-MM-DD）且
-// 带 token 明细。上游对「今天」这一行的形态改过（见 WhamDailyUsageCounts），按字段
-// 有无判断已不可靠，按日期判断才稳：今天的数值一定还在变，昨天及更早的在下一轮
-// 整窗回补时被覆盖。
+// SettledOn reports whether this day's record is settled: the date is earlier than today (UTC date, YYYY-MM-DD) and
+// it has token details. The upstream has changed the shape of the "today" row (see WhamDailyUsageCounts), so judging by fields
+// being present is no longer reliable; judging by date is stable: today's values are still changing, while yesterday and earlier are overwritten
+// during the next whole-window backfill.
 func (d WhamDailyUsageDay) SettledOn(today string) bool {
 	date := strings.TrimSpace(d.Date)
 	return date != "" && date < strings.TrimSpace(today) && d.Totals.HasTokenDetail()
 }
 
-// WhamDailyUsageCounts 是一组用量计数。
+// WhamDailyUsageCounts is a set of usage counts.
 //
-// 当天（未结算）记录的形态上游改过：2026-08 时只有 users/threads/turns/credits、
-// 四个 token 字段整个缺失；2026-09 实测反过来，token 与 credits 都在，缺的是 models
-// 键且 users/threads/turns 全 0。token 字段保留指针区分「上游没给」与「给了 0」，
-// 但「是否已结算」不能再靠字段有无判断，见 WhamDailyUsageDay.SettledOn。
+// The shape of the current day's (unsettled) record has been changed by upstream: in 2026-08 it had only users/threads/turns/credits,
+// with all four token fields missing; in 2026-09 it was the reverse: tokens and credits were present, and the missing thing was the models
+// key, with users/threads/turns all 0. The token fields keep pointers to tell "upstream did not provide it" apart from "provided 0",
+// but "whether settled" can no longer be judged by field presence; see WhamDailyUsageDay.SettledOn.
 type WhamDailyUsageCounts struct {
 	Users   int     `json:"users"`
 	Threads int     `json:"threads"`
@@ -91,37 +91,37 @@ type WhamDailyUsageCounts struct {
 	TextTotalTokens         *int64 `json:"text_total_tokens,omitempty"`
 }
 
-// HasTokenDetail 表示这条记录带有 token 明细字段。只说明字段存在，不代表已结算：
-// 当天的记录现在也会带 token 且全天持续变化，结算判定用 WhamDailyUsageDay.SettledOn。
+// HasTokenDetail reports that this record carries the token detail fields. It only says the fields exist, not that the record is settled:
+// today's record now also carries tokens and changes all day, so settlement is decided by WhamDailyUsageDay.SettledOn.
 func (c WhamDailyUsageCounts) HasTokenDetail() bool {
 	return c.TextTotalTokens != nil
 }
 
-// USD 按官方 1 美元 = 25 credits 折算本条记录的成本。
+// USD converts this record's cost at the official rate of 1 USD = 25 credits.
 func (c WhamDailyUsageCounts) USD() float64 {
 	return c.Credits / WhamCreditsPerUSD
 }
 
-// WhamDailyUsageClient 是按客户端入口拆分的用量。client_id 取值实测包括
+// WhamDailyUsageClient is usage split by client entry point. Measured client_id values include
 // CODEX_CLI / CODEX_DESKTOP_APP / CODEX_IDE_VSCODE / CODEX_WORK_DESKTOP /
-// CODEX_SERVICE_EXEC / CODEX_SDK_TS / CODEX_WEB，以及没有官方客户端标识的
-// CODEX_UNKNOWN_DEFAULT（走本网关的流量落在这一档）。
+// CODEX_SERVICE_EXEC / CODEX_SDK_TS / CODEX_WEB, and the one without an official client identifier,
+// CODEX_UNKNOWN_DEFAULT (traffic through this gateway lands in this bucket).
 type WhamDailyUsageClient struct {
 	ClientID string `json:"client_id"`
 	WhamDailyUsageCounts
 }
 
-// WhamDailyUsageModel 是按模型拆分的用量。实测上游在这一层不返回 token 明细，
-// credits 也恒为 0，只有 users/threads/turns 有值。模型维度的成本要用
-// daily-token-usage-breakdown 的份额分摊（见 usage_wham_breakdown.go）。
+// WhamDailyUsageModel is usage split by model. Measured: the upstream returns no token details at this level,
+// credits are also always 0, and only users/threads/turns have values. Per-model cost must use
+// the share apportionment from daily-token-usage-breakdown (see usage_wham_breakdown.go).
 type WhamDailyUsageModel struct {
 	Model string `json:"model"`
 	WhamDailyUsageCounts
 }
 
-// QueryWhamDailyUsage 拉取 [startDate, endDate] 区间的按天用量统计，日期格式
-// YYYY-MM-DD。零额度成本，与 QueryWhamUsage 同款请求形态。
-// 非 200 时返回 resp（body 未读）供调用方处理。
+// QueryWhamDailyUsage fetches the per-day usage statistics for the [startDate, endDate] range, with dates in
+// YYYY-MM-DD format. It costs no quota and uses the same request shape as QueryWhamUsage.
+// On a non-200 response it returns resp (body unread) for the caller to handle.
 func QueryWhamDailyUsage(ctx context.Context, account *auth.Account, proxyURL, startDate, endDate string) (*WhamDailyUsageResponse, *http.Response, error) {
 	base := WhamDailyUsageURL
 	if whamDailyUsageURLForTest != "" {
@@ -130,12 +130,12 @@ func QueryWhamDailyUsage(ctx context.Context, account *auth.Account, proxyURL, s
 	return queryWhamDailyUsageWithURL(ctx, account, proxyURL, base, startDate, endDate)
 }
 
-// WhamDailyUsageWindow 返回稳态同步的滚动区间（含今天，UTC 日期）。
+// WhamDailyUsageWindow returns the rolling range for steady-state sync (including today, UTC dates).
 func WhamDailyUsageWindow(now time.Time) (startDate, endDate string) {
 	return whamDailyUsageWindowDays(now, WhamDailyUsageRetentionDays)
 }
 
-// WhamDailyUsageBackfillWindow 返回首次同步的深回补区间（含今天，UTC 日期）。
+// WhamDailyUsageBackfillWindow returns the deep backfill range for the first sync (including today, UTC dates).
 func WhamDailyUsageBackfillWindow(now time.Time) (startDate, endDate string) {
 	return whamDailyUsageWindowDays(now, WhamDailyUsageBackfillDays)
 }
@@ -168,7 +168,7 @@ func queryWhamDailyUsageWithURL(ctx context.Context, account *auth.Account, prox
 	query.Set("workspace_user", "true")
 	requestURL := base + "?" + query.Encode()
 
-	// resinMaintenanceTarget 经 RequestURI() 重建目标，query 会被保留。
+	// resinMaintenanceTarget rebuilds the target via RequestURI(), so the query is preserved.
 	finalURL, resinClient, viaResin := resinMaintenanceTarget(account, requestURL)
 	req, err := http.NewRequestWithContext(ctx, http.MethodGet, finalURL, nil)
 	if err != nil {
@@ -179,8 +179,8 @@ func queryWhamDailyUsageWithURL(ctx context.Context, account *auth.Account, prox
 	if err := applyCodexMaintenanceHeaders(req, account); err != nil {
 		return nil, nil, err
 	}
-	// 与 wham 用量查询一致：自定义头覆盖工作区 ID 时，统计必须查覆盖后的空间，
-	// 否则拿到的是与实际流量不同的空间。
+	// As with the wham usage query: when a custom header overrides the workspace ID, the statistics must query the overridden workspace,
+	// otherwise the data returned is for a different workspace than the actual traffic.
 	if accountID := account.EffectiveAccountID(); accountID != "" {
 		req.Header.Set("chatgpt-account-id", accountID)
 	}
@@ -194,7 +194,7 @@ func queryWhamDailyUsageWithURL(ctx context.Context, account *auth.Account, prox
 		return nil, resp, fmt.Errorf("daily usage returned status %d", resp.StatusCode)
 	}
 
-	// 稀疏行 × 客户端与模型拆分，实测 plus 号 84 天约 77KB；上限给到 1MB 足够冗余。
+	// Sparse rows × client and model split: measured, a plus account's 84 days is about 77KB; the 1MB limit leaves ample headroom.
 	body, err := io.ReadAll(io.LimitReader(resp.Body, 1<<20))
 	_ = resp.Body.Close()
 	if err != nil {

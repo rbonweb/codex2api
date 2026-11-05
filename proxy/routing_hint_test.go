@@ -8,7 +8,7 @@ import (
 )
 
 func codexAccount() *auth.Account {
-	// 空 UpstreamType 的账号即官方 Codex 账号。
+	// An account with an empty UpstreamType is an official Codex account.
 	return &auth.Account{AccountID: "acc-1"}
 }
 
@@ -44,14 +44,14 @@ func TestBuildCodexRoutingHint(t *testing.T) {
 func TestApplyCodexRoutingHintForCodexAndNilAccount(t *testing.T) {
 	body := []byte(`{"model":"gpt-5.6-codex","service_tier":"fast"}`)
 
-	// 官方 Codex 账号:合成 hint。
+	// Official Codex account: synthesize the hint.
 	h := http.Header{}
 	ApplyCodexRoutingHint(h, codexAccount(), body)
 	if got := h.Get("X-Codex-Routing-Hint"); got != "model=gpt-5.6-codex;tier=priority" {
 		t.Fatalf("codex account hint = %q, want priority hint", got)
 	}
 
-	// nil 账号:不发。
+	// nil account: do not send.
 	h = http.Header{}
 	ApplyCodexRoutingHint(h, nil, body)
 	if got := h.Get("X-Codex-Routing-Hint"); got != "" {
@@ -62,7 +62,7 @@ func TestApplyCodexRoutingHintForCodexAndNilAccount(t *testing.T) {
 func TestApplyCodexRoutingHintStripsSpoofedHeaders(t *testing.T) {
 	body := []byte(`{"model":"gpt-5.6","service_tier":"default"}`)
 
-	// 下游用任意大小写伪造该头,应被无条件剥离后按网关值重建。
+	// Downstream spoofs this header in any letter case; it must be stripped unconditionally and then rebuilt from the gateway value.
 	h := http.Header{
 		"x-codex-routing-hint": []string{"model=evil;tier=priority"},
 		"X-Codex-Routing-Hint": []string{"model=evil2"},
@@ -74,9 +74,9 @@ func TestApplyCodexRoutingHintStripsSpoofedHeaders(t *testing.T) {
 	}
 }
 
-// hint 必须取"最终出站 body"：上游只接受 priority，flex/auto/default/scale 会被
-// sanitizeServiceTierForUpstream 从出站体剥离，此时 hint 应随之降为 model-only，
-// 不能声明一个实际没发出去的 tier。本用例串起真实管道的两步以钉死该语义。
+// The hint must be taken from the "final outbound body": the upstream only accepts priority, so flex/auto/default/scale are
+// stripped from the outbound body by sanitizeServiceTierForUpstream, so the hint must degrade to model-only along with it,
+// and must not declare a tier that was never actually sent. This case chains the two steps of the real pipeline to pin down this semantics.
 func TestRoutingHintFollowsSanitizedOutboundTier(t *testing.T) {
 	cases := []struct {
 		clientTier string
@@ -104,7 +104,7 @@ func TestApplyCodexRoutingHintDisabledByEnv(t *testing.T) {
 	t.Setenv("CODEX_DISABLE_ROUTING_HINT", "1")
 	body := []byte(`{"model":"gpt-5.6-codex","service_tier":"fast"}`)
 
-	// 关闭后不合成,但入站伪造仍被剥离。
+	// When turned off, it is not synthesized, but inbound spoofing is still stripped.
 	h := http.Header{"x-codex-routing-hint": []string{"model=evil"}}
 	ApplyCodexRoutingHint(h, codexAccount(), body)
 	if got := h.Get("X-Codex-Routing-Hint"); got != "" {

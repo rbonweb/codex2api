@@ -8,8 +8,8 @@ import (
 	"github.com/codex2api/database"
 )
 
-// TestMain 只初始化一次 SQLite schema 模板：之后每个测试建库直接复制模板、跳过迁移，
-// 把 -race 下每个测试 ~1.2s 的建库开销压到毫秒级。
+// TestMain initializes the SQLite schema template only once: afterwards each test creates its database by copying the template and skipping migration,
+// reducing the per-test ~1.2s database creation overhead under -race to milliseconds.
 func TestMain(m *testing.M) {
 	cleanup, err := database.PrepareSQLiteSchemaTemplate()
 	if err != nil {

@@ -153,7 +153,7 @@ func codexMSIXPackageMatchesCandidate(version string, candidate codexClientCandi
 	return version == candidate.Pair.PackageVersion
 }
 
-// 版本化包缺失时保留上游的最新官方包回退，并用 ETag 区分可变地址。
+// When the versioned package is missing, fall back to the upstream's latest official package, and use ETag to tell apart mutable addresses.
 func resolveCodexWindowsArchive(ctx context.Context, client *http.Client, candidate codexClientCandidate) (CodexClientVersionPair, error) {
 	ranges, err := codexWindowsCandidateRanges(ctx, client, &candidate)
 	if err != nil {

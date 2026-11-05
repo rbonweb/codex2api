@@ -2,7 +2,7 @@ package proxy
 
 import "strings"
 
-// defaultCodexFallbackModel 是请求未带模型时使用的 Codex 兜底模型。
+// defaultCodexFallbackModel is the fallback Codex model used when a request carries no model.
 const defaultCodexFallbackModel = "gpt-5.5"
 
 func canonicalizeCodexModel(model string, supportedModels []string) string {

@@ -10,18 +10,18 @@ import (
 	"github.com/tidwall/gjson"
 )
 
-// ==================== 透传 instructions 观测 ====================
+// ==================== Pass-through instructions observation ====================
 //
-// 网关自身没有默认系统提示词：/v1/responses 的 instructions 由客户端透传。
-// 这里在规则改写前记录最近观测到的原始 instructions 样本，供管理端展示，
-// 让管理员配置追加/覆盖规则时能看到客户端实际发来的提示词原文。
+// The gateway has no default system prompt of its own: the instructions of /v1/responses are passed through by the client.
+// Here, before rule rewriting, the most recently observed raw instructions samples are recorded for display in the admin panel,
+// so that when an admin configures append/override rules they can see the exact prompt text the client actually sent.
 
 const (
 	observedInstructionsMaxSamples = 8
 	observedInstructionsMaxLength  = 32 * 1024
 )
 
-// ObservedInstructionsSample 一条观测样本。
+// ObservedInstructionsSample is one observed sample.
 type ObservedInstructionsSample struct {
 	Model        string    `json:"model"`
 	Originator   string    `json:"originator"`
@@ -34,11 +34,11 @@ type ObservedInstructionsSample struct {
 var (
 	observedInstructionsMu      sync.Mutex
 	observedInstructionsSamples []ObservedInstructionsSample
-	observedInstructionsIndex   = map[string]int{} // 去重键 → samples 下标
+	observedInstructionsIndex   = map[string]int{} // dedup key → samples index
 )
 
-// RecordObservedInstructions 记录请求体中的原始 instructions（改写前调用）。
-// 按 (模型, originator, 内容哈希) 去重，只保留最近若干条。
+// RecordObservedInstructions records the raw instructions in the request body (called before rewriting).
+// Deduplicates by (model, originator, content hash), and keeps only the most recent few entries.
 func RecordObservedInstructions(body []byte, headers http.Header) {
 	instructions := gjson.GetBytes(body, "instructions").String()
 	if instructions == "" {
@@ -74,7 +74,7 @@ func RecordObservedInstructions(body []byte, headers http.Header) {
 		return
 	}
 	if len(observedInstructionsSamples) >= observedInstructionsMaxSamples {
-		// 淘汰最旧样本
+		// Evict the oldest sample
 		oldest := 0
 		for i := 1; i < len(observedInstructionsSamples); i++ {
 			if observedInstructionsSamples[i].ObservedAt.Before(observedInstructionsSamples[oldest].ObservedAt) {
@@ -94,7 +94,7 @@ func RecordObservedInstructions(body []byte, headers http.Header) {
 	observedInstructionsIndex[key] = len(observedInstructionsSamples) - 1
 }
 
-// ObservedInstructions 返回最近观测样本（新→旧）。
+// ObservedInstructions returns the most recent observed samples (newest → oldest).
 func ObservedInstructions() []ObservedInstructionsSample {
 	observedInstructionsMu.Lock()
 	defer observedInstructionsMu.Unlock()

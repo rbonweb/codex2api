@@ -171,7 +171,7 @@ func (r *codexMSIXFileReader) readBlock(index int) ([]byte, error) {
 		var err error
 		data, err = io.ReadAll(io.LimitReader(stream, codexMSIXBlockBytes+1))
 		_ = stream.Close()
-		// MSIX 的非末块不带 DEFLATE 结束标志，仍须校验长度和 SHA-256。
+		// Non-final MSIX blocks do not carry the DEFLATE end flag, but length and SHA-256 must still be verified.
 		if err != nil && !errors.Is(err, io.ErrUnexpectedEOF) {
 			return nil, err
 		}

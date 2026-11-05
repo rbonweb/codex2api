@@ -28,7 +28,7 @@ type daybreakRequest struct {
 	Program   string
 }
 
-// model 保留下游请求名，effective_model 记录基础模型，Daybreak 程序单独记录。
+// model keeps the downstream request name, effective_model records the base model, and the Daybreak program is recorded separately.
 func applyDaybreakUsageModel(c *gin.Context, input *database.UsageLogInput) {
 	if c == nil || input == nil {
 		return
@@ -45,7 +45,7 @@ func applyDaybreakUsageModel(c *gin.Context, input *database.UsageLogInput) {
 	input.DaybreakProgram = request.Program
 }
 
-// 仅缓存路由字段，不能延长图片/base64 等大请求体的生命周期。
+// Caches only the routing fields and must not extend the lifetime of large request bodies such as images or base64 payloads.
 func rememberDaybreakRequest(c *gin.Context, body []byte) {
 	c.Set(daybreakOriginalKey, daybreakRoutingMetadata(body))
 }

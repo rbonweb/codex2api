@@ -16,7 +16,7 @@ const (
 	openAIOlderPriceColumns  = 4
 )
 
-// openAIPricingIslands 读取官网用于渲染折叠表格的数据，不执行网页脚本。
+// openAIPricingIslands reads the data the official site uses to render its collapsible tables, without executing page scripts.
 func openAIPricingIslands(body []byte, out map[string]database.ModelPricingOverride) error {
 	doc, err := html.Parse(bytes.NewReader(body))
 	if err != nil {
@@ -49,11 +49,11 @@ func pricingNodeAttribute(node *html.Node, key string) string {
 	return ""
 }
 
-// decodePricingProp 仅支持 Astro 的普通值和数组编码，未知编码直接拒绝。
+// decodePricingProp only supports Astro's plain value and array encodings; unknown encodings are rejected directly.
 func decodePricingProp(raw json.RawMessage) (any, error) {
 	var pair []json.RawMessage
 	if err := json.Unmarshal(raw, &pair); err != nil || len(pair) != 2 {
-		return nil, fmt.Errorf("OpenAI 页面数据编码不符")
+		return nil, fmt.Errorf("OpenAI page data encoding is unexpected")
 	}
 	var kind int
 	if err := json.Unmarshal(pair[0], &kind); err != nil {
@@ -65,7 +65,7 @@ func decodePricingProp(raw json.RawMessage) (any, error) {
 		return value, err
 	}
 	if kind != 1 {
-		return nil, fmt.Errorf("OpenAI 页面数据编码类型不受支持")
+		return nil, fmt.Errorf("OpenAI page data encoding type is not supported")
 	}
 	var items []json.RawMessage
 	if err := json.Unmarshal(pair[1], &items); err != nil {
@@ -96,7 +96,7 @@ func openAIIslandRows(props map[string]json.RawMessage, out map[string]database.
 	}
 	rows, ok := decoded.([]any)
 	if !ok {
-		return fmt.Errorf("OpenAI rows 格式不符")
+		return fmt.Errorf("OpenAI rows format is unexpected")
 	}
 	table := officialHTMLPricingTable{tier: tier.(string)}
 	for _, value := range rows {
@@ -112,29 +112,29 @@ func openAIIslandRows(props map[string]json.RawMessage, out map[string]database.
 func openAIIslandRow(value any) (officialPricingRow, error) {
 	cells, ok := value.([]any)
 	if !ok || (len(cells) != openAIOlderPriceColumns && len(cells) != openAILatestPriceColumns) {
-		return nil, fmt.Errorf("OpenAI 文本价格数据列数不符")
+		return nil, fmt.Errorf("OpenAI text price data column count is unexpected")
 	}
 	model, ok := cells[0].(string)
 	if !ok || !strings.HasPrefix(model, "gpt-") && !strings.HasPrefix(model, "o") {
-		return nil, fmt.Errorf("OpenAI 模型列格式不符")
+		return nil, fmt.Errorf("OpenAI model column format is unexpected")
 	}
 	row := officialPricingRow{"model": model}
 	for key, index := range map[string]int{"input": 1, "cached input": 2, "output": len(cells) - 1} {
 		switch value := cells[index].(type) {
 		case nil:
 			if key != "cached input" {
-				return nil, fmt.Errorf("OpenAI 必要价格数据缺失")
+				return nil, fmt.Errorf("OpenAI required price data is missing")
 			}
 			row[key] = "-"
 		case float64:
 			row[key] = "$" + strconv.FormatFloat(value, 'f', -1, 64)
 		case string:
 			if value != "-" {
-				return nil, fmt.Errorf("OpenAI 价格数据不是数字")
+				return nil, fmt.Errorf("OpenAI price data is not a number")
 			}
 			row[key] = value
 		default:
-			return nil, fmt.Errorf("OpenAI 价格数据类型不符")
+			return nil, fmt.Errorf("OpenAI price data type is unexpected")
 		}
 	}
 	return row, nil

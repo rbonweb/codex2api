@@ -13,16 +13,16 @@ import (
 	"github.com/codex2api/database"
 )
 
-// CodexReleasesLatestURL 是 openai/codex 官方最新稳定 release 的 GitHub API 端点。
-// GitHub 的 "latest" 天然排除 prerelease/draft（如 0.145.0-alpha.1），只返回正式版。
+// CodexReleasesLatestURL is the GitHub API endpoint for the latest stable release of openai/codex.
+// GitHub's "latest" naturally excludes prerelease/draft (such as 0.145.0-alpha.1) and returns only stable releases.
 const CodexReleasesLatestURL = "https://api.github.com/repos/openai/codex/releases/latest"
 
-// codexReleasesLatestURLForTest 允许测试替换默认 URL。生产代码不要赋值。
+// codexReleasesLatestURLForTest lets tests replace the default URL. Production code must not assign it.
 var codexReleasesLatestURLForTest = ""
 
-// CodexCLIVersionSyncDisabled 报告是否通过兼容环境变量关闭客户端版本自动同步。
-// CODEX_DISABLE_CLI_VERSION_SYNC=1（或 true）时关闭全部客户端的后台定时与启动同步；
-// 管理端「立即同步」按钮不受影响。
+// CodexCLIVersionSyncDisabled reports whether client version auto-sync is turned off through the compatibility environment variable.
+// When CODEX_DISABLE_CLI_VERSION_SYNC=1 (or true), the background timed and startup sync for all clients is turned off;
+// the admin panel's "Sync now" button is not affected.
 func CodexCLIVersionSyncDisabled() bool {
 	switch strings.ToLower(strings.TrimSpace(os.Getenv("CODEX_DISABLE_CLI_VERSION_SYNC"))) {
 	case "1", "true", "yes", "on":
@@ -32,20 +32,20 @@ func CodexCLIVersionSyncDisabled() bool {
 	}
 }
 
-// CodexCLIVersionSyncResult 是一次版本同步的结果投影。
+// CodexCLIVersionSyncResult is the result projection of one version sync.
 type CodexCLIVersionSyncResult struct {
-	// FetchedVersion 是本次从上游解析到的最新版本（可能为空，表示解析失败）。
+	// FetchedVersion is the latest version parsed from upstream this time (may be empty, meaning parsing failed).
 	FetchedVersion string `json:"fetched_version"`
-	// EffectiveVersion 是同步后当前生效的模拟版本（内置常量与同步值的较大者）。
+	// EffectiveVersion is the simulated version in effect after sync (the larger of the built-in constant and the synced value).
 	EffectiveVersion string `json:"effective_version"`
-	// BuiltinVersion 是编译期内置的版本常量。
+	// BuiltinVersion is the version constant built into the binary at compile time.
 	BuiltinVersion string `json:"builtin_version"`
-	// Updated 表示本次是否真的抬升了生效版本并已持久化。
+	// Updated reports whether this run actually raised the effective version and persisted it.
 	Updated bool `json:"updated"`
 }
 
-// FetchLatestCodexCLIVersion 从 openai/codex releases 拉取最新稳定版本号（如 "0.144.1"）。
-// 优先取 release 的 name（上游填的是干净版本号），回退解析 tag_name（rust-v0.144.1）。
+// FetchLatestCodexCLIVersion fetches the latest stable version number (such as "0.144.1") from openai/codex releases.
+// It prefers the release name (upstream fills in a clean version number) and falls back to parsing tag_name (rust-v0.144.1).
 func FetchLatestCodexCLIVersion(ctx context.Context, proxyURL string) (string, error) {
 	endpoint := CodexReleasesLatestURL
 	if codexReleasesLatestURLForTest != "" {
@@ -60,7 +60,7 @@ func FetchLatestCodexCLIVersion(ctx context.Context, proxyURL string) (string, e
 	}
 	req.Header.Set("Accept", "application/vnd.github+json")
 	req.Header.Set("User-Agent", "codex2api")
-	// GitHub 访问设置（issue #522）：token 提升 API 限流配额，专用代理与全局代理解耦。
+	// GitHub access settings (issue #522): the token raises the API rate limit quota, and the dedicated proxy is decoupled from the global proxy.
 	ApplyGithubAuth(req)
 
 	client, closeClient := newVersionSyncClient(endpoint, GithubProxyOrDefault(endpoint, proxyURL), 20*time.Second)
@@ -97,8 +97,8 @@ func FetchLatestCodexCLIVersion(ctx context.Context, proxyURL string) (string, e
 	return version, nil
 }
 
-// extractCodexCLIVersion 从 release 的 name / tag_name 里提取干净语义版本。
-// 接受 "0.144.1"、"v0.144.1"、"rust-v0.144.1" 等形态；校验为合法 Codex 版本才返回。
+// extractCodexCLIVersion extracts a clean semantic version from the release name / tag_name.
+// It accepts forms such as "0.144.1", "v0.144.1" and "rust-v0.144.1"; it returns a value only if it validates as a legal Codex version.
 func extractCodexCLIVersion(raw string) string {
 	raw = strings.TrimSpace(raw)
 	if raw == "" {
@@ -114,15 +114,15 @@ func extractCodexCLIVersion(raw string) string {
 	return raw
 }
 
-// SyncCodexCLIVersion 拉取上游最新版本并在其高于当前生效版本时持久化到系统设置，
-// 随后刷新 RuntimeSettings。绝不写入低于内置常量的值（远端异常不会导致降级）。
+// SyncCodexCLIVersion fetches the latest upstream version and, when it is higher than the current effective version, persists it to system settings,
+// then refreshes RuntimeSettings. It never writes a value below the built-in constant (a remote anomaly does not cause a downgrade).
 func SyncCodexCLIVersion(ctx context.Context, db *database.DB, proxyURL string) (*CodexCLIVersionSyncResult, error) {
 	result := &CodexCLIVersionSyncResult{
 		BuiltinVersion:   latestCodexCLIVersion,
 		EffectiveVersion: effectiveLatestCodexCLIVersion(),
 	}
 	if db == nil {
-		return result, fmt.Errorf("数据库不可用，无法同步 Codex CLI 版本")
+		return result, fmt.Errorf("database unavailable, cannot sync Codex CLI version")
 	}
 
 	fetched, err := FetchLatestCodexCLIVersion(ctx, proxyURL)
@@ -136,11 +136,11 @@ func SyncCodexCLIVersion(ctx context.Context, db *database.DB, proxyURL string) 
 	return result, err
 }
 
-// applyCodexCLIVersion 是 SyncCodexCLIVersion 拉取之后的持久化部分,供并发拉取后顺序落库复用。
+// applyCodexCLIVersion is the persistence step after SyncCodexCLIVersion fetches. It is reused to save results in sequence after concurrent fetches.
 func applyCodexCLIVersion(ctx context.Context, db *database.DB, result *CodexCLIVersionSyncResult, fetched string) (*CodexCLIVersionSyncResult, error) {
 	result.FetchedVersion = fetched
 
-	// 仅当拉取值高于内置常量时才有意义（否则运行时会自动回落内置常量）。
+	// It only matters when the fetched value is above the built-in constant (otherwise the runtime falls back to the built-in constant automatically).
 	if cmp, ok := compareCodexClientVersions(fetched, latestCodexCLIVersion); !ok || cmp <= 0 {
 		result.EffectiveVersion = effectiveLatestCodexCLIVersion()
 		return result, nil
@@ -179,10 +179,10 @@ func applyCodexCLIVersion(ctx context.Context, db *database.DB, result *CodexCLI
 	return result, nil
 }
 
-// StartCodexCLIVersionSync 沿用旧入口，在后台同步 CLI、Desktop 和 VSCode 版本。
-// 开关(CodexCLIVersionSyncEnabled)与间隔(CodexCLIVersionSyncIntervalHours)在每个周期读取；
-// 新间隔从下一轮计时生效，无需重启。环境变量 CODEX_DISABLE_CLI_VERSION_SYNC 为硬开关，优先级最高。
-// proxyResolver 允许调用方注入出站代理（可为 nil）。
+// StartCodexCLIVersionSync keeps the old entry point and syncs the CLI, Desktop and VSCode versions in the background.
+// The switch (CodexCLIVersionSyncEnabled) and the interval (CodexCLIVersionSyncIntervalHours) are read each cycle;
+// a new interval takes effect from the next timing round, without a restart. The environment variable CODEX_DISABLE_CLI_VERSION_SYNC is a hard switch with the highest priority.
+// proxyResolver lets the caller inject an outbound proxy (may be nil).
 func StartCodexCLIVersionSync(ctx context.Context, db *database.DB, proxyResolver func() string) {
 	if ctx == nil {
 		ctx = context.Background()
@@ -191,7 +191,7 @@ func StartCodexCLIVersionSync(ctx context.Context, db *database.DB, proxyResolve
 		return
 	}
 	if err := LoadCodexClientVersionCache(ctx, db); err != nil {
-		fmt.Printf("[codex-client-version-sync] 缓存加载失败: %v\n", err)
+		fmt.Printf("[codex-client-version-sync] cache load failed: %v\n", err)
 	}
 	if CodexCLIVersionSyncDisabled() {
 		return
@@ -207,22 +207,22 @@ func StartCodexCLIVersionSync(ctx context.Context, db *database.DB, proxyResolve
 		syncCtx, cancel := context.WithTimeout(runCtx, 15*time.Minute)
 		defer cancel()
 		if res, err := SyncCodexClientVersions(syncCtx, db, resolveProxy()); err != nil {
-			fmt.Printf("[codex-client-version-sync] 同步失败: %v\n", err)
+			fmt.Printf("[codex-client-version-sync] sync failed: %v\n", err)
 		} else {
 			for kind, item := range map[string]CodexAppBuildSyncResult{
 				"cli": res.CLI, "desktop-mac": res.DesktopMac,
 				"desktop-windows": res.DesktopWindows, "vscode": res.VSCode,
 			} {
 				if item.Error != "" {
-					fmt.Printf("[codex-client-version-sync] %s 同步失败: %s\n", kind, item.Error)
+					fmt.Printf("[codex-client-version-sync] %s sync failed: %s\n", kind, item.Error)
 				} else if item.Updated {
-					fmt.Printf("[codex-client-version-sync] %s 已更新至 %s\n", kind, item.EffectiveVersion)
+					fmt.Printf("[codex-client-version-sync] %s updated to %s\n", kind, item.EffectiveVersion)
 				}
 			}
 		}
 	}
 
-	// 当前配置的同步间隔（小时→时长），钳到 [1h, 720h]。
+	// The currently configured sync interval (hours to a duration), clamped to [1h, 720h].
 	currentInterval := func() time.Duration {
 		hours := CurrentRuntimeSettings().CodexCLIVersionSyncIntervalHours
 		if hours <= 0 {

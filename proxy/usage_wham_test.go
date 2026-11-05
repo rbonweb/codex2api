@@ -67,7 +67,7 @@ func TestQueryWhamUsage_ParsesPlusAccountResponse(t *testing.T) {
 	}))
 	defer server.Close()
 
-	// 重写 URL 到测试服务器：通过临时变量替换
+	// Rewrite the URL to the test server by replacing it through a temporary variable
 	oldURL := whamURLForTest
 	whamURLForTest = server.URL
 	defer func() { whamURLForTest = oldURL }()
@@ -264,9 +264,9 @@ func TestApplyWhamUsage_PersistsSubscriptionExpiresAtWhenMemoryAlreadyMatches(t 
 	}
 }
 
-// TestApplyWhamUsage_ClearsStaleSubscriptionExpiry 验证：wham 权威返回付费 plan_type
-// 而账号存储的订阅到期时间已过去（续费后 JWT 里的旧值）时，内存与 DB 的陈旧值被清理，
-// 不再显示「已过期」。(issue #360)
+// TestApplyWhamUsage_ClearsStaleSubscriptionExpiry verifies: wham authoritatively returns a paid plan_type
+// while the subscription expiry stored on the account has already passed (the old value still in the JWT after renewal), the stale in-memory and DB values are cleared,
+// so it no longer shows "expired". (issue #360)
 func TestApplyWhamUsage_ClearsStaleSubscriptionExpiry(t *testing.T) {
 	ctx := context.Background()
 	dbPath := filepath.Join(t.TempDir(), "codex2api.db")
@@ -287,7 +287,7 @@ func TestApplyWhamUsage_ClearsStaleSubscriptionExpiry(t *testing.T) {
 
 	store := auth.NewStore(db, nil, &database.SystemSettings{MaxConcurrency: 2, TestConcurrency: 1, TestModel: "gpt-5.4"})
 	account := &auth.Account{DBID: id, AccessToken: "at", PlanType: "plus", AccountID: "acc", SubscriptionExpiresAt: stale}
-	// 实测 wham/usage 不返回任何订阅到期字段，这里保持缺省以贴近真实响应。
+	// Measured: wham/usage returns no subscription expiry fields, so this stays unset to match the real response.
 	usage := &WhamUsage{PlanType: "plus"}
 
 	ApplyWhamUsage(store, account, usage)
@@ -304,8 +304,8 @@ func TestApplyWhamUsage_ClearsStaleSubscriptionExpiry(t *testing.T) {
 	}
 }
 
-// TestApplyWhamUsage_KeepsExpiredSubscriptionForFreePlan 验证：套餐真到期（wham 返回
-// free）时，已过去的订阅到期时间是准确信息，保留不清理。
+// TestApplyWhamUsage_KeepsExpiredSubscriptionForFreePlan verifies: when the plan has truly expired (wham returns
+// free), the past subscription expiry is accurate information and is kept, not cleared.
 func TestApplyWhamUsage_KeepsExpiredSubscriptionForFreePlan(t *testing.T) {
 	ctx := context.Background()
 	dbPath := filepath.Join(t.TempDir(), "codex2api.db")
@@ -414,9 +414,9 @@ func TestApplyWhamUsage5hOnlyDoesNotRefreshStale7dProbeFreshness(t *testing.T) {
 	}
 }
 
-// 复现 issue #168：free 账号的 wham 响应里 primary_window 实际承载的是 7d 数据
-// （limit_window_seconds=604800），secondary_window=null。代码必须按
-// limit_window_seconds 而不是字段位置来分类，否则 7d 数据会被错误写入 5h 槽位。
+// Reproduces issue #168: on a free account's wham response, primary_window actually carries the 7d data
+// (limit_window_seconds=604800), with secondary_window=null. The code must classify by
+// limit_window_seconds rather than by field position, otherwise the 7d data is wrongly written into the 5h slot.
 func TestApplyWhamUsage_FreeAccountPrimaryIs7d(t *testing.T) {
 	ctx := context.Background()
 	dbPath := filepath.Join(t.TempDir(), "codex2api.db")
@@ -470,7 +470,7 @@ func TestApplyWhamUsage_FreeAccountPrimaryIs7d(t *testing.T) {
 	}
 }
 
-// issue #382：上游 WHAM 不再返回 5h 时，必须清除本地陈旧 5h 快照与 premium 5h 限流。
+// issue #382: when the upstream WHAM no longer returns the 5h window, the local stale 5h snapshot and the premium 5h rate limit must be cleared.
 func TestApplyWhamUsage_ClearsStale5hWhenUpstreamOmitsWindow(t *testing.T) {
 	ctx := context.Background()
 	dbPath := filepath.Join(t.TempDir(), "codex2api.db")
@@ -496,7 +496,7 @@ func TestApplyWhamUsage_ClearsStale5hWhenUpstreamOmitsWindow(t *testing.T) {
 
 	reset7d := time.Now().Add(7 * 24 * time.Hour).Unix()
 	usage := &WhamUsage{PlanType: "plus"}
-	// 仅 weekly：模拟 OpenAI 临时取消 5h 窗口后的 WHAM 响应
+	// weekly only: simulates the WHAM response after OpenAI temporarily removed the 5h window
 	usage.RateLimit.PrimaryWindow = &WhamUsageWindow{UsedPercent: 22, LimitWindowSeconds: 604800, ResetAfterSeconds: 604800, ResetAt: reset7d}
 	usage.RateLimit.SecondaryWindow = nil
 
@@ -594,14 +594,14 @@ func TestApplyWhamUsage_UsedPercentOnlyPayloadPreserves5h(t *testing.T) {
 	}
 }
 
-// 防御性测试：即使后端把 5h/7d 字段顺序对调，分类也必须按 limit_window_seconds 走。
+// Defensive test: even if the backend swaps the order of the 5h/7d fields, classification must still follow limit_window_seconds.
 func TestApplyWhamUsage_ClassifiesByWindowSeconds(t *testing.T) {
 	store := auth.NewStore(nil, nil, &database.SystemSettings{MaxConcurrency: 2, TestConcurrency: 1, TestModel: "gpt-5.4"})
 	account := &auth.Account{DBID: 1, AccessToken: "at", PlanType: "plus"}
 
 	now := time.Now()
 	usage := &WhamUsage{PlanType: "plus"}
-	// 故意颠倒：把 7d (604800) 放 primary、5h (18000) 放 secondary
+	// Deliberately reversed: 7d (604800) in primary, 5h (18000) in secondary
 	usage.RateLimit.PrimaryWindow = &WhamUsageWindow{UsedPercent: 30, LimitWindowSeconds: 604800, ResetAt: now.Add(5 * 24 * time.Hour).Unix()}
 	usage.RateLimit.SecondaryWindow = &WhamUsageWindow{UsedPercent: 83, LimitWindowSeconds: 18000, ResetAt: now.Add(3 * time.Hour).Unix()}
 
@@ -615,9 +615,9 @@ func TestApplyWhamUsage_ClassifiesByWindowSeconds(t *testing.T) {
 	}
 }
 
-// 当 limit_window_seconds 缺失或为未知值时，按字段位置兜底分类。
+// When limit_window_seconds is missing or has an unknown value, fall back to classifying by field position.
 func TestPickClassifiedWhamWindows_FallsBackToPositionForUnknownSeconds(t *testing.T) {
-	primary := &WhamUsageWindow{UsedPercent: 50, LimitWindowSeconds: 0} // 未知/缺失
+	primary := &WhamUsageWindow{UsedPercent: 50, LimitWindowSeconds: 0} // unknown or missing
 	secondary := &WhamUsageWindow{UsedPercent: 20, LimitWindowSeconds: 0}
 
 	w5h, w7d := pickClassifiedWhamWindows(primary, secondary, "plus", time.Now())
@@ -657,8 +657,8 @@ func TestPickClassifiedWhamWindows_LongResetPrimaryFallsBackTo7d(t *testing.T) {
 	}
 }
 
-// TestPickClassifiedWhamWindows_TeamMonthlyWindowRoutesTo7dSlot 验证 team plan 的
-// 月窗(约 30 天 = 2592000s)被归入长窗口(7d)槽，而非漏掉或误进 5h。
+// TestPickClassifiedWhamWindows_TeamMonthlyWindowRoutesTo7dSlot verifies that the team plan's
+// monthly window (about 30 days = 2592000s) is routed into the long-window (7d) slot, not dropped or wrongly put into 5h.
 func TestPickClassifiedWhamWindows_TeamMonthlyWindowRoutesTo7dSlot(t *testing.T) {
 	now := time.Now()
 	primary := &WhamUsageWindow{UsedPercent: 40, LimitWindowSeconds: 18000, ResetAt: now.Add(2 * time.Hour).Unix()}
@@ -672,15 +672,15 @@ func TestPickClassifiedWhamWindows_TeamMonthlyWindowRoutesTo7dSlot(t *testing.T)
 		t.Fatalf("expected monthly(2592000s)→7d slot, got %v", w7d)
 	}
 
-	// 28–31 天容差：29 天窗口也应识别为月窗。
+	// 28–31 day tolerance: a 29-day window should also be recognized as monthly.
 	tolMonthly := &WhamUsageWindow{UsedPercent: 5, LimitWindowSeconds: 29 * 24 * 60 * 60, ResetAt: now.Add(29 * 24 * time.Hour).Unix()}
 	if _, w7dTol := pickClassifiedWhamWindows(primary, tolMonthly, "team", now); w7dTol != tolMonthly {
 		t.Fatalf("expected 29d window→7d slot via tolerance, got %v", w7dTol)
 	}
 }
 
-// TestApplyWhamUsage_CapturesMonthlyWindowLength 验证 team 月窗的真实周期秒数被记入账号，
-// 供智能配速按真实周期(而非固定 7 天)计算。
+// TestApplyWhamUsage_CapturesMonthlyWindowLength verifies that the real period in seconds of the team monthly window is recorded on the account,
+// so smart pacing computes with the real period (not a fixed 7 days).
 func TestApplyWhamUsage_CapturesMonthlyWindowLength(t *testing.T) {
 	store := auth.NewStore(nil, nil, &database.SystemSettings{MaxConcurrency: 2, TestConcurrency: 1, TestModel: "gpt-5.4"})
 	account := &auth.Account{DBID: 1, AccessToken: "at", PlanType: "team"}
@@ -700,9 +700,9 @@ func TestApplyWhamUsage_CapturesMonthlyWindowLength(t *testing.T) {
 	}
 }
 
-// TestApplyWhamUsage_FreePlanMonthlyWindow 验证 free plan 的唯一限流窗口(月窗)
-// 也被识别为 monthly：free 只有 primary=2592000s、无 secondary (issue #324，
-// 前端据 usage_window_7d_kind 把标签显示为 30d 而非 7d)。
+// TestApplyWhamUsage_FreePlanMonthlyWindow verifies that the only rate-limit window of the free plan (the monthly window)
+// is also recognized as monthly: free has only primary=2592000s and no secondary (issue #324,
+// the frontend uses usage_window_7d_kind to show the label as 30d instead of 7d).
 func TestApplyWhamUsage_FreePlanMonthlyWindow(t *testing.T) {
 	store := auth.NewStore(nil, nil, &database.SystemSettings{MaxConcurrency: 2, TestConcurrency: 1, TestModel: "gpt-5.4"})
 	account := &auth.Account{DBID: 1, AccessToken: "at", PlanType: "free"}
@@ -754,7 +754,7 @@ func TestApplyWhamUsage_CreditAccountSkipsPremium5hWindowLimit(t *testing.T) {
 		CreditEnabled:         true,
 		CreditSkipUsageWindow: true,
 	}
-	// 信用开关现在还要求当下确实有积分可花，快照缺失会按「没有积分」处理。
+	// The credits toggle now also requires that credits are actually available right now; a missing snapshot is treated as "no credits".
 	account.SetCreditBalance("1000.0000000000", true, false, false)
 
 	now := time.Now()
@@ -803,7 +803,7 @@ func TestApplyWhamUsage_CreditAccountSkips7dWindowLimit(t *testing.T) {
 		CreditEnabled:         true,
 		CreditSkipUsageWindow: true,
 	}
-	// 信用开关现在还要求当下确实有积分可花，快照缺失会按「没有积分」处理。
+	// The credits toggle now also requires that credits are actually available right now; a missing snapshot is treated as "no credits".
 	account.SetCreditBalance("1000.0000000000", true, false, false)
 
 	now := time.Now()
@@ -815,8 +815,8 @@ func TestApplyWhamUsage_CreditAccountSkips7dWindowLimit(t *testing.T) {
 	if result.Usage7dRateLimited {
 		t.Fatalf("Usage7dRateLimited = true, want false for credit account")
 	}
-	// 窗口打满但积分顶着：显示仍是限流，调度侧不受影响，
-	// 前端据 UsingCredits 在限流徽章后面挂一个积分徽章。
+	// The window is fully used but credits still cover it: the display still shows rate limited, and scheduling is not affected,
+	// the frontend uses UsingCredits to show a credits badge after the rate-limit badge.
 	if got := account.RuntimeStatus(); got != "rate_limited" {
 		t.Fatalf("RuntimeStatus() = %q, want rate_limited for credit account", got)
 	}
@@ -916,16 +916,16 @@ func TestQueryWhamUsage_ParsesRateLimitResetCredits(t *testing.T) {
 		t.Fatalf("RateLimitResetCredits = %+v, want available_count=4", usage.RateLimitResetCredits)
 	}
 
-	// ApplyWhamUsage 应把次数写入账号。
+	// ApplyWhamUsage should write the counts to the account.
 	ApplyWhamUsage(nil, account, usage)
 	if count, ok := account.GetRateLimitResetCredits(); !ok || count != 4 {
 		t.Fatalf("account reset credits = (%d,%v), want (4,true)", count, ok)
 	}
 }
 
-// TestQueryWhamResetCredits_ParsesAndFilters 验证重置券列表端点的解析与过滤
-// (issue #322)：只保留 reset_type=codex_rate_limits 且 status=available 且带
-// expires_at 的券，请求形态与 wham 查询一致（Bearer + chatgpt-account-id）。
+// TestQueryWhamResetCredits_ParsesAndFilters verifies parsing and filtering of the reset-credit list endpoint
+// (issue #322): only keep reset credits with reset_type=codex_rate_limits, status=available, and an expires_at,
+// with the same request shape as the wham query (Bearer + chatgpt-account-id).
 func TestQueryWhamResetCredits_ParsesAndFilters(t *testing.T) {
 	body := `{
 		"available_count": 3,
@@ -1067,9 +1067,9 @@ func TestConsumeResetCredit_NoToken(t *testing.T) {
 	}
 }
 
-// TestConsumeResetCreditWithID_ReusesProvidedIdempotencyKey 验证调用方提供的
-// redeem_request_id 会原样发给上游——重试同一次重置时复用它，可借助上游幂等去重，
-// 避免重复消耗一次重置次数。
+// TestConsumeResetCreditWithID_ReusesProvidedIdempotencyKey verifies that the redeem_request_id provided by the caller
+// is sent upstream unchanged: retrying the same reset reuses it, letting upstream idempotent deduplication work,
+// so a reset is not consumed twice.
 func TestConsumeResetCreditWithID_ReusesProvidedIdempotencyKey(t *testing.T) {
 	var gotIDs []string
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
@@ -1090,7 +1090,7 @@ func TestConsumeResetCreditWithID_ReusesProvidedIdempotencyKey(t *testing.T) {
 	account := &auth.Account{DBID: 1, AccessToken: "at-123", AccountID: "acc-1"}
 	const fixedID = "fixed-redeem-id-123"
 
-	// 两次调用复用同一个 ID（模拟刷新后重试）。
+	// Both calls reuse the same ID (simulates a retry after a refresh).
 	for i := 0; i < 2; i++ {
 		resp, err := ConsumeResetCreditWithID(context.Background(), account, "", fixedID)
 		if err != nil {
@@ -1109,8 +1109,8 @@ func TestConsumeResetCreditWithID_ReusesProvidedIdempotencyKey(t *testing.T) {
 	}
 }
 
-// TestConsumeResetCreditWithID_EmptyIDFallsBackToGenerated 验证空 ID 时仍会生成一个，
-// 不会发出空幂等键。
+// TestConsumeResetCreditWithID_EmptyIDFallsBackToGenerated verifies that an empty ID still generates one,
+// so an empty idempotency key is never sent.
 func TestConsumeResetCreditWithID_EmptyIDFallsBackToGenerated(t *testing.T) {
 	var gotID string
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
@@ -1139,8 +1139,8 @@ func TestConsumeResetCreditWithID_EmptyIDFallsBackToGenerated(t *testing.T) {
 	}
 }
 
-// TestConsumeResetCreditParsed_ReturnsWindowsResetAndCredit 验证成功响应被解析为
-// WhamResetResult（windows_reset / credit），供调用方即时反馈、省去重置后再查一次 usage。
+// TestConsumeResetCreditParsed_ReturnsWindowsResetAndCredit verifies that a successful response is parsed into
+// WhamResetResult (windows_reset / credit), so callers get instant feedback without querying usage again after the reset.
 func TestConsumeResetCreditParsed_ReturnsWindowsResetAndCredit(t *testing.T) {
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
 		w.WriteHeader(http.StatusOK)
@@ -1174,8 +1174,8 @@ func TestConsumeResetCreditParsed_ReturnsWindowsResetAndCredit(t *testing.T) {
 	}
 }
 
-// TestConsumeResetCreditParsed_NonOKReturnsRespForCaller 验证非 2xx 时 result 为 nil、
-// resp 保留（body 未关闭）供调用方读取错误详情。
+// TestConsumeResetCreditParsed_NonOKReturnsRespForCaller verifies that on a non-2xx response result is nil,
+// and resp is kept (body not closed) so the caller can read the error details.
 func TestConsumeResetCreditParsed_NonOKReturnsRespForCaller(t *testing.T) {
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
 		w.WriteHeader(http.StatusUnauthorized)
@@ -1205,9 +1205,9 @@ func TestConsumeResetCreditParsed_NonOKReturnsRespForCaller(t *testing.T) {
 	}
 }
 
-// Resin 启用时，wham 用量查询必须经 Resin 反代并携带 X-Resin-Account，
-// 而不是直连 chatgpt.com（issue #372：账号维护请求漏接 Resin，
-// 大量账号会共享本机出口 IP）。
+// When Resin is enabled, the wham usage query must go through the Resin reverse proxy and carry X-Resin-Account,
+// not connect directly to chatgpt.com (issue #372: account maintenance requests skipped Resin,
+// so many accounts shared the local egress IP).
 func TestQueryWhamUsageRoutesThroughResin(t *testing.T) {
 	var gotPath, gotResinAccount string
 	fakeResin := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
@@ -1237,7 +1237,7 @@ func TestQueryWhamUsageRoutesThroughResin(t *testing.T) {
 	}
 }
 
-// 重置券列表/消费与 wham 查询同一套请求形态，同样必须走 Resin。
+// The reset-credit list and consume requests use the same request shape as the wham query, so they must also go through Resin.
 func TestConsumeResetCreditRoutesThroughResin(t *testing.T) {
 	var gotPath, gotResinAccount string
 	fakeResin := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
@@ -1263,7 +1263,7 @@ func TestConsumeResetCreditRoutesThroughResin(t *testing.T) {
 	}
 }
 
-// 重置券列表端点同样必须走 Resin（与用量查询/消费保持三端点全覆盖）。
+// The reset-credit list endpoint must also go through Resin (so all three endpoints, usage query, consume and list, are covered).
 func TestQueryWhamResetCreditsRoutesThroughResin(t *testing.T) {
 	var gotPath, gotResinAccount string
 	fakeResin := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {

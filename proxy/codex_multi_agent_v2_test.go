@@ -470,11 +470,11 @@ func TestRestoreCodexMultiAgentV2Response(t *testing.T) {
 	if ns := gjson.GetBytes(got, "response.output.2.namespace").String(); ns != codexCollaborationNamespace {
 		t.Fatalf("output 2 namespace = %q", ns)
 	}
-	// arguments 是不透明字段，不能被改写。
+	// arguments is an opaque field and must not be rewritten.
 	if ns := gjson.GetBytes(got, "response.output.0.arguments.namespace").String(); ns != codexOptimizedCollaborationNamespace {
 		t.Fatalf("arguments namespace was rewritten: %q", ns)
 	}
-	// 非工具调用项的普通 namespace 字段保持原样。
+	// The ordinary namespace field of non-tool-call items stays as is.
 	if ns := gjson.GetBytes(got, "response.output.3.namespace").String(); ns != codexOptimizedCollaborationNamespace {
 		t.Fatalf("ordinary namespace was rewritten: %q", ns)
 	}
@@ -488,7 +488,7 @@ func TestRestoreCodexMultiAgentV2Response(t *testing.T) {
 		t.Fatalf("business tool namespace changed: %q", ns)
 	}
 
-	// 幂等：再次还原不应继续变化。
+	// Idempotent: restoring again should not change anything further.
 	again := restoreCodexMultiAgentV2Response(got, nil)
 	if string(again) != string(got) {
 		t.Fatalf("restore is not idempotent:\nfirst=%s\nsecond=%s", got, again)
@@ -649,7 +649,7 @@ func TestRestoreCodexMultiAgentV2ResponseInjectsPlaintextFunctionArgs(t *testing
 				t.Fatalf("namespace = %q, want %q", ns, tc.wantNamespace)
 			}
 			if tc.wantInjected {
-				// arguments 是不透明字段，补标记不能改动正文。
+				// arguments is an opaque field; adding the marker must not change the body.
 				beforeArgs := gjson.GetBytes([]byte(tc.payload), tc.path+".arguments").Raw
 				afterArgs := gjson.GetBytes(got, tc.path+".arguments").Raw
 				if afterArgs != beforeArgs {

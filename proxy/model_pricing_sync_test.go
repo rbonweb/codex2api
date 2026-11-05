@@ -115,7 +115,7 @@ func TestParseModelPricingPayloadModelsDev(t *testing.T) {
 	if !ok {
 		t.Fatalf("missing gpt-5.5, got keys: %v", got)
 	}
-	// 只取 openai provider，长上下文分档映射到 *_long。
+	// Only take the openai provider; long-context tiers map to *_long.
 	if ov.Input != 5 || ov.CachedInput != 0.5 || ov.Output != 30 {
 		t.Fatalf("unexpected standard tier: %+v", ov)
 	}
@@ -123,7 +123,7 @@ func TestParseModelPricingPayloadModelsDev(t *testing.T) {
 		t.Fatalf("unexpected long-context tier: %+v", ov)
 	}
 
-	// gpt-5.6-terra 独立规范键，与 gpt-5.4 互不影响。
+	// gpt-5.6-terra has its own independent canonical key and is unaffected by gpt-5.4.
 	if ov44 := got["gpt-5.4"]; ov44.Input != 2.5 {
 		t.Fatalf("gpt-5.4 should keep exact entry: %+v", ov44)
 	}
@@ -133,7 +133,7 @@ func TestParseModelPricingPayloadModelsDev(t *testing.T) {
 		t.Fatalf("gpt-5.6-terra = %+v, want input 99", ovTerra)
 	}
 
-	// 无 cost 的模型跳过。
+	// Skip models without a cost.
 	if _, ok := got["text-embedding-3-large"]; ok {
 		t.Fatalf("model without cost should be skipped")
 	}

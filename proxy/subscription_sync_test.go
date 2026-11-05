@@ -68,8 +68,8 @@ func TestQueryChatGPTSubscription_ParsesResponse(t *testing.T) {
 	}
 }
 
-// TestQueryChatGPTSubscription_RejectsUserAccountID 验证 user-... 形态的账号 ID
-// （历史污染数据）不发请求直接报错——上游对非工作区 UUID 返回 500。
+// TestQueryChatGPTSubscription_RejectsUserAccountID verifies that an account ID in the user-... form
+// (polluted historical data) fails right away without sending a request, because the upstream returns 500 for non-workspace UUIDs.
 func TestQueryChatGPTSubscription_RejectsUserAccountID(t *testing.T) {
 	requested := false
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
@@ -87,8 +87,8 @@ func TestQueryChatGPTSubscription_RejectsUserAccountID(t *testing.T) {
 	}
 }
 
-// TestQueryChatGPTSubscription_FallsBackToJWTWorkspaceID 验证 account_id 为 user-...
-// （历史污染）时回退用 AT JWT 里的 chatgpt_account_id（真实工作区 UUID）。
+// TestQueryChatGPTSubscription_FallsBackToJWTWorkspaceID verifies that when account_id is user-...
+// (polluted history), it falls back to chatgpt_account_id in the AT JWT (the real workspace UUID).
 func TestQueryChatGPTSubscription_FallsBackToJWTWorkspaceID(t *testing.T) {
 	var gotAccountID string
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
@@ -121,8 +121,8 @@ func TestQueryChatGPTSubscription_FallsBackToJWTWorkspaceID(t *testing.T) {
 	}
 }
 
-// TestMaybeSyncSubscriptionExpiry_SyncsAndThrottles 验证：付费套餐 + 到期时间缺失时
-// 从网页端同步 active_until 到内存与 DB；同一账号在节流间隔内不重复请求。
+// TestMaybeSyncSubscriptionExpiry_SyncsAndThrottles verifies that for a paid plan with a missing expiry time,
+// active_until is synced from the web endpoint into memory and the DB; the same account does not repeat requests within the throttle interval.
 func TestMaybeSyncSubscriptionExpiry_SyncsAndThrottles(t *testing.T) {
 	ctx := context.Background()
 	activeUntil := time.Now().Add(20 * 24 * time.Hour).UTC().Truncate(time.Second)
@@ -163,7 +163,7 @@ func TestMaybeSyncSubscriptionExpiry_SyncsAndThrottles(t *testing.T) {
 		t.Fatalf("persisted subscription_expires_at = %q, want %q", got, activeUntil.Format(time.RFC3339))
 	}
 
-	// 已有远期到期时间 + 节流窗口内：第二次调用不应再发请求。
+	// With a far-future expiry time and inside the throttle window: the second call should not send another request.
 	if MaybeSyncSubscriptionExpiry(ctx, store, account, "") {
 		t.Fatal("second call should be a no-op")
 	}
@@ -172,8 +172,8 @@ func TestMaybeSyncSubscriptionExpiry_SyncsAndThrottles(t *testing.T) {
 	}
 }
 
-// TestMaybeSyncSubscriptionExpiry_SkipsPastActiveUntil 验证：上游返回已过去的
-// active_until（宽限期/降级中）不写入，避免与陈旧值清理逻辑互相打架。
+// TestMaybeSyncSubscriptionExpiry_SkipsPastActiveUntil verifies that a past active_until returned by the upstream
+// (in grace period / degraded) is not written, to avoid conflicting with the stale-value cleanup logic.
 func TestMaybeSyncSubscriptionExpiry_SkipsPastActiveUntil(t *testing.T) {
 	ctx := context.Background()
 	past := time.Now().Add(-24 * time.Hour).UTC().Truncate(time.Second)
@@ -195,7 +195,7 @@ func TestMaybeSyncSubscriptionExpiry_SkipsPastActiveUntil(t *testing.T) {
 	}
 }
 
-// Resin 启用时订阅到期查询也必须经反代（issue #372），指纹由 Resin 侧承担。
+// When Resin is enabled, the subscription expiry query must also go through the reverse proxy (issue #372); the fingerprint is handled on the Resin side.
 func TestQueryChatGPTSubscriptionRoutesThroughResin(t *testing.T) {
 	var gotPath, gotResinAccount, gotAccountIDQuery string
 	fakeResin := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
@@ -242,8 +242,8 @@ func newSubscriptionSyncTestStore(t *testing.T, plan string) (*auth.Store, *data
 	return store, db, id
 }
 
-// 成功同步：写权威到期时间 + confirmed/provider_api + 自动续期 + 宽限期；
-// 有效期向后延时记录续费检测时间；首次拿到不算续费。元数据落库可读回。
+// Successful sync: writes the authoritative expiry time + confirmed/provider_api + auto-renewal + grace period;
+// when the validity period is extended, records the renewal detection time; the first time it is obtained does not count as a renewal. The metadata is stored and can be read back.
 func TestSyncSubscriptionExpiry_RecordsMetaOnSuccess(t *testing.T) {
 	ctx := context.Background()
 	first := time.Now().Add(10 * 24 * time.Hour).UTC().Truncate(time.Second)
@@ -276,7 +276,7 @@ func TestSyncSubscriptionExpiry_RecordsMetaOnSuccess(t *testing.T) {
 		t.Fatalf("meta after first sync = %+v", meta)
 	}
 
-	// 续费：有效期向后延 + 出现宽限期字段（unix 秒形态）。
+	// Renewal: validity period extended + a grace period field appears (unix seconds form).
 	body.Store(`{"plan_type":"plus","active_until":"` + renewed.Format(time.RFC3339) + `","will_renew":false,"grace_period_end_timestamp":` + fmtInt(grace.Unix()) + `}`)
 	res = SyncSubscriptionExpiry(ctx, store, account, "")
 	if res.Outcome != SubscriptionSyncUpdated || !res.ExpiresAt.Equal(renewed) {
@@ -287,7 +287,7 @@ func TestSyncSubscriptionExpiry_RecordsMetaOnSuccess(t *testing.T) {
 		t.Fatalf("meta after renew = %+v", meta)
 	}
 
-	// 不变：unchanged。
+	// Unchanged: the result is unchanged.
 	res = SyncSubscriptionExpiry(ctx, store, account, "")
 	if res.Outcome != SubscriptionSyncUnchanged {
 		t.Fatalf("third sync = %+v, want unchanged", res)
@@ -312,7 +312,7 @@ func TestSyncSubscriptionExpiry_RecordsMetaOnSuccess(t *testing.T) {
 
 func fmtInt(v int64) string { return strconv.FormatInt(v, 10) }
 
-// 404「No subscription found」（k12/edu）：不算失败，标 unsupported，保留原到期时间。
+// 404 "No subscription found" (k12/edu): not counted as a failure; marked unsupported; the original expiry time is kept.
 func TestSyncSubscriptionExpiry_NoSubscriptionIsUnsupported(t *testing.T) {
 	ctx := context.Background()
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
@@ -343,7 +343,7 @@ func TestSyncSubscriptionExpiry_NoSubscriptionIsUnsupported(t *testing.T) {
 	}
 }
 
-// 查询失败：有已知状态时标 failed 并保留到期时间；从未有过状态时标 unknown。
+// Query failure: when there is a known state, mark it failed and keep the expiry time; when there has never been a state, mark it unknown.
 func TestSyncSubscriptionExpiry_FailureKeepsLastKnown(t *testing.T) {
 	ctx := context.Background()
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
@@ -379,14 +379,14 @@ func TestSyncSubscriptionExpiry_FailureKeepsLastKnown(t *testing.T) {
 		t.Fatalf("blank account sync state = %s, want unknown", got)
 	}
 
-	// 非付费套餐不发请求。
+	// A non-paid plan sends no request.
 	free := &auth.Account{DBID: id, AccessToken: "test-at", PlanType: "free", AccountID: testWorkspaceUUID}
 	if res := SyncSubscriptionExpiry(ctx, store, free, ""); res.Outcome != SubscriptionSyncUnsupported {
 		t.Fatalf("free plan = %+v, want unsupported", res)
 	}
 }
 
-// 宽限期内的已过去 active_until 可以写入（陈旧值清理会放过宽限期）。
+// A past active_until within the grace period can be written (stale-value cleanup skips the grace period).
 func TestSyncSubscriptionExpiry_AppliesPastExpiryInsideGrace(t *testing.T) {
 	ctx := context.Background()
 	past := time.Now().Add(-24 * time.Hour).UTC().Truncate(time.Second)
@@ -415,7 +415,7 @@ func TestSyncSubscriptionExpiry_AppliesPastExpiryInsideGrace(t *testing.T) {
 	}
 }
 
-// 落库的失败原因要可读：HTML 拦截页只留状态码 + 疑似被拦截提示。
+// The stored failure reason must be readable: an HTML block page keeps only the status code plus a suspected-blocking hint.
 func TestSubscriptionErrorForStorage(t *testing.T) {
 	html := &SubscriptionHTTPError{Status: 403, Body: "<html>\n  <head><meta name=\"viewport\"></head><body>blocked</body></html>"}
 	if got := subscriptionErrorForStorage(html); got != "HTTP 403: "+SubscriptionErrorAntiBotChallenge {
@@ -430,7 +430,7 @@ func TestSubscriptionErrorForStorage(t *testing.T) {
 	}
 }
 
-// Codex 身份被 403 时回退浏览器伪装；两种身份都 403 才算失败；401 不换身份重试。
+// On 403 with the Codex identity, fall back to the browser disguise; it only counts as a failure when both identities get 403; 401 does not retry with another identity.
 func TestQueryChatGPTSubscription_FallsBackToBrowserOn403(t *testing.T) {
 	ctx := context.Background()
 	activeUntil := time.Now().Add(15 * 24 * time.Hour).UTC().Truncate(time.Second)
@@ -458,7 +458,7 @@ func TestQueryChatGPTSubscription_FallsBackToBrowserOn403(t *testing.T) {
 		t.Fatalf("attempt order = %v, want codex then browser", seen)
 	}
 
-	// 两种身份都 403：报 403 错误且落库文案是人机验证提示。
+	// Both identities get 403: report a 403 error, and the stored text is the human-verification hint.
 	seen = nil
 	both := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		seen = append(seen, r.Header.Get("User-Agent"))
@@ -474,7 +474,7 @@ func TestQueryChatGPTSubscription_FallsBackToBrowserOn403(t *testing.T) {
 		t.Fatalf("both-403 attempts = %d, want 2", len(seen))
 	}
 
-	// 401：不值得换身份，只打一次。
+	// 401: not worth switching identity; only one request is sent.
 	seen = nil
 	unauth := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		seen = append(seen, r.Header.Get("User-Agent"))

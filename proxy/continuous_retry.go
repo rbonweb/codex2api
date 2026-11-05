@@ -56,7 +56,7 @@ func continuousRetryHTTPSelected(policy database.ContinuousRetryPolicy, status i
 	if !policy.Enabled {
 		return false
 	}
-	// 明确的上游 CYB 是请求级安全终态；即使开启 catch-all 也不能换号重放。
+	// an explicit upstream CYB is a request-level security terminal state; even with catch-all enabled it must not switch accounts and replay.
 	// An explicit upstream CYB is a request-level safety terminal and must not
 	// rotate accounts even when catch-all is enabled.
 	if isExplicitUpstreamCyberPolicy(body) {
@@ -305,7 +305,7 @@ func isContextRetryError(payload []byte) bool {
 // while explicit cyber_policy always remains a hard stop. Match structured
 // machine codes only so a harmless mention of "content policy" in an error
 // message cannot disable a genuinely recoverable selective retry.
-// 这里只匹配结构化机器码，不扫描自由文本 message，避免误伤可恢复故障。
+// this only matches structured machine codes and does not scan free-text messages, to avoid misclassifying recoverable failures.
 func isExplicitUpstreamSafetyPolicy(payload []byte) bool {
 	if isExplicitUpstreamCyberPolicy(payload) {
 		return true

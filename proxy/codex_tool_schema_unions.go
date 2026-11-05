@@ -6,18 +6,18 @@ import (
 	"strconv"
 )
 
-// MCP 服务器常把枚举写成带说明的常量联合：
+// MCP servers often write enums as const unions with descriptions:
 //
 //	"action": {"type":"string","oneOf":[{"const":"a","description":"..."}, ...]}
 //
-// 分支一多（实测 13 支）Codex 上游会静默中止：HTTP 200 + response.incomplete、
-// 0 输出 token、无任何内容，且任意去掉一支就恢复。这种联合与 enum 语义完全等价，
-// 这里把它折成 enum 后再发上游。只有能证明等价的形态才动：每一支只含
-// const（可带 description/title）、常量互不重复、oneOf/anyOf 不同时出现；已有
-// enum 时必须与常量集合一致才删掉联合，否则原样保留。
+// With many branches (13 measured), the Codex upstream silently aborts: HTTP 200 + response.incomplete,
+// 0 output tokens and no content, and removing any single branch restores normal behavior. Such a union is fully equivalent in meaning to an enum,
+// so it is collapsed into an enum before being sent upstream. Only shapes whose equivalence can be proven are changed: each branch contains only
+// const (may carry description/title), the constants are unique, and oneOf/anyOf do not appear together; if an
+// enum already exists, it must match the constant set before the union is dropped; otherwise it is kept as is.
 const codexConstUnionFoldThreshold = 8
 
-// simplifyConstUnionSchemas 递归折叠 schema 及其全部子 schema 里的纯常量联合。
+// simplifyConstUnionSchemas recursively collapses pure-constant unions in the schema and in all of its sub-schemas.
 func simplifyConstUnionSchemas(schema map[string]any) bool {
 	if schema == nil {
 		return false
@@ -35,7 +35,7 @@ func foldPureConstUnion(schema map[string]any) bool {
 	_, hasOneOf := schema["oneOf"]
 	_, hasAnyOf := schema["anyOf"]
 	if hasOneOf == hasAnyOf {
-		// 两者都没有，或同时出现（复合约束，语义不再是单纯的枚举）。
+		// Neither is present, or both are (a compound constraint, so the meaning is no longer a plain enum).
 		return false
 	}
 	unionKey := "oneOf"
@@ -99,7 +99,7 @@ func foldPureConstUnion(schema map[string]any) bool {
 	return true
 }
 
-// canonicalSchemaConstKey 给标量常量一个类型限定的比较键；对象/数组常量不折。
+// canonicalSchemaConstKey gives scalar constants a type-qualified comparison key; object and array constants are not collapsed.
 func canonicalSchemaConstKey(value any) (string, bool) {
 	switch typed := value.(type) {
 	case string:

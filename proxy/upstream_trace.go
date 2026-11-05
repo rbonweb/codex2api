@@ -17,7 +17,7 @@ type upstreamTraceAttempt struct {
 	accountID int64
 	requestID string
 	proxy     auth.ProxyAuditLabel
-	// upstreamTurnState 是上游响应回带的 X-Codex-Turn-State，空串表示没有。
+	// upstreamTurnState is the X-Codex-Turn-State returned with the upstream response; an empty string means there is none.
 	upstreamTurnState string
 }
 
@@ -152,8 +152,8 @@ func beginUpstreamTrace(ctx context.Context, account *auth.Account, proxyURL str
 	}
 }
 
-// noteUpstreamTurnState 把上游回带的 turn state 记到当前尝试上；WS 路径逐帧调用，
-// 后到的值覆盖先到的。
+// noteUpstreamTurnState records the turn state returned by upstream on the current attempt; the WS path calls it frame by frame,
+// and a later value overwrites an earlier one.
 func noteUpstreamTurnState(ctx context.Context, state string) {
 	a := upstreamTraceFromContext(ctx)
 	if a == nil || state == "" {

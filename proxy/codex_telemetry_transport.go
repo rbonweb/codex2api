@@ -7,12 +7,12 @@ import (
 	"net/http"
 )
 
-// sendCodexTelemetryJob 使用账号网络配置发送一批遥测数据。
+// sendCodexTelemetryJob sends one batch of telemetry using the account's network configuration.
 //
-// 遥测与 /responses 一样携带账号身份打 chatgpt.com。Resin 启用时必须同样经反代
-// 发出，否则所有账号会共享本机出口 IP 直连，与该账号 /responses 流量的出口不一致
-// （issue #372 的不变量）。metrics 端点虽不带 Bearer，但真实客户端从同一出口发出，
-// 这里保持一致。
+// Telemetry, like /responses, carries the account identity and goes to chatgpt.com. When Resin is enabled it must likewise go through the reverse proxy,
+// otherwise all accounts would share this machine's egress IP for direct connections, which is inconsistent with the egress of that account's /responses traffic
+// (the invariant of issue #372). The metrics endpoint carries no Bearer token, but the real client sends from the same egress,
+// so this stays consistent here.
 func sendCodexTelemetryJob(job codexTelemetryJob) error {
 	ctx, cancel := context.WithTimeout(context.Background(), codexTelemetryTimeout)
 	defer cancel()
@@ -46,12 +46,12 @@ func sendCodexTelemetryJob(job codexTelemetryJob) error {
 	return nil
 }
 
-// codexTelemetryHTTPClient 克隆共享池化客户端并禁止跟随重定向。
+// codexTelemetryHTTPClient clones the shared pooled client and forbids following redirects.
 //
-// 分析请求携带账号的 Bearer access token；Go 默认策略只在跨 host 重定向时剥离
-// Authorization，同 host 的 https→http 降级不会剥离。池化客户端按账号复用、
-// 不可就地改写，因此这里浅拷贝一份并覆盖 CheckRedirect，避免凭证被转发到
-// 重定向目标。与 grok_media.go / claude_api_key.go 的既有做法一致。
+// Analytics requests carry the account's Bearer access token; Go's default policy only strips
+// Authorization on cross-host redirects, and an https→http downgrade on the same host is not stripped. The pooled client is reused per account,
+// and cannot be modified in place, so here we make a shallow copy and override CheckRedirect, to avoid forwarding the credential
+// to the redirect target. This matches the existing approach in grok_media.go / claude_api_key.go.
 func codexTelemetryHTTPClient(base *http.Client) *http.Client {
 	if base == nil {
 		return &http.Client{CheckRedirect: codexTelemetryRejectRedirect}
@@ -61,21 +61,21 @@ func codexTelemetryHTTPClient(base *http.Client) *http.Client {
 	return &clone
 }
 
-// codexTelemetryRejectRedirect 拒绝跟随一切重定向。
+// codexTelemetryRejectRedirect refuses to follow any redirect.
 func codexTelemetryRejectRedirect(*http.Request, []*http.Request) error {
 	return http.ErrUseLastResponse
 }
 
 type codexTelemetryHTTPError struct{ status int }
 
-// Error 返回遥测上游的 HTTP 状态描述。
+// Error returns the HTTP status description of the telemetry upstream.
 func (e *codexTelemetryHTTPError) Error() string { return http.StatusText(e.status) }
 
-// applyCodexAnalyticsHeaders 添加 Codex 分析接口要求的客户端身份头。
+// applyCodexAnalyticsHeaders adds the client identity headers required by the Codex analytics endpoint.
 //
-// 真实客户端 send_track_events_request 只显式加 auth 头与 Content-Type，但其
-// create_client() 经 default_headers() 给所有请求注入 originator 与 User-Agent
-// （codex-rs/login/src/auth/default_client.rs），因此这里同样带上这两个头。
+// The real client's send_track_events_request explicitly adds only the auth header and Content-Type, but its
+// create_client() injects originator and User-Agent into all requests through default_headers()
+// (codex-rs/login/src/auth/default_client.rs), so these two headers are sent here as well.
 func applyCodexAnalyticsHeaders(headers http.Header, client codexTelemetryClient) {
 	headers.Set("Authorization", "Bearer "+client.accessToken)
 	headers.Set("Chatgpt-Account-Id", client.accountID)

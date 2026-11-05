@@ -7,7 +7,7 @@ import (
 	"time"
 )
 
-// TestDownstreamSSEKeepaliveIntervalFromEnv 验证 HTTP/SSE 保活周期的默认、覆盖和禁用值。
+// TestDownstreamSSEKeepaliveIntervalFromEnv verifies the default, override and disabled values of the HTTP/SSE keepalive period.
 func TestDownstreamSSEKeepaliveIntervalFromEnv(t *testing.T) {
 	const fallback = defaultDownstreamSSEKeepaliveInterval
 	tests := []struct {
@@ -31,7 +31,7 @@ func TestDownstreamSSEKeepaliveIntervalFromEnv(t *testing.T) {
 	}
 }
 
-// TestDownstreamMessagesKeepaliveEvent 验证 Messages 使用兼容协议的 ping 事件载荷。
+// TestDownstreamMessagesKeepaliveEvent verifies that Messages uses the ping event payload of the compatible protocol.
 func TestDownstreamMessagesKeepaliveEvent(t *testing.T) {
 	const want = "event: ping\ndata: {\"type\":\"ping\"}\n\n"
 	if downstreamMessagesKeepaliveEvent != want {

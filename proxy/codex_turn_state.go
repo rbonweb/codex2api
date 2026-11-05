@@ -12,19 +12,19 @@ import (
 	"github.com/gin-gonic/gin"
 )
 
-// x-codex-turn-state 是上游在响应中铸造的不透明回合状态 blob,客户端在同一
-// 回合的后续请求原样回带。blob 与铸造账号的出站身份绑定,同账号回放自洽;
-// 跨账号回放(failover 换号后客户端仍回带旧账号的 blob)是代理链独有、真实
-// Codex 永远不会产生的矛盾信号。溯源表记录每个下游会话最近一次向客户端
-// 下发该 blob 的账号,出站守卫据此剥离已知异账号的回带值。只剥离、不注入:
-// 下游是真实 Codex 客户端,会按自身回合语义自行回带。
+// x-codex-turn-state is an opaque turn state blob that the upstream mints in its response, and the client sends it back on the same
+// turn's follow-up requests unchanged. The blob is bound to the outbound identity of the account that minted it, so replay on the same account is self-consistent;
+// cross-account replay (after a failover to another account, the client still sends back the old account's blob) is a contradictory signal that only proxy chains produce and that
+// real Codex never produces. The origin table records, for each downstream session, which account most recently issued this blob to the client;
+// the outbound guard uses it to strip echoed values that belong to a known other account. It only strips and never injects:
+// the downstream is a real Codex client, which sends the blob back on its own according to its turn semantics.
 //
-// 键使用 affinityKey(下游会话标识 + API Key,与账号粘性绑定同源),保证
-// 同一段对话的记录/守卫两侧落在同一键上。无会话标识时不做跟踪(保持透传)。
+// The key uses affinityKey (downstream session ID + API Key, the same source as account stickiness binding), so that
+// recording and guarding for the same conversation land on the same key. Without a session ID, no tracking is done (pass through unchanged).
 const (
 	codexTurnStateProvenanceTTL = time.Hour
-	// 溯源表只用于剥离跨账号回带，条目可以安全丢弃；设硬上限避免高基数
-	// 会话键在 TTL 内无限增长。
+	// The origin table is only used to strip cross-account echoes, so entries can be dropped safely; a hard cap prevents high cardinality from
+	// session keys growing without bound within the TTL.
 	codexTurnStateMaxOrigins = 65536
 )
 
@@ -38,10 +38,10 @@ var (
 	codexTurnStateWrites  atomic.Uint64
 )
 
-// relayCodexTurnStateResponseHeader 把上游响应的 turn-state 写入下游响应头,
-// 并记录铸造账号。上游没有该头时主动清除 writer 上可能残留的上一 failover
-// attempt 的值——否则换号重试后旧账号的 blob 会粘到新账号的响应上,正是本
-// 文件要防止的跨账号矛盾。(流式响应一旦提交,对 writer 头的改动是无害空操作。)
+// relayCodexTurnStateResponseHeader writes the upstream response's turn-state into the downstream response header,
+// and records the minting account. When the upstream does not send that header, it proactively clears any value left on the writer by the previous failover
+// attempt — otherwise, after a retry on another account, the old account's blob would stick to the new account's response, which is exactly the
+// cross-account contradiction this file exists to prevent. (Once a streaming response is committed, changes to the writer header are a harmless no-op.)
 func relayCodexTurnStateResponseHeader(c *gin.Context, affinityKey string, account *auth.Account, model string, headers http.Header) {
 	if c == nil {
 		return
@@ -86,8 +86,8 @@ func (h *Handler) commitResponsesStreamAttempt(c *gin.Context, attempt *continuo
 	if err := h.commitStreamAttempt(c, attempt); err != nil {
 		// Headers are staged before replay/filter commit; remove the token on
 		// failure so local replay errors cannot expose turn state or provenance.
-		// Header 会先于回放/过滤提交暂存；失败时移除 token，避免本地回放错误
-		// 暴露账号绑定的续链状态或出处数据。
+		// The header is staged before replay/filtering commits it; on failure, remove the token so a local replay does not wrongly
+		// expose account-bound continuation state or provenance data.
 		if stagedHeader && c != nil && c.Writer != nil && !c.Writer.Written() {
 			c.Writer.Header().Del(codexTurnStateHeader)
 		}
@@ -99,10 +99,10 @@ func (h *Handler) commitResponsesStreamAttempt(c *gin.Context, attempt *continuo
 	return nil
 }
 
-// guardCodexTurnStateEcho 出站守卫:客户端回带的 turn-state 若已知由其他账号
-// 铸造则从下游头剥离(HTTP 直传与 WS 握手都从这份头取值),同账号或无溯源
-// 记录时保持原样。按 attempt 调用:failover 换号后同一请求的下一次尝试必须
-// 重新裁决。
+// guardCodexTurnStateEcho is the outbound guard: if the turn-state echoed back by the client is known to have been minted by another account
+// it is stripped from the downstream header (both HTTP pass-through and the WS handshake read the value from this header). For the same account, or with no provenance
+// record, it is left as is. It is called per attempt: after a failover to another account, the next attempt for the same request must
+// re-decide.
 func guardCodexTurnStateEcho(affinityKey string, account *auth.Account, headers http.Header) {
 	if headers == nil || account == nil || strings.TrimSpace(affinityKey) == "" {
 		return
@@ -181,8 +181,8 @@ func noteCodexTurnStateProvenance(affinityKey string, account *auth.Account) {
 	sweepCodexTurnStateOrigins()
 }
 
-// sweepCodexTurnStateOrigins 机会式清扫:每 256 次写入全量遍历一轮,防止仅靠
-// 读侧惰性删除导致的慢泄漏(会话键无上界)。
+// sweepCodexTurnStateOrigins is an opportunistic sweep: every 256 writes it runs a full pass, to prevent a slow leak caused by
+// lazy deletion on the read side alone (session keys are unbounded).
 func sweepCodexTurnStateOrigins() {
 	if codexTurnStateWrites.Add(1)%256 != 0 {
 		return
@@ -201,8 +201,8 @@ func sweepCodexTurnStateOrigins() {
 	if live <= codexTurnStateMaxOrigins {
 		return
 	}
-	// 超过上限时丢弃任意条目。溯源缺失只会让守卫放行一次回带，不会影响
-	// 转发正确性；这比让内存随会话键数量持续增长更安全。
+	// When over the limit, arbitrary entries are dropped. A missing origin only lets the guard pass one echo through and does not affect
+	// forwarding correctness; this is safer than letting memory keep growing with the number of session keys.
 	excess := live - codexTurnStateMaxOrigins
 	codexTurnStateOrigins.Range(func(key, _ any) bool {
 		if excess <= 0 {

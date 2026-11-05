@@ -2,8 +2,8 @@ package proxy
 
 import "strings"
 
-// IANA tzdb zone.tab 和 backward 的时区到地区代码映射。
-// 来源: https://data.iana.org/time-zones/tzdb/ 。
+// Timezone-to-region-code mapping from IANA tzdb zone.tab and backward.
+// Source: https://data.iana.org/time-zones/tzdb/.
 var codexAttestationZonesByCountry = map[string]string{
 	"AD": "Europe/Andorra",
 	"AE": "Asia/Dubai",

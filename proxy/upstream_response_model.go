@@ -9,21 +9,21 @@ import (
 	"github.com/codex2api/database"
 )
 
-// 上游响应模型观测（移植自 sub2api 的 upstream response model audit）：
-// 记录一次转发尝试内上游响应自报的模型名，与实际发往上游的模型对比，写入用量日志，
-// 供管理端「模型不一致」审计与筛选使用。观测绝不影响转发与计费路径。
+// Upstream response model observation (ported from the upstream response model audit in sub2api):
+// It records the model name the upstream response self-reports within one forwarding attempt, compares it with the model actually sent upstream, and writes it to the usage log,
+// for the admin panel's "model mismatch" audit and filtering. Observation never affects the forwarding or billing path.
 //
-// - first：首个声明（如 response.created 帧携带的 response.model）
-// - terminal：终态事件声明（response.completed / response.incomplete / response.failed），
-//   存在时优先生效
-// - conflict：同一次尝试内出现互相矛盾的自报——上游混流或中途换模型的信号
+//   - first: the first declaration (such as response.model carried by a response.created frame)
+//   - terminal: the terminal event declaration (response.completed / response.incomplete / response.failed),
+//     takes precedence when present
+//   - conflict: contradictory self-reports within the same attempt: a signal that upstream mixed streams or switched models midway
 type upstreamResponseModelObserver struct {
 	first    string
 	terminal string
 	conflict bool
 }
 
-// upstreamResponseModelMaxLength 与 usage_logs.upstream_response_model 列宽一致。
+// upstreamResponseModelMaxLength matches the column width of usage_logs.upstream_response_model.
 const upstreamResponseModelMaxLength = 200
 
 func (o *upstreamResponseModelObserver) Observe(model string, terminal bool) {
@@ -43,8 +43,8 @@ func (o *upstreamResponseModelObserver) Observe(model string, terminal bool) {
 	}
 }
 
-// Model 返回本次尝试观测到的上游自报模型：终态声明优先，否则取首个声明；
-// 上游从未自报时为空串。
+// Model returns the upstream self-reported model observed for this attempt: the terminal declaration takes precedence, otherwise the first declaration;
+// it is an empty string when upstream never self-reported.
 func (o *upstreamResponseModelObserver) Model() string {
 	if o == nil {
 		return ""
@@ -68,8 +68,8 @@ func normalizeObservedUpstreamResponseModel(model string) string {
 	return model
 }
 
-// observeUpstreamResponseModelFrame 供 SSE 帧循环逐帧调用：帧体 response.model
-// 非空即记录；成功终态与 response.failed 按终态声明处理（终态声明优先生效）。
+// observeUpstreamResponseModelFrame is called frame by frame by the SSE frame loop: if the frame body's response.model
+// is non-empty, it is recorded; a successful terminal state and response.failed are handled as terminal declarations (the terminal declaration takes precedence).
 func observeUpstreamResponseModelFrame(o *upstreamResponseModelObserver, parsed gjson.Result, eventType string) {
 	if o == nil {
 		return
@@ -79,8 +79,8 @@ func observeUpstreamResponseModelFrame(o *upstreamResponseModelObserver, parsed 
 	}
 }
 
-// observeUpstreamResponseModelBody 供一次性响应体（非流式 JSON / compact 聚合结果）
-// 调用：整个 body 就是终态。
+// observeUpstreamResponseModelBody is for one-shot response bodies (non-streaming JSON / aggregated compact results)
+// calls: the whole body is the terminal state.
 func observeUpstreamResponseModelBody(o *upstreamResponseModelObserver, body []byte) {
 	if o == nil || len(body) == 0 {
 		return
@@ -88,9 +88,9 @@ func observeUpstreamResponseModelBody(o *upstreamResponseModelObserver, body []b
 	o.Observe(gjson.GetBytes(body, "model").String(), true)
 }
 
-// upstreamModelMismatch 三态判定：上游未自报 → nil（不参与筛选与展示，历史行同为
-// NULL）；自报了 → 与实发模型大小写不敏感地严格比对。变体级别的宽松归一化（-latest /
-// 日期后缀）不在此处做——那是前端徽章分级的展示语义，落库值保持原始对比结果。
+// upstreamModelMismatch has three states: if upstream did not self-report → nil (excluded from filtering and display; historical rows are likewise
+// NULL); if it self-reported → strictly compared with the model actually sent, case-insensitively. Loose variant-level normalization (-latest /
+// date suffix) is not done here: that is the display semantics of the frontend badge tiers; the stored value keeps the raw comparison result.
 func upstreamModelMismatch(sentModel, responseModel string) *bool {
 	responseModel = strings.TrimSpace(responseModel)
 	if responseModel == "" {
@@ -101,8 +101,8 @@ func upstreamModelMismatch(sentModel, responseModel string) *bool {
 	return &mismatch
 }
 
-// upstreamSentModelForAudit 返回审计对比用的实发模型：优先 attempt 实发
-// （账号级映射可能改写），兜底客户端请求模型。
+// upstreamSentModelForAudit returns the model actually sent, used for the audit comparison: prefers the attempt's actual sent model
+// (an account-level mapping may rewrite it), falling back to the client's requested model.
 func upstreamSentModelForAudit(attemptModel, logModel string) string {
 	if m := strings.TrimSpace(attemptModel); m != "" {
 		return m
@@ -110,9 +110,9 @@ func upstreamSentModelForAudit(attemptModel, logModel string) string {
 	return strings.TrimSpace(logModel)
 }
 
-// applyUpstreamResponseModelObservation 把观测结果写入用量日志输入。上游未自报时
-// 两个字段保持零值/nil。conflict 打一条告警（对齐 sub2api 的
-// upstream_response_model_conflict），落库值取终态优先的 Model()。
+// applyUpstreamResponseModelObservation writes the observation result into the usage log input. When upstream did not self-report,
+// both fields stay at zero value/nil. A conflict logs one alert (aligned with sub2api's
+// upstream_response_model_conflict); the stored value is Model() with the terminal declaration taking precedence.
 func applyUpstreamResponseModelObservation(input *database.UsageLogInput, o *upstreamResponseModelObserver, sentModel string, accountID int64) {
 	if input == nil || o == nil {
 		return

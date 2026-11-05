@@ -16,7 +16,7 @@ import (
 	"github.com/gin-gonic/gin"
 )
 
-// standalone 搜索透传：请求体、上游状态码与响应体原样带回，OAuth 凭据注入。
+// Standalone search passthrough: the request body, upstream status code and response body come back unchanged, with OAuth credentials injected.
 func TestCodexAlphaSearchHandler_PassesThroughRequestAndResponse(t *testing.T) {
 	gin.SetMode(gin.TestMode)
 
@@ -69,7 +69,7 @@ func TestCodexAlphaSearchHandler_PassesThroughRequestAndResponse(t *testing.T) {
 	}
 }
 
-// 客户端塞进来的 prompt_cache_key 在转发前被剥离，避免上游 400（issue #433）；其余字段保持原样。
+// The prompt_cache_key sent by the client is stripped before forwarding to avoid an upstream 400 (issue #433); other fields stay unchanged.
 func TestCodexAlphaSearchHandler_StripsPromptCacheKey(t *testing.T) {
 	gin.SetMode(gin.TestMode)
 
@@ -110,7 +110,7 @@ func TestCodexAlphaSearchHandler_StripsPromptCacheKey(t *testing.T) {
 	}
 }
 
-// 上游 4xx 原样透传（保留 CLI 能理解的真实错误语义），不包装成 502。
+// Upstream 4xx responses pass through unchanged (keeping the real error semantics the CLI understands) and are not wrapped as 502.
 func TestCodexAlphaSearchHandler_PassesThroughUpstreamError(t *testing.T) {
 	gin.SetMode(gin.TestMode)
 
@@ -143,7 +143,7 @@ func TestCodexAlphaSearchHandler_PassesThroughUpstreamError(t *testing.T) {
 	}
 }
 
-// 池中只有中转（OpenAI Responses API）账号时 fast-fail 503：搜索端点只存在于 ChatGPT 后端。
+// When the pool has only relay (OpenAI Responses API) accounts, fail fast with 503: the search endpoint exists only on the ChatGPT backend.
 func TestCodexAlphaSearchHandler_RelayOnlyPoolFastFails(t *testing.T) {
 	gin.SetMode(gin.TestMode)
 
@@ -170,8 +170,8 @@ func TestCodexAlphaSearchHandler_RelayOnlyPoolFastFails(t *testing.T) {
 	}
 }
 
-// TestCodexAlphaSearchHandler_KeepsJSONResponseAliveWhileReadingBody 验证读取静默的
-// 非流式 JSON 响应体时会发送 HTTP 102，同时保留最终 JSON 响应。
+// TestCodexAlphaSearchHandler_KeepsJSONResponseAliveWhileReadingBody verifies that while reading a silent
+// non-streaming JSON response body, HTTP 102 is sent and the final JSON response is still kept.
 func TestCodexAlphaSearchHandler_KeepsJSONResponseAliveWhileReadingBody(t *testing.T) {
 	gin.SetMode(gin.TestMode)
 	previousInterval := continuousRetryKeepaliveInterval

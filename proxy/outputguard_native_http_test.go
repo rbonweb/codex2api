@@ -2,7 +2,7 @@ package proxy
 
 import "testing"
 
-// selectNativeProjector 必须按真实上游协议选择投影器，而不是按下游入口路径猜测。
+// selectNativeProjector must select the projector by the real upstream protocol, not guess it from the downstream entry path.
 func TestNativeHTTP_SelectNativeProjectorDispatchesByUpstreamProtocol(t *testing.T) {
 	cases := []struct {
 		name            string

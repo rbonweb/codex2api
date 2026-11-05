@@ -13,24 +13,24 @@ import (
 	"github.com/tidwall/sjson"
 )
 
-// Codex multi-agent v2 兼容层。
+// Compatibility layer for Codex multi-agent v2.
 //
-// 背景：Codex CLI/Desktop 的 v2 collaboration 工具把 spawn_agent /
-// send_message / followup_task 的 message 参数标记为 encrypted。官方 OpenAI
-// 上游在收到该标记时会生成密文，并由客户端存为 agent_message 的
-// encrypted_content；第三方子模型无法读取。Codex 只在 function_call 带有
-// 显式空数组 encrypted_function_args 且 namespace 为 collaboration 时走
-// DirectPlaintextMessage 分支。
+// Background: the v2 collaboration tools in Codex CLI/Desktop mark the message parameter of spawn_agent /
+// send_message / followup_task as encrypted. The official OpenAI
+// upstream, on receiving that marker, generates ciphertext, and the client stores it as the
+// encrypted_content of agent_message; third-party sub-models cannot read it. Codex only goes down the
+// DirectPlaintextMessage branch when function_call has an explicit empty array
+// encrypted_function_args and the namespace is collaboration.
 //
-// 兼容层在父请求发往 Codex 上游前做两件事：
-//  1. 删除三个协作工具 message schema 上的 encrypted 标记；
-//  2. 把 collaboration 命名空间临时改名为 collaboration-optimize，避开上游
-//     reserved schema 的逐字校验（issue #342）。
+// Before the parent request is sent to the Codex upstream, the compatibility layer does two things:
+//  1. Removes the encrypted marker from the message schema of the three collaboration tools;
+//  2. Temporarily renames the collaboration namespace to collaboration-optimize, to avoid the upstream
+//     reserved-schema character-by-character validation (issue #342).
 //
-// 上游响应中的 collaboration-optimize 再还原为 collaboration，使 Codex 按
-// 明文路径处理。无法安全判断时保持原生路径，不猜测密文内容。
+// collaboration-optimize in upstream responses is restored to collaboration, so that Codex handles them as
+// the plaintext path. When it cannot tell safely, it keeps the native path and does not guess at the ciphertext content.
 //
-// 核心变换参考 CLIProxyAPI 的同类实现（MIT）：
+// The core transformation follows the similar implementation in CLIProxyAPI (MIT):
 // https://github.com/router-for-me/CLIProxyAPI/blob/911f49c/internal/client/codex/optimize-multi-agent-v2/optimize_multi_agent_v2.go
 const (
 	codexMultiAgentV2CompatEnv = "CODEX_MULTI_AGENT_V2_COMPAT"
@@ -42,8 +42,8 @@ const (
 	codexOptimizedNamespaceDotPrefix     = codexOptimizedCollaborationNamespace + "."
 	codexOptimizedNamespaceDoublePrefix  = codexOptimizedCollaborationNamespace + "__"
 
-	// 官方客户端的协作工具只有一层 namespace。限制深度和改写数量，
-	// 避免异常请求用深层嵌套或大量同名工具放大扫描/复制成本。
+	// The official client's collaboration tools have only one namespace layer. Limit the depth and the number of rewrites,
+	// so that abnormal requests cannot use deep nesting or many same-named tools to inflate scanning and copying costs.
 	codexMultiAgentV2MaxToolDepth = 8
 	codexMultiAgentV2MaxToolPaths = 16
 )
@@ -60,10 +60,10 @@ var (
 	codexFunctionCallBytes           = []byte("function_call")
 )
 
-// codexMultiAgentV2State 记录本次请求是否真的执行了命名空间改写。
-// 只有改写过时才需要在响应侧还原，避免普通请求被二次处理。
-// 账号、模型和诊断去重使用互斥锁，因为 attempt 协程可能被提前遗弃，
-// 而响应回调仍会读取状态。
+// codexMultiAgentV2State records whether this request actually performed the namespace rewrite.
+// Only a rewritten request needs restoring on the response side, so ordinary requests are not processed twice.
+// Account, model and diagnostic deduplication uses a mutex, because the attempt goroutine may be abandoned early,
+// while the response callback still reads the state.
 type codexMultiAgentV2State struct {
 	mu        sync.Mutex
 	optimized bool
@@ -92,8 +92,8 @@ func (s *codexMultiAgentV2State) isOptimizedFor(accountID int64) bool {
 	return s.optimized && s.accountID == accountID
 }
 
-// isOptimized 表示本次请求确实执行过命名空间改写。响应补全在函数内部再检查
-// 一次，避免未来新增响应路径忘记外层账号门槛时误补 marker。
+// isOptimized means this request did perform the namespace rewrite. Response completion checks this again inside the function,
+// so a future response path that forgets the outer account gate does not add the marker by mistake.
 func (s *codexMultiAgentV2State) isOptimized() bool {
 	if s == nil {
 		return false
@@ -112,7 +112,7 @@ func (s *codexMultiAgentV2State) diagnosticContext() (int64, string) {
 	return s.accountID, s.model
 }
 
-// markDiagnosed 返回 true 表示同一 call_id 已经记录过，调用方应跳过日志。
+// markDiagnosed returns true when the same call_id has already been recorded, and the caller should skip logging.
 func (s *codexMultiAgentV2State) markDiagnosed(key string) bool {
 	if s == nil || key == "" {
 		return false
@@ -146,7 +146,7 @@ func codexMultiAgentV2StateFromContext(ctx context.Context) *codexMultiAgentV2St
 	return state
 }
 
-// codexMultiAgentV2CompatEnabled 默认关闭，部署方通过环境变量显式启用。
+// codexMultiAgentV2CompatEnabled is off by default; deployers enable it explicitly through an environment variable.
 func codexMultiAgentV2CompatEnabled() bool {
 	switch strings.ToLower(strings.TrimSpace(os.Getenv(codexMultiAgentV2CompatEnv))) {
 	case "1", "true", "yes", "on":
@@ -156,8 +156,8 @@ func codexMultiAgentV2CompatEnabled() bool {
 	}
 }
 
-// isCodexMultiAgentV2Client 只匹配官方 Codex 客户端身份，避免把普通
-// Responses/Chat 请求或第三方客户端纳入改写。
+// isCodexMultiAgentV2Client only matches the official Codex client identity, so ordinary
+// Responses/Chat requests or third-party clients are not pulled into the rewrite.
 func isCodexMultiAgentV2Client(userAgent string) bool {
 	userAgent = strings.TrimSpace(userAgent)
 	return strings.HasPrefix(userAgent, "Codex Desktop/") ||
@@ -174,15 +174,15 @@ type codexFlatToolRename struct {
 
 type codexMultiAgentV2ToolScan struct {
 	messagePaths     []string
-	flatNames        map[string]codexFlatToolRename // tool path -> 原名后缀与改名后的前缀
+	flatNames        map[string]codexFlatToolRename // tool path -> original name suffix and renamed prefix
 	namespacePaths   []string
 	namespaceRecords map[string]struct{}
 	conflict         bool
 	limitExceeded    bool
 }
 
-// prepareCodexMultiAgentV2Request 是纯函数：返回改写后的请求体以及是否执行了
-// 命名空间改名。任何不确定/冲突情况都返回原 body，让上游保持原生行为。
+// prepareCodexMultiAgentV2Request is a pure function: it returns the rewritten request body and whether it performed the
+// namespace rename. In any uncertain or conflicting case it returns the original body, so the upstream keeps its native behavior.
 func prepareCodexMultiAgentV2Request(body []byte) ([]byte, bool, error) {
 	if !bytes.Contains(body, codexCollaborationNamespaceBytes) {
 		return body, false, nil
@@ -211,8 +211,8 @@ func prepareCodexMultiAgentV2Request(body []byte) ([]byte, bool, error) {
 	if scan.limitExceeded {
 		return body, false, fmt.Errorf("collaboration tool scan exceeds nesting or count limit")
 	}
-	// 只处理带 message.encrypted 的 collaboration 工具：没有可删的加密标记时
-	// 保持原生路径，避免无意义地改 schema 和命名空间。
+	// Only handles collaboration tools with message.encrypted: when there is no encryption marker to remove,
+	// keep the native path, so the schema and namespace are not changed for nothing.
 	if len(scan.messagePaths) == 0 || (len(scan.namespacePaths) == 0 && len(scan.flatNames) == 0) {
 		return body, false, nil
 	}
@@ -246,9 +246,9 @@ func prepareCodexMultiAgentV2Request(body []byte) ([]byte, bool, error) {
 	return updated, true, nil
 }
 
-// rewriteCodexMultiAgentV2ToolChoice 同步改写指向协作工具的 tool_choice，
-// 避免工具定义改名后 choice 仍指向旧名导致上游 400。只有本次确实改过
-// namespace 或对应扁平工具时才改写。
+// rewriteCodexMultiAgentV2ToolChoice also rewrites the tool_choice that points at a collaboration tool,
+// so that after a tool definition is renamed, the choice still pointing at the old name does not cause an upstream 400. It only rewrites when this request actually changed
+// the namespace or the corresponding flat tool.
 func rewriteCodexMultiAgentV2ToolChoice(body []byte, scan *codexMultiAgentV2ToolScan) ([]byte, error) {
 	choice := gjson.GetBytes(body, "tool_choice")
 	if !choice.IsObject() {
@@ -323,12 +323,12 @@ func (s *codexMultiAgentV2ToolScan) flatToolRenamed(name string) bool {
 	return false
 }
 
-// scanCodexMultiAgentV2Tools 只识别协作工具族的两种正式形态：
-// 顶层 collaboration namespace 下的三个 function，以及顶层扁平
-// collaboration.<tool>。其他 namespace 或裸工具名即使同名也不改写。
+// scanCodexMultiAgentV2Tools only recognizes the two official forms of the collaboration tool family:
+// the three functions under the top-level collaboration namespace, and the top-level flat
+// collaboration.<tool>. Other namespaces or bare tool names are not rewritten, even with the same name.
 //
-// 只有出现 parameters.properties.message.encrypted 时才记录，避免对已经
-// 明文的 schema 做无意义改名。
+// It only records when parameters.properties.message.encrypted is present, so it does not do a pointless rename on a
+// schema that is already plaintext.
 func scanCodexMultiAgentV2Tools(tools gjson.Result, path, namespace, namespacePath string, root bool, depth int, scan *codexMultiAgentV2ToolScan) {
 	if !tools.IsArray() {
 		return
@@ -421,19 +421,19 @@ func isCodexOptimizedNamespaceName(name string) bool {
 		strings.HasPrefix(name, codexOptimizedNamespaceDoublePrefix)
 }
 
-// restoreCodexMultiAgentV2Response 把上游响应中的临时命名空间还原为
-// collaboration。只改写工具调用项和 namespace 声明，arguments/input/output
-// 等不透明字段保持原样。
+// restoreCodexMultiAgentV2Response restores the temporary namespace in the upstream response to
+// collaboration. It only rewrites tool call items and namespace declarations; arguments/input/output
+// and other opaque fields stay as they are.
 //
-// 这里按已知响应容器定向改写，而不是整包 decode 成 any 再 marshal：
-// response.completed 会回显完整工具数组，整包重编码会放大延迟和垃圾。
+// This rewrites targeted known response containers, rather than decoding the whole package into any and then marshaling it:
+// response.completed echoes the full tool array, and re-encoding the whole thing would increase latency and garbage.
 func restoreCodexMultiAgentV2Response(payload []byte, state *codexMultiAgentV2State) []byte {
 	if len(payload) == 0 {
 		return payload
 	}
 	if !bytes.Contains(payload, codexOptimizedNamespaceBytes) {
-		// 上游可能把 namespace 归一化回 collaboration；本次请求确实改写过时，
-		// 仍要检查 function_call 是否缺 encrypted_function_args。
+		// The upstream may normalize the namespace back to collaboration; when this request did rewrite it,
+		// still check whether function_call is missing encrypted_function_args.
 		if state == nil || !state.isOptimized() || !bytes.Contains(payload, codexFunctionCallBytes) {
 			return payload
 		}
@@ -497,8 +497,8 @@ func restoreCodexMultiAgentV2Item(updated []byte, path string, item gjson.Result
 				return updated, err
 			}
 		}
-		// 上游可能直接返回 collaboration，而不是临时命名空间；只要本次请求
-		// 确实改写过，且是三个协作工具之一，就检查并按需补全明文标记。
+		// The upstream may return collaboration directly instead of the temporary namespace; as long as this request
+		// did rewrite it and it is one of the three collaboration tools, check it and fill in the plaintext marker as needed.
 		if itemType == "function_call" && (restoreNamespace || namespace == codexCollaborationNamespace) {
 			var err error
 			var injected bool
@@ -542,8 +542,8 @@ func restoreCodexMultiAgentV2Item(updated []byte, path string, item gjson.Result
 		}
 		return updated, nil
 	}
-	// 部分响应会回显工具定义或 tool_choice；扁平工具在请求侧被改成
-	// collaboration-optimize.<tool>，返回客户端前恢复原前缀。
+	// Some responses echo the tool definitions or tool_choice; flat tools were changed on the request side to
+	// collaboration-optimize.<tool>, so the original prefix is restored before returning to the client.
 	if itemType == "function" || itemType == "custom" {
 		if namespace := strings.TrimSpace(item.Get("namespace").String()); namespace == codexOptimizedCollaborationNamespace {
 			var err error
@@ -571,13 +571,13 @@ func restoreCodexMultiAgentV2Item(updated []byte, path string, item gjson.Result
 	return updated, nil
 }
 
-// ensureCodexPlaintextFunctionArgs 把上游省略的 encrypted_function_args 显式
-// 补成 []。客户端只在 encrypted_function_args == Some([]) 时才把协作工具参数
-// 当作明文；字段缺失或为 null 时仍按密文交付，父模型生成的明文 message 会被
-// 客户端重新包进子会话的 encrypted_content。
+// ensureCodexPlaintextFunctionArgs explicitly fills in
+// the encrypted_function_args the upstream omitted, as []. The client treats collaboration tool arguments as plaintext only when encrypted_function_args == Some([]),
+// and when the field is missing or null it still treats them as ciphertext, so the plaintext message generated by the parent model would be
+// re-wrapped by the client into the sub-session's encrypted_content.
 //
-// 补全前校验 arguments 是合法 JSON、message 是字符串，且不像已知密文前缀。
-// 上游仍返回密文时保持原样，把判断留给诊断日志和上层错误。
+// Before filling in, it checks that arguments is valid JSON, message is a string, and it does not look like a known ciphertext prefix.
+// If the upstream still returns ciphertext, it is left as is, and the judgment is left to diagnostic logs and upper-level errors.
 func ensureCodexPlaintextFunctionArgs(updated []byte, path, name string, item gjson.Result, state *codexMultiAgentV2State) ([]byte, bool, error) {
 	if state == nil || !state.isOptimized() {
 		return updated, false, nil
@@ -611,16 +611,16 @@ func ensureCodexPlaintextFunctionArgs(updated []byte, path, name string, item gj
 	}
 	accountID, model := state.diagnosticContext()
 	if callID := strings.TrimSpace(item.Get("call_id").String()); callID == "" || !state.markDiagnosed(callID+"\x00"+name+"\x00plaintext") {
-		log.Printf("[multi-agent-v2] 已为上游 %s 调用补全 encrypted_function_args: [] (account=%d model=%s)",
+		log.Printf("[multi-agent-v2] filled in encrypted_function_args: [] for upstream %s call (account=%d model=%s)",
 			name, accountID, model)
 	}
 	return updated, true, nil
 }
 
-// looksLikeCodexCiphertext 是响应补全前的 fail-closed 启发式，不是完整的
-// 密文识别。已知的 Fernet 前缀、JWE 紧凑格式和 enc_ 前缀直接拒绝；长度较长
-// 且只含 base64url 字符的单 token 也按密文处理。命中时保持原样，让客户端
-// 继续按加密消息处理，避免把密文伪装成明文任务。
+// looksLikeCodexCiphertext is a fail-closed heuristic applied before response completion, not a complete
+// ciphertext detector. Known Fernet prefixes, the JWE compact format and the enc_ prefix are rejected outright; a long
+// single token made only of base64url characters is also treated as ciphertext. On a match it keeps the value as is, so the client
+// keeps handling it as an encrypted message, so ciphertext is not disguised as a plaintext task.
 func looksLikeCodexCiphertext(value string) bool {
 	value = strings.TrimSpace(value)
 	if value == "" {
@@ -647,17 +647,17 @@ func looksLikeCodexCiphertext(value string) bool {
 	return true
 }
 
-// diagnoseCodexMultiAgentV2ToolCall 在还原响应时检查上游是否真的返回了
-// 明文标记。缺失 encrypted_function_args: [] 时客户端仍会按加密消息处理，
-// 这是兼容层未生效的关键可诊断信号；只记录账号、模型、工具名和密文形态，
-// 不记录任务正文。
+// diagnoseCodexMultiAgentV2ToolCall checks, while restoring the response, whether the upstream really returned the
+// plaintext marker. When encrypted_function_args: [] is missing, the client still handles the call as an encrypted message,
+// which is the key diagnosable signal that the compatibility layer did not take effect. It only records the account, model, tool name and ciphertext shape,
+// not the task body.
 func diagnoseCodexMultiAgentV2ToolCall(name string, item gjson.Result, state *codexMultiAgentV2State) {
 	if _, ok := codexCollaborationMessageTools[name]; !ok {
 		return
 	}
 	arguments := item.Get("arguments").String()
 	if strings.TrimSpace(arguments) == "" {
-		// output_item.added 可能还没有 arguments；等到 done 再判断。
+		// output_item.added may not have arguments yet; judge again at done.
 		return
 	}
 	if marker := item.Get("encrypted_function_args"); marker.IsArray() && len(marker.Array()) == 0 {
@@ -670,6 +670,6 @@ func diagnoseCodexMultiAgentV2ToolCall(name string, item gjson.Result, state *co
 		}
 	}
 	message := gjson.Get(arguments, "message").String()
-	log.Printf("[multi-agent-v2] 上游 %s 调用未返回 encrypted_function_args: []，Codex 仍会按加密消息处理 (account=%d model=%s ciphertext_like=%t)",
+	log.Printf("[multi-agent-v2] upstream %s call did not return encrypted_function_args: [], Codex will still treat it as an encrypted message (account=%d model=%s ciphertext_like=%t)",
 		name, accountID, model, looksLikeCodexCiphertext(message))
 }

@@ -11,9 +11,9 @@ import (
 
 const discardRaceEvent = "data: {\"type\":\"response.output_text.delta\",\"delta\":\"runaway repetition\"}\n\n"
 
-// concurrentSafeBuffer 是并发回归专用 sink。streamFlushWriter 把下游写放在
-// 内部状态锁之外执行（慢速客户端不得阻塞 DiscardBuffered），因此测试夹具自己
-// 必须线程安全，避免把夹具的数据竞争误判成生产代码问题。
+// concurrentSafeBuffer is a sink dedicated to the concurrency regression. streamFlushWriter runs downstream writes on
+// outside its internal state lock (a slow client must not block DiscardBuffered), so the test fixture itself
+// must be thread-safe, so a data race in the fixture is not mistaken for a production code problem.
 type concurrentSafeBuffer struct {
 	mu  sync.Mutex
 	buf bytes.Buffer
@@ -37,15 +37,15 @@ func (b *concurrentSafeBuffer) String() string {
 	return b.buf.String()
 }
 
-// guard 的 discard 回调在 HandleTripped 的 once 内锁外执行，与持 downstreamMu
-// 的保活/forward 并发共享同一个 streamFlushWriter。回归要求：不 panic（不再并
-// 发读写 bytes.Buffer/扫描器）、丢弃状态只生效一次、discard 完成后任何入口都
-// 不再向 sink 写字节。
+// The guard's discard callback runs outside the lock inside HandleTripped's once, and it shares the same streamFlushWriter
+// concurrently with the keepalive/forward path that holds downstreamMu. The regression requires: no panic (no longer concurrently
+// read or write bytes.Buffer/the scanner), the discard state takes effect only once, and after discard completes no entry point
+// writes bytes to the sink anymore.
 func TestStreamFlushWriterDiscardBufferedConcurrent(t *testing.T) {
 	sink := &concurrentSafeBuffer{}
 	w := &streamFlushWriter{writer: sink, policy: StreamFlushPolicyCoalesce, interval: time.Hour, lastFlush: time.Now()}
 	event := []byte(discardRaceEvent)
-	// 缓冲里先囤住“已判定失控”的残留字节：discard 必须把它们彻底丢弃。
+	// The buffer first holds leftover bytes already judged runaway: discard must drop them completely.
 	if err := w.WriteBytes(event); err != nil {
 		t.Fatalf("prefill WriteBytes: %v", err)
 	}
@@ -80,7 +80,7 @@ func TestStreamFlushWriterDiscardBufferedConcurrent(t *testing.T) {
 					_ = w.Finalize()
 				}
 				if j == 10 {
-					// 保证 discard 发生在写 goroutine 仍在跑的时候。
+					// Ensures discard happens while the write goroutine is still running.
 					midwayOnce.Do(func() { close(midway) })
 				}
 			}
@@ -104,7 +104,7 @@ func TestStreamFlushWriterDiscardBufferedConcurrent(t *testing.T) {
 		t.Fatalf("expected buffer/scanCarry/outputScanner cleared")
 	}
 
-	// discard 之后所有写入口都必须短路：不得再向 sink 写任何字节。
+	// After discard, every write entry point must short-circuit: it must not write any bytes to the sink.
 	before := sink.Len()
 	for i := 0; i < 100; i++ {
 		if err := w.Flush(); err != nil {
@@ -127,13 +127,13 @@ func TestStreamFlushWriterDiscardBufferedConcurrent(t *testing.T) {
 		}
 	}
 	if got := sink.Len(); got != before {
-		t.Fatalf("discard 后仍有字节写入下游: before=%d after=%d", before, got)
+		t.Fatalf("bytes still written downstream after discard: before=%d after=%d", before, got)
 	}
 	if w.buffer.Len() != 0 {
-		t.Fatalf("discard 后缓冲又被写入: %q", w.buffer.String())
+		t.Fatalf("buffer was written again after discard: %q", w.buffer.String())
 	}
 
-	// 重复/并发调用 DiscardBuffered 必须幂等：不 panic、状态不回退、无新字节。
+	// Repeated or concurrent calls to DiscardBuffered must be idempotent: no panic, the state does not roll back, and no new bytes.
 	var repeat sync.WaitGroup
 	for i := 0; i < writers; i++ {
 		repeat.Add(1)
@@ -151,8 +151,8 @@ func TestStreamFlushWriterDiscardBufferedConcurrent(t *testing.T) {
 	}
 }
 
-// blockingWriteSink 让第一次下游写停在 Write 里，用于验证 DiscardBuffered 不会
-// 被慢速/阻塞的下游写拖住（guard 终止编排“不被下游写锁延迟”的约束）。
+// blockingWriteSink holds the first downstream write inside Write, to verify that DiscardBuffered is not
+// held up by a slow or blocked downstream write (the constraint that guard termination orchestration is not delayed by the downstream write lock).
 type blockingWriteSink struct {
 	entered   chan struct{}
 	release   chan struct{}
@@ -195,10 +195,10 @@ func TestStreamFlushWriterDiscardBufferedNotBlockedBySlowDownstream(t *testing.T
 	select {
 	case <-sink.entered:
 	case <-time.After(5 * time.Second):
-		t.Fatalf("Flush 未进入下游写入")
+		t.Fatalf("Flush did not enter the downstream write")
 	}
 
-	// 此刻下游写仍阻塞在 sink 内；discard 必须立刻返回而不是等下游 I/O。
+	// At this point the downstream write is still blocked inside the sink; discard must return immediately instead of waiting for downstream I/O.
 	discardDone := make(chan struct{})
 	go func() {
 		defer close(discardDone)
@@ -208,10 +208,10 @@ func TestStreamFlushWriterDiscardBufferedNotBlockedBySlowDownstream(t *testing.T
 	case <-discardDone:
 	case <-time.After(5 * time.Second):
 		close(sink.release)
-		t.Fatalf("DiscardBuffered 被慢速下游写阻塞")
+		t.Fatalf("DiscardBuffered was blocked by a slow downstream write")
 	}
 	if !w.aborted.Load() || w.buffer.Len() != 0 || w.scanCarry != nil || w.outputScanner != nil {
-		t.Fatalf("discard 未完成清理: aborted=%t buffer=%d carry=%v scanner=%v", w.aborted.Load(), w.buffer.Len(), w.scanCarry != nil, w.outputScanner != nil)
+		t.Fatalf("discard did not finish cleanup: aborted=%t buffer=%d carry=%v scanner=%v", w.aborted.Load(), w.buffer.Len(), w.scanCarry != nil, w.outputScanner != nil)
 	}
 
 	close(sink.release)
@@ -219,7 +219,7 @@ func TestStreamFlushWriterDiscardBufferedNotBlockedBySlowDownstream(t *testing.T
 		t.Fatalf("Flush returned error: %v", err)
 	}
 
-	// 已进入 Write 的那一笔无法撤回；但 discard 之后的新入口一律不得再写。
+	// A write that has already entered Write cannot be taken back; but new entry points after discard must never write again.
 	before := sink.Len()
 	for i := 0; i < 20; i++ {
 		if err := w.Flush(); err != nil {
@@ -239,13 +239,13 @@ func TestStreamFlushWriterDiscardBufferedNotBlockedBySlowDownstream(t *testing.T
 		}
 	}
 	if got := sink.Len(); got != before {
-		t.Fatalf("discard 后仍有字节写入下游: before=%d after=%d", before, got)
+		t.Fatalf("bytes still written downstream after discard: before=%d after=%d", before, got)
 	}
 }
 
-// TestStreamFlushWriterDiscardBufferedConcurrentWithScanner 是挂有 outputScanner
-// 时的并发回归变体。DiscardBuffered 与 Flush/WriteSSEData/WriteBytes/Finalize
-// 并发交错，验证 -race 下无 panic、outputScanner 清理安全，且 discard 后零新字节。
+// TestStreamFlushWriterDiscardBufferedConcurrentWithScanner is the concurrency regression variant for when an outputScanner is attached.
+// DiscardBuffered interleaves concurrently with Flush/WriteSSEData/WriteBytes/Finalize,
+// and verifies no panic under -race, that outputScanner cleanup is safe, and zero new bytes after discard.
 func TestStreamFlushWriterDiscardBufferedConcurrentWithScanner(t *testing.T) {
 	sink := &concurrentSafeBuffer{}
 	cfg := promptfilter.DefaultConfig()
@@ -320,7 +320,7 @@ func TestStreamFlushWriterDiscardBufferedConcurrentWithScanner(t *testing.T) {
 		t.Fatalf("expected buffer/scanCarry/outputScanner cleared")
 	}
 
-	// discard 之后所有写入口都必须短路：不得再向 sink 写任何字节。
+	// After discard, every write entry point must short-circuit: it must not write any bytes to the sink.
 	before := sink.Len()
 	for i := 0; i < 100; i++ {
 		if err := w.Flush(); err != nil {
@@ -343,9 +343,9 @@ func TestStreamFlushWriterDiscardBufferedConcurrentWithScanner(t *testing.T) {
 		}
 	}
 	if got := sink.Len(); got != before {
-		t.Fatalf("discard 后仍有字节写入下游: before=%d after=%d", before, got)
+		t.Fatalf("bytes still written downstream after discard: before=%d after=%d", before, got)
 	}
 	if w.buffer.Len() != 0 {
-		t.Fatalf("discard 后缓冲又被写入: %q", w.buffer.String())
+		t.Fatalf("buffer was written again after discard: %q", w.buffer.String())
 	}
 }

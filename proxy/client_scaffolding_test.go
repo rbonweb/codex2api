@@ -3,7 +3,6 @@ package proxy
 import (
 	"strings"
 	"testing"
-
 )
 
 const clientScaffoldingSample = "<system-reminder>\n" +
@@ -162,9 +161,6 @@ func TestNormalizeClientScaffoldingSkipsOversizedPayloads(t *testing.T) {
 	}
 }
 
-
-
-
 // The affinity key is resolved from the raw body, before the converter runs, so
 // the ingress neutralizer cannot protect it. It has to ignore the same
 // scaffolding, otherwise a volatile environment block moves the conversation to
@@ -193,4 +189,3 @@ func TestDeriveContentSessionSeedStillDistinguishesScaffoldedConversations(t *te
 		t.Fatalf("different questions must stay isolated: %q vs %q", leftSeed, rightSeed)
 	}
 }
-

@@ -1,16 +1,16 @@
-// Package proxy: 「该 Key × 某分组/账号」的并发上限（issue #439 v2）。
+// Package proxy: concurrency limit for "this key × a group/account" (issue #439 v2).
 //
-// 与 Key 级 max_concurrency 的区别：那个在请求入口就能判定（不需要知道会用哪个账号），
-// 这个只有选中账号之后才知道命中哪条 scope，所以拆成两步：
+// Unlike the key-level max_concurrency, which is decided at request entry (without needing to know which account will be used),
+// this one only knows which scope is hit after an account is selected, so it is split into two steps:
 //
-//  1. 选号阶段：账号过滤链里读一次当前在途数，已满则把该 scope 的账号剔除，请求自然落到
-//     其它分组；候选被剔空时返回 429 并说明是并发位已满。并发是瞬时状态，不套用预算的
-//     on_exhausted=reject（那会让偶发争抢直接失败），一律按"换号"处理；
-//  2. 选中之后：为命中的每条 scope 占一个位，请求结束（或换号重试）时释放。
+//  1. Selection phase: read the current in-flight count once in the account filter chain; if full, remove that scope's accounts so the request naturally falls through to
+//     other groups; when no candidates remain it returns 429 and states that concurrency slots are full. Concurrency is a transient state, so the budget's
+//     on_exhausted=reject (that would make occasional contention fail outright), and is always handled as "switch account";
+//  2. After selection: take one slot for each matched scope, and release them when the request ends (or on an account-switch retry).
 //
-// 刻意做成**软上限**：过滤判定与占位之间存在竞态，高并发下可能短暂超出一两个。要做硬上限
-// 就得在占位失败后回到调度循环重选账号，那需要改动 6 条转发路径的重试结构，收益不抵风险。
-// 位上带截止时间，即使某条路径漏了释放也会在 scopeLeaseMaxAge 后自愈，不会永久卡死一条 scope。
+// It is deliberately a **soft limit**: there is a race between the filter check and taking the slot, so under high concurrency it may briefly exceed by one or two. A hard limit
+// would require re-selecting an account in the scheduling loop after a failed slot take, which means changing the retry structure of 6 forwarding paths; the gain does not justify the risk.
+// Each slot carries a deadline, so even if a path forgets to release, it self-heals after scopeLeaseMaxAge and never permanently blocks a scope.
 package proxy
 
 import (
@@ -23,8 +23,8 @@ import (
 	"github.com/gin-gonic/gin"
 )
 
-// scopeLeaseMaxAge 是一个位的最长存活时间。正常路径都会显式释放；这是漏释放时的兜底，
-// 取值远大于任何单次请求（含长流式与 WS 轮次）。
+// scopeLeaseMaxAge is the maximum lifetime of one slot. Normal paths release it explicitly; this is the fallback for missed releases,
+// set far above any single request (including long streams and WS rounds).
 const scopeLeaseMaxAge = 15 * time.Minute
 
 type scopeConcurrencyLease struct {
@@ -36,17 +36,17 @@ type scopeConcurrencyLease struct {
 type scopeConcurrencyTracker struct {
 	mu     sync.Mutex
 	nextID uint64
-	// inflight[scope] = leaseID -> 截止时间
+	// inflight[scope] = leaseID -> deadline
 	inflight map[scopeSkipKey]map[uint64]time.Time
 }
 
-// apiKeyScopeConcurrency 是进程级单例：/v1 流量可能由多个 Handler 实例服务，
-// 并发计数必须共享（与 apiKeyScopeSkipStats 同理）。
+// apiKeyScopeConcurrency is a process-level singleton: /v1 traffic may be served by multiple Handler instances,
+// concurrency counts must be shared (same reason as apiKeyScopeSkipStats).
 var apiKeyScopeConcurrency = &scopeConcurrencyTracker{
 	inflight: make(map[scopeSkipKey]map[uint64]time.Time),
 }
 
-// count 返回某 scope 当前在途数，顺带清掉过期的位。
+// count returns the current in-flight count of a scope and also clears expired slots.
 func (t *scopeConcurrencyTracker) count(key scopeSkipKey) int {
 	t.mu.Lock()
 	defer t.mu.Unlock()
@@ -97,7 +97,7 @@ func (t *scopeConcurrencyTracker) release(lease scopeConcurrencyLease) {
 	}
 }
 
-// APIKeyScopeInflight 返回某 scope 当前在途请求数，供管理端展示。
+// APIKeyScopeInflight returns the current in-flight request count of a scope, for display in the admin UI.
 func APIKeyScopeInflight(apiKeyID int64, scopeType string, scopeID int64) int {
 	if apiKeyID <= 0 || scopeID <= 0 {
 		return 0
@@ -105,7 +105,7 @@ func APIKeyScopeInflight(apiKeyID int64, scopeType string, scopeID int64) int {
 	return apiKeyScopeConcurrency.count(scopeSkipKey{apiKeyID: apiKeyID, scopeType: scopeType, scopeID: scopeID})
 }
 
-// scopeConcurrencyFull 判断某条 scope 的并发位是否已满。
+// scopeConcurrencyFull reports whether a scope's concurrency slots are full.
 func scopeConcurrencyFull(apiKeyID int64, scope database.APIKeyScopeLimit) bool {
 	if scope.MaxConcurrency <= 0 {
 		return false
@@ -114,7 +114,7 @@ func scopeConcurrencyFull(apiKeyID int64, scope database.APIKeyScopeLimit) bool 
 	return apiKeyScopeConcurrency.count(key) >= scope.MaxConcurrency
 }
 
-// scopeMatchesAccount 判断账号是否落在某条 scope 上。
+// scopeMatchesAccount reports whether an account falls within a scope.
 func scopeMatchesAccount(scope database.APIKeyScopeLimit, account *auth.Account) bool {
 	if account == nil {
 		return false
@@ -125,8 +125,8 @@ func scopeMatchesAccount(scope database.APIKeyScopeLimit, account *auth.Account)
 	return account.InAnyGroup(map[int64]struct{}{scope.ScopeID: {}})
 }
 
-// AcquireAPIKeyScopeConcurrency 为选中的账号占位。同一请求换号重试时先释放上一轮的位，
-// 因为一个请求同时只会占用一个账号。
+// AcquireAPIKeyScopeConcurrency takes slots for the selected account. On an account-switch retry of the same request, the previous round's slots are released first,
+// because one request only ever occupies one account at a time.
 func (h *Handler) AcquireAPIKeyScopeConcurrency(c *gin.Context, account *auth.Account) {
 	gate := scopeBudgetGateFromContext(c)
 	if gate == nil || account == nil || len(gate.concurrencyScopes) == 0 {
@@ -147,14 +147,14 @@ func (h *Handler) AcquireAPIKeyScopeConcurrency(c *gin.Context, account *auth.Ac
 	gate.setLeases(leases)
 }
 
-// ReleaseAPIKeyScopeConcurrency 释放本次请求占用的全部并发位。转发 handler 在入口 defer 它。
+// ReleaseAPIKeyScopeConcurrency releases all concurrency slots this request holds. The forwarding handler defers it at entry.
 func (h *Handler) ReleaseAPIKeyScopeConcurrency(c *gin.Context) {
 	if gate := scopeBudgetGateFromContext(c); gate != nil {
 		gate.releaseLeases()
 	}
 }
 
-// scopeConcurrencyMessage 是并发位已满时给下游的说明。
+// scopeConcurrencyMessage is the note given downstream when concurrency slots are full.
 func scopeConcurrencyMessage(scopeLabel string, limit int) string {
 	return fmt.Sprintf("API key scope concurrency limit reached: %s allows %d concurrent request(s)", scopeLabel, limit)
 }

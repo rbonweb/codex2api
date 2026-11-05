@@ -15,14 +15,14 @@ import (
 )
 
 const (
-	// GuardWriteDeadlineTimeout 是已提交响应头后写入 guard 终态帧的有界超时。
-	// 它只约束下游尽力通知，绝不参与、也不阻塞上游取消。
+	// GuardWriteDeadlineTimeout is the bounded timeout for writing the guard terminal frame after the response headers have been committed.
+	// It only bounds best-effort downstream notification and never participates in or blocks upstream cancellation.
 	GuardWriteDeadlineTimeout = 5 * time.Second
 )
 
-// ApplyDownstreamWriteDeadline 通过 http.ResponseController 给下游写施加
-// 有界超时。timeout<=0 表示清除 deadline。底层不支持时返回
-// http.ErrNotSupported，调用方必须放弃写而不是退化为可能无界阻塞的同步写。
+// ApplyDownstreamWriteDeadline applies a bounded timeout to downstream writes through http.ResponseController.
+// timeout<=0 clears the deadline. If the underlying layer does not support it, it returns
+// http.ErrNotSupported, and the caller must give up the write rather than fall back to a synchronous write that may block without bound.
 func ApplyDownstreamWriteDeadline(w http.ResponseWriter, timeout time.Duration) error {
 	if w == nil {
 		return errors.New("nil response writer")
@@ -37,9 +37,9 @@ func ApplyDownstreamWriteDeadline(w http.ResponseWriter, timeout time.Duration) 
 	return rc.SetWriteDeadline(time.Now().Add(timeout))
 }
 
-// FormatGuardTerminalEnvelope 生成各协议脱敏后的 guard 终态帧。
-// 返回的 status 仅在响应头未提交时使用（502）；已提交时忽略。
-// 所有协议都不携带内部触发 reason。
+// FormatGuardTerminalEnvelope builds the redacted guard terminal frame for each protocol.
+// The returned status is used only when the response headers have not been committed (502); it is ignored once they have.
+// No protocol carries the internal trigger reason.
 func FormatGuardTerminalEnvelope(protocol string, streamID string) ([]byte, int, error) {
 	normProto := strings.ToLower(strings.TrimSpace(protocol))
 	switch normProto {
@@ -85,7 +85,7 @@ func FormatGuardTerminalEnvelope(protocol string, streamID string) ([]byte, int,
 		return []byte("event: error\ndata: " + string(payload) + "\n\n"), http.StatusOK, nil
 
 	case "gemini":
-		// Native Gemini SDK 不解析 SSE；错误必须是无 data: 前缀的裸 JSON。
+		// The native Gemini SDK does not parse SSE; the error must be bare JSON without the data: prefix.
 		payload, err := json.Marshal(gin.H{
 			"error": gin.H{"code": http.StatusBadGateway, "message": GuardTriggeredPublicMessage, "status": "UNAVAILABLE"},
 		})
@@ -122,15 +122,15 @@ func FormatGuardTerminalEnvelope(protocol string, streamID string) ([]byte, int,
 	}
 }
 
-// SendDownstreamGuardTerminalHTTP 尽力向下游 HTTP 客户端发送 guard 终态。
+// SendDownstreamGuardTerminalHTTP makes a best-effort attempt to send the guard terminal state to the downstream HTTP client.
 //
-// 未提交响应头：直接返回 502 JSON 错误。
-// 已提交流式响应头：通过 TryLock 非阻塞获取下游写锁，锁内用 ResponseController
-// 施加 5s 写超时后写出协议终态帧；锁被占用、deadline 不受支持、连接已断开或
-// 写入失败时立即放弃（clientGone=true），绝不启动孤儿 goroutine 拼死写入。
+// If the response headers are not committed, it returns a 502 JSON error directly.
+// If the streaming response headers are committed, it takes the downstream write lock non-blockingly via TryLock, and inside the lock uses ResponseController
+// to apply a 5s write timeout and then write the protocol terminal frame. If the lock is held, the deadline is unsupported, the connection is gone,
+// or the write fails, it gives up immediately (clientGone=true). It never starts an orphan goroutine to keep writing.
 //
-// 无论成功与否，该函数都不会阻塞或延迟上游取消：调用方必须先执行
-// GuardTerminationCoordinator.HandleTripped。
+// Regardless of success, this function never blocks or delays upstream cancellation: the caller must first execute
+// GuardTerminationCoordinator.HandleTripped.
 func SendDownstreamGuardTerminalHTTP(c *gin.Context, mu *sync.Mutex, clientGone *bool, protocol string, reason string) error {
 	if c == nil || c.Writer == nil {
 		if clientGone != nil {
@@ -196,13 +196,13 @@ func SendDownstreamGuardTerminalHTTP(c *gin.Context, mu *sync.Mutex, clientGone 
 	return nil
 }
 
-// SendDownstreamGuardTerminalWS 向 Responses WebSocket 连接写入带 stream_id 的
-// 脱敏 error 帧。写超时有界；调用方负责后续关闭连接。
+// SendDownstreamGuardTerminalWS writes an error frame carrying stream_id to the Responses WebSocket connection,
+// redacted. The write timeout is bounded; the caller is responsible for closing the connection afterwards.
 //
-// 并发写契约：gorilla/websocket 禁止同一 conn 上出现并发写（并发写会 panic）。
-// 调用方必须保证同一 conn 上无并发写（含流式转发 goroutine）；本函数不做任何
-// 连接级写串行化，也不隐式等待转发侧写入结束。后续 wsrelay 接线时须由调用方
-// 用同一把写锁/单写 goroutine 保证互斥。
+// Concurrent write contract: gorilla/websocket forbids concurrent writes on the same conn (concurrent writes panic).
+// The caller must guarantee there are no concurrent writes on the same conn (including the streaming forwarding goroutine). This function does no
+// connection-level write serialization and does not implicitly wait for the forwarding side's writes to finish. When wsrelay is wired up later, the caller must
+// use the same write lock or a single writer goroutine to guarantee mutual exclusion.
 func SendDownstreamGuardTerminalWS(conn *websocket.Conn, streamID string, reason string) error {
 	if conn == nil {
 		return errors.New("nil websocket conn")

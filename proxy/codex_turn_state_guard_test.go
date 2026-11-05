@@ -23,8 +23,8 @@ func newTurnStateTestContext(t *testing.T) (*gin.Context, *httptest.ResponseReco
 	return c, recorder
 }
 
-// 跨账号回声守卫:换号后客户端回带旧账号铸造的 turn-state 必须剥离;
-// 同账号、无溯源记录或无会话标识时保持透传。
+// The cross-account echo guard: after switching accounts, a turn-state that the client echoes back from the old account's minting must be stripped;
+// for the same account, or when there is no provenance record or no session ID, pass-through is kept.
 func TestGuardCodexTurnStateEchoStripsCrossAccountEcho(t *testing.T) {
 	minter := &auth.Account{DBID: 101}
 	other := &auth.Account{DBID: 202}
@@ -82,8 +82,8 @@ func TestGuardCodexTurnStateEchoExpiredProvenanceIsDropped(t *testing.T) {
 	}
 }
 
-// 上游无 turn-state 时必须清除 writer 上残留的上一 failover attempt 的值,
-// 防止旧账号的 blob 粘到新账号的响应上。
+// When the upstream has no turn-state, the value left on the writer by the previous failover attempt must be cleared,
+// so the old account's blob does not stick to the new account's response.
 func TestRelayCodexTurnStateClearsStaleHeaderOnFailover(t *testing.T) {
 	affinityKey := "turn-guard-conv-stale::api-key:9"
 	t.Cleanup(func() { codexTurnStateOrigins.Delete(affinityKey) })
@@ -157,8 +157,8 @@ func TestCommitResponsesStreamAttemptDoesNotForgeTurnStateAfterHeartbeat(t *test
 	}
 }
 
-// 会话级 beta-features:未声明时补默认(deviceCfg 优先于内置默认),
-// 客户端显式声明的原样保留(即使不含 remote_compaction_v2)。
+// Session-level beta-features: when not declared, the default is filled in (deviceCfg takes precedence over the built-in default),
+// what the client explicitly declares is kept as is (even if it does not include remote_compaction_v2).
 func TestApplyCodexRequestHeadersSessionLevelBetaFeatures(t *testing.T) {
 	acc := &auth.Account{DBID: 42, AccountID: "acct-42"}
 

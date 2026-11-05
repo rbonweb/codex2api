@@ -6,8 +6,8 @@ import (
 	"github.com/tidwall/gjson"
 )
 
-// isFirstTokenEvent 判断 codex SSE 事件类型是否可能代表"首个有内容产出"。
-// 纯生命周期/结构事件不算首 token；完整 payload 场景应优先使用 isFirstTokenResult。
+// isFirstTokenEvent reports whether a codex SSE event type may represent the "first content output".
+// Pure lifecycle/structural events do not count as the first token; when the full payload is available, isFirstTokenResult should be preferred.
 func isFirstTokenEvent(eventType string) bool {
 	eventType = strings.TrimSpace(eventType)
 	switch eventType {
@@ -39,9 +39,9 @@ func isFirstTokenEvent(eventType string) bool {
 	return false
 }
 
-// isPreContentLifecycleEvent 识别不含模型产出的 response.created / in_progress。
-// 宽松首字统计排除这些帧；下游提交与首内容前重试另由 isFirstTokenResult 判断，
-// 不能用这个生命周期分类决定结构帧是否应立即下发。
+// isPreContentLifecycleEvent identifies response.created / in_progress, which contain no model output.
+// The loose first-token statistic excludes these frames; the downstream commit and the retry before first content are judged separately by isFirstTokenResult,
+// so this lifecycle classification must not decide whether structural frames should be sent immediately.
 func isPreContentLifecycleEvent(eventType string) bool {
 	switch strings.TrimSpace(eventType) {
 	case "response.created", "response.in_progress":
@@ -82,9 +82,9 @@ func isFirstTokenResult(parsed gjson.Result) bool {
 	return isFirstTokenEvent(eventType)
 }
 
-// isLooseFirstTokenResult 是首字统计的唯一口径（宽松首字）：response.created /
-// in_progress 之外的首个非终态响应事件即记为首字，结构帧也算。严格判定
-// isFirstTokenResult 仍用于断流重试的 contentTokenSeen 等内容感知逻辑。
+// isLooseFirstTokenResult is the only basis for first-token statistics (loose first token): response.created /
+// the first non-terminal response event other than in_progress counts as the first token, and structural frames count too. The strict check
+// isFirstTokenResult is still used for content-aware logic such as contentTokenSeen for stream-break retries.
 func isLooseFirstTokenResult(parsed gjson.Result) bool {
 	eventType := strings.TrimSpace(parsed.Get("type").String())
 	if eventType == "" || isPreContentLifecycleEvent(eventType) {

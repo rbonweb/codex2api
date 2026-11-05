@@ -40,7 +40,7 @@ func TestParseOfficialCodexModelIDs(t *testing.T) {
 			t.Fatalf("parsed models missing %q in %v", model, models)
 		}
 	}
-	// gpt-5.4 全系下线；5.3 只保留 spark；gpt-5.2 及以下、gpt-5.2-codex、gpt-4.1 均被过滤。
+	// the whole gpt-5.4 series is retired; 5.3 keeps only spark; gpt-5.2 and below, gpt-5.2-codex, and gpt-4.1 are all filtered out.
 	for _, model := range []string{"gpt-5.4", "gpt-5.2", "gpt-5.2-codex", "gpt-4.1"} {
 		if !slices.Contains(skipped, model) {
 			t.Fatalf("skipped models missing %q in %v", model, skipped)
@@ -216,7 +216,7 @@ func TestLearnModelsFromManifest_AddsOnlyUnknownAndNeverTouchesExisting(t *testi
 	db := newTestModelRegistryDB(t)
 	ctx := context.Background()
 
-	// 预置一条管理员禁用的行:学习绝不能翻案。
+	// Pre-seed an administrator-disabled row: learning must never reverse it.
 	disabled := database.ModelRegistryRow{
 		ID: "gpt-old", Enabled: false, Category: ModelCategoryCodex, Source: "manual",
 		APIKeyAuthAvailable: true,
@@ -261,7 +261,7 @@ func TestLearnModelsFromManifest_AddsOnlyUnknownAndNeverTouchesExisting(t *testi
 		t.Fatalf("registry rows missing expected entries: new=%v old=%v", sawNew, sawOld)
 	}
 
-	// 学习后的模型立即进入请求侧支持列表。
+	// Learned models enter the request-side supported list immediately.
 	if !slices.Contains(SupportedModelIDs(ctx, db), "gpt-9.9-new") {
 		t.Fatal("learned model should appear in SupportedModelIDs immediately")
 	}
@@ -289,7 +289,7 @@ func TestLearnModelsFromManifest_AllKnownIsNoOp(t *testing.T) {
 	}
 }
 
-// 上游同步/学习的模型准入策略：5.5+ 放行，5.3 仅 spark，5.4 全系与 5.2 及以下下线。
+// Admission policy for upstream-synced and learned models: 5.5+ allowed, 5.3 spark only, the whole 5.4 series and 5.2 and below retired.
 func TestIsAllowedUpstreamCodexModel_Policy(t *testing.T) {
 	cases := map[string]bool{
 		"gpt-6-astra":         true,
@@ -308,8 +308,8 @@ func TestIsAllowedUpstreamCodexModel_Policy(t *testing.T) {
 		"gpt-4o":              false,
 		"gpt-image-2":         false,
 		"":                    false,
-		// Trusted Access for Cyber（issue #624）：稳定别名没有数字版本号，
-		// 但清单里出现即代表账号真实权益，必须放行；带版本号的 cyber 变体走常规规则。
+		// Trusted Access for Cyber (issue #624): stable aliases have no numeric version,
+		// but their presence in the manifest reflects real account entitlement, so they must be allowed; cyber variants with a version number follow the regular rules.
 		"gpt-daybreak-blue-latest": true,
 		"gpt-daybreak-red-latest":  true,
 		"gpt-5.6-cyber":            true,
@@ -322,7 +322,7 @@ func TestIsAllowedUpstreamCodexModel_Policy(t *testing.T) {
 		"gpt-+foo":                 false,
 		"gpt-daybreak-image":       false,
 		"daybreak-blue":            false,
-		// 内部变体后缀（个别账号清单里的 gpt-5.6-sol-wm）：不学进注册表。
+		// Internal variant suffixes (gpt-5.6-sol-wm in some accounts' manifests) are not learned into the registry.
 		"gpt-5.6-sol-wm": false,
 		"gpt-6-astra-wm": false,
 	}
@@ -333,9 +333,9 @@ func TestIsAllowedUpstreamCodexModel_Policy(t *testing.T) {
 	}
 }
 
-// /models/sync 的出站请求必须遵循全局 ProxyURL（issue #371）：官方模型页
-// （https）经 HTTP 代理访问时表现为一次 CONNECT。这里用假代理记录 CONNECT
-// 目标来证明请求真的走了代理，而不是直连。
+// Outbound requests from /models/sync must follow the global ProxyURL (issue #371): the official model page
+// (https) accessed through an HTTP proxy shows up as a CONNECT. Here a fake proxy records the CONNECT
+// target to prove the request actually went through the proxy rather than connecting directly.
 func TestSyncOfficialCodexModelsUsesGlobalProxy(t *testing.T) {
 	db := newTestModelRegistryDB(t)
 
@@ -347,7 +347,7 @@ func TestSyncOfficialCodexModelsUsesGlobalProxy(t *testing.T) {
 			connectHosts = append(connectHosts, r.URL.Host)
 		}
 		mu.Unlock()
-		// 拒绝隧道，令同步以网络错误结束——本测试只关心流量是否经过代理。
+		// Refuse the tunnel so the sync ends with a network error; this test only cares whether the traffic went through the proxy.
 		http.Error(w, "tunnel rejected by test proxy", http.StatusBadGateway)
 	}))
 	defer fakeProxy.Close()
@@ -370,24 +370,24 @@ func TestSyncOfficialCodexModelsUsesGlobalProxy(t *testing.T) {
 	}
 }
 
-// 空 proxyURL 保持直连语义：请求应命中目标站点本身（用可覆盖 URL 不可行，
-// 官方 URL 是常量——退而验证空代理不会因代理配置失败而报错，走到网络阶段）。
+// An empty proxyURL keeps direct-connection semantics: the request should reach the target site itself (an overridable URL is not feasible,
+// because the official URL is a constant, so fall back to checking that an empty proxy does not fail on proxy configuration and reaches the network stage).
 func TestSyncOfficialCodexModelsEmptyProxyStillAttempts(t *testing.T) {
 	db := newTestModelRegistryDB(t)
 	ctx, cancel := context.WithTimeout(context.Background(), 50*time.Millisecond)
 	defer cancel()
-	// 极短超时：无论网络环境如何都快速返回；断言错误是网络类而非参数类。
+	// Extremely short timeout: it returns quickly whatever the network conditions; assert the error is network-class, not argument-class.
 	_, err := SyncOfficialCodexModels(ctx, db, "")
 	if err == nil {
-		return // 网络环境好到 50ms 内完成同步也算通过
+		return // if the network is fast enough to finish the sync within 50ms, that also counts as a pass
 	}
-	if !strings.Contains(err.Error(), "官方模型页面") {
+	if !strings.Contains(err.Error(), "official model page") {
 		t.Fatalf("unexpected error kind: %v", err)
 	}
 }
 
 func TestIsAllowedUpstreamCodexModelAcceptsMajorOnlyVersions(t *testing.T) {
-	// gpt-6-astra 这类没有小数点的新一代型号必须被允许进入注册表。
+	// New-generation models with no decimal point, such as gpt-6-astra, must be allowed into the registry.
 	for _, id := range []string{"gpt-6-astra", "gpt-6", "gpt-7-nova"} {
 		if !isAllowedUpstreamCodexModel(id) {
 			t.Fatalf("%s should be allowed", id)
@@ -405,9 +405,9 @@ func TestIsAllowedUpstreamCodexModelAcceptsMajorOnlyVersions(t *testing.T) {
 }
 
 func TestParseOfficialCodexModelIDsIgnoresNonModelContexts(t *testing.T) {
-	// 真实官方页里"长得像模型 ID"的噪声：导航文案、锚点、图片文件名，以及用法示例
-	// 代码里的家族占位名（codex --model gpt-5.6 / model = "gpt-5.6"）——官方并没有
-	// 叫 gpt-5.6 的模型，只有卡片的 data-model-slug / slug / name 属性才算目录条目。
+	// Real noise on the official page that looks like a model ID: navigation copy, anchors, image filenames, and usage-example
+	// placeholder family names in code (codex --model gpt-5.6 / model = "gpt-5.6"). The official site has no
+	// model named gpt-5.6; only the card's data-model-slug / slug / name attributes count as catalog entries.
 	html := `
 		<a href="#gpt-6-astra-in-enterprise">Using GPT-6 Astra</a>
 		<img src="/images/api/models/gpt-6-astra-texture.webp" alt="Astra">
@@ -438,8 +438,8 @@ func TestParseOfficialCodexModelIDsIgnoresNonModelContexts(t *testing.T) {
 	}
 }
 
-// issue #624：Trusted Access for Cyber 账号的清单里带 gpt-daybreak-blue-latest，
-// 学习后必须立刻进入请求侧支持列表，否则 /v1/models 不列、/responses 直接拒绝。
+// issue #624: the manifest of a Trusted Access for Cyber account includes gpt-daybreak-blue-latest,
+// so after learning it must immediately enter the request-side supported list, otherwise /v1/models does not list it and /responses rejects it.
 func TestLearnModelsFromManifest_AdmitsNonVersionedCyberAlias(t *testing.T) {
 	db := newTestModelRegistryDB(t)
 	ctx := context.Background()
@@ -477,8 +477,8 @@ func TestLearnModelsFromManifest_AdmitsNonVersionedCyberAlias(t *testing.T) {
 	}
 }
 
-// 官方页是 official_codex_docs 来源行的唯一真值：页面上已不存在的该来源行
-// （早期解析噪声如裸 gpt-5.6）随同步删除；manifest 学习 / 手工来源与内置行不动。
+// The official page is the single source of truth for official_codex_docs source rows: such a source row that no longer appears on the page
+// (early parse noise such as a bare gpt-5.6) is removed by the sync; manifest learning, manual sources, and built-in rows are left alone.
 func TestApplyOfficialCodexModelSyncPrunesStaleOfficialRows(t *testing.T) {
 	db := newTestModelRegistryDB(t)
 	ctx := context.Background()
@@ -486,7 +486,7 @@ func TestApplyOfficialCodexModelSyncPrunesStaleOfficialRows(t *testing.T) {
 		{ID: "gpt-5.6", Enabled: true, Category: ModelCategoryCodex, Source: ModelSourceOfficialCodexDocs, APIKeyAuthAvailable: true},
 		{ID: "gpt-daybreak-blue-latest", Enabled: true, Category: ModelCategoryCodex, Source: ModelSourceUpstreamManifest, APIKeyAuthAvailable: true},
 		{ID: "gpt-7-manual", Enabled: true, Category: ModelCategoryCodex, Source: "manual", APIKeyAuthAvailable: true},
-		// 内置模型即使带 official 来源、页面暂时没列出，也不能删。
+		// A built-in model with an official source that is not currently listed on the page must not be deleted either.
 		{ID: "gpt-5.5", Enabled: false, Category: ModelCategoryCodex, Source: ModelSourceOfficialCodexDocs, APIKeyAuthAvailable: true},
 	}
 	if err := db.UpsertModelRegistryRows(ctx, seed); err != nil {
@@ -524,17 +524,17 @@ func TestApplyOfficialCodexModelSyncPrunesStaleOfficialRows(t *testing.T) {
 	}
 }
 
-// 同步/学习进来的非内置模型排在列表最前，按版本新→旧；内置列表接在后面。
+// Synced and learned non-built-in models are placed first in the list, ordered newest to oldest by version; the built-in list follows.
 func TestMergeModelInfosPutsSyncedModelsFirstNewestFirst(t *testing.T) {
 	rows := []database.ModelRegistryRow{
-		// 早期学进来的内部变体残留行：不再暴露。
+		// Residual internal variant rows learned earlier: no longer exposed.
 		{ID: "gpt-5.6-sol-wm", Enabled: true, Source: ModelSourceUpstreamManifest},
 		{ID: "gpt-daybreak-blue-latest", Enabled: true, Source: ModelSourceUpstreamManifest},
 		{ID: "gpt-6-nova", Enabled: true, Source: ModelSourceUpstreamManifest},
 		{ID: "gpt-5.7-terra", Enabled: true, Source: ModelSourceOfficialCodexDocs},
 		{ID: "gpt-5.7-sol", Enabled: true, Source: ModelSourceOfficialCodexDocs},
 		{ID: "gpt-7", Enabled: true, Source: ModelSourceUpstreamManifest},
-		// 内置行保持内置顺序，不参与前置。
+		// Built-in rows keep their built-in order and are not moved to the front.
 		{ID: "gpt-5.5", Enabled: true, Source: ModelSourceOfficialCodexDocs},
 	}
 	merged := mergeModelInfos(rows)
