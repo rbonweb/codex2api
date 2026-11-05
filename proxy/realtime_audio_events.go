@@ -15,6 +15,101 @@ type realtimeAudioConfig struct {
 	Voice        string
 	Instructions string
 	TextOnly     bool
+	// InputRate and OutputRate are the PCM16 sample rates the client uses; zero means the native 24000.
+	InputRate  int
+	OutputRate int
+	// DelegationNoAck asks Live not to speak a filler acknowledgement while a client delegation runs (delegation.acknowledgement "none").
+	DelegationNoAck bool
+	// NoCreateResponse records turn_detection.create_response:false. Live still decides when to speak, so it only changes what the session object reports; the bridge never sends response.create on its own, and a client response.create is forwarded either way.
+	NoCreateResponse bool
+}
+
+const (
+	realtimeAudioNativeRate = 24000
+	realtimeAudioLowRate    = 16000
+)
+
+// inputRate returns the effective client input sample rate.
+func (cfg *realtimeAudioConfig) inputRate() int {
+	if cfg.InputRate == realtimeAudioLowRate {
+		return realtimeAudioLowRate
+	}
+	return realtimeAudioNativeRate
+}
+
+// outputRate returns the effective client output sample rate.
+func (cfg *realtimeAudioConfig) outputRate() int {
+	if cfg.OutputRate == realtimeAudioLowRate {
+		return realtimeAudioLowRate
+	}
+	return realtimeAudioNativeRate
+}
+
+// realtimeAudioParamError marks an API error that names the session field behind it; the bridge writes it as the public error event with param.
+type realtimeAudioParamError struct {
+	Param string `json:"param"`
+}
+
+// realtimeAudioFieldError builds a session.update error with a code (unknown_parameter, unsupported_value, ...) and the dotted param.
+func realtimeAudioFieldError(code, param, message string) *api.APIError {
+	return api.NewAPIErrorWithDetails(api.ErrorCode(code), message, api.ErrorTypeInvalidRequest, realtimeAudioParamError{Param: param})
+}
+
+// Session fields OpenAI Realtime clients commonly send. Fields the bridge cannot act on (tools, temperature and so on) are tolerated and ignored because ChatGPT Live takes only instructions, voice and delegation at call creation; any other key is unknown_parameter.
+var (
+	realtimeAudioSessionKeys = setOf("type", "id", "object", "expires_at", "client_secret", "model", "instructions", "voice", "audio", "modalities", "output_modalities", "input_audio_format", "output_audio_format", "input_audio_transcription", "input_audio_noise_reduction", "turn_detection", "tools", "tool_choice", "temperature", "max_response_output_tokens", "max_output_tokens", "speed", "include", "tracing", "prompt", "truncation", "delegation")
+	realtimeAudioAudioKeys   = setOf("input", "output")
+	realtimeAudioInputKeys   = setOf("format", "transcription", "noise_reduction", "turn_detection")
+	realtimeAudioOutputKeys  = setOf("format", "voice", "speed")
+)
+
+func setOf(keys ...string) map[string]struct{} {
+	set := make(map[string]struct{}, len(keys))
+	for _, key := range keys {
+		set[key] = struct{}{}
+	}
+	return set
+}
+
+// firstUnknownKey returns the dotted path of the first key of obj (sorted by position) that is not in known, or "".
+func firstUnknownKey(obj gjson.Result, prefix string, known map[string]struct{}) string {
+	unknown := ""
+	obj.ForEach(func(key, _ gjson.Result) bool {
+		if _, ok := known[key.String()]; !ok {
+			unknown = prefix + "." + key.String()
+			return false
+		}
+		return true
+	})
+	return unknown
+}
+
+// validateRealtimeAudioSessionKeys rejects session keys the bridge does not know.
+func validateRealtimeAudioSessionKeys(session gjson.Result) *api.APIError {
+	check := func(obj gjson.Result, prefix string, known map[string]struct{}) *api.APIError {
+		if !obj.IsObject() {
+			return nil
+		}
+		if param := firstUnknownKey(obj, prefix, known); param != "" {
+			return realtimeAudioFieldError("unknown_parameter", param, "Unknown parameter: '"+param+"'.")
+		}
+		return nil
+	}
+	for _, step := range []struct {
+		obj    gjson.Result
+		prefix string
+		known  map[string]struct{}
+	}{
+		{session, "session", realtimeAudioSessionKeys},
+		{session.Get("audio"), "session.audio", realtimeAudioAudioKeys},
+		{session.Get("audio.input"), "session.audio.input", realtimeAudioInputKeys},
+		{session.Get("audio.output"), "session.audio.output", realtimeAudioOutputKeys},
+	} {
+		if err := check(step.obj, step.prefix, step.known); err != nil {
+			return err
+		}
+	}
+	return nil
 }
 
 // realtimeAudioResponse tracks the assistant response that is currently streaming.
@@ -380,6 +475,10 @@ func realtimeAudioSessionObject(cfg *realtimeAudioConfig, id string) map[string]
 	if cfg.TextOnly {
 		modality = "text"
 	}
+	delegation := map[string]any{"type": "client"}
+	if cfg.DelegationNoAck {
+		delegation["acknowledgement"] = "none"
+	}
 	session := map[string]any{
 		"object":            "realtime.session",
 		"type":              "realtime",
@@ -388,14 +487,15 @@ func realtimeAudioSessionObject(cfg *realtimeAudioConfig, id string) map[string]
 		"output_modalities": []string{modality},
 		"audio": map[string]any{
 			"input": map[string]any{
-				"format":         map[string]any{"type": "audio/pcm", "rate": 24000},
-				"turn_detection": map[string]any{"type": "server_vad"},
+				"format":         map[string]any{"type": "audio/pcm", "rate": cfg.inputRate()},
+				"turn_detection": map[string]any{"type": "server_vad", "create_response": !cfg.NoCreateResponse},
 			},
 			"output": map[string]any{
-				"format": map[string]any{"type": "audio/pcm", "rate": 24000},
+				"format": map[string]any{"type": "audio/pcm", "rate": cfg.outputRate()},
 				"voice":  voice,
 			},
 		},
+		"delegation": delegation,
 	}
 	if id != "" {
 		session["id"] = id
@@ -403,23 +503,90 @@ func realtimeAudioSessionObject(cfg *realtimeAudioConfig, id string) map[string]
 	return session
 }
 
-// realtimeAudioFormatAccepted reports whether a format field is absent or is 24 kHz mono PCM16.
-// It accepts the string "pcm16" or the object {"type":"audio/pcm","rate":24000} (rate optional).
-func realtimeAudioFormatAccepted(format gjson.Result) bool {
+// realtimeAudioFormatRate reads a format field. An absent or null field is ok with present false. The string "pcm16" and the object {"type":"audio/pcm","rate":24000|16000} (rate optional, default 24000) are ok with the rate; anything else is not ok. OpenAI has no legacy string for 16 kHz, so that rate exists only in the object form.
+func realtimeAudioFormatRate(format gjson.Result) (rate int, present, ok bool) {
 	if !format.Exists() || format.Type == gjson.Null {
-		return true
+		return 0, false, true
 	}
 	if format.Type == gjson.String {
-		return strings.EqualFold(format.String(), "pcm16")
+		return realtimeAudioNativeRate, true, strings.EqualFold(format.String(), "pcm16")
 	}
-	if !format.IsObject() {
-		return false
+	if !format.IsObject() || !strings.EqualFold(format.Get("type").String(), "audio/pcm") {
+		return 0, true, false
 	}
-	if !strings.EqualFold(format.Get("type").String(), "audio/pcm") {
-		return false
+	value := format.Get("rate")
+	if !value.Exists() {
+		return realtimeAudioNativeRate, true, true
 	}
-	rate := format.Get("rate")
-	return !rate.Exists() || (rate.Type == gjson.Number && rate.Num == 24000)
+	if value.Type == gjson.Number && (value.Num == realtimeAudioNativeRate || value.Num == realtimeAudioLowRate) {
+		return int(value.Num), true, true
+	}
+	return 0, true, false
+}
+
+// realtimeAudioApplyFormats reads the input and output format fields (the object form wins over the legacy string) into next.
+func realtimeAudioApplyFormats(session gjson.Result, next *realtimeAudioConfig) *api.APIError {
+	for _, field := range []struct {
+		legacy, object, name string
+		target               *int
+	}{
+		{"input_audio_format", "audio.input.format", "input", &next.InputRate},
+		{"output_audio_format", "audio.output.format", "output", &next.OutputRate},
+	} {
+		for _, path := range []string{field.legacy, field.object} {
+			rate, present, ok := realtimeAudioFormatRate(session.Get(path))
+			if !ok {
+				return realtimeAudioFieldError("unsupported_value", "session."+path, `only pcm16 mono `+field.name+` audio at 24 kHz or 16 kHz is supported (`+path+` {"type":"audio/pcm","rate":24000})`)
+			}
+			if present {
+				*field.target = rate
+			}
+		}
+	}
+	return nil
+}
+
+// realtimeAudioApplyDelegation reads session.delegation. Only client delegation exists; acknowledgement "none" is the gateway extension that turns Live's filler acknowledgement off, "auto" turns it back on. A delegation without acknowledgement leaves the current setting, so it keeps what the delegation query parameter chose.
+func realtimeAudioApplyDelegation(session gjson.Result, next *realtimeAudioConfig) *api.APIError {
+	delegation := session.Get("delegation")
+	if !delegation.Exists() || delegation.Type == gjson.Null {
+		return nil
+	}
+	if !delegation.IsObject() {
+		return realtimeAudioFieldError("unsupported_value", "session.delegation", `delegation must be an object such as {"type":"client"}.`)
+	}
+	if kind := delegation.Get("type"); kind.Exists() && kind.String() != "client" {
+		return realtimeAudioFieldError("unsupported_value", "session.delegation.type", "Only client delegation is supported; handle the task in your application and return the result with session.commentary.append.")
+	}
+	if ack := delegation.Get("acknowledgement"); ack.Exists() && ack.Type != gjson.Null {
+		switch ack.String() {
+		case "none":
+			next.DelegationNoAck = true
+		case "auto", "default":
+			// "auto" is the documented value; "default" is an undocumented synonym.
+			next.DelegationNoAck = false
+		default:
+			return realtimeAudioFieldError("unsupported_value", "session.delegation.acknowledgement", `The supported acknowledgements are "auto" and "none".`)
+		}
+	}
+	return nil
+}
+
+// realtimeAudioApplyTurnDetection records turn_detection.create_response. Live runs its own voice activity detection, so the rest of turn_detection is tolerated and ignored.
+func realtimeAudioApplyTurnDetection(session gjson.Result, next *realtimeAudioConfig) *api.APIError {
+	for _, path := range []string{"turn_detection", "audio.input.turn_detection"} {
+		detection := session.Get(path)
+		if !detection.IsObject() {
+			continue
+		}
+		if value := detection.Get("create_response"); value.Exists() && value.Type != gjson.Null {
+			if value.Type != gjson.True && value.Type != gjson.False {
+				return realtimeAudioFieldError("unsupported_value", "session."+path+".create_response", "create_response must be a boolean.")
+			}
+			next.NoCreateResponse = value.Type == gjson.False
+		}
+	}
+	return nil
 }
 
 // applyRealtimeAudioSessionUpdate applies an OpenAI session.update event to cfg.
@@ -430,12 +597,17 @@ func applyRealtimeAudioSessionUpdate(cfg *realtimeAudioConfig, raw []byte) (side
 		return nil, nil, api.NewAPIError(api.ErrCodeMissingField, "session is required in session.update", api.ErrorTypeInvalidRequest)
 	}
 
-	if !realtimeAudioFormatAccepted(session.Get("input_audio_format")) || !realtimeAudioFormatAccepted(session.Get("audio.input.format")) {
-		return nil, nil, api.NewAPIError(api.ErrCodeInvalidRequest, `only pcm16 24 kHz mono input audio is supported (audio.input.format {"type":"audio/pcm","rate":24000})`, api.ErrorTypeInvalidRequest)
+	if apiErr = validateRealtimeAudioSessionKeys(session); apiErr != nil {
+		return nil, nil, apiErr
 	}
-	if !realtimeAudioFormatAccepted(session.Get("output_audio_format")) || !realtimeAudioFormatAccepted(session.Get("audio.output.format")) {
-		return nil, nil, api.NewAPIError(api.ErrCodeInvalidRequest, `only pcm16 24 kHz mono output audio is supported (audio.output.format {"type":"audio/pcm","rate":24000})`, api.ErrorTypeInvalidRequest)
+	// Validate everything on a copy so a rejected update changes nothing.
+	next := *cfg
+	for _, apply := range []func(gjson.Result, *realtimeAudioConfig) *api.APIError{realtimeAudioApplyFormats, realtimeAudioApplyDelegation, realtimeAudioApplyTurnDetection} {
+		if apiErr = apply(session, &next); apiErr != nil {
+			return nil, nil, apiErr
+		}
 	}
+	cfg.InputRate, cfg.OutputRate, cfg.DelegationNoAck, cfg.NoCreateResponse = next.InputRate, next.OutputRate, next.DelegationNoAck, next.NoCreateResponse
 
 	voiceChanged := false
 	if voice := session.Get("audio.output.voice"); voice.Exists() {
@@ -493,7 +665,7 @@ func realtimeAudioInstructionsOrDefault(instructions string) string {
 	return instructions
 }
 
-// realtimeTextItemToContextAppend converts an OpenAI conversation.item.create text message into a ChatGPT Live context append.
+// realtimeTextItemToContextAppend converts an OpenAI conversation.item.create text message into a ChatGPT Live context append on the quiet "commentary" channel: the model may use it but does not speak it, which is what a client adding conversation context expects. The speakable default would make Live read the text aloud.
 // It returns the sideband event and the conversation.item.created ack; audio items are rejected.
 func realtimeTextItemToContextAppend(raw []byte) (sideband, ack []byte, apiErr *api.APIError) {
 	item := gjson.GetBytes(raw, "item")
@@ -528,7 +700,8 @@ func realtimeTextItemToContextAppend(raw []byte) (sideband, ack []byte, apiErr *
 	}
 
 	sideband = marshalRealtimeServerEvent(map[string]any{
-		"type": "session.context.append",
+		"type":    "session.context.append",
+		"channel": "commentary",
 		"content": []map[string]any{
 			{"type": "input_text", "text": joined},
 		},

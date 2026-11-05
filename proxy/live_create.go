@@ -273,6 +273,11 @@ func (s *liveCreateState) gatewayError(outcome liveCreateOutcome) *liveGatewayEr
 // createGatewayLiveCall opens a Live call for the gateway itself. It runs the same account selection, retries, attestation, identity, lease, store save and usage logging as LiveCreate but never writes to c, so it is safe after a WebSocket upgrade.
 // The call is claimed as proxy-controlled so no external sideband can attach. The caller releases everything with h.liveCalls().finalize(record).
 func (h *Handler) createGatewayLiveCall(c *gin.Context, request *liveCallRequest) (*gatewayLiveCall, *liveGatewayError) {
+	return h.createLiveCallWithoutReply(c, request, true)
+}
+
+// createLiveCallWithoutReply is createGatewayLiveCall with a choice: with claim false the saved call stays pending, so a client that owns the media can attach a sideband to it later (POST /v1/live/sessions).
+func (h *Handler) createLiveCallWithoutReply(c *gin.Context, request *liveCallRequest, claim bool) (*gatewayLiveCall, *liveGatewayError) {
 	row := apiKeyRowFromContext(c)
 	if row == nil || !row.Limits.AllowLive {
 		return nil, newLiveGatewayError(http.StatusForbidden, api.ErrCodeInsufficientScope, api.ErrorTypePermission, "ChatGPT Live is not enabled for this API key")
@@ -306,9 +311,11 @@ func (h *Handler) createGatewayLiveCall(c *gin.Context, request *liveCallRequest
 		return nil, newLiveGatewayError(http.StatusServiceUnavailable, api.ErrCodeServiceUnavailable, api.ErrorTypeServer, "Live call mapping unavailable")
 	}
 	state.keyHeld = true
-	if _, claimed, err := h.liveCalls().claimProxy(ctx, record); err != nil || !claimed {
-		h.liveCalls().finalize(record)
-		return nil, newLiveGatewayError(http.StatusServiceUnavailable, api.ErrCodeServiceUnavailable, api.ErrorTypeServer, "Live call unavailable")
+	if claim {
+		if _, claimed, err := h.liveCalls().claimProxy(ctx, record); err != nil || !claimed {
+			h.liveCalls().finalize(record)
+			return nil, newLiveGatewayError(http.StatusServiceUnavailable, api.ErrCodeServiceUnavailable, api.ErrorTypeServer, "Live call unavailable")
+		}
 	}
 	return &gatewayLiveCall{Record: record, AnswerSDP: outcome.created.sdp}, nil
 }

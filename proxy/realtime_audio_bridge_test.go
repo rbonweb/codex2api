@@ -88,23 +88,16 @@ type bridgeTestServer struct {
 }
 
 // newBridgeTestServer serves /v1/realtime through RealtimeWebSocket with the audio seams replaced by fakes.
+// The call is created lazily, so tests that need it send a trigger event (audio append, conversation.item.create or response.create) first.
 func newBridgeTestServer(t *testing.T, allowLive, supported bool) *bridgeTestServer {
-	t.Helper()
-	// A short grace keeps tests that never send a trigger event moving; tests that need to see the call before it exists use newBridgeTestServerWithGrace.
-	return newBridgeTestServerWithGrace(t, allowLive, supported, 5*time.Millisecond)
-}
-
-// newBridgeTestServerWithGrace sets the creation grace before the server starts, so the handlers read it after a happens-before edge.
-func newBridgeTestServerWithGrace(t *testing.T, allowLive, supported bool, grace time.Duration) *bridgeTestServer {
 	t.Helper()
 	gin.SetMode(gin.TestMode)
 	srv := &bridgeTestServer{call: newFakeBridgeCall(), session: make(chan []byte, 4), handlers: make(chan struct{}, 8)}
 
-	prevOpen, prevSupported, prevEncoder, prevGrace := openRealtimeAudioCall, realtimeAudioBridgeSupported, newRealtimeAudioEncoder, realtimeAudioCreateGrace
+	prevOpen, prevSupported, prevEncoder := openRealtimeAudioCall, realtimeAudioBridgeSupported, newRealtimeAudioEncoder
 	t.Cleanup(func() {
-		openRealtimeAudioCall, realtimeAudioBridgeSupported, newRealtimeAudioEncoder, realtimeAudioCreateGrace = prevOpen, prevSupported, prevEncoder, prevGrace
+		openRealtimeAudioCall, realtimeAudioBridgeSupported, newRealtimeAudioEncoder = prevOpen, prevSupported, prevEncoder
 	})
-	realtimeAudioCreateGrace = grace
 	openRealtimeAudioCall = func(_ *Handler, _ *gin.Context, session json.RawMessage) (realtimeAudioCallConn, *liveGatewayError) {
 		srv.opens.Add(1)
 		srv.session <- append([]byte(nil), session...)
@@ -186,6 +179,22 @@ func takeBridgeSent(t *testing.T, call *fakeBridgeCall) []byte {
 	}
 }
 
+// startBridgeCall triggers lazy call creation with a response.create, waits for the creation session and the forwarded event, and returns the session.
+func startBridgeCall(t *testing.T, srv *bridgeTestServer, conn *websocket.Conn) json.RawMessage {
+	t.Helper()
+	writeBridgeEvent(t, conn, `{"type":"response.create"}`)
+	var session json.RawMessage
+	select {
+	case session = <-srv.session:
+	case <-time.After(bridgeTestTimeout):
+		t.Fatal("the call was not created")
+	}
+	if got := string(takeBridgeSent(t, srv.call)); got != `{"type":"response.create"}` {
+		t.Fatalf("trigger sideband = %s", got)
+	}
+	return session
+}
+
 func TestAudioBridgeOpensCallAndSendsSessionCreated(t *testing.T) {
 	srv := newBridgeTestServer(t, true, true)
 	conn := srv.dial(t, "?model=gpt-realtime")
@@ -200,7 +209,7 @@ func TestAudioBridgeOpensCallAndSendsSessionCreated(t *testing.T) {
 	if gjson.GetBytes(created, "session.output_modalities.0").String() != "audio" {
 		t.Fatalf("session modalities = %s", created)
 	}
-	session := <-srv.session
+	session := startBridgeCall(t, srv, conn)
 	if got := gjson.GetBytes(session, "model").String(); got != liveAudioDefaultModel {
 		t.Fatalf("live model = %q", got)
 	}
@@ -268,6 +277,7 @@ func TestAudioBridgeMapsUpstreamEvents(t *testing.T) {
 	srv := newBridgeTestServer(t, true, true)
 	conn := srv.dial(t, "?model=gpt-realtime")
 	readBridgeUntil(t, conn, "session.created")
+	startBridgeCall(t, srv, conn)
 
 	for _, event := range []string{
 		`{"type":"turn.created","turn":{"role":"assistant"}}`,
@@ -337,7 +347,7 @@ func TestAudioBridgeTextItemAndResponseCreateReachTheCall(t *testing.T) {
 }
 
 func TestAudioBridgeSessionUpdateBeforeCreationCarriesInstructionsAndVoice(t *testing.T) {
-	srv := newBridgeTestServerWithGrace(t, true, true, time.Hour)
+	srv := newBridgeTestServer(t, true, true)
 	conn := srv.dial(t, "?model=gpt-realtime")
 	readBridgeUntil(t, conn, "session.created")
 	if srv.opens.Load() != 0 {
@@ -349,7 +359,7 @@ func TestAudioBridgeSessionUpdateBeforeCreationCarriesInstructionsAndVoice(t *te
 	if gjson.GetBytes(ack, "session.instructions").String() != "Answer in one short sentence." {
 		t.Fatalf("ack = %s", ack)
 	}
-	session := <-srv.session
+	session := startBridgeCall(t, srv, conn)
 	if got := gjson.GetBytes(session, "instructions").String(); got != "Answer in one short sentence." {
 		t.Fatalf("creation instructions = %q", got)
 	}
@@ -363,17 +373,255 @@ func TestAudioBridgeSessionUpdateBeforeCreationCarriesInstructionsAndVoice(t *te
 	}
 }
 
-func TestAudioBridgeCreatesCallAfterGraceWithoutSessionUpdate(t *testing.T) {
-	srv := newBridgeTestServerWithGrace(t, true, true, 10*time.Millisecond)
+// pingBridge waits until the client loop has handled every event written before it.
+func pingBridge(t *testing.T, conn *websocket.Conn) {
+	t.Helper()
+	writeBridgeEvent(t, conn, `{"type":"ping"}`)
+	readBridgeUntil(t, conn, "pong")
+}
+
+func TestAudioBridgeNoCallBeforeATriggerEvenAfterSessionUpdates(t *testing.T) {
+	srv := newBridgeTestServer(t, true, true)
 	conn := srv.dial(t, "?model=gpt-realtime")
 	readBridgeUntil(t, conn, "session.created")
-	select {
-	case session := <-srv.session:
-		if gjson.GetBytes(session, "instructions").String() != liveAudioDefaultInstructions {
-			t.Fatalf("creation session = %s", session)
+
+	for _, update := range []string{
+		`{"type":"session.update","session":{"instructions":"First."}}`,
+		`{"type":"session.update","session":{"instructions":"Second.","audio":{"output":{"voice":"echo"}}}}`,
+		`{"type":"session.update","session":{"audio":{"output":{"voice":"coral"}}}}`,
+	} {
+		writeBridgeEvent(t, conn, update)
+		readBridgeUntil(t, conn, "session.updated")
+	}
+	writeBridgeEvent(t, conn, `{"type":"input_audio_buffer.commit"}`)
+	readBridgeUntil(t, conn, "input_audio_buffer.committed")
+	writeBridgeEvent(t, conn, `{"type":"input_audio_buffer.clear"}`)
+	pingBridge(t, conn)
+	if srv.opens.Load() != 0 {
+		t.Fatal("session.update, commit or clear created the call")
+	}
+
+	pcm := base64.StdEncoding.EncodeToString(make([]byte, 480))
+	writeBridgeEvent(t, conn, `{"type":"input_audio_buffer.append","audio":"`+pcm+`"}`)
+	session := <-srv.session
+	if got := gjson.GetBytes(session, "instructions").String(); got != "Second." {
+		t.Fatalf("creation instructions = %q, want the latest", got)
+	}
+	if got := gjson.GetBytes(session, "audio.output.voice").String(); got != mapRealtimeVoiceToLive("coral") {
+		t.Fatalf("creation voice = %q, want the latest (coral)", got)
+	}
+	if srv.opens.Load() != 1 {
+		t.Fatalf("opens = %d", srv.opens.Load())
+	}
+}
+
+func TestAudioBridgeQueryParametersReachCreation(t *testing.T) {
+	srv := newBridgeTestServer(t, true, true)
+	conn := srv.dial(t, "?model=gpt-realtime&instructions=Be%20brief%20%26%20kind&voice=echo&delegation=none")
+	created := readBridgeUntil(t, conn, "session.created")
+	if gjson.GetBytes(created, "session.instructions").String() != "Be brief & kind" || gjson.GetBytes(created, "session.audio.output.voice").String() != "echo" || gjson.GetBytes(created, "session.delegation.acknowledgement").String() != "none" {
+		t.Fatalf("session.created = %s", created)
+	}
+	session := startBridgeCall(t, srv, conn)
+	if gjson.GetBytes(session, "instructions").String() != "Be brief & kind" || gjson.GetBytes(session, "audio.output.voice").String() != mapRealtimeVoiceToLive("echo") {
+		t.Fatalf("creation session = %s", session)
+	}
+	if ack := gjson.GetBytes(session, "delegation.ack_filler"); !ack.Exists() || ack.Bool() || gjson.GetBytes(session, "delegation.type").String() != "client" {
+		t.Fatalf("delegation = %s", gjson.GetBytes(session, "delegation").Raw)
+	}
+}
+
+func TestAudioBridgeSessionUpdateOverridesQueryParameters(t *testing.T) {
+	srv := newBridgeTestServer(t, true, true)
+	conn := srv.dial(t, "?model=gpt-realtime&instructions=From%20the%20URL&voice=echo&delegation=none")
+	readBridgeUntil(t, conn, "session.created")
+	writeBridgeEvent(t, conn, `{"type":"session.update","session":{"instructions":"From the event.","delegation":{"type":"client"}}}`)
+	if ack := readBridgeUntil(t, conn, "session.updated"); gjson.GetBytes(ack, "session.delegation.acknowledgement").String() != "none" {
+		t.Fatalf("a delegation without acknowledgement should keep the query's none: %s", ack)
+	}
+	writeBridgeEvent(t, conn, `{"type":"session.update","session":{"delegation":{"type":"client","acknowledgement":"default"}}}`)
+	readBridgeUntil(t, conn, "session.updated")
+	session := startBridgeCall(t, srv, conn)
+	if got := gjson.GetBytes(session, "instructions").String(); got != "From the event." {
+		t.Fatalf("instructions = %q", got)
+	}
+	if got := gjson.GetBytes(session, "audio.output.voice").String(); got != mapRealtimeVoiceToLive("echo") {
+		t.Fatalf("voice = %q, the query voice should remain", got)
+	}
+	if gjson.GetBytes(session, "delegation.ack_filler").Exists() {
+		t.Fatalf("delegation = %s, want the default acknowledgement back", gjson.GetBytes(session, "delegation").Raw)
+	}
+}
+
+func TestAudioBridgeRejectsBadDelegationQueryBeforeUpgrade(t *testing.T) {
+	srv := newBridgeTestServer(t, true, true)
+	_, resp, err := websocket.DefaultDialer.Dial(srv.URL+"?model=gpt-realtime&delegation=responses", nil)
+	if err == nil || resp == nil || resp.StatusCode != http.StatusBadRequest {
+		t.Fatalf("dial err=%v resp=%v, want HTTP 400", err, resp)
+	}
+	defer resp.Body.Close()
+	body, _ := io.ReadAll(resp.Body)
+	if gjson.GetBytes(body, "error.code").String() != "unsupported_value" || !strings.Contains(gjson.GetBytes(body, "error.message").String(), "delegation") {
+		t.Fatalf("body = %s", body)
+	}
+	if srv.opens.Load() != 0 {
+		t.Fatal("a call was opened")
+	}
+}
+
+func TestAudioBridgeConversationItemIsQuietContext(t *testing.T) {
+	srv := newBridgeTestServer(t, true, true)
+	conn := srv.dial(t, "?model=gpt-realtime")
+	readBridgeUntil(t, conn, "session.created")
+	writeBridgeEvent(t, conn, `{"type":"conversation.item.create","item":{"type":"message","role":"user","content":[{"type":"input_text","text":"the user is Ana"}]}}`)
+	sideband := takeBridgeSent(t, srv.call)
+	if gjson.GetBytes(sideband, "type").String() != "session.context.append" || gjson.GetBytes(sideband, "channel").String() != "commentary" {
+		t.Fatalf("sideband = %s, want a commentary context append", sideband)
+	}
+	if srv.opens.Load() != 1 {
+		t.Fatal("conversation.item.create should create the call")
+	}
+}
+
+func TestAudioBridgeDelegationOnSessionUpdate(t *testing.T) {
+	srv := newBridgeTestServer(t, true, true)
+	conn := srv.dial(t, "?model=gpt-realtime")
+	readBridgeUntil(t, conn, "session.created")
+
+	writeBridgeEvent(t, conn, `{"event_id":"evt_resp","type":"session.update","session":{"delegation":{"type":"responses"}}}`)
+	errEvent := readBridgeUntil(t, conn, "error")
+	if gjson.GetBytes(errEvent, "error.code").String() != "unsupported_value" || gjson.GetBytes(errEvent, "error.param").String() != "session.delegation.type" || gjson.GetBytes(errEvent, "error.client_event_id").String() != "evt_resp" || gjson.GetBytes(errEvent, "error.type").String() != "invalid_request_error" {
+		t.Fatalf("error = %s", errEvent)
+	}
+
+	writeBridgeEvent(t, conn, `{"type":"session.update","session":{"delegation":{"type":"client","acknowledgement":"none"}}}`)
+	ack := readBridgeUntil(t, conn, "session.updated")
+	if gjson.GetBytes(ack, "session.delegation.acknowledgement").String() != "none" {
+		t.Fatalf("ack = %s", ack)
+	}
+	session := startBridgeCall(t, srv, conn)
+	if ackFiller := gjson.GetBytes(session, "delegation.ack_filler"); !ackFiller.Exists() || ackFiller.Bool() {
+		t.Fatalf("delegation = %s", gjson.GetBytes(session, "delegation").Raw)
+	}
+}
+
+func TestAudioBridgeUnknownAndUnsupportedSessionFieldsError(t *testing.T) {
+	srv := newBridgeTestServer(t, true, true)
+	conn := srv.dial(t, "?model=gpt-realtime")
+	readBridgeUntil(t, conn, "session.created")
+
+	for _, tc := range []struct{ update, code, param string }{
+		{`{"type":"session.update","session":{"foo":1}}`, "unknown_parameter", "session.foo"},
+		{`{"type":"session.update","session":{"audio":{"input":{"bar":true}}}}`, "unknown_parameter", "session.audio.input.bar"},
+		{`{"type":"session.update","session":{"input_audio_format":"g711_ulaw"}}`, "unsupported_value", "session.input_audio_format"},
+		{`{"type":"session.update","session":{"audio":{"output":{"format":{"type":"audio/pcm","rate":8000}}}}}`, "unsupported_value", "session.audio.output.format"},
+		{`{"type":"session.update","session":{"turn_detection":{"create_response":"no"}}}`, "unsupported_value", "session.turn_detection.create_response"},
+	} {
+		writeBridgeEvent(t, conn, tc.update)
+		errEvent := readBridgeUntil(t, conn, "error")
+		if gjson.GetBytes(errEvent, "error.code").String() != tc.code || gjson.GetBytes(errEvent, "error.param").String() != tc.param {
+			t.Fatalf("%s: error = %s", tc.update, errEvent)
 		}
-	case <-time.After(bridgeTestTimeout):
-		t.Fatal("the call was not created after the grace period")
+	}
+
+	// Fields the bridge tolerates still ack.
+	writeBridgeEvent(t, conn, `{"type":"session.update","session":{"type":"realtime","tools":[],"tool_choice":"auto","temperature":0.8,"max_response_output_tokens":"inf","input_audio_transcription":{"model":"whisper-1"},"include":[],"tracing":null,"truncation":"auto","prompt":null,"audio":{"input":{"transcription":{"model":"whisper-1"},"noise_reduction":null}}}}`)
+	readBridgeUntil(t, conn, "session.updated")
+}
+
+func TestAudioBridgeCreateResponseFalseIsRecordedAndResponseCreateStillForwarded(t *testing.T) {
+	srv := newBridgeTestServer(t, true, true)
+	conn := srv.dial(t, "?model=gpt-realtime")
+	readBridgeUntil(t, conn, "session.created")
+
+	writeBridgeEvent(t, conn, `{"type":"session.update","session":{"audio":{"input":{"turn_detection":{"type":"server_vad","create_response":false}}}}}`)
+	ack := readBridgeUntil(t, conn, "session.updated")
+	if got := gjson.GetBytes(ack, "session.audio.input.turn_detection.create_response"); !got.Exists() || got.Bool() {
+		t.Fatalf("ack = %s", ack)
+	}
+	writeBridgeEvent(t, conn, `{"type":"session.update","session":{"turn_detection":{"create_response":true}}}`)
+	if got := gjson.GetBytes(readBridgeUntil(t, conn, "session.updated"), "session.audio.input.turn_detection.create_response"); !got.Bool() {
+		t.Fatal("create_response true was not recorded")
+	}
+	writeBridgeEvent(t, conn, `{"type":"session.update","session":{"turn_detection":{"create_response":false}}}`)
+	readBridgeUntil(t, conn, "session.updated")
+
+	// The bridge sends nothing on its own; the client's explicit response.create is forwarded.
+	pcm := base64.StdEncoding.EncodeToString(make([]byte, 480))
+	writeBridgeEvent(t, conn, `{"type":"input_audio_buffer.append","audio":"`+pcm+`"}`)
+	<-srv.session
+	pingBridge(t, conn)
+	select {
+	case event := <-srv.call.sent:
+		t.Fatalf("the bridge sent %s on its own", event)
+	default:
+	}
+	writeBridgeEvent(t, conn, `{"type":"response.create"}`)
+	if got := string(takeBridgeSent(t, srv.call)); got != `{"type":"response.create"}` {
+		t.Fatalf("sideband = %s", got)
+	}
+}
+
+func TestAudioBridgeSixteenKilohertzInput(t *testing.T) {
+	srv := newBridgeTestServer(t, true, true)
+	conn := srv.dial(t, "?model=gpt-realtime")
+	readBridgeUntil(t, conn, "session.created")
+	writeBridgeEvent(t, conn, `{"type":"session.update","session":{"audio":{"input":{"format":{"type":"audio/pcm","rate":16000}}}}}`)
+	ack := readBridgeUntil(t, conn, "session.updated")
+	if gjson.GetBytes(ack, "session.audio.input.format.rate").Int() != 16000 || gjson.GetBytes(ack, "session.audio.output.format.rate").Int() != 24000 {
+		t.Fatalf("ack = %s, want input 16000 and output 24000", ack)
+	}
+
+	// 100 ms at 16 kHz is 1600 samples; resampled to 24 kHz it is 2400, the same five 20 ms frames as 100 ms of native audio.
+	pcm := base64.StdEncoding.EncodeToString(make([]byte, 3200))
+	writeBridgeEvent(t, conn, `{"type":"input_audio_buffer.append","audio":"`+pcm+`"}`)
+	// The stateful converter holds back a few samples for interpolation, so the last frame may wait for the next chunk.
+	for i := 0; i < 4; i++ {
+		select {
+		case <-srv.call.frames:
+		case <-time.After(bridgeTestTimeout):
+			t.Fatalf("got %d speech frames, want at least 4", i)
+		}
+	}
+	pingBridge(t, conn)
+	if len(srv.call.frames) > 1 {
+		t.Fatal("more than five frames for 100 ms of 16 kHz audio")
+	}
+}
+
+func TestAudioBridgeSixteenKilohertzOutput(t *testing.T) {
+	srv := newBridgeTestServer(t, true, true)
+	conn := srv.dial(t, "?model=gpt-realtime")
+	readBridgeUntil(t, conn, "session.created")
+	writeBridgeEvent(t, conn, `{"type":"session.update","session":{"output_audio_format":{"type":"audio/pcm","rate":16000}}}`)
+	ack := readBridgeUntil(t, conn, "session.updated")
+	if gjson.GetBytes(ack, "session.audio.output.format.rate").Int() != 16000 || gjson.GetBytes(ack, "session.audio.input.format.rate").Int() != 24000 {
+		t.Fatalf("ack = %s, want output 16000 and input 24000", ack)
+	}
+	startBridgeCall(t, srv, conn)
+
+	// 300 samples at 24 kHz leave as 200 samples at 16 kHz.
+	srv.call.events <- []byte(`{"type":"session.output_audio.delta","delta":"` + base64.StdEncoding.EncodeToString(make([]byte, 600)) + `"}`)
+	delta := readBridgeUntil(t, conn, "response.output_audio.delta")
+	raw, err := base64.StdEncoding.DecodeString(gjson.GetBytes(delta, "delta").String())
+	if err != nil || len(raw) != 400 {
+		t.Fatalf("delta decoded to %d bytes (err %v), want 400", len(raw), err)
+	}
+}
+
+func TestAudioBridgeHandoffCallIsAlsoLazy(t *testing.T) {
+	srv := newBridgeTestServer(t, true, true)
+	conn := srv.dial(t, "?model=gpt-5.5")
+	readBridgeEvent(t, conn)
+	writeBridgeEvent(t, conn, `{"type":"session.update","session":{"output_modalities":["audio"],"instructions":"Talk."}}`)
+	readBridgeUntil(t, conn, "session.updated")
+	pingBridge(t, conn)
+	if srv.opens.Load() != 0 {
+		t.Fatal("the handoff created the call before any trigger")
+	}
+	session := startBridgeCall(t, srv, conn)
+	if gjson.GetBytes(session, "instructions").String() != "Talk." {
+		t.Fatalf("session = %s", session)
 	}
 }
 
@@ -386,7 +634,7 @@ func (e seqBridgeEncoder) Encode([]int16) ([]byte, error) {
 func (seqBridgeEncoder) Close() {}
 
 func TestAudioBridgeAudioSentBeforeCreationIsFlushedInOrder(t *testing.T) {
-	srv := newBridgeTestServerWithGrace(t, true, true, time.Hour)
+	srv := newBridgeTestServer(t, true, true)
 	var seq atomic.Int32
 	newRealtimeAudioEncoder = func() (opusEncoder, error) { return seqBridgeEncoder{n: &seq}, nil }
 	gate := make(chan struct{})
@@ -421,7 +669,7 @@ func TestAudioBridgeSessionUpdateAfterCreationIsImmutable(t *testing.T) {
 	readBridgeUntil(t, conn, "session.created")
 	writeBridgeEvent(t, conn, `{"type":"session.update","session":{"instructions":"First.","audio":{"output":{"voice":"echo"}}}}`)
 	readBridgeUntil(t, conn, "session.updated")
-	<-srv.session
+	startBridgeCall(t, srv, conn)
 
 	// Changing instructions and voice is refused with one error each, and nothing reaches upstream.
 	writeBridgeEvent(t, conn, `{"type":"session.update","session":{"instructions":"Second.","audio":{"output":{"voice":"coral"}}}}`)
@@ -458,6 +706,7 @@ func TestAudioBridgeTextOnlySessionRenamesTranscriptEvents(t *testing.T) {
 	srv := newBridgeTestServer(t, true, true)
 	conn := srv.dial(t, "?model=gpt-realtime")
 	readBridgeUntil(t, conn, "session.created")
+	startBridgeCall(t, srv, conn)
 
 	writeBridgeEvent(t, conn, `{"type":"session.update","session":{"output_modalities":["text"]}}`)
 	ack := readBridgeUntil(t, conn, "session.updated")
@@ -495,6 +744,7 @@ func TestAudioBridgeTextOnlySessionKeepsContentConsistent(t *testing.T) {
 	srv := newBridgeTestServer(t, true, true)
 	conn := srv.dial(t, "?model=gpt-realtime")
 	readBridgeUntil(t, conn, "session.created")
+	startBridgeCall(t, srv, conn)
 	writeBridgeEvent(t, conn, `{"type":"session.update","session":{"output_modalities":["text"]}}`)
 	readBridgeUntil(t, conn, "session.updated")
 
@@ -523,6 +773,7 @@ func TestAudioBridgeDeliversBufferedEventsWhenTheCallEnds(t *testing.T) {
 	srv := newBridgeTestServer(t, true, true)
 	conn := srv.dial(t, "?model=gpt-realtime")
 	readBridgeUntil(t, conn, "session.created")
+	startBridgeCall(t, srv, conn)
 
 	// The final events and the end of the call are ready together, as when the sideband closes right after turn.done.
 	srv.call.events <- []byte(`{"type":"turn.done","turn":{"role":"assistant","transcript":"bye"}}`)
@@ -562,7 +813,7 @@ func TestAudioBridgeClientDisconnectClosesCallOnce(t *testing.T) {
 	srv := newBridgeTestServer(t, true, true)
 	conn := srv.dial(t, "?model=gpt-realtime")
 	readBridgeUntil(t, conn, "session.created")
-	<-srv.session
+	startBridgeCall(t, srv, conn)
 
 	_ = conn.WriteControl(websocket.CloseMessage, websocket.FormatCloseMessage(websocket.CloseNormalClosure, "bye"), time.Now().Add(bridgeTestTimeout))
 	_ = conn.Close()
@@ -581,7 +832,7 @@ func TestAudioBridgeCallEndingClosesClient(t *testing.T) {
 	srv := newBridgeTestServer(t, true, true)
 	conn := srv.dial(t, "?model=gpt-realtime")
 	readBridgeUntil(t, conn, "session.created")
-	<-srv.session
+	startBridgeCall(t, srv, conn)
 
 	srv.call.end()
 	_, _, err := conn.ReadMessage()
@@ -601,6 +852,8 @@ func TestAudioBridgeOpenFailureIsAnErrorEventThenClose(t *testing.T) {
 		return nil, newLiveGatewayError(http.StatusServiceUnavailable, api.ErrCodeServiceUnavailable, api.ErrorTypeServer, "no capacity")
 	}
 	conn := srv.dial(t, "?model=gpt-realtime")
+	readBridgeUntil(t, conn, "session.created")
+	writeBridgeEvent(t, conn, `{"type":"response.create"}`)
 	errEvent := readBridgeUntil(t, conn, "error")
 	if !strings.Contains(string(errEvent), "no capacity") {
 		t.Fatalf("error event = %s", errEvent)
@@ -655,7 +908,7 @@ func TestAudioBridgeTextSessionHandsOverOnAudioSessionUpdate(t *testing.T) {
 	if gjson.GetBytes(ack, "session.output_modalities.0").String() != "audio" {
 		t.Fatalf("handoff ack = %s", ack)
 	}
-	session := <-srv.session
+	session := startBridgeCall(t, srv, conn)
 	if gjson.GetBytes(session, "instructions").String() != "Talk." || gjson.GetBytes(session, "audio.output.voice").String() != "breeze" {
 		t.Fatalf("live session = %s", session)
 	}
@@ -747,5 +1000,191 @@ func TestRealtimeAudioInputReportsClosedTrackAfterSinkFailure(t *testing.T) {
 		if err == nil || !errors.Is(err, sinkErr) || !strings.Contains(err.Error(), "live call audio track closed") {
 			t.Fatalf("%s error = %v, want the closed-track error wrapping the sink error", name, err)
 		}
+	}
+}
+
+func TestAudioBridgeDelegationCreatedBecomesExtensionEvent(t *testing.T) {
+	srv := newBridgeTestServer(t, true, true)
+	conn := srv.dial(t, "?model=gpt-realtime")
+	readBridgeUntil(t, conn, "session.created")
+	startBridgeCall(t, srv, conn)
+
+	srv.call.events <- []byte(`{"type":"delegation.created","offset_ms":1200,"item":{"id":"dlg_1","content":[{"type":"input_text","text":"look up "},{"type":"input_text","text":"the weather"}]}}`)
+	event := readBridgeUntil(t, conn, "session.delegation.created")
+	if gjson.GetBytes(event, "offset_ms").Int() != 1200 || gjson.GetBytes(event, "delegation.id").String() != "dlg_1" || gjson.GetBytes(event, "delegation.target").String() != "client" || gjson.GetBytes(event, "delegation.content").String() != "look up the weather" {
+		t.Fatalf("event = %s", event)
+	}
+}
+
+func TestAudioBridgeContextAppendExtensionEventsAndAcks(t *testing.T) {
+	srv := newBridgeTestServer(t, true, true)
+	conn := srv.dial(t, "?model=gpt-realtime")
+	readBridgeUntil(t, conn, "session.created")
+
+	// The first append creates the call and maps to a speakable delegation append.
+	writeBridgeEvent(t, conn, `{"event_id":"c1","type":"session.commentary.append","delegation_id":"dlg_1","content":"It is sunny."}`)
+	sent := takeBridgeSent(t, srv.call)
+	if gjson.GetBytes(sent, "type").String() != "delegation.context.append" || gjson.GetBytes(sent, "delegation_item_id").String() != "dlg_1" || gjson.GetBytes(sent, "channel").String() != "speakable" || gjson.GetBytes(sent, "content.0.text").String() != "It is sunny." {
+		t.Fatalf("commentary sideband = %s", sent)
+	}
+	if srv.opens.Load() != 1 {
+		t.Fatal("the append did not create the call")
+	}
+
+	writeBridgeEvent(t, conn, `{"event_id":"t1","type":"session.thinking.append","delegation_id":"dlg_1","content":[{"type":"text","text":"checking "},{"type":"text","text":"sources"}]}`)
+	sent = takeBridgeSent(t, srv.call)
+	if gjson.GetBytes(sent, "type").String() != "delegation.context.append" || gjson.GetBytes(sent, "channel").String() != "commentary" || gjson.GetBytes(sent, "content.0.text").String() != "checking sources" {
+		t.Fatalf("thinking sideband = %s", sent)
+	}
+	writeBridgeEvent(t, conn, `{"event_id":"t2","type":"session.thinking.append","content":"no delegation"}`)
+	sent = takeBridgeSent(t, srv.call)
+	if gjson.GetBytes(sent, "type").String() != "session.context.append" || gjson.GetBytes(sent, "channel").String() != "commentary" {
+		t.Fatalf("session-level thinking sideband = %s", sent)
+	}
+	writeBridgeEvent(t, conn, `{"event_id":"i1","type":"session.instructions.append","content":"Prefer metric units."}`)
+	sent = takeBridgeSent(t, srv.call)
+	if gjson.GetBytes(sent, "type").String() != "session.context.append" || gjson.GetBytes(sent, "channel").String() != "commentary" {
+		t.Fatalf("instructions sideband = %s", sent)
+	}
+	// A conversation item shares the session-level FIFO but has no public ack of its own.
+	writeBridgeEvent(t, conn, `{"type":"conversation.item.create","item":{"type":"message","role":"user","content":[{"type":"input_text","text":"note"}]}}`)
+	takeBridgeSent(t, srv.call)
+	readBridgeUntil(t, conn, "conversation.item.created")
+	writeBridgeEvent(t, conn, `{"event_id":"i2","type":"session.instructions.append","content":"Be brief."}`)
+	takeBridgeSent(t, srv.call)
+
+	// Session-level acks arrive in order: thinking t2, instructions i1, then the item (silent), then i2. Delegation acks are a separate FIFO.
+	srv.call.events <- []byte(`{"type":"delegation.context.appended","delegation_item_id":"dlg_1"}`)
+	srv.call.events <- []byte(`{"type":"session.context.appended"}`)
+	srv.call.events <- []byte(`{"type":"session.context.appended"}`)
+	srv.call.events <- []byte(`{"type":"session.context.appended"}`)
+	srv.call.events <- []byte(`{"type":"delegation.context.appended","delegation_item_id":"dlg_1"}`)
+	srv.call.events <- []byte(`{"type":"session.context.appended"}`)
+	for _, want := range [][2]string{
+		{"session.commentary.appended", "c1"},
+		{"session.thinking.appended", "t2"},
+		{"session.instructions.appended", "i1"},
+		{"session.thinking.appended", "t1"},
+		{"session.instructions.appended", "i2"},
+	} {
+		ack := readBridgeUntil(t, conn, want[0])
+		if got := gjson.GetBytes(ack, "client_event_id").String(); got != want[1] {
+			t.Fatalf("%s client_event_id = %q, want %q", want[0], got, want[1])
+		}
+	}
+}
+
+func TestAudioBridgeChunkedAppendIsAckedOnceOnTheLastChunk(t *testing.T) {
+	srv := newBridgeTestServer(t, true, true)
+	conn := srv.dial(t, "?model=gpt-realtime")
+	readBridgeUntil(t, conn, "session.created")
+
+	writeBridgeEvent(t, conn, `{"event_id":"big","type":"session.thinking.append","content":"`+strings.Repeat("a", 1200)+`"}`)
+	for i := 0; i < 3; i++ {
+		takeBridgeSent(t, srv.call)
+	}
+	writeBridgeEvent(t, conn, `{"event_id":"after","type":"session.thinking.append","content":"small"}`)
+	takeBridgeSent(t, srv.call)
+
+	for i := 0; i < 4; i++ {
+		srv.call.events <- []byte(`{"type":"session.context.appended"}`)
+	}
+	first := readBridgeUntil(t, conn, "session.thinking.appended")
+	second := readBridgeUntil(t, conn, "session.thinking.appended")
+	if gjson.GetBytes(first, "client_event_id").String() != "big" || gjson.GetBytes(second, "client_event_id").String() != "after" {
+		t.Fatalf("acks = %s then %s, want big then after", first, second)
+	}
+}
+
+func TestAudioBridgeContextAppendErrors(t *testing.T) {
+	srv := newBridgeTestServer(t, true, true)
+	conn := srv.dial(t, "?model=gpt-realtime")
+	readBridgeUntil(t, conn, "session.created")
+
+	writeBridgeEvent(t, conn, `{"event_id":"e1","type":"session.commentary.append"}`)
+	errEvent := readBridgeUntil(t, conn, "error")
+	if gjson.GetBytes(errEvent, "error.code").String() != "missing_required_parameter" || gjson.GetBytes(errEvent, "error.param").String() != "content" || gjson.GetBytes(errEvent, "error.client_event_id").String() != "e1" {
+		t.Fatalf("error = %s", errEvent)
+	}
+	writeBridgeEvent(t, conn, `{"type":"session.thinking.append","delegation_id":7,"content":"x"}`)
+	errEvent = readBridgeUntil(t, conn, "error")
+	if gjson.GetBytes(errEvent, "error.param").String() != "delegation_id" {
+		t.Fatalf("error = %s", errEvent)
+	}
+	if srv.opens.Load() != 0 {
+		t.Fatal("an invalid append created the call")
+	}
+}
+
+func TestAudioBridgeHandoffParamErrorUsesPublicShape(t *testing.T) {
+	srv := newBridgeTestServer(t, true, true)
+	conn := srv.dial(t, "?model=gpt-5.5")
+	readBridgeEvent(t, conn)
+	writeBridgeEvent(t, conn, `{"event_id":"h1","type":"session.update","session":{"output_modalities":["audio"],"foo":1}}`)
+	errEvent := readBridgeUntil(t, conn, "error")
+	if gjson.GetBytes(errEvent, "error.code").String() != "unknown_parameter" || gjson.GetBytes(errEvent, "error.param").String() != "session.foo" || gjson.GetBytes(errEvent, "error.client_event_id").String() != "h1" {
+		t.Fatalf("error = %s", errEvent)
+	}
+}
+
+func TestAudioBridgeDelegationAcknowledgementIsImmutableAfterCreation(t *testing.T) {
+	srv := newBridgeTestServer(t, true, true)
+	conn := srv.dial(t, "?model=gpt-realtime&delegation=none")
+	readBridgeUntil(t, conn, "session.created")
+	startBridgeCall(t, srv, conn)
+
+	writeBridgeEvent(t, conn, `{"event_id":"d1","type":"session.update","session":{"delegation":{"type":"client","acknowledgement":"default"}}}`)
+	ack := readBridgeUntil(t, conn, "session.updated")
+	if gjson.GetBytes(ack, "session.delegation.acknowledgement").String() != "none" {
+		t.Fatalf("ack = %s, want the accepted none", ack)
+	}
+	errEvent := readBridgeUntil(t, conn, "error")
+	if gjson.GetBytes(errEvent, "error.code").String() != "immutable_field_update" || gjson.GetBytes(errEvent, "error.param").String() != "session.delegation.acknowledgement" || gjson.GetBytes(errEvent, "error.client_event_id").String() != "d1" {
+		t.Fatalf("error = %s", errEvent)
+	}
+	// A delegation without acknowledgement is not a change.
+	writeBridgeEvent(t, conn, `{"type":"session.update","session":{"delegation":{"type":"client"}}}`)
+	readBridgeUntil(t, conn, "session.updated")
+	pingBridge(t, conn)
+}
+
+// TestAudioBridgeSixteenKilohertzStreamKeepsResamplerState feeds odd-sized chunks and checks the totals match one big chunk, which a stateless per-chunk resampler would not give.
+func TestAudioBridgeSixteenKilohertzOutputIsStateful(t *testing.T) {
+	srv := newBridgeTestServer(t, true, true)
+	conn := srv.dial(t, "?model=gpt-realtime")
+	readBridgeUntil(t, conn, "session.created")
+	writeBridgeEvent(t, conn, `{"type":"session.update","session":{"audio":{"output":{"format":{"type":"audio/pcm","rate":16000}}}}}`)
+	readBridgeUntil(t, conn, "session.updated")
+	startBridgeCall(t, srv, conn)
+
+	// Three chunks of 301 samples (903 samples at 24 kHz) must yield 602 samples at 16 kHz in total, give or take the sample the resampler holds back.
+	total := 0
+	for i := 0; i < 3; i++ {
+		srv.call.events <- []byte(`{"type":"session.output_audio.delta","delta":"` + base64.StdEncoding.EncodeToString(make([]byte, 602)) + `"}`)
+	}
+	for i := 0; i < 3; i++ {
+		delta := readBridgeUntil(t, conn, "response.output_audio.delta")
+		raw, err := base64.StdEncoding.DecodeString(gjson.GetBytes(delta, "delta").String())
+		if err != nil {
+			t.Fatal(err)
+		}
+		total += len(raw) / 2
+	}
+	if total < 600 || total > 604 {
+		t.Fatalf("total output samples = %d, want about 602", total)
+	}
+}
+
+func TestAudioBridgeDelegationAcknowledgementAutoTurnsFillerBackOn(t *testing.T) {
+	srv := newBridgeTestServer(t, true, true)
+	conn := srv.dial(t, "?model=gpt-realtime&delegation=none")
+	readBridgeUntil(t, conn, "session.created")
+	writeBridgeEvent(t, conn, `{"type":"session.update","session":{"delegation":{"type":"client","acknowledgement":"auto"}}}`)
+	if ack := readBridgeUntil(t, conn, "session.updated"); gjson.GetBytes(ack, "session.delegation.acknowledgement").Exists() {
+		t.Fatalf("ack = %s, want the default acknowledgement reported", ack)
+	}
+	session := startBridgeCall(t, srv, conn)
+	if gjson.GetBytes(session, "delegation.ack_filler").Exists() {
+		t.Fatalf("delegation = %s, want the filler on", gjson.GetBytes(session, "delegation").Raw)
 	}
 }
