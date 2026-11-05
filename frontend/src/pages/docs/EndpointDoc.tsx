@@ -424,8 +424,7 @@ export const EndpointDoc = memo(function EndpointDoc({
   allKeys?: { name: string; key: string }[];
   activeId: string;
 }) {
-  const { t, i18n } = useTranslation();
-  const zh = i18n.language.startsWith("zh");
+  const { t } = useTranslation();
   const { id, method, path, title, description, responses, parameters } =
     endpoint;
   const [expanded, setExpanded] = useState(activeId === id);
@@ -468,8 +467,8 @@ export const EndpointDoc = memo(function EndpointDoc({
         </button>
         <a
           href={`#${id}`}
-          aria-label={`${zh ? "章节链接" : "Section link"}: ${title}`}
-          title={zh ? "章节链接" : "Section link"}
+          aria-label={`Section link: ${title}`}
+          title="Section link"
           className="p-2 rounded-md text-muted-foreground hover:text-primary"
         >
           <LinkIcon className="size-3.5" />
@@ -480,17 +479,13 @@ export const EndpointDoc = memo(function EndpointDoc({
           <p className="docs-endpoint-description">{description}</p>
           {!!parameters?.length && (
             <>
-              <h4 className="docs-endpoint-subtitle">
-                {zh ? "请求参数" : "Request parameters"}
-              </h4>
+              <h4 className="docs-endpoint-subtitle">Request parameters</h4>
               <div className="docs-table-wrap">
                 <table>
                   <thead>
                     <tr>
-                      <th scope="col">
-                        {zh ? "参数 / 类型" : "Parameter / type"}
-                      </th>
-                      <th scope="col">{zh ? "说明" : "Description"}</th>
+                      <th scope="col">Parameter / type</th>
+                      <th scope="col">Description</th>
                     </tr>
                   </thead>
                   <tbody>
@@ -499,22 +494,14 @@ export const EndpointDoc = memo(function EndpointDoc({
                         <td>
                           <code>{p.name}</code>
                           <div className="text-xs text-muted-foreground">
-                            {p.type} ·{" "}
-                            {p.required
-                              ? zh
-                                ? "必填"
-                                : "required"
-                              : zh
-                                ? "可选"
-                                : "optional"}
+                            {p.type} · {p.required ? "required" : "optional"}
                           </div>
                         </td>
                         <td>
                           {p.description}
                           {p.defaultValue && (
                             <div className="text-xs text-muted-foreground">
-                              {zh ? "默认" : "Default"}:{" "}
-                              <code>{p.defaultValue}</code>
+                              Default: <code>{p.defaultValue}</code>
                             </div>
                           )}
                         </td>
@@ -526,9 +513,7 @@ export const EndpointDoc = memo(function EndpointDoc({
             </>
           )}
           <div className="flex items-center justify-between gap-3 mb-3">
-            <h4 className="docs-endpoint-subtitle">
-              {zh ? "请求示例" : "Request example"}
-            </h4>
+            <h4 className="docs-endpoint-subtitle">Request example</h4>
             {supportsTryIt && (
               <Button
                 size="sm"
@@ -541,10 +526,7 @@ export const EndpointDoc = memo(function EndpointDoc({
             )}
           </div>
           {requests.length > 1 && (
-            <div
-              className="docs-example-tabs"
-              aria-label={zh ? "请求示例" : "Request examples"}
-            >
+            <div className="docs-example-tabs" aria-label="Request examples">
               {requests.map((request, i) => (
                 <button
                   type="button"
@@ -558,13 +540,8 @@ export const EndpointDoc = memo(function EndpointDoc({
             </div>
           )}
           <CodeBlock {...(requests[activeRequest] || requests[0])} />
-          <h4 className="docs-endpoint-subtitle">
-            {zh ? "响应示例" : "Response examples"}
-          </h4>
-          <div
-            className="docs-example-tabs"
-            aria-label={zh ? "响应示例" : "Response examples"}
-          >
+          <h4 className="docs-endpoint-subtitle">Response examples</h4>
+          <div className="docs-example-tabs" aria-label="Response examples">
             {responses.map((r, i) => (
               <button
                 type="button"
