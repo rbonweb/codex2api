@@ -3392,6 +3392,10 @@ func (h *Handler) RegisterRoutes(r *gin.Engine) {
 	v1.POST("/live", h.LiveCreate)
 	v1.GET("/live/sessions", h.LiveSessionsWebSocket)
 	v1.GET("/live/:call_id", h.LiveSideband)
+
+	v1.POST("/live/sessions", h.LiveSessionsCreate)
+	v1.GET("/live/sessions/:session_id/attach", h.LiveSessionsAttach)
+
 	v1.POST("/realtime/calls", h.RealtimeCalls)
 	v1.POST("/audio/transcriptions", h.AudioTranscriptions)
 
@@ -3416,6 +3420,10 @@ func (h *Handler) RegisterRoutes(r *gin.Engine) {
 	r.POST("/live", auth, h.LiveCreate)
 	r.GET("/live/sessions", auth, h.LiveSessionsWebSocket)
 	r.GET("/live/:call_id", auth, h.LiveSideband)
+
+	r.POST("/live/sessions", auth, h.LiveSessionsCreate)
+	r.GET("/live/sessions/:session_id/attach", auth, h.LiveSessionsAttach)
+
 	r.POST("/realtime/calls", auth, h.RealtimeCalls)
 	r.POST("/audio/transcriptions", auth, h.AudioTranscriptions)
 
