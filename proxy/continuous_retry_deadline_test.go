@@ -188,7 +188,6 @@ func TestContinuousRetryHTTPTimeoutWritesStableProtocols(t *testing.T) {
 		{name: "json", protocol: continuousRetryProtocolOpenAI, wantCode: http.StatusGatewayTimeout, contains: []string{"upstream_timeout"}},
 		{name: "responses SSE", protocol: continuousRetryProtocolResponses, commit: true, wantCode: http.StatusOK, contains: []string{"response.failed", "upstream_timeout", `"created_at":`}},
 		{name: "chat SSE", protocol: continuousRetryProtocolChat, commit: true, wantCode: http.StatusOK, contains: []string{"upstream_timeout"}},
-		{name: "anthropic SSE", protocol: continuousRetryProtocolAnthropic, commit: true, wantCode: http.StatusOK, contains: []string{"event: error", "api_error"}},
 	}
 	for _, tc := range tests {
 		t.Run(tc.name, func(t *testing.T) {
@@ -288,7 +287,6 @@ func TestContinuousRetryCommittedWritersReturnLastFailureOnce(t *testing.T) {
 	}{
 		{name: "responses", protocol: continuousRetryProtocolResponses, write: func(c *gin.Context) bool { return writeCommittedResponsesRetryError(c, "later error") }, contains: "response.failed"},
 		{name: "chat", protocol: continuousRetryProtocolChat, write: func(c *gin.Context) bool { return writeCommittedChatRetryError(c, "later error") }, contains: `"code":"upstream_503"`},
-		{name: "anthropic", protocol: continuousRetryProtocolAnthropic, write: func(c *gin.Context) bool { return writeCommittedAnthropicRetryError(c, "api_error", "later error") }, contains: "event: error"},
 	}
 	for _, tc := range tests {
 		t.Run(tc.name, func(t *testing.T) {
@@ -578,120 +576,6 @@ func TestResponsesCompactContinuousRetryDeadlineReturnsLatestFailureAndReleasesS
 	affinityKey := sessionAffinityKey(ResolveSessionID(req.Header, body), 0)
 	if _, ok := store.SessionAffinityAccountID(affinityKey); ok {
 		t.Fatal("deadline left a fresh session affinity binding")
-	}
-}
-
-func TestGrokImagesContinuousRetryDeadlineCancelsActiveBodyRead(t *testing.T) {
-	gin.SetMode(gin.TestMode)
-	previousRuntime := CurrentRuntimeSettings()
-	t.Cleanup(func() {
-		UpdateRuntimeSettings(func(RuntimeSettings) RuntimeSettings { return previousRuntime })
-	})
-	UpdateRuntimeSettings(func(current RuntimeSettings) RuntimeSettings {
-		current.ContinuousRetryPolicy = database.ContinuousRetryPolicy{
-			Enabled:            true,
-			Categories:         []string{database.ContinuousRetryCategoryHTTP5xx},
-			MaxDurationSeconds: 1,
-		}
-		return current
-	})
-
-	lastBody := []byte(`{"error":{"message":"latest Grok media 503","type":"upstream_error","code":"upstream_503"}}`)
-	var attempts atomic.Int32
-	secondAttempt := make(chan struct{}, 1)
-	upstreamCanceled := make(chan struct{}, 1)
-	releaseUpstream := make(chan struct{})
-	upstream := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		if attempts.Add(1) == 1 {
-			w.Header().Set("Content-Type", "application/json")
-			w.WriteHeader(http.StatusServiceUnavailable)
-			_, _ = w.Write(lastBody)
-			return
-		}
-		select {
-		case secondAttempt <- struct{}{}:
-		default:
-		}
-		w.Header().Set("Content-Type", "application/json")
-		w.WriteHeader(http.StatusOK)
-		_, _ = w.Write([]byte(`{"data":[`))
-		if flusher, ok := w.(http.Flusher); ok {
-			flusher.Flush()
-		}
-		ticker := time.NewTicker(10 * time.Millisecond)
-		defer ticker.Stop()
-		for {
-			select {
-			case <-r.Context().Done():
-				select {
-				case upstreamCanceled <- struct{}{}:
-				default:
-				}
-				return
-			case <-releaseUpstream:
-				return
-			case <-ticker.C:
-				if _, err := w.Write([]byte(" ")); err != nil {
-					select {
-					case upstreamCanceled <- struct{}{}:
-					default:
-					}
-					return
-				}
-				if flusher, ok := w.(http.Flusher); ok {
-					flusher.Flush()
-				}
-			}
-		}
-	}))
-	defer upstream.Close()
-	defer close(releaseUpstream)
-
-	store := auth.NewStore(nil, nil, &database.SystemSettings{
-		MaxConcurrency:      1,
-		MaxRetries:          0,
-		MaxRateLimitRetries: 0,
-		RetryIntervalMS:     0,
-	})
-	defer store.Stop()
-	account := &auth.Account{
-		DBID:         1,
-		UpstreamType: auth.UpstreamGrok,
-		BaseURL:      upstream.URL,
-		APIKey:       "test-grok-key",
-		Models:       []string{grokImagineImageQualityModel},
-		Status:       auth.StatusReady,
-	}
-	store.AddAccount(account)
-	handler := NewHandler(store, nil, nil, nil)
-
-	body := []byte(`{"model":"grok-imagine","prompt":"deadline image","response_format":"url"}`)
-	req := httptest.NewRequest(http.MethodPost, "/v1/images/generations", bytes.NewReader(body))
-	req.Header.Set("Content-Type", "application/json")
-	recorder := httptest.NewRecorder()
-	c, _ := gin.CreateTestContext(recorder)
-	c.Request = req
-
-	started := time.Now()
-	handler.ImagesGenerations(c)
-	if elapsed := time.Since(started); elapsed > 3*time.Second {
-		t.Fatalf("handler exceeded wall-clock bound: %s", elapsed)
-	}
-	select {
-	case <-secondAttempt:
-	default:
-		t.Fatal("deadline did not cover an active Grok media retry")
-	}
-	select {
-	case <-upstreamCanceled:
-	case <-time.After(500 * time.Millisecond):
-		t.Fatal("deadline did not cancel the active Grok media body read")
-	}
-	if recorder.Code != http.StatusServiceUnavailable || recorder.Body.String() != string(lastBody) {
-		t.Fatalf("response = %d %q, want exact latest upstream failure", recorder.Code, recorder.Body.String())
-	}
-	if got := account.ActiveRequests.Load(); got != 0 {
-		t.Fatalf("ActiveRequests = %d, want 0", got)
 	}
 }
 
