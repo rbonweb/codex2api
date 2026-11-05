@@ -1,6 +1,7 @@
 # Gateway only. Point it at an external database through .env:
 #   - PostgreSQL such as Neon: DATABASE_URL=postgresql://USER:PASSWORD@HOST/DBNAME?sslmode=require
 #   - SQLite on the data volume: DATABASE_DRIVER=sqlite and DATABASE_PATH=/data/codex2api.db
+# Without Redis, set CACHE_DRIVER=memory (or point REDIS_ADDR at an external Redis).
 # For a bundled PostgreSQL and Redis, use docker-compose.full.yml instead.
 name: codex2api
 
