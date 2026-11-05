@@ -546,7 +546,7 @@ func realtimeAudioApplyFormats(session gjson.Result, next *realtimeAudioConfig) 
 	return nil
 }
 
-// realtimeAudioApplyDelegation reads session.delegation. Only client delegation exists; acknowledgement "none" is the gateway extension that turns Live's filler acknowledgement off, "default" turns it back on. A delegation without acknowledgement leaves the current setting, so it keeps what the delegation query parameter chose.
+// realtimeAudioApplyDelegation reads session.delegation. Only client delegation exists; acknowledgement "none" is the gateway extension that turns Live's filler acknowledgement off, "auto" turns it back on. A delegation without acknowledgement leaves the current setting, so it keeps what the delegation query parameter chose.
 func realtimeAudioApplyDelegation(session gjson.Result, next *realtimeAudioConfig) *api.APIError {
 	delegation := session.Get("delegation")
 	if !delegation.Exists() || delegation.Type == gjson.Null {
@@ -562,10 +562,11 @@ func realtimeAudioApplyDelegation(session gjson.Result, next *realtimeAudioConfi
 		switch ack.String() {
 		case "none":
 			next.DelegationNoAck = true
-		case "default":
+		case "auto", "default":
+			// "auto" is the documented value; "default" is an undocumented synonym.
 			next.DelegationNoAck = false
 		default:
-			return realtimeAudioFieldError("unsupported_value", "session.delegation.acknowledgement", `The supported acknowledgements are "none" and "default".`)
+			return realtimeAudioFieldError("unsupported_value", "session.delegation.acknowledgement", `The supported acknowledgements are "auto" and "none".`)
 		}
 	}
 	return nil
