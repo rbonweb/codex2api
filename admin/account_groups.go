@@ -13,7 +13,6 @@ import (
 	"time"
 	"unicode/utf8"
 
-	"github.com/codex2api/auth"
 	"github.com/codex2api/database"
 	"github.com/codex2api/security"
 	"github.com/gin-gonic/gin"
@@ -469,22 +468,13 @@ func dedupeInt64(ids []int64) []int64 {
 	return out
 }
 
-// accountRowGroupChannel 返回账号所属的分组渠道。
-func accountRowGroupChannel(row *database.AccountRow) string {
-	if row != nil && strings.EqualFold(strings.TrimSpace(row.GetCredential("upstream_type")), auth.UpstreamAntigravity) {
-		return database.AccountGroupChannelAntigravity
-	}
-	if row != nil && strings.EqualFold(strings.TrimSpace(row.GetCredential("upstream_type")), auth.UpstreamClaude) {
-		return database.AccountGroupChannelClaude
-	}
-	if isGrokAccountRow(row) {
-		return database.AccountGroupChannelGrok
-	}
+// accountRowGroupChannel 返回账号所属的分组渠道。移除其它上游后，所有账号都属于 Codex 渠道。
+func accountRowGroupChannel(_ *database.AccountRow) string {
 	return database.AccountGroupChannelCodex
 }
 
 // validateGroupChannelForRows 校验目标分组的渠道与账号平台一致(issue #487):
-// Codex 与 Grok 账号不得进入同一个分组。groupIDs 为空直接放行。
+// 账号不得进入其它渠道的分组。groupIDs 为空直接放行。
 func (h *Handler) validateGroupChannelForRows(ctx context.Context, rows []*database.AccountRow, groupIDs []int64) error {
 	if len(groupIDs) == 0 || len(rows) == 0 {
 		return nil
@@ -518,15 +508,6 @@ func (h *Handler) validateGroupChannelForRows(ctx context.Context, rows []*datab
 	return nil
 }
 
-func groupChannelDisplayName(channel string) string {
-	switch channel {
-	case database.AccountGroupChannelGrok:
-		return "Grok"
-	case database.AccountGroupChannelAntigravity:
-		return "Antigravity"
-	case database.AccountGroupChannelClaude:
-		return "Claude"
-	default:
-		return "Codex"
-	}
+func groupChannelDisplayName(string) string {
+	return "Codex"
 }

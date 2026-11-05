@@ -7,6 +7,7 @@ import (
 	"net/http/httptest"
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/codex2api/auth"
 	"github.com/codex2api/database"
@@ -17,22 +18,22 @@ func TestToggleAccountEnabledImmediatelySchedulesOnlyEnabledEndpoint(t *testing.
 	gin.SetMode(gin.TestMode)
 	db := newTestAdminDB(t)
 	ctx := context.Background()
-	credentials := func(baseURL string) map[string]interface{} {
+	credentials := func(name string) map[string]interface{} {
 		return map[string]interface{}{
-			"upstream_type": auth.UpstreamOpenAIResponses,
-			"base_url":      baseURL,
-			"api_key":       "sk-test",
-			"models":        []string{"gpt-5.6"},
+			"refresh_token": "rt-" + name,
+			"access_token":  "at-" + name,
+			"expires_at":    time.Now().Add(time.Hour).UTC().Format(time.RFC3339),
+			"email":         name + "@example.com",
 		}
 	}
 
-	disabledID, err := db.InsertOpenAIResponsesAccount(ctx, "disabled", credentials("https://disabled.example"), "")
+	disabledID, err := db.InsertAccountWithCredentials(ctx, "disabled", credentials("disabled"), "")
 	if err != nil {
-		t.Fatalf("InsertOpenAIResponsesAccount(disabled): %v", err)
+		t.Fatalf("InsertAccountWithCredentials(disabled): %v", err)
 	}
-	enabledID, err := db.InsertOpenAIResponsesAccount(ctx, "to-enable", credentials("https://healthy.example"), "")
+	enabledID, err := db.InsertAccountWithCredentials(ctx, "to-enable", credentials("healthy"), "")
 	if err != nil {
-		t.Fatalf("InsertOpenAIResponsesAccount(to-enable): %v", err)
+		t.Fatalf("InsertAccountWithCredentials(to-enable): %v", err)
 	}
 	for _, id := range []int64{disabledID, enabledID} {
 		if err := db.SetAccountEnabled(ctx, id, false); err != nil {
@@ -81,14 +82,14 @@ func TestBatchEnableLoadsEndpointMissingFromRuntimePool(t *testing.T) {
 	gin.SetMode(gin.TestMode)
 	db := newTestAdminDB(t)
 	ctx := context.Background()
-	accountID, err := db.InsertOpenAIResponsesAccount(ctx, "batch-enable", map[string]interface{}{
-		"upstream_type": auth.UpstreamOpenAIResponses,
-		"base_url":      "https://healthy.example",
-		"api_key":       "sk-test",
-		"models":        []string{"gpt-5.6"},
+	accountID, err := db.InsertAccountWithCredentials(ctx, "batch-enable", map[string]interface{}{
+		"refresh_token": "rt-batch",
+		"access_token":  "at-batch",
+		"expires_at":    time.Now().Add(time.Hour).UTC().Format(time.RFC3339),
+		"email":         "batch@example.com",
 	}, "")
 	if err != nil {
-		t.Fatalf("InsertOpenAIResponsesAccount: %v", err)
+		t.Fatalf("InsertAccountWithCredentials: %v", err)
 	}
 	if err := db.SetAccountEnabled(ctx, accountID, false); err != nil {
 		t.Fatalf("SetAccountEnabled(false): %v", err)

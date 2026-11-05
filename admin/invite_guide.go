@@ -124,13 +124,10 @@ func (h *Handler) lookupInviteAccount(id int64) *auth.Account {
 }
 
 // inviteGuideCandidate 判断账号能否作为邀请发起方。与前端 isCodexInviteCandidate
-// 同口径：中转号与 AT-only 号没有可持续用于 referral 的 Codex OAuth 凭证。
+// 同口径：AT-only 号没有可持续用于 referral 的 Codex OAuth 凭证。
 // enabled/locked/status 不参与判断——那些只是调度开关，不影响 access token 可用性。
 func inviteGuideCandidate(acc *auth.Account) bool {
 	if acc == nil || acc.GetAccessToken() == "" {
-		return false
-	}
-	if acc.IsOpenAIResponsesAPI() || acc.IsGrokAPI() || acc.IsAntigravityAPI() {
 		return false
 	}
 	return acc.RefreshToken != ""

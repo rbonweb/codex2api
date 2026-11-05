@@ -169,7 +169,7 @@ func TestCodexTestRecorderIgnoresNonObjectFrames(t *testing.T) {
 
 func TestCodexTestRecorderRedactsSecretsAndTruncates(t *testing.T) {
 	token := "eyJhbGciOiJSUzI1NiJ9.super-secret-access-token"
-	apiKey := "sk-relay-secret-key"
+	apiKey := "sk-secret-key"
 	body := `{"error":{"message":"token ` + token + ` key ` + apiKey + ` proxy http://user:pass@proxy.local:8080"}}`
 	resp := &http.Response{StatusCode: 401, Header: make(http.Header), Body: io.NopCloser(strings.NewReader(body))}
 	resp.Header.Set("x-request-id", "req-"+token)
@@ -238,125 +238,6 @@ func newCodexDiagnosticsTestHandler(t *testing.T, upstream http.HandlerFunc) (*H
 	}
 	store.AddAccount(account)
 	return &Handler{store: store}, account, server
-}
-
-func serveCodexDiagnosticsTest(handler *Handler) *httptest.ResponseRecorder {
-	router := gin.New()
-	router.GET("/api/admin/accounts/:id/test", handler.TestConnection)
-	recorder := httptest.NewRecorder()
-	router.ServeHTTP(recorder, httptest.NewRequest(http.MethodGet, "/api/admin/accounts/42/test", nil))
-	return recorder
-}
-
-func TestConnectionCodexEmitsDiagnosticsFramesAroundSuccess(t *testing.T) {
-	handler, _, _ := newCodexDiagnosticsTestHandler(t, func(w http.ResponseWriter, r *http.Request) {
-		w.Header().Set("Content-Type", "text/event-stream")
-		w.Header().Set("x-request-id", "req_ok")
-		w.Header().Set("x-codex-plan-type", "plus")
-		w.Header().Set("x-codex-primary-used-percent", "5")
-		w.Header().Set("x-codex-primary-window-minutes", "300")
-		w.Header().Set("x-codex-primary-reset-after-seconds", "100")
-		w.WriteHeader(http.StatusOK)
-		// Echo the bearer secret back so the preview must redact it.
-		_, _ = w.Write([]byte("data: {\"type\":\"response.created\",\"response\":{\"id\":\"resp_ok\",\"model\":\"gpt-4o-mini\",\"auth\":\"" + strings.TrimPrefix(r.Header.Get("Authorization"), "Bearer ") + "\"}}\n\n"))
-		_, _ = w.Write([]byte("data: {\"type\":\"response.output_text.delta\",\"delta\":\"pong\"}\n\n"))
-		_, _ = w.Write([]byte("data: {\"type\":\"response.completed\",\"response\":{\"id\":\"resp_ok\",\"status\":\"completed\",\"usage\":{\"input_tokens\":7,\"output_tokens\":1,\"input_tokens_details\":{\"cached_tokens\":0}}}}\n\n"))
-	})
-	recorder := serveCodexDiagnosticsTest(handler)
-	if recorder.Code != http.StatusOK {
-		t.Fatalf("status = %d, want 200", recorder.Code)
-	}
-	events := decodeCodexTestEvents(t, recorder.Body.String())
-	if len(events) < 5 || events[0].Type != "test_start" || events[1].Type != "diagnostics" {
-		t.Fatalf("expected test_start then initial diagnostics: %+v", events)
-	}
-	initial := events[1].CodexDiagnostics
-	if initial == nil || initial.HTTPStatus != 200 || initial.DurationMS != nil || initial.RequestID != "req_ok" || initial.PlanType != "plus" || initial.PrimaryWindow == nil {
-		t.Fatalf("initial diagnostics must carry headers without duration: %+v", initial)
-	}
-	if events[1].Diagnostics != nil {
-		t.Fatal("Codex test must not populate the Claude diagnostics field")
-	}
-	terminal, final := events[len(events)-2], events[len(events)-1]
-	if terminal.Type != "test_complete" || !terminal.Success || final.Type != "diagnostics" {
-		t.Fatalf("terminal result must be followed by final diagnostics: %+v", events)
-	}
-	d := final.CodexDiagnostics
-	if d == nil || d.DurationMS == nil || d.FirstContentMS == nil || d.ResponseID != "resp_ok" || d.ResponseModel != "gpt-4o-mini" || d.ResponseStatus != "completed" {
-		t.Fatalf("final diagnostics incomplete: %+v", d)
-	}
-	if d.Usage == nil || d.Usage.InputTokens == nil || *d.Usage.InputTokens != 7 || d.Usage.CachedTokens == nil || *d.Usage.CachedTokens != 0 {
-		t.Fatalf("usage not carried: %+v", d.Usage)
-	}
-	if strings.Contains(d.ResponseBody, "sk-test-secret") || !strings.Contains(d.ResponseBody, "[REDACTED]") {
-		t.Fatalf("API key leaked into body preview: %s", d.ResponseBody)
-	}
-	if !strings.Contains(d.ResponseBody, "response.output_text.delta") {
-		t.Fatalf("body preview must include the streamed frames: %s", d.ResponseBody)
-	}
-	for _, event := range events {
-		if event.Type == "content" && strings.Contains(event.Text, "耗时") {
-			return
-		}
-	}
-	t.Fatalf("existing duration trailer must be preserved: %+v", events)
-}
-
-func TestConnectionCodexNon200CarriesErrorDiagnostics(t *testing.T) {
-	handler, account, _ := newCodexDiagnosticsTestHandler(t, func(w http.ResponseWriter, r *http.Request) {
-		w.Header().Set("Content-Type", "application/json")
-		w.Header().Set("cf-ray", "ray-401")
-		w.WriteHeader(http.StatusUnauthorized)
-		_, _ = w.Write([]byte(`{"error":{"message":"Your authentication token has been invalidated.","code":"token_invalidated","type":"invalid_request_error"}}`))
-	})
-	events := decodeCodexTestEvents(t, serveCodexDiagnosticsTest(handler).Body.String())
-	if len(events) < 4 || events[len(events)-2].Type != "error" || events[len(events)-1].Type != "diagnostics" {
-		t.Fatalf("error must be followed by final diagnostics: %+v", events)
-	}
-	d := events[len(events)-1].CodexDiagnostics
-	if d == nil || d.HTTPStatus != 401 || d.CFRay != "ray-401" || d.ErrorCode != "token_invalidated" || d.ErrorType != "invalid_request_error" || d.DurationMS == nil {
-		t.Fatalf("final diagnostics incomplete: %+v", d)
-	}
-	if !strings.Contains(d.ResponseBody, "token_invalidated") {
-		t.Fatalf("body preview missing: %s", d.ResponseBody)
-	}
-	if got := account.RuntimeStatus(); got != "unauthorized" {
-		t.Fatalf("RuntimeStatus() = %q, want unauthorized (state handling must be unchanged)", got)
-	}
-}
-
-func TestConnectionCodexStreamFailureRecordsErrorType(t *testing.T) {
-	handler, _, _ := newCodexDiagnosticsTestHandler(t, func(w http.ResponseWriter, r *http.Request) {
-		w.Header().Set("Content-Type", "text/event-stream")
-		w.WriteHeader(http.StatusOK)
-		_, _ = w.Write([]byte("data: {\"type\":\"response.created\",\"response\":{\"id\":\"resp_fail\"}}\n\n"))
-		_, _ = w.Write([]byte("data: {\"type\":\"response.failed\",\"response\":{\"id\":\"resp_fail\",\"status\":\"failed\",\"error\":{\"type\":\"server_error\",\"code\":\"upstream_unavailable\",\"message\":\"boom\"}}}\n\n"))
-	})
-	events := decodeCodexTestEvents(t, serveCodexDiagnosticsTest(handler).Body.String())
-	if len(events) < 4 || events[len(events)-2].Type != "error" || events[len(events)-1].Type != "diagnostics" {
-		t.Fatalf("error must be followed by final diagnostics: %+v", events)
-	}
-	d := events[len(events)-1].CodexDiagnostics
-	if d == nil || d.ResponseID != "resp_fail" || d.ResponseStatus != "failed" || d.ErrorType != "server_error" || d.ErrorCode != "upstream_unavailable" || d.FirstContentMS != nil {
-		t.Fatalf("final diagnostics incomplete: %+v", d)
-	}
-}
-
-func TestConnectionCodexRequestFailureCarriesDiagnostics(t *testing.T) {
-	handler, account, server := newCodexDiagnosticsTestHandler(t, func(w http.ResponseWriter, r *http.Request) {})
-	server.Close()
-	_ = account
-	events := decodeCodexTestEvents(t, serveCodexDiagnosticsTest(handler).Body.String())
-	if len(events) != 2 || events[0].Type != "test_start" || events[1].Type != "error" {
-		t.Fatalf("request failure must yield test_start then error: %+v", events)
-	}
-	d := events[1].CodexDiagnostics
-	if d == nil || d.DurationMS == nil || d.HTTPStatus != 0 || d.Model == "" {
-		t.Fatalf("request failure must still attach duration diagnostics: %+v", d)
-	}
-	if !strings.HasPrefix(events[1].Error, "请求失败") {
-		t.Fatalf("error text = %q", events[1].Error)
-	}
 }
 
 func TestCodexTestRecorderDetectsWebsocketTransportAndMetadataFrames(t *testing.T) {

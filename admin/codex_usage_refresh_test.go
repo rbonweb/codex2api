@@ -54,10 +54,6 @@ func TestBatchRefreshCodexUsageUpdatesSnapshotsWithoutFallback(t *testing.T) {
 		{DBID: 1, AccessToken: "codex-ok", Status: auth.StatusReady},
 		{DBID: 2, AccessToken: "codex-denied", Status: auth.StatusReady},
 		{DBID: 3, AccessToken: "codex-empty", Status: auth.StatusReady},
-		{DBID: 4, AccessToken: "claude-token", UpstreamType: auth.UpstreamClaude, Status: auth.StatusReady},
-		{DBID: 5, AccessToken: "grok-token", UpstreamType: auth.UpstreamGrok, Status: auth.StatusReady},
-		{DBID: 6, AccessToken: "google-token", UpstreamType: auth.UpstreamAntigravity, Status: auth.StatusReady},
-		{DBID: 7, AccessToken: "relay-token", UpstreamType: auth.UpstreamOpenAIResponses, Status: auth.StatusReady},
 		{DBID: 8, RefreshToken: "no-at", Status: auth.StatusReady},
 		{DBID: 9, CodexAuthMode: auth.CodexAuthModeAgentIdentity, AccessToken: "identity-token", Status: auth.StatusReady},
 	}

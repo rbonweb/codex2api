@@ -8,7 +8,6 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/codex2api/auth"
 	"github.com/codex2api/database"
 	"github.com/gin-gonic/gin"
 )
@@ -28,39 +27,6 @@ func TestIsOAuthProxyBalanceTarget(t *testing.T) {
 			want: true,
 		},
 		{
-			name: "grok oauth",
-			row: &database.AccountRow{
-				Type: "grok",
-				Credentials: map[string]interface{}{
-					"upstream_type": auth.UpstreamGrok,
-					"refresh_token": "rt-grok",
-				},
-			},
-			want: true,
-		},
-		{
-			name: "antigravity oauth",
-			row: &database.AccountRow{
-				Type: auth.UpstreamAntigravity,
-				Credentials: map[string]interface{}{
-					"upstream_type": auth.UpstreamAntigravity,
-					"refresh_token": "rt-antigravity",
-				},
-			},
-			want: true,
-		},
-		{
-			name: "claude oauth",
-			row: &database.AccountRow{
-				Type: "anthropic",
-				Credentials: map[string]interface{}{
-					"upstream_type": auth.UpstreamClaude,
-					"refresh_token": "rt-claude",
-				},
-			},
-			want: true,
-		},
-		{
 			name: "codex access token only",
 			row: &database.AccountRow{
 				Type:        "oauth",
@@ -68,33 +34,19 @@ func TestIsOAuthProxyBalanceTarget(t *testing.T) {
 			},
 		},
 		{
-			name: "openai responses api",
+			name: "api key account",
 			row: &database.AccountRow{
-				Type: "responses_api",
-				Credentials: map[string]interface{}{
-					"upstream_type": auth.UpstreamOpenAIResponses,
-					"api_key":       "sk-relay",
-				},
+				Type:        "oauth",
+				Credentials: map[string]interface{}{"api_key": "sk-key"},
 			},
 		},
 		{
-			name: "grok api key",
+			name: "api key wins over refresh token",
 			row: &database.AccountRow{
-				Type: "grok",
+				Type: "oauth",
 				Credentials: map[string]interface{}{
-					"upstream_type": auth.UpstreamGrok,
-					"api_key":       "xai-key",
-				},
-			},
-		},
-		{
-			name: "ambiguous api key wins over refresh token",
-			row: &database.AccountRow{
-				Type: "grok",
-				Credentials: map[string]interface{}{
-					"upstream_type": auth.UpstreamGrok,
-					"refresh_token": "rt-grok",
-					"api_key":       "xai-key",
+					"refresh_token": "rt-codex",
+					"api_key":       "sk-key",
 				},
 			},
 		},
@@ -103,8 +55,8 @@ func TestIsOAuthProxyBalanceTarget(t *testing.T) {
 			row: &database.AccountRow{
 				Type: "oauth",
 				Credentials: map[string]interface{}{
-					"upstream_type": "future-relay",
-					"refresh_token": "rt-relay",
+					"upstream_type": "future-upstream",
+					"refresh_token": "rt-future",
 				},
 			},
 		},
@@ -134,12 +86,9 @@ func TestSelectOAuthProxyBalanceTargetsHonorsMode(t *testing.T) {
 			Credentials: map[string]interface{}{"refresh_token": "rt-unbound"},
 		},
 		{
-			ID:   3,
-			Type: "responses_api",
-			Credentials: map[string]interface{}{
-				"upstream_type": auth.UpstreamOpenAIResponses,
-				"api_key":       "sk-relay",
-			},
+			ID:          3,
+			Type:        "oauth",
+			Credentials: map[string]interface{}{"api_key": "sk-key"},
 		},
 	}
 
@@ -170,27 +119,13 @@ func TestAutoBalanceProxiesAssignsOnlyOAuthAccounts(t *testing.T) {
 	if err != nil {
 		t.Fatalf("InsertAccount codex OAuth: %v", err)
 	}
-	grokOAuthID, err := db.InsertAccountWithUpstream(ctx, "grok-oauth", "xai", auth.UpstreamGrok, map[string]interface{}{
-		"upstream_type": auth.UpstreamGrok,
-		"refresh_token": "rt-grok",
-	}, "")
+	secondOAuthID, err := db.InsertAccount(ctx, "codex-oauth-2", "rt-codex-2", "")
 	if err != nil {
-		t.Fatalf("InsertAccountWithUpstream Grok OAuth: %v", err)
+		t.Fatalf("InsertAccount second codex OAuth: %v", err)
 	}
-	responsesAPIID, err := db.InsertOpenAIResponsesAccount(ctx, "responses-api", map[string]interface{}{
-		"upstream_type": auth.UpstreamOpenAIResponses,
-		"base_url":      "https://relay.example/v1",
-		"api_key":       "sk-relay",
-	}, manualProxy)
+	apiKeyID, err := db.InsertAccountWithCredentials(ctx, "codex-api-key", map[string]interface{}{"api_key": "sk-key"}, manualProxy)
 	if err != nil {
-		t.Fatalf("InsertOpenAIResponsesAccount: %v", err)
-	}
-	grokAPIKeyID, err := db.InsertAccountWithUpstream(ctx, "grok-api-key", "xai", auth.UpstreamGrok, map[string]interface{}{
-		"upstream_type": auth.UpstreamGrok,
-		"api_key":       "xai-key",
-	}, "")
-	if err != nil {
-		t.Fatalf("InsertAccountWithUpstream Grok API key: %v", err)
+		t.Fatalf("InsertAccountWithCredentials API key: %v", err)
 	}
 	atOnlyID, err := db.InsertATAccount(ctx, "codex-at-only", "at-codex", manualProxy)
 	if err != nil {
@@ -234,9 +169,8 @@ func TestAutoBalanceProxiesAssignsOnlyOAuthAccounts(t *testing.T) {
 		}
 	}
 	assertProxyURL(codexOAuthID, candidateProxy)
-	assertProxyURL(grokOAuthID, candidateProxy)
-	assertProxyURL(responsesAPIID, manualProxy)
-	assertProxyURL(grokAPIKeyID, "")
+	assertProxyURL(secondOAuthID, candidateProxy)
+	assertProxyURL(apiKeyID, manualProxy)
 	assertProxyURL(atOnlyID, manualProxy)
 }
 

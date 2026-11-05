@@ -16,7 +16,7 @@ import (
 	"github.com/gin-gonic/gin"
 )
 
-func newPagedAccountsHandler(t *testing.T) (*Handler, []int64, []int64) {
+func newPagedAccountsHandler(t *testing.T) (*Handler, []int64) {
 	t.Helper()
 	db := newTestAdminDB(t)
 	ctx := context.Background()
@@ -32,19 +32,6 @@ func newPagedAccountsHandler(t *testing.T) (*Handler, []int64, []int64) {
 		}
 		codexIDs = append(codexIDs, id)
 	}
-	grokIDs := make([]int64, 0, 2)
-	for index := 0; index < 2; index++ {
-		id, err := db.InsertAccountWithUpstream(ctx, "grok-"+strconv.Itoa(index+1), "xai", "oauth", map[string]interface{}{
-			"upstream_type": "grok",
-			"refresh_token": "secret-grok-" + strconv.Itoa(index+1),
-			"email":         "grok" + strconv.Itoa(index+1) + "@example.net",
-			"plan_type":     "supergrok",
-		}, "")
-		if err != nil {
-			t.Fatalf("insert grok account: %v", err)
-		}
-		grokIDs = append(grokIDs, id)
-	}
 	store := auth.NewStore(db, nil, nil)
 	store.SetLazyMode(true)
 	if err := store.Init(ctx); err != nil {
@@ -55,7 +42,7 @@ func newPagedAccountsHandler(t *testing.T) (*Handler, []int64, []int64) {
 	t.Cleanup(func() { store.Stop() })
 	tokenCache := cache.NewMemory(1)
 	t.Cleanup(func() { _ = tokenCache.Close() })
-	return NewHandler(store, db, tokenCache, nil, ""), codexIDs, grokIDs
+	return NewHandler(store, db, tokenCache, nil, ""), codexIDs
 }
 
 func invokeListAccounts(t *testing.T, handler *Handler, target string) *httptest.ResponseRecorder {
@@ -69,7 +56,7 @@ func invokeListAccounts(t *testing.T, handler *Handler, target string) *httptest
 
 func TestListAccountsPageIsChannelScopedStableAndClamped(t *testing.T) {
 	gin.SetMode(gin.TestMode)
-	handler, codexIDs, _ := newPagedAccountsHandler(t)
+	handler, codexIDs := newPagedAccountsHandler(t)
 
 	recorder := invokeListAccounts(t, handler, "/api/admin/accounts?view=page&channel=codex&page=1&page_size=2")
 	if recorder.Code != http.StatusOK {
@@ -86,9 +73,6 @@ func TestListAccountsPageIsChannelScopedStableAndClamped(t *testing.T) {
 		t.Fatalf("default order ids = [%d,%d], want [%d,%d]", first.Accounts[0].ID, first.Accounts[1].ID, codexIDs[0], codexIDs[1])
 	}
 	for _, account := range first.Accounts {
-		if account.GrokAPI {
-			t.Fatalf("codex page leaked grok account %d", account.ID)
-		}
 		if account.DetailLoaded || account.Usage5hDetail != nil || account.Usage7dDetail != nil || account.Billed5h != nil || account.Billed7d != nil || len(account.ModelCooldowns) != 0 {
 			t.Fatalf("paged account %d leaked detail-only fields", account.ID)
 		}
@@ -106,9 +90,9 @@ func TestListAccountsPageIsChannelScopedStableAndClamped(t *testing.T) {
 
 func TestListAccountsPageFiltersAndLegacyCompatibility(t *testing.T) {
 	gin.SetMode(gin.TestMode)
-	handler, _, grokIDs := newPagedAccountsHandler(t)
+	handler, codexIDs := newPagedAccountsHandler(t)
 
-	recorder := invokeListAccounts(t, handler, "/api/admin/accounts?view=page&channel=grok&page=1&page_size=500&search=grok2&auth_kind=oauth")
+	recorder := invokeListAccounts(t, handler, "/api/admin/accounts?view=page&channel=codex&page=1&page_size=500&search=codex2&auth_kind=oauth")
 	if recorder.Code != http.StatusOK {
 		t.Fatalf("status = %d: %s", recorder.Code, recorder.Body.String())
 	}
@@ -116,7 +100,7 @@ func TestListAccountsPageFiltersAndLegacyCompatibility(t *testing.T) {
 	if err := json.Unmarshal(recorder.Body.Bytes(), &page); err != nil {
 		t.Fatalf("decode page: %v", err)
 	}
-	if page.Total != 1 || len(page.Accounts) != 1 || page.Accounts[0].ID != grokIDs[1] {
+	if page.Total != 1 || len(page.Accounts) != 1 || page.Accounts[0].ID != codexIDs[1] {
 		t.Fatalf("filtered rows = %+v", page.Accounts)
 	}
 	if page.SnapshotAt == "" || page.StatsState == "" {
@@ -128,8 +112,8 @@ func TestListAccountsPageFiltersAndLegacyCompatibility(t *testing.T) {
 	if err := json.Unmarshal(legacyRecorder.Body.Bytes(), &legacy); err != nil {
 		t.Fatalf("decode legacy response: %v", err)
 	}
-	if len(legacy.Accounts) != 5 {
-		t.Fatalf("legacy account count = %d, want 5", len(legacy.Accounts))
+	if len(legacy.Accounts) != 3 {
+		t.Fatalf("legacy account count = %d, want 3", len(legacy.Accounts))
 	}
 
 	emptyRecorder := invokeListAccounts(t, handler, "/api/admin/accounts?view=page&channel=codex&page=4&page_size=20&search=does-not-exist")
@@ -160,25 +144,24 @@ func TestListAccountsPageFiltersAndLegacyCompatibility(t *testing.T) {
 
 func TestAccountListItemMatchesEveryFilter(t *testing.T) {
 	item := &accountListSnapshotItem{
-		Row:              &database.AccountRow{ID: 7, Name: "Alice", ProxyURL: "http://proxy.example"},
-		ID:               7,
-		Status:           "active",
-		Enabled:          true,
-		PlanType:         "supergrok",
-		GrokPlanCategory: "supergrok",
-		GrokAuthKind:     auth.GrokAuthKindOAuth,
-		EmailDomain:      "example.com",
-		Tags:             []string{"blue", "paid"},
-		GroupIDs:         []int64{10, 20},
-		HealthTier:       "risky",
-		SearchText:       "7 alice alice@example.com",
+		Row:            &database.AccountRow{ID: 7, Name: "Alice", ProxyURL: "http://proxy.example"},
+		ID:             7,
+		Status:         "active",
+		Enabled:        true,
+		PlanType:       "plus",
+		UsagePercent7d: 10, UsagePercent7dOK: true,
+		EmailDomain: "example.com",
+		Tags:        []string{"blue", "paid"},
+		GroupIDs:    []int64{10, 20},
+		HealthTier:  "risky",
+		SearchText:  "7 alice alice@example.com",
 	}
 	query := accountPageQuery{
-		Search: "alice", Status: "active", Plan: "supergrok", AuthKind: auth.GrokAuthKindOAuth,
+		Search: "alice", Status: "active", Plan: "plus", AuthKind: "oauth",
 		Tag: "blue", EmailDomain: "example.com", GroupInclude: []int64{20}, GroupExclude: []int64{30},
 		HealthTier: "attention", ProxyURL: item.Row.ProxyURL, ProxyFilter: "this",
 	}
-	if !accountListItemMatches(item, query, database.UpstreamChannelGrok) {
+	if !accountListItemMatches(item, query, database.UpstreamChannelCodex) {
 		t.Fatal("item should match the complete filter set")
 	}
 
@@ -186,7 +169,7 @@ func TestAccountListItemMatchesEveryFilter(t *testing.T) {
 		{Search: "bob"},
 		{Status: "disabled"},
 		{Plan: "free"},
-		{AuthKind: auth.GrokAuthKindAPIKey},
+		{AuthKind: "api_key"},
 		{Tag: "missing"},
 		{EmailDomain: "other.example"},
 		{GroupInclude: []int64{99}},
@@ -196,7 +179,7 @@ func TestAccountListItemMatchesEveryFilter(t *testing.T) {
 		{ProxyFilter: "unbound"},
 	}
 	for index, failing := range failingQueries {
-		if accountListItemMatches(item, failing, database.UpstreamChannelGrok) {
+		if accountListItemMatches(item, failing, database.UpstreamChannelCodex) {
 			t.Fatalf("failing filter %d unexpectedly matched: %+v", index, failing)
 		}
 	}
@@ -256,7 +239,7 @@ func TestAccountListSortAlwaysFallsBackToIDAscending(t *testing.T) {
 }
 
 func TestPagedAccountRuntimeStatusOverridesDatabaseRow(t *testing.T) {
-	handler, codexIDs, _ := newPagedAccountsHandler(t)
+	handler, codexIDs := newPagedAccountsHandler(t)
 	runtimeAccount := handler.store.FindByID(codexIDs[0])
 	if runtimeAccount == nil {
 		t.Fatal("runtime account missing")
@@ -300,7 +283,7 @@ func TestChunkInt64IDsCoversFullPool(t *testing.T) {
 }
 
 func TestLargePoolDisablesRequestAndTodaySort(t *testing.T) {
-	handler, _, _ := newPagedAccountsHandler(t)
+	handler, _ := newPagedAccountsHandler(t)
 	if got := handler.disabledUsageSorts(database.UpstreamChannelCodex, requestCountFullPoolScanMax); got != nil {
 		t.Fatalf("disabled sorts at threshold = %v, want nil", got)
 	}
@@ -365,7 +348,7 @@ func TestLargePoolDisablesRequestAndTodaySort(t *testing.T) {
 }
 
 func TestLargePoolEnablesUsageSortAfterBatchedCache(t *testing.T) {
-	handler, _, _ := newPagedAccountsHandler(t)
+	handler, _ := newPagedAccountsHandler(t)
 	handler.storeRequestCountCache(database.UpstreamChannelCodex, map[int64]*database.AccountRequestCount{
 		2: {AccountID: 2, SuccessCount: 9},
 	}, map[int64]*database.AccountTimeRangeUsage{
@@ -386,7 +369,7 @@ func TestLargePoolEnablesUsageSortAfterBatchedCache(t *testing.T) {
 }
 
 func TestBatchedStatsResumeFromStaging(t *testing.T) {
-	handler, _, _ := newPagedAccountsHandler(t)
+	handler, _ := newPagedAccountsHandler(t)
 	todayStart := database.StartOfDay(time.Now())
 	staged := &requestCountStaging{
 		counts:     map[int64]*database.AccountRequestCount{1: {AccountID: 1, SuccessCount: 5}},
@@ -423,7 +406,7 @@ func TestBatchedStatsResumeFromStaging(t *testing.T) {
 }
 
 func TestBatchedStatsErrorPreservesStagingProgress(t *testing.T) {
-	handler, _, _ := newPagedAccountsHandler(t)
+	handler, _ := newPagedAccountsHandler(t)
 	ids := make([]int64, requestCountBatchSize+50)
 	for i := range ids {
 		ids[i] = int64(i + 1)
@@ -462,7 +445,7 @@ func TestRequestCountBatchRefreshTimeoutScales(t *testing.T) {
 }
 
 func TestLargePoolStartsBatchedRefreshWithoutBlocking(t *testing.T) {
-	handler, _, _ := newPagedAccountsHandler(t)
+	handler, _ := newPagedAccountsHandler(t)
 	ids := make([]int64, requestCountFullPoolScanMax+1)
 	for i := range ids {
 		ids[i] = int64(i + 1)
@@ -485,7 +468,7 @@ func TestLargePoolStartsBatchedRefreshWithoutBlocking(t *testing.T) {
 }
 
 func TestAccountStatsCachesNeverBlockColdOrStaleReads(t *testing.T) {
-	handler, _, _ := newPagedAccountsHandler(t)
+	handler, _ := newPagedAccountsHandler(t)
 	started := time.Now()
 	_, _, state := handler.getCachedRequestCountsNonBlocking(database.UpstreamChannelCodex, nil)
 	if state != "warming" || time.Since(started) > 100*time.Millisecond {
@@ -522,8 +505,6 @@ func TestAccountListUnsampledExcludedFromNormalAndSchedulable(t *testing.T) {
 	unsampled := &accountListSnapshotItem{ID: 1, Status: "active", Enabled: true}
 	sampled := &accountListSnapshotItem{ID: 2, Status: "active", Enabled: true, UsagePercent7d: 12, UsagePercent7dOK: true}
 	only5h := &accountListSnapshotItem{ID: 3, Status: "active", Enabled: true, UsagePercent5h: 8, UsagePercent5hOK: true}
-	responses := &accountListSnapshotItem{ID: 4, Status: "active", Enabled: true, OpenAIResponses: true}
-	grok := &accountListSnapshotItem{ID: 5, Status: "active", Enabled: true, GrokAuthKind: auth.GrokAuthKindOAuth}
 	banned := &accountListSnapshotItem{ID: 6, Status: "unauthorized", Enabled: true}
 
 	if !accountListUnsampled(unsampled) {
@@ -532,11 +513,11 @@ func TestAccountListUnsampledExcludedFromNormalAndSchedulable(t *testing.T) {
 	if accountListNormal(unsampled) || accountListSchedulable(unsampled) {
 		t.Fatal("unsampled account must not count as normal or schedulable")
 	}
-	if accountListUnsampled(sampled) || accountListUnsampled(only5h) || accountListUnsampled(responses) || accountListUnsampled(grok) || accountListUnsampled(banned) {
-		t.Fatal("sampled, 5h-only, responses, grok, and banned accounts must not be unsampled")
+	if accountListUnsampled(sampled) || accountListUnsampled(only5h) || accountListUnsampled(banned) {
+		t.Fatal("sampled, 5h-only, and banned accounts must not be unsampled")
 	}
-	if !accountListNormal(sampled) || !accountListSchedulable(sampled) || !accountListNormal(only5h) || !accountListSchedulable(responses) || !accountListSchedulable(grok) {
-		t.Fatal("sampled / responses / grok accounts should stay available")
+	if !accountListNormal(sampled) || !accountListSchedulable(sampled) || !accountListNormal(only5h) {
+		t.Fatal("sampled accounts should stay available")
 	}
 	if accountListStatusMatches(unsampled, "normal", database.UpstreamChannelCodex) || accountListStatusMatches(unsampled, "scheduling", database.UpstreamChannelCodex) {
 		t.Fatal("unsampled filter buckets must exclude normal and scheduling")
@@ -545,9 +526,9 @@ func TestAccountListUnsampledExcludedFromNormalAndSchedulable(t *testing.T) {
 		t.Fatal("unsampled filter should match accounts without usage windows")
 	}
 
-	summary, _ := summarizeAccountList([]*accountListSnapshotItem{unsampled, sampled, only5h, responses}, database.UpstreamChannelCodex)
-	if summary.Normal != 3 || summary.Active != 3 || summary.Unsampled != 1 {
-		t.Fatalf("summary = %+v, want normal=3 active=3 unsampled=1", summary)
+	summary, _ := summarizeAccountList([]*accountListSnapshotItem{unsampled, sampled, only5h}, database.UpstreamChannelCodex)
+	if summary.Normal != 2 || summary.Active != 2 || summary.Unsampled != 1 {
+		t.Fatalf("summary = %+v, want normal=2 active=2 unsampled=1", summary)
 	}
 }
 
@@ -560,26 +541,6 @@ func TestBuildAccountQuotaAnalysisExcludesErrorFromUnsampled(t *testing.T) {
 	}
 }
 
-func TestBuildAccountQuotaAnalysisTreatsClaudePlanAsFiveHourEligible(t *testing.T) {
-	item := &accountListSnapshotItem{PlanType: "claude-max-5x", UsagePercent5h: 42, UsagePercent5hOK: true,
-		UsagePercent7d: 61, UsagePercent7dOK: true, Row: &database.AccountRow{Credentials: map[string]interface{}{"upstream_type": auth.UpstreamClaude}}}
-	got := buildAccountQuotaAnalysis([]*accountListSnapshotItem{item}, "5h")
-	if got.Total != 1 || got.Sampled != 1 || got.AverageUsed == nil || *got.AverageUsed != 42 {
-		t.Fatalf("Claude 5h quota = %+v, want sampled Claude account", got)
-	}
-}
-
-func TestBuildAccountQuotaAnalysisDoesNotTreatClaudeFreeOrUnknownAsFiveHourEligible(t *testing.T) {
-	for _, plan := range []string{"free", "", "mystery-tier", "claude-free", "claude-unknown"} {
-		item := &accountListSnapshotItem{PlanType: plan, UsagePercent5h: 42, UsagePercent5hOK: true,
-			Row: &database.AccountRow{Credentials: map[string]interface{}{"upstream_type": auth.UpstreamClaude}}}
-		got := buildAccountQuotaAnalysis([]*accountListSnapshotItem{item}, "5h")
-		if got.Total != 0 || got.Sampled != 0 {
-			t.Fatalf("Claude plan %q incorrectly entered 5h analysis: %+v", plan, got)
-		}
-	}
-}
-
 func TestCombineAccountStatsState(t *testing.T) {
 	if got := combineAccountStatsState("ready", "stale"); got != "stale" {
 		t.Fatalf("ready+stale=%q", got)
@@ -589,162 +550,28 @@ func TestCombineAccountStatsState(t *testing.T) {
 	}
 }
 
-func TestAccountOperationSelectorNeverCrossesChannel(t *testing.T) {
-	handler, codexIDs, grokIDs := newPagedAccountsHandler(t)
-	ctx := context.Background()
-	selected, err := handler.resolveAccountOperationSelector(ctx, &accountOperationSelector{Channel: database.UpstreamChannelGrok})
-	if err != nil {
-		t.Fatalf("resolve selector: %v", err)
-	}
-	if len(selected) != len(grokIDs) {
-		t.Fatalf("grok selector ids = %v, want %v", selected, grokIDs)
-	}
-	for _, id := range selected {
-		for _, codexID := range codexIDs {
-			if id == codexID {
-				t.Fatalf("selector leaked codex account %d", id)
-			}
-		}
-	}
-}
-
-func TestAccountListSubscriptionUnlockedIsProviderAware(t *testing.T) {
-	claudeRow := &database.AccountRow{Credentials: map[string]interface{}{"upstream_type": auth.UpstreamClaude}}
+func TestAccountListSubscriptionUnlockedUsesCodexPlans(t *testing.T) {
 	cases := []struct {
-		name    string
-		item    *accountListSnapshotItem
-		channel string
-		want    bool
+		name string
+		item *accountListSnapshotItem
+		want bool
 	}{
-		{
-			name:    "codex paid plan",
-			item:    &accountListSnapshotItem{PlanType: "plus"},
-			channel: database.UpstreamChannelCodex,
-			want:    true,
-		},
-		{
-			name:    "claude max plan",
-			item:    &accountListSnapshotItem{Claude: true, PlanType: "max", Row: claudeRow},
-			channel: database.UpstreamChannelClaude,
-			want:    true,
-		},
-		{
-			name:    "claude free plan",
-			item:    &accountListSnapshotItem{Claude: true, PlanType: "free", Row: claudeRow},
-			channel: database.UpstreamChannelClaude,
-			want:    false,
-		},
-		{
-			name:    "claude locked plan",
-			item:    &accountListSnapshotItem{Claude: true, PlanType: "max", Locked: true, Row: claudeRow},
-			channel: database.UpstreamChannelClaude,
-			want:    false,
-		},
-		{
-			name:    "grok plan is not claude subscription",
-			item:    &accountListSnapshotItem{PlanType: "supergrok", GrokAuthKind: auth.GrokAuthKindOAuth},
-			channel: database.UpstreamChannelGrok,
-			want:    false,
-		},
+		{name: "codex paid plan", item: &accountListSnapshotItem{PlanType: "plus"}, want: true},
+		{name: "codex free plan", item: &accountListSnapshotItem{PlanType: "free"}, want: false},
+		{name: "codex locked paid plan", item: &accountListSnapshotItem{PlanType: "plus", Locked: true}, want: false},
 	}
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
-			if got := accountListSubscriptionUnlocked(tc.item, tc.channel); got != tc.want {
+			if got := accountListSubscriptionUnlocked(tc.item, database.UpstreamChannelCodex); got != tc.want {
 				t.Fatalf("accountListSubscriptionUnlocked() = %v, want %v", got, tc.want)
 			}
 		})
 	}
 }
 
-func TestAccountOperationSelectorIncludesUnlockedClaudePlans(t *testing.T) {
-	handler, _, _ := newPagedAccountsHandler(t)
-	ctx := context.Background()
-	maxID, err := handler.db.InsertAccountWithUpstream(ctx, "claude-max", "anthropic", "oauth", map[string]interface{}{
-		"upstream_type": "claude",
-		"refresh_token": "claude-max-refresh",
-		"plan_type":     "max",
-	}, "")
-	if err != nil {
-		t.Fatalf("insert Claude max account: %v", err)
-	}
-	lockedID, err := handler.db.InsertAccountWithUpstream(ctx, "claude-locked", "anthropic", "oauth", map[string]interface{}{
-		"upstream_type": "claude",
-		"refresh_token": "claude-locked-refresh",
-		"plan_type":     "max-5x",
-	}, "")
-	if err != nil {
-		t.Fatalf("insert locked Claude account: %v", err)
-	}
-	if err := handler.db.SetAccountLocked(ctx, lockedID, true); err != nil {
-		t.Fatalf("lock Claude account: %v", err)
-	}
-	freeID, err := handler.db.InsertAccountWithUpstream(ctx, "claude-free", "anthropic", "oauth", map[string]interface{}{
-		"upstream_type": "claude",
-		"refresh_token": "claude-free-refresh",
-		"plan_type":     "free",
-	}, "")
-	if err != nil {
-		t.Fatalf("insert Claude free account: %v", err)
-	}
-
-	selected, err := handler.resolveAccountOperationSelector(ctx, &accountOperationSelector{
-		Channel:              database.UpstreamChannelClaude,
-		SubscriptionUnlocked: true,
-	})
-	if err != nil {
-		t.Fatalf("resolve Claude selector: %v", err)
-	}
-	if len(selected) != 1 || selected[0] != maxID {
-		t.Fatalf("Claude subscription selector ids = %v, want [%d] (locked=%d free=%d)", selected, maxID, lockedID, freeID)
-	}
-}
-
-func TestClaudeAccountSnapshotExpiryDoesNotInvalidateOtherChannelGeneration(t *testing.T) {
-	h := &Handler{accountListCache: make(map[string]*accountListSnapshot)}
-	globalBefore := h.accountCachesGen.Load()
-	claudeBefore := h.claudeAccountCachesGen.Load()
-	h.expireAccountListSnapshot(database.UpstreamChannelClaude)
-	if h.accountCachesGen.Load() != globalBefore {
-		t.Fatal("Claude snapshot expiry should not bump the global account cache generation")
-	}
-	if h.claudeAccountCachesGen.Load() != claudeBefore+1 {
-		t.Fatal("Claude snapshot expiry should bump its channel generation")
-	}
-	h.expireAccountListSnapshot(database.UpstreamChannelCodex)
-	if h.accountCachesGen.Load() != globalBefore+1 {
-		t.Fatal("non-Claude snapshot expiry should retain the global invalidation behavior")
-	}
-}
-
-func TestAccountOperationSelectorSupportsAntigravity(t *testing.T) {
-	handler, codexIDs, grokIDs := newPagedAccountsHandler(t)
-	ctx := context.Background()
-	antigravityID, err := handler.db.InsertAccountWithUpstream(ctx, "antigravity-1", "google", auth.UpstreamAntigravity, map[string]interface{}{
-		"upstream_type": auth.UpstreamAntigravity,
-		"refresh_token": "secret-antigravity-1",
-		"email":         "antigravity@example.org",
-	}, "")
-	if err != nil {
-		t.Fatalf("insert antigravity account: %v", err)
-	}
-
-	selected, err := handler.resolveAccountOperationSelector(ctx, &accountOperationSelector{Channel: database.UpstreamChannelAntigravity})
-	if err != nil {
-		t.Fatalf("resolve antigravity selector: %v", err)
-	}
-	if len(selected) != 1 || selected[0] != antigravityID {
-		t.Fatalf("antigravity selector ids = %v, want [%d]", selected, antigravityID)
-	}
-	for _, leakedID := range append(codexIDs, grokIDs...) {
-		if selected[0] == leakedID {
-			t.Fatalf("antigravity selector leaked account %d", leakedID)
-		}
-	}
-}
-
 func TestGetAccountReturnsOneEnrichedAccount(t *testing.T) {
 	gin.SetMode(gin.TestMode)
-	handler, codexIDs, _ := newPagedAccountsHandler(t)
+	handler, codexIDs := newPagedAccountsHandler(t)
 	recorder := httptest.NewRecorder()
 	ginContext, _ := gin.CreateTestContext(recorder)
 	ginContext.Params = gin.Params{{Key: "id", Value: strconv.FormatInt(codexIDs[0], 10)}}
@@ -806,7 +633,7 @@ func TestAccountAnalysisHasFixedSizeForFortyThousandAccounts(t *testing.T) {
 }
 
 func TestBatchOperationsRejectIDsTogetherWithSelector(t *testing.T) {
-	handler, _, _ := newPagedAccountsHandler(t)
+	handler, _ := newPagedAccountsHandler(t)
 	payload := `{"ids":[],"selector":{"channel":"codex"},"enabled":true}`
 	tests := []struct {
 		name   string
@@ -842,7 +669,7 @@ func warmRequestCountCache(handler *Handler, channel string) {
 
 func TestAccountMutationInvalidationServesFreshSummary(t *testing.T) {
 	gin.SetMode(gin.TestMode)
-	handler, codexIDs, _ := newPagedAccountsHandler(t)
+	handler, codexIDs := newPagedAccountsHandler(t)
 	ctx := context.Background()
 	warmRequestCountCache(handler, database.UpstreamChannelCodex)
 
@@ -881,7 +708,7 @@ func TestAccountMutationInvalidationServesFreshSummary(t *testing.T) {
 // 因为缓存被清空而回头全量投影(全量投影会把库里仍在的账号读回来)。
 func TestPruneAccountsFromSnapshotCachesKeepsWarmSnapshot(t *testing.T) {
 	gin.SetMode(gin.TestMode)
-	handler, codexIDs, _ := newPagedAccountsHandler(t)
+	handler, codexIDs := newPagedAccountsHandler(t)
 	ctx := context.Background()
 	warmRequestCountCache(handler, database.UpstreamChannelCodex)
 
@@ -930,7 +757,7 @@ func TestPruneAccountsFromSnapshotCachesKeepsWarmSnapshot(t *testing.T) {
 // 在途重建若跨越了失效点(读库早于账号变更),不得把旧快照写回缓存。
 func TestInstallSkipsCacheWhenGenerationMoved(t *testing.T) {
 	gin.SetMode(gin.TestMode)
-	handler, _, _ := newPagedAccountsHandler(t)
+	handler, _ := newPagedAccountsHandler(t)
 	staleGen := handler.accountCachesGen.Load()
 	handler.invalidateAccountSnapshotCaches() // 模拟重建读库之后才提交的账号变更
 	snapshot := &accountListSnapshot{Channel: database.UpstreamChannelCodex}
@@ -962,8 +789,6 @@ func TestShouldInvalidateAccountSnapshotCaches(t *testing.T) {
 		{http.MethodPost, "/api/admin/accounts/clean-error", http.StatusOK, false},
 		{http.MethodPost, "/api/admin/accounts/clean-banned", http.StatusOK, false},
 		{http.MethodPost, "/api/admin/accounts/clean-rate-limited", http.StatusOK, false},
-		{http.MethodPost, "/api/admin/accounts/grok/clean-error", http.StatusOK, false},
-		{http.MethodPost, "/api/admin/accounts/grok/clean-banned", http.StatusOK, false},
 		{http.MethodDelete, "/api/admin/accounts/7/purge", http.StatusOK, true},
 		{http.MethodDelete, "/api/admin/accounts/recycle-bin", http.StatusOK, true},
 		{http.MethodPost, "/api/admin/accounts/7/enable", http.StatusOK, true},
@@ -985,7 +810,7 @@ func TestShouldInvalidateAccountSnapshotCaches(t *testing.T) {
 // 快照全员按 0 打平,排序退化成 ID 序(账号页"排序不生效"反馈)。
 func TestListAccountsPageSortsBySchedulerPriority(t *testing.T) {
 	gin.SetMode(gin.TestMode)
-	handler, codexIDs, _ := newPagedAccountsHandler(t)
+	handler, codexIDs := newPagedAccountsHandler(t)
 	ctx := context.Background()
 	// codexIDs[0] 不设置(视同 0),其余两个分别 50 / 40。
 	if err := handler.db.UpdateCredentials(ctx, codexIDs[1], map[string]interface{}{"scheduler_priority": int64(50)}); err != nil {
@@ -1022,59 +847,6 @@ func TestListAccountsPageSortsBySchedulerPriority(t *testing.T) {
 
 	assertOrder("desc", []int64{codexIDs[1], codexIDs[2], codexIDs[0]})
 	assertOrder("asc", []int64{codexIDs[0], codexIDs[2], codexIDs[1]})
-}
-
-func TestListAccountsPageKeepsGrokQuotaBars(t *testing.T) {
-	gin.SetMode(gin.TestMode)
-	db := newTestAdminDB(t)
-	ctx := context.Background()
-	id, err := db.InsertAccountWithUpstream(ctx, "grok-quota", "xai", "oauth", map[string]interface{}{
-		"upstream_type":       "grok",
-		"refresh_token":       "rt-grok",
-		"email":               "grok@example.net",
-		"plan_type":           "supergrok",
-		"grok_billing_detail": `{"weekly_percent":42.5,"weekly_period_end":"2026-08-15T00:00:00Z"}`,
-	}, "")
-	if err != nil {
-		t.Fatalf("insert grok: %v", err)
-	}
-	store := auth.NewStore(db, nil, nil)
-	store.SetLazyMode(true)
-	if err := store.Init(ctx); err != nil {
-		t.Fatalf("store.Init: %v", err)
-	}
-	account := store.FindByID(id)
-	if account == nil {
-		t.Fatal("runtime account missing")
-	}
-	account.SetGrokRateLimitSnapshot(auth.GrokRateLimitSnapshot{
-		LimitTokens: 1000, RemainingTokens: 400, UpdatedAt: time.Now(),
-	})
-	tokenCache := cache.NewMemory(1)
-	t.Cleanup(func() { _ = tokenCache.Close() })
-	handler := NewHandler(store, db, tokenCache, nil, "")
-
-	recorder := invokeListAccounts(t, handler, "/api/admin/accounts?view=page&channel=grok&page=1&page_size=20")
-	if recorder.Code != http.StatusOK {
-		t.Fatalf("status = %d: %s", recorder.Code, recorder.Body.String())
-	}
-	var page accountsPageResponse
-	if err := json.Unmarshal(recorder.Body.Bytes(), &page); err != nil {
-		t.Fatalf("decode page: %v", err)
-	}
-	if len(page.Accounts) != 1 || page.Accounts[0].ID != id {
-		t.Fatalf("page rows = %+v", page.Accounts)
-	}
-	row := page.Accounts[0]
-	if row.DetailLoaded || row.Usage5hDetail != nil || row.ModelMapping != "" {
-		t.Fatalf("paged grok row leaked expensive details: %+v", row)
-	}
-	if len(row.GrokBilling) == 0 || !strings.Contains(string(row.GrokBilling), `"weekly_percent":42.5`) {
-		t.Fatalf("paged grok row dropped quota bar payload: %s", row.GrokBilling)
-	}
-	if row.GrokRateLimit == nil || row.GrokRateLimit.LimitTokens != 1000 || row.GrokRateLimit.RemainingTokens != 400 {
-		t.Fatalf("paged grok row dropped rate-limit snapshot: %+v", row.GrokRateLimit)
-	}
 }
 
 func TestListAccountsPageIncludesWorkspaceID(t *testing.T) {
@@ -1186,77 +958,9 @@ func TestOverloadPausedCountsAsNormalNotRateLimitedOrScheduling(t *testing.T) {
 	}
 }
 
-func TestCodexAuthKindFilterSplitsOAuthAndResponsesAPI(t *testing.T) {
-	oauthItem := &accountListSnapshotItem{Status: "active", Enabled: true}
-	apiItem := &accountListSnapshotItem{Status: "active", Enabled: true, OpenAIResponses: true}
-	codex := database.UpstreamChannelCodex
-	if !accountListItemMatches(oauthItem, accountPageQuery{AuthKind: "oauth"}, codex) ||
-		accountListItemMatches(apiItem, accountPageQuery{AuthKind: "oauth"}, codex) {
-		t.Fatal("auth_kind=oauth should match only non-Responses accounts on codex channel")
-	}
-	if !accountListItemMatches(apiItem, accountPageQuery{AuthKind: "api_key"}, codex) ||
-		accountListItemMatches(oauthItem, accountPageQuery{AuthKind: "api_key"}, codex) {
-		t.Fatal("auth_kind=api_key should match only Responses API accounts on codex channel")
-	}
-	summary, _ := summarizeAccountList([]*accountListSnapshotItem{oauthItem, apiItem}, codex)
-	if summary.OAuth != 1 || summary.APIKey != 1 {
-		t.Fatalf("summary = %+v, want OAuth=1 APIKey=1", summary)
-	}
-}
-
-func TestClaudeAccountListPreservesProviderSearchAndOAuthSummary(t *testing.T) {
-	row := &database.AccountRow{
-		ID:      901,
-		Name:    "claude-account",
-		Status:  "active",
-		Enabled: true,
-		Tags:    []string{"claude"},
-		Credentials: map[string]interface{}{
-			"upstream_type":            auth.UpstreamClaude,
-			"email":                    "claude@example.com",
-			"plan_type":                "claude-max-5x",
-			"models":                   []string{"claude-sonnet-4-5"},
-			"claude_usage_probe_error": "temporary upstream failure",
-		},
-	}
-	store := auth.NewStore(nil, nil, nil)
-	defer store.Stop()
-	store.AddAccount(&auth.Account{DBID: 901, UpstreamType: auth.UpstreamClaude, GroupIDs: []int64{7}})
-	item := (&Handler{store: store}).buildAccountListSnapshotItem(row, nil, nil, map[int64]string{7: "Claude Team"}, map[int64]string{7: "0007"})
-	if !item.Claude {
-		t.Fatal("Claude list item must retain provider marker")
-	}
-	for _, needle := range []string{"claude-sonnet-4-5", "claude-max-5x", "temporary upstream failure", "claude team"} {
-		if !strings.Contains(item.SearchText, needle) {
-			t.Fatalf("SearchText %q does not contain %q", item.SearchText, needle)
-		}
-	}
-	if !accountListItemMatches(item, accountPageQuery{AuthKind: "oauth", Search: "claude-sonnet-4-5"}, database.UpstreamChannelClaude) {
-		t.Fatal("Claude OAuth filter/search should match")
-	}
-	if accountListItemMatches(item, accountPageQuery{AuthKind: "api_key"}, database.UpstreamChannelClaude) {
-		t.Fatal("Claude OAuth account must not match api_key filter")
-	}
-	summary, _ := summarizeAccountList([]*accountListSnapshotItem{item}, database.UpstreamChannelClaude)
-	if summary.OAuth != 1 || summary.APIKey != 0 {
-		t.Fatalf("Claude summary = %+v, want oauth=1 api_key=0", summary)
-	}
-}
-
-func TestClaudeAccountListSuccessfulProbeCountsAsSampledWithoutQuotaHeaders(t *testing.T) {
-	row := &database.AccountRow{ID: 902, Status: "active", Enabled: true, Credentials: map[string]interface{}{
-		"upstream_type":                      auth.UpstreamClaude,
-		auth.ClaudeUsageProbeAtCredentialKey: "2026-08-29T05:00:00Z",
-	}}
-	item := (&Handler{}).buildAccountListSnapshotItem(row, nil, nil, nil, nil)
-	if !item.Claude || accountListUnsampled(item) {
-		t.Fatalf("Claude successful probe should be sampled: item=%+v", item)
-	}
-}
-
 func TestListAccountsPageSortsByID(t *testing.T) {
 	gin.SetMode(gin.TestMode)
-	handler, codexIDs, _ := newPagedAccountsHandler(t)
+	handler, codexIDs := newPagedAccountsHandler(t)
 	for _, tc := range []struct {
 		order string
 		want  []int64

@@ -14,14 +14,14 @@ import (
 
 func TestRunRefreshAllModels_PartialFailureKeepsOtherChannels(t *testing.T) {
 	h := &Handler{modelRefreshFuncs: map[string]channelModelRefreshFunc{
-		database.UpstreamChannelGrok: func(ctx context.Context, _ modelRefreshEmitter) channelModelRefreshResult {
-			return channelModelRefreshResult{Refreshed: 1, Added: []string{"grok-5"}}
+		"extra-ok": func(ctx context.Context, _ modelRefreshEmitter) channelModelRefreshResult {
+			return channelModelRefreshResult{Refreshed: 1, Added: []string{"gpt-6-extra"}}
 		},
 		database.UpstreamChannelCodex: func(ctx context.Context, _ modelRefreshEmitter) channelModelRefreshResult {
 			return channelModelRefreshResult{Error: "官方模型页同步失败: boom", Failed: 1}
 		},
-		database.UpstreamChannelClaude: func(ctx context.Context, _ modelRefreshEmitter) channelModelRefreshResult {
-			panic("claude exploded")
+		"extra-panic": func(ctx context.Context, _ modelRefreshEmitter) channelModelRefreshResult {
+			panic("extra exploded")
 		},
 	}}
 	resp := h.runRefreshAllModels(context.Background(), nil)
@@ -29,20 +29,20 @@ func TestRunRefreshAllModels_PartialFailureKeepsOtherChannels(t *testing.T) {
 	if len(resp.Channels) != 3 {
 		t.Fatalf("channels = %d, want 3: %+v", len(resp.Channels), resp.Channels)
 	}
-	// 固定顺序：codex → claude → grok
-	if resp.Channels[0].Channel != database.UpstreamChannelCodex || resp.Channels[1].Channel != database.UpstreamChannelClaude || resp.Channels[2].Channel != database.UpstreamChannelGrok {
+	// 固定顺序：codex 在前，其余渠道按名称排序
+	if resp.Channels[0].Channel != database.UpstreamChannelCodex || resp.Channels[1].Channel != "extra-ok" || resp.Channels[2].Channel != "extra-panic" {
 		t.Fatalf("unexpected channel order: %+v", resp.Channels)
 	}
 	if resp.Channels[0].Error == "" || resp.Channels[0].Failed != 1 {
 		t.Fatalf("codex failure should be reported: %+v", resp.Channels[0])
 	}
-	if resp.Channels[1].Error == "" || resp.Channels[1].Error[:5] != "panic" {
-		t.Fatalf("claude panic should be captured as error: %+v", resp.Channels[1])
+	if resp.Channels[2].Error == "" || resp.Channels[2].Error[:5] != "panic" {
+		t.Fatalf("panic should be captured as error: %+v", resp.Channels[2])
 	}
-	if resp.Channels[2].Refreshed != 1 || len(resp.Channels[2].Added) != 1 {
-		t.Fatalf("grok result lost: %+v", resp.Channels[2])
+	if resp.Channels[1].Refreshed != 1 || len(resp.Channels[1].Added) != 1 {
+		t.Fatalf("extra channel result lost: %+v", resp.Channels[1])
 	}
-	if len(resp.Added) != 1 || resp.Added[0] != "grok-5" {
+	if len(resp.Added) != 1 || resp.Added[0] != "gpt-6-extra" {
 		t.Fatalf("aggregated added = %v", resp.Added)
 	}
 	for _, ch := range resp.Channels {
@@ -54,7 +54,7 @@ func TestRunRefreshAllModels_PartialFailureKeepsOtherChannels(t *testing.T) {
 
 func TestRunRefreshAllModels_TimeoutIsReportedPerChannel(t *testing.T) {
 	h := &Handler{modelRefreshFuncs: map[string]channelModelRefreshFunc{
-		database.UpstreamChannelAntigravity: func(ctx context.Context, _ modelRefreshEmitter) channelModelRefreshResult {
+		"extra-slow": func(ctx context.Context, _ modelRefreshEmitter) channelModelRefreshResult {
 			<-ctx.Done()
 			return channelModelRefreshResult{}
 		},
@@ -69,8 +69,8 @@ func TestRunRefreshAllModels_TimeoutIsReportedPerChannel(t *testing.T) {
 	if time.Since(started) > 2*time.Second {
 		t.Fatalf("refresh did not honour context deadline")
 	}
-	if resp.Channels[1].Channel != database.UpstreamChannelAntigravity || !errors.Is(context.DeadlineExceeded, context.DeadlineExceeded) || resp.Channels[1].Error != context.DeadlineExceeded.Error() {
-		t.Fatalf("antigravity timeout should be reported: %+v", resp.Channels)
+	if resp.Channels[1].Channel != "extra-slow" || !errors.Is(context.DeadlineExceeded, context.DeadlineExceeded) || resp.Channels[1].Error != context.DeadlineExceeded.Error() {
+		t.Fatalf("extra channel timeout should be reported: %+v", resp.Channels)
 	}
 	if resp.Channels[0].Error != "" {
 		t.Fatalf("codex should not inherit the timeout error: %+v", resp.Channels[0])

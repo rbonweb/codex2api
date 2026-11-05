@@ -190,29 +190,6 @@ func TestImportClaudeSetupTokensBatch(t *testing.T) {
 	}
 }
 
-func TestBuildAccountResponseCarriesClaudeAuthKind(t *testing.T) {
-	row := &database.AccountRow{ID: 9, Name: "claude-setup", Status: "active", Enabled: true, Credentials: map[string]interface{}{
-		"upstream_type": auth.UpstreamClaude, "access_token": "sk-ant-oat01-x", auth.ClaudeAuthKindCredentialKey: auth.ClaudeAuthKindSetupToken,
-	}}
-	h := &Handler{store: auth.NewStore(nil, nil, nil)}
-	response := h.buildAccountResponse(row, nil, nil, nil, nil, false)
-	if response.ClaudeAuthKind != auth.ClaudeAuthKindSetupToken || response.ATOnly {
-		t.Fatalf("response auth kind = %q at_only=%v", response.ClaudeAuthKind, response.ATOnly)
-	}
-	item := h.buildAccountListSnapshotItem(row, nil, nil, nil, nil)
-	if item.ClaudeAuthKind != auth.ClaudeAuthKindSetupToken {
-		t.Fatalf("list item auth kind = %q", item.ClaudeAuthKind)
-	}
-	if !accountListItemMatches(item, accountPageQuery{AuthKind: auth.ClaudeAuthKindSetupToken}, database.UpstreamChannelClaude) ||
-		accountListItemMatches(item, accountPageQuery{AuthKind: "oauth"}, database.UpstreamChannelClaude) {
-		t.Fatal("Claude auth_kind filter must distinguish setup_token from oauth")
-	}
-	summary, _ := summarizeAccountList([]*accountListSnapshotItem{item}, database.UpstreamChannelClaude)
-	if summary.SetupToken != 1 || summary.OAuth != 0 {
-		t.Fatalf("summary = %+v", summary)
-	}
-}
-
 func TestClaudeImportParserAcceptsRefreshTokenOnlyOAuth(t *testing.T) {
 	docs, err := parseClaudeImportDocuments([]byte(`{"type":"claude","refresh_token":"sk-ant-ort01-only"}`))
 	if err != nil {

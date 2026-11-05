@@ -314,7 +314,7 @@ func buildAccountQuotaAnalysis(items []*accountListSnapshotItem, window string) 
 	}
 	totalUsed := 0.0
 	for _, item := range items {
-		if item.Status == "unauthorized" || item.Status == "error" || item.OpenAIResponses || (window == "5h" && !accountList5hQuotaEligible(item)) {
+		if item.Status == "unauthorized" || item.Status == "error" || (window == "5h" && !accountList5hQuotaEligible(item)) {
 			continue
 		}
 		result.Total++
@@ -472,7 +472,7 @@ func accountAnalysisWindowRateLimited(item *accountListSnapshotItem, window stri
 }
 
 func accountAnalysisHasBurnPrediction(item *accountListSnapshotItem, window string) bool {
-	if strings.EqualFold(item.Status, "unauthorized") || item.OpenAIResponses {
+	if strings.EqualFold(item.Status, "unauthorized") {
 		return false
 	}
 	if window == "5h" {

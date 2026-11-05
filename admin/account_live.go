@@ -78,41 +78,37 @@ func (h *Handler) GetAccountLiveState(c *gin.Context) {
 			DynamicConcurrencyLimit:  account.GetDynamicConcurrencyLimit(),
 			BaseConcurrencyEffective: account.GetBaseConcurrencyEffective(),
 		}
-		// Antigravity rows use a persisted quota snapshot; runtimeStatusLocked
-		// does not model their display status, so leave the row's fields alone.
-		if !account.IsAntigravityAPI() {
-			usage := account.GetAccountLiveUsageSnapshot()
-			item.PlanType = &usage.PlanType
-			item.AccountLiveCredits = &AccountLiveCredits{Valid: usage.CreditsValid}
-			if usage.CreditsValid {
-				item.Balance = usage.Credits.Balance
-				item.HasCredits = &usage.Credits.HasCredits
-				item.Unlimited = &usage.Credits.Unlimited
-				item.OverageLimitReached = &usage.Credits.OverageLimitReached
-				item.SpendControlReached = usage.Credits.SpendControlReached
-				item.RateLimitReachedType = usage.Credits.RateLimitReachedType
-			}
-			status := usage.Status
-			item.Status = &status
-			usingCredits := usage.UsingCredits
-			item.UsingCredits = &usingCredits
-			if usage.UsagePercent5hValid {
-				pct := usage.UsagePercent5h
-				item.UsagePercent5h = &pct
-			}
-			item.Reset5hAt = optionalLiveTime(usage.Reset5hAt)
-			item.UsageUpdatedAt5h = optionalLiveTime(usage.UsageUpdatedAt5h)
-			if usage.UsagePercent7dValid {
-				pct := usage.UsagePercent7d
-				item.UsagePercent7d = &pct
-			}
-			item.Reset7dAt = optionalLiveTime(usage.Reset7dAt)
-			item.UsageUpdatedAt = optionalLiveTime(usage.UsageUpdatedAt)
-			if !usage.UsageFrameLastAt.IsZero() {
-				item.UsageFrameAt = optionalLiveTime(usage.UsageFrameLastAt)
-				kind := usage.UsageFrameLastKind
-				item.UsageFrameKind = &kind
-			}
+		usage := account.GetAccountLiveUsageSnapshot()
+		item.PlanType = &usage.PlanType
+		item.AccountLiveCredits = &AccountLiveCredits{Valid: usage.CreditsValid}
+		if usage.CreditsValid {
+			item.Balance = usage.Credits.Balance
+			item.HasCredits = &usage.Credits.HasCredits
+			item.Unlimited = &usage.Credits.Unlimited
+			item.OverageLimitReached = &usage.Credits.OverageLimitReached
+			item.SpendControlReached = usage.Credits.SpendControlReached
+			item.RateLimitReachedType = usage.Credits.RateLimitReachedType
+		}
+		status := usage.Status
+		item.Status = &status
+		usingCredits := usage.UsingCredits
+		item.UsingCredits = &usingCredits
+		if usage.UsagePercent5hValid {
+			pct := usage.UsagePercent5h
+			item.UsagePercent5h = &pct
+		}
+		item.Reset5hAt = optionalLiveTime(usage.Reset5hAt)
+		item.UsageUpdatedAt5h = optionalLiveTime(usage.UsageUpdatedAt5h)
+		if usage.UsagePercent7dValid {
+			pct := usage.UsagePercent7d
+			item.UsagePercent7d = &pct
+		}
+		item.Reset7dAt = optionalLiveTime(usage.Reset7dAt)
+		item.UsageUpdatedAt = optionalLiveTime(usage.UsageUpdatedAt)
+		if !usage.UsageFrameLastAt.IsZero() {
+			item.UsageFrameAt = optionalLiveTime(usage.UsageFrameLastAt)
+			kind := usage.UsageFrameLastKind
+			item.UsageFrameKind = &kind
 		}
 		live[id] = item
 	}
