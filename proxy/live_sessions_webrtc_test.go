@@ -8,6 +8,7 @@ import (
 	"net/http"
 	"net/http/httptest"
 	"strings"
+	"sync"
 	"sync/atomic"
 	"testing"
 	"time"
@@ -31,6 +32,7 @@ type liveWebRTCFixture struct {
 	allowLive   atomic.Bool
 	apiKeyID    atomic.Int64
 	upstreamErr atomic.Int32
+	attached    sync.WaitGroup
 }
 
 func newLiveWebRTCFixture(t *testing.T) *liveWebRTCFixture {
@@ -97,7 +99,13 @@ func newLiveWebRTCFixture(t *testing.T) *liveWebRTCFixture {
 	v1.POST("/live", handler.LiveCreate)
 	v1.GET("/live/:call_id", handler.LiveSideband)
 	v1.POST("/live/sessions", handler.LiveSessionsCreate)
-	v1.GET("/live/sessions/:session_id/attach", handler.LiveSessionsAttach)
+	// Cleanups run last-in first-out: the wait below runs before the usage hook is restored, so a finalize still in flight never races with the reset.
+	v1.GET("/live/sessions/:session_id/attach", func(c *gin.Context) {
+		fx.attached.Add(1)
+		defer fx.attached.Done()
+		handler.LiveSessionsAttach(c)
+	})
+	t.Cleanup(fx.attached.Wait)
 	fx.server = httptest.NewServer(router)
 	t.Cleanup(fx.server.Close)
 	return fx

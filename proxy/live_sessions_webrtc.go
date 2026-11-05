@@ -306,6 +306,13 @@ func (h *Handler) serveLiveSessionsAttach(c *gin.Context, record *liveCallRecord
 		finalized = true
 	}
 
+	// handleUpstream translates one internal event; false means a write failed and the loop must stop.
+	handleUpstream := func(raw []byte) bool {
+		res := translator.Upstream(raw)
+		// res.AudioOut is dropped: the client has the audio on its own peer connection.
+		return writeAll(upstreamSock, res.Upstream) == nil && writeAll(client, res.Client) == nil
+	}
+
 	for {
 		select {
 		case <-ctx.Done():
@@ -314,6 +321,17 @@ func (h *Handler) serveLiveSessionsAttach(c *gin.Context, record *liveCallRecord
 			// The client left: nothing to tell it, just release.
 			return
 		case <-upstreamGone:
+			// Deliver what upstream sent before it hung up, then report the hangup.
+			for drained := false; !drained; {
+				select {
+				case raw := <-upstreamMsgs:
+					if !handleUpstream(raw) {
+						return
+					}
+				default:
+					drained = true
+				}
+			}
 			end("remote_hangup")
 			return
 		case <-expiry.C:
@@ -337,16 +355,14 @@ func (h *Handler) serveLiveSessionsAttach(c *gin.Context, record *liveCallRecord
 				return
 			}
 			if res.Close {
-				if translator.started {
+				if translator.Started() {
 					_ = upstreamSock.write([]byte(`{"type":"session.close"}`))
 				}
 				end("close_requested")
 				return
 			}
 		case raw := <-upstreamMsgs:
-			res := translator.Upstream(raw)
-			// res.AudioOut is dropped: the client has the audio on its own peer connection.
-			if writeAll(upstreamSock, res.Upstream) != nil || writeAll(client, res.Client) != nil {
+			if !handleUpstream(raw) {
 				return
 			}
 		}
