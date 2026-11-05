@@ -33,7 +33,7 @@ type imageStudioQuotaResponse struct {
 func (h *Handler) GetPortalImageQuota(c *gin.Context) {
 	c.Header("Cache-Control", "no-store")
 	if h == nil || h.db == nil {
-		writeError(c, http.StatusServiceUnavailable, "服务未就绪")
+		writeError(c, http.StatusServiceUnavailable, "service not ready")
 		return
 	}
 	ctx, cancel := context.WithTimeout(c.Request.Context(), 5*time.Second)
@@ -44,12 +44,12 @@ func (h *Handler) GetPortalImageQuota(c *gin.Context) {
 		return
 	}
 	if !enabled {
-		writeError(c, http.StatusNotFound, "生图门户未启用")
+		writeError(c, http.StatusNotFound, "image studio portal is not enabled")
 		return
 	}
 	key := extractPublicAPIKey(c)
 	if key == "" {
-		writeError(c, http.StatusUnauthorized, "缺少 Authorization Bearer API Key")
+		writeError(c, http.StatusUnauthorized, "missing Authorization Bearer API Key")
 		return
 	}
 	// Read the database row directly: auth-cache snapshots exclude live usage.
@@ -57,14 +57,14 @@ func (h *Handler) GetPortalImageQuota(c *gin.Context) {
 	if err != nil {
 		if errors.Is(err, sql.ErrNoRows) {
 			security.SecurityAuditLog("IMAGE_STUDIO_QUOTA_AUTH_FAILED", "ip="+security.SanitizeLog(c.ClientIP())+" key="+security.MaskAPIKey(key))
-			writeError(c, http.StatusUnauthorized, "API Key 无效或不存在")
+			writeError(c, http.StatusUnauthorized, "API Key is invalid or does not exist")
 			return
 		}
 		writeInternalError(c, err)
 		return
 	}
 	if !row.Enabled {
-		writeError(c, http.StatusUnauthorized, "API Key 已停用")
+		writeError(c, http.StatusUnauthorized, "API Key is disabled")
 		return
 	}
 	result := imageStudioQuotaResponse{

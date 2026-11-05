@@ -30,8 +30,8 @@ func runSubscriptionRefresh(t *testing.T, handler *Handler, id string) (*httptes
 	return rec, payload
 }
 
-// 手动刷新：绕过后台 6 小时节流真去查一次；30 秒内再点返回 429 + retry_after；
-// 响应带结果分类与服务端计算的订阅状态对象。
+// Manual refresh: bypasses the background 6-hour throttle and really queries once; a second click within 30 seconds returns 429 + retry_after;
+// the response carries the result classification and the server-computed subscription status object.
 func TestRefreshAccountSubscription_ManualRefreshAndRateLimit(t *testing.T) {
 	activeUntil := time.Now().Add(20 * 24 * time.Hour).UTC().Truncate(time.Second)
 	requests := 0
@@ -45,7 +45,7 @@ func TestRefreshAccountSubscription_ManualRefreshAndRateLimit(t *testing.T) {
 
 	store := auth.NewStore(nil, nil, &database.SystemSettings{MaxConcurrency: 2, TestConcurrency: 1, TestModel: "gpt-5.4"})
 	account := &auth.Account{DBID: 31, AccessToken: "token", PlanType: "plus", AccountID: subscriptionTestWorkspaceUUID, Status: auth.StatusReady}
-	// 模拟后台探针 1 小时前查过：后台节流窗口内，但手动刷新不受它限制。
+	// Simulates the background probe having queried 1 hour ago: inside the background throttle window, but manual refresh is not limited by it.
 	account.MarkSubscriptionExpiryProbed(time.Now().Add(-time.Hour))
 	store.AddAccount(account)
 	handler := &Handler{store: store}
@@ -77,7 +77,7 @@ func TestRefreshAccountSubscription_ManualRefreshAndRateLimit(t *testing.T) {
 	}
 }
 
-// 不跟踪订阅的套餐直接返回 unsupported，不打上游。
+// Plans that do not track subscriptions return unsupported directly, without calling upstream.
 func TestRefreshAccountSubscription_Unsupported(t *testing.T) {
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		t.Error("upstream must not be called")
@@ -103,7 +103,7 @@ func TestRefreshAccountSubscription_Unsupported(t *testing.T) {
 	}
 }
 
-// 列表/详情响应附带服务端计算的订阅状态对象；api 套餐不带。
+// List and detail responses include the server-computed subscription status object; api plans do not.
 func TestSubscriptionStatusViewForRow(t *testing.T) {
 	past := time.Now().Add(-3 * 24 * time.Hour).UTC().Format(time.RFC3339)
 	row := &database.AccountRow{Credentials: map[string]any{
@@ -124,9 +124,9 @@ func TestSubscriptionStatusViewForRow(t *testing.T) {
 	}
 }
 
-// 列表「订阅状态」筛选：按服务端状态对象匹配；不跟踪订阅的账号任何筛选值都不命中。
+// List "subscription status" filter: matches against the server status object; accounts that do not track a subscription never match any filter value.
 func TestSubscriptionFilterMatches(t *testing.T) {
-	// 业务状态按 time.Local 自然日算，基准取本地正午，让 +6h 仍落在当天。
+	// Business status is computed by the time.Local calendar day, with the base at local noon so that +6h still falls on the same day.
 	now := time.Date(2026, 9, 13, 12, 0, 0, 0, time.Local)
 	mk := func(plan string, creds map[string]any) *accountListSnapshotItem {
 		return &accountListSnapshotItem{PlanType: plan, Row: &database.AccountRow{Credentials: creds}}

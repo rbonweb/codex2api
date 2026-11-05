@@ -51,8 +51,8 @@ func TestRefreshAccountRejectsInvalidID(t *testing.T) {
 	if err := json.Unmarshal(recorder.Body.Bytes(), &payload); err != nil {
 		t.Fatalf("decode response: %v", err)
 	}
-	if got := payload["error"]; got != "无效的账号 ID" {
-		t.Fatalf("error = %q, want %q", got, "无效的账号 ID")
+	if got := payload["error"]; got != "invalid account ID" {
+		t.Fatalf("error = %q, want %q", got, "invalid account ID")
 	}
 }
 
@@ -129,12 +129,12 @@ func TestSummarizeDashboardAccountsMatchesAccountPageBuckets(t *testing.T) {
 	}
 }
 
-// 积分顶着限流的账号 RuntimeStatus 仍是 rate_limited（用量窗口客观上打满了），
-// 但它照常参与调度，仪表盘该把它算进「可用」而不是「限流」。
+// An account whose credits are standing in for a rate limit still has RuntimeStatus rate_limited (its usage window is objectively full),
+// but it still takes part in scheduling, so the dashboard should count it as "available" rather than "rate limited".
 func TestSummarizeDashboardAccountsCountsCreditBackedAsNormal(t *testing.T) {
 	rows := []*database.AccountRow{
-		{ID: 1, Status: "active", Enabled: true}, // 积分顶替限流
-		{ID: 2, Status: "active", Enabled: true}, // 真限流
+		{ID: 1, Status: "active", Enabled: true}, // credits standing in for the rate limit
+		{ID: 2, Status: "active", Enabled: true}, // real rate limit
 	}
 
 	usingCredits := &auth.Account{
@@ -380,8 +380,8 @@ func TestRefreshAccountRunsSingleRefresh(t *testing.T) {
 	if err := json.Unmarshal(recorder.Body.Bytes(), &payload); err != nil {
 		t.Fatalf("decode response: %v", err)
 	}
-	if got := payload["message"]; got != "账号刷新成功" {
-		t.Fatalf("message = %q, want %q", got, "账号刷新成功")
+	if got := payload["message"]; got != "Account refreshed successfully" {
+		t.Fatalf("message = %q, want %q", got, "Account refreshed successfully")
 	}
 }
 
@@ -438,8 +438,8 @@ func TestRefreshAccountReturnsRefreshFailure(t *testing.T) {
 	if err := json.Unmarshal(recorder.Body.Bytes(), &payload); err != nil {
 		t.Fatalf("decode response: %v", err)
 	}
-	if got := payload["error"]; got != "刷新失败: upstream unavailable" {
-		t.Fatalf("error = %q, want %q", got, "刷新失败: upstream unavailable")
+	if got := payload["error"]; got != "refresh failed: upstream unavailable" {
+		t.Fatalf("error = %q, want %q", got, "refresh failed: upstream unavailable")
 	}
 }
 
@@ -551,13 +551,13 @@ func TestCleanErrorStreamsProgress(t *testing.T) {
 		`"deleted":2`,
 		`"account_email":"a@example.com"`,
 		`"account_email":"b@example.com"`,
-		`"message":"已清理 2 个账号"`,
+		`"message":"Cleaned up 2 accounts"`,
 	} {
 		if !strings.Contains(body, want) {
 			t.Fatalf("stream body missing %s:\n%s", want, body)
 		}
 	}
-	if strings.Count(body, `"message":"账号已清理"`) > 0 {
+	if strings.Count(body, `"message":"accounts cleaned up"`) > 0 {
 		t.Fatalf("progress events should not claim the clean is finished:\n%s", body)
 	}
 	remaining := accountIDsFromStore(store)
@@ -754,7 +754,7 @@ func TestCreateAPIKeyPersistsQuotaAndExpiration(t *testing.T) {
 	dbPath := filepath.Join(t.TempDir(), "codex2api.db")
 	db, err := database.New("sqlite", dbPath)
 	if err != nil {
-		t.Fatalf("database.New 返回错误: %v", err)
+		t.Fatalf("database.New returned error: %v", err)
 	}
 	defer db.Close()
 
@@ -781,7 +781,7 @@ func TestCreateAPIKeyPersistsQuotaAndExpiration(t *testing.T) {
 
 	row, err := db.GetAPIKeyByValue(context.Background(), "sk-test-client-a-1234567890")
 	if err != nil {
-		t.Fatalf("GetAPIKeyByValue 返回错误: %v", err)
+		t.Fatalf("GetAPIKeyByValue returned error: %v", err)
 	}
 	if row.QuotaLimit != 0.25 || !row.ExpiresAt.Valid {
 		t.Fatalf("row = %#v, want quota and expiration", row)
@@ -794,7 +794,7 @@ func TestUpdateAPIKeyPreservesOmittedFieldsAndUpdatesLimits(t *testing.T) {
 	dbPath := filepath.Join(t.TempDir(), "codex2api.db")
 	db, err := database.New("sqlite", dbPath)
 	if err != nil {
-		t.Fatalf("database.New 返回错误: %v", err)
+		t.Fatalf("database.New returned error: %v", err)
 	}
 	defer db.Close()
 
@@ -806,7 +806,7 @@ func TestUpdateAPIKeyPreservesOmittedFieldsAndUpdatesLimits(t *testing.T) {
 		ExpiresAt:  expiresAt,
 	})
 	if err != nil {
-		t.Fatalf("InsertAPIKeyWithOptions 返回错误: %v", err)
+		t.Fatalf("InsertAPIKeyWithOptions returned error: %v", err)
 	}
 
 	handler := &Handler{db: db}
@@ -823,7 +823,7 @@ func TestUpdateAPIKeyPreservesOmittedFieldsAndUpdatesLimits(t *testing.T) {
 	}
 	row, err := db.GetAPIKeyByID(context.Background(), id)
 	if err != nil {
-		t.Fatalf("GetAPIKeyByID 返回错误: %v", err)
+		t.Fatalf("GetAPIKeyByID returned error: %v", err)
 	}
 	if row.Name != "Client B" || row.QuotaLimit != 0.25 || !row.ExpiresAt.Valid {
 		t.Fatalf("row = %#v, want renamed with quota/expiration preserved", row)
@@ -842,7 +842,7 @@ func TestUpdateAPIKeyPreservesOmittedFieldsAndUpdatesLimits(t *testing.T) {
 	}
 	row, err = db.GetAPIKeyByID(context.Background(), id)
 	if err != nil {
-		t.Fatalf("GetAPIKeyByID 返回错误: %v", err)
+		t.Fatalf("GetAPIKeyByID returned error: %v", err)
 	}
 	if row.Name != "Client B" || row.QuotaLimit != 0 || row.ExpiresAt.Valid {
 		t.Fatalf("row = %#v, want quota/expiration cleared with name preserved", row)
@@ -855,19 +855,19 @@ func TestUpdateAPIKeyRefreshesRuntimeStoreAndCache(t *testing.T) {
 	dbPath := filepath.Join(t.TempDir(), "codex2api.db")
 	db, err := database.New("sqlite", dbPath)
 	if err != nil {
-		t.Fatalf("database.New 返回错误: %v", err)
+		t.Fatalf("database.New returned error: %v", err)
 	}
 	defer db.Close()
 
 	ctx := context.Background()
 	groupID, err := db.CreateAccountGroup(ctx, "Team", "", "#2563eb", 0, 0, sql.NullInt64{}, 0)
 	if err != nil {
-		t.Fatalf("CreateAccountGroup 返回错误: %v", err)
+		t.Fatalf("CreateAccountGroup returned error: %v", err)
 	}
 	key := "sk-test-runtime-refresh-1234567890"
 	keyID, err := db.InsertAPIKey(ctx, "Client A", key)
 	if err != nil {
-		t.Fatalf("InsertAPIKey 返回错误: %v", err)
+		t.Fatalf("InsertAPIKey returned error: %v", err)
 	}
 	store := auth.NewStore(nil, nil, nil)
 	tc := cache.NewMemory(1)
@@ -920,7 +920,7 @@ func TestGetAccountAuthJSONRejectsInvalidID(t *testing.T) {
 	if recorder.Code != http.StatusBadRequest {
 		t.Fatalf("status = %d, want %d", recorder.Code, http.StatusBadRequest)
 	}
-	assertErrorMessage(t, recorder, "无效的账号 ID")
+	assertErrorMessage(t, recorder, "Invalid account ID")
 }
 
 func TestGetAccountAuthJSONReturnsCodexAuthFile(t *testing.T) {
@@ -996,7 +996,7 @@ func TestGetAccountAuthJSONRejectsIncompleteTokens(t *testing.T) {
 	if recorder.Code != http.StatusBadRequest {
 		t.Fatalf("status = %d, want %d", recorder.Code, http.StatusBadRequest)
 	}
-	assertErrorMessage(t, recorder, "账号缺少 access_token 或 id_token，请先刷新账号后再生成 auth.json")
+	assertErrorMessage(t, recorder, "Account is missing access_token or id_token; refresh the account before generating auth.json")
 }
 
 func TestGetUsageLogsRejectsInvalidAPIKeyID(t *testing.T) {
@@ -1017,8 +1017,8 @@ func TestGetUsageLogsRejectsInvalidAPIKeyID(t *testing.T) {
 	if err := json.Unmarshal(recorder.Body.Bytes(), &payload); err != nil {
 		t.Fatalf("decode response: %v", err)
 	}
-	if got := payload["error"]; got != "api_key_id 参数无效，需要正整数" {
-		t.Fatalf("error = %q, want %q", got, "api_key_id 参数无效，需要正整数")
+	if got := payload["error"]; got != "api_key_id parameter is invalid, a positive integer is required" {
+		t.Fatalf("error = %q, want %q", got, "api_key_id parameter is invalid, a positive integer is required")
 	}
 }
 
@@ -1033,12 +1033,12 @@ func TestGetUsageLogsRejectsInvalidCompactionFilters(t *testing.T) {
 		{
 			name:      "compact",
 			query:     "compact=maybe",
-			wantError: "compact 参数无效，需要 true 或 false",
+			wantError: "compact parameter is invalid, true or false is required",
 		},
 		{
 			name:      "compaction history",
 			query:     "has_compaction_history=1",
-			wantError: "has_compaction_history 参数无效，需要 true 或 false",
+			wantError: "has_compaction_history parameter is invalid, true or false is required",
 		},
 	}
 
@@ -1074,22 +1074,22 @@ func TestGetUsageLogsRejectsInvalidDiagnosticFilters(t *testing.T) {
 		{
 			name:      "status",
 			query:     "status=6xx",
-			wantError: "status/status_code 参数无效",
+			wantError: "status/status_code parameter is invalid",
 		},
 		{
 			name:      "retry",
 			query:     "retry=maybe",
-			wantError: "retry 参数无效，需要 true 或 false",
+			wantError: "retry parameter is invalid, true or false is required",
 		},
 		{
 			name:      "websocket",
 			query:     "via_websocket=1",
-			wantError: "via_websocket 参数无效，需要 true 或 false",
+			wantError: "via_websocket parameter is invalid, true or false is required",
 		},
 		{
 			name:      "error only",
 			query:     "error_only=yes",
-			wantError: "error_only 参数无效，需要 true 或 false",
+			wantError: "error_only parameter is invalid, true or false is required",
 		},
 	}
 
@@ -1495,7 +1495,7 @@ func TestUpdateSettingsPersistsAutoResetCreditsAcrossPartialUpdates(t *testing.T
 		}
 	}
 
-	// 阈值必须能在开关关闭时先保存，避免启用后的即时扫描使用旧默认值。
+	// Thresholds must be saved while the switch is off, so that an immediate scan after enabling does not use the old defaults.
 	update(`{"auto_reset_credits_before_expiry_min":90}`)
 	select {
 	case <-handler.autoResetCreditsWake:
@@ -2203,7 +2203,7 @@ func TestUpdateAccountSchedulerRejectsInvalidID(t *testing.T) {
 	if recorder.Code != http.StatusBadRequest {
 		t.Fatalf("status = %d, want %d", recorder.Code, http.StatusBadRequest)
 	}
-	assertErrorMessage(t, recorder, "无效的账号 ID")
+	assertErrorMessage(t, recorder, "Invalid account ID")
 }
 
 func TestUpdateAccountSchedulerRejectsInvalidBody(t *testing.T) {
@@ -2222,7 +2222,7 @@ func TestUpdateAccountSchedulerRejectsInvalidBody(t *testing.T) {
 	if recorder.Code != http.StatusBadRequest {
 		t.Fatalf("status = %d, want %d", recorder.Code, http.StatusBadRequest)
 	}
-	assertErrorMessage(t, recorder, "score_bias_override 必须是整数或 null")
+	assertErrorMessage(t, recorder, "score_bias_override must be an integer or null")
 }
 
 func TestUpdateAccountSchedulerRejectsInvalidSkipWarmTier(t *testing.T) {
@@ -2242,7 +2242,7 @@ func TestUpdateAccountSchedulerRejectsInvalidSkipWarmTier(t *testing.T) {
 	if recorder.Code != http.StatusBadRequest {
 		t.Fatalf("status = %d, want %d", recorder.Code, http.StatusBadRequest)
 	}
-	assertErrorMessage(t, recorder, "skip_warm_tier 必须是布尔值或 null")
+	assertErrorMessage(t, recorder, "skip_warm_tier must be a boolean or null")
 }
 
 func TestUpdateAccountSchedulerRejectsInvalidAllowedAPIKeyIDs(t *testing.T) {
@@ -2260,12 +2260,12 @@ func TestUpdateAccountSchedulerRejectsInvalidAllowedAPIKeyIDs(t *testing.T) {
 		{
 			name:    "invalid type",
 			body:    `{"allowed_api_key_ids":"abc"}`,
-			message: "allowed_api_key_ids 必须是整数数组或 null",
+			message: "allowed_api_key_ids must be an integer array or null",
 		},
 		{
 			name:    "non positive",
 			body:    `{"allowed_api_key_ids":[0]}`,
-			message: "allowed_api_key_ids 中的值必须是正整数",
+			message: "values in allowed_api_key_ids must be positive integers",
 		},
 	}
 
@@ -2302,22 +2302,22 @@ func TestUpdateAccountSchedulerRejectsOutOfRangeValues(t *testing.T) {
 		{
 			name:    "score bias out of range",
 			body:    `{"score_bias_override":201}`,
-			message: "score_bias_override 超出范围，必须在 -200..200 之间",
+			message: "score_bias_override is out of range, must be between -200..200",
 		},
 		{
 			name:    "base concurrency out of range",
 			body:    `{"base_concurrency_override":0}`,
-			message: "base_concurrency_override 超出范围，必须 >= 1",
+			message: "base_concurrency_override is out of range, must be >= 1",
 		},
 		{
 			name:    "5h auto pause threshold out of range",
 			body:    `{"auto_pause_5h_threshold":1.01}`,
-			message: "auto_pause_5h_threshold 超出范围，必须在 0..1 之间",
+			message: "auto_pause_5h_threshold is out of range, must be between 0..1",
 		},
 		{
 			name:    "7d auto pause threshold out of range",
 			body:    `{"auto_pause_7d_threshold":-0.01}`,
-			message: "auto_pause_7d_threshold 超出范围，必须在 0..1 之间",
+			message: "auto_pause_7d_threshold is out of range, must be between 0..1",
 		},
 	}
 
@@ -2831,7 +2831,7 @@ func TestUpdateAccountSchedulerRejectsMissingAllowedAPIKeyID(t *testing.T) {
 	if recorder.Code != http.StatusBadRequest {
 		t.Fatalf("status = %d, want %d", recorder.Code, http.StatusBadRequest)
 	}
-	assertErrorMessage(t, recorder, "allowed_api_key_ids 包含不存在的 API Key ID: 999")
+	assertErrorMessage(t, recorder, "allowed_api_key_ids contains nonexistent API Key ID: 999")
 }
 
 func TestUpdateAccountSchedulerUpdatesRuntimeOverrides(t *testing.T) {
@@ -3208,12 +3208,12 @@ func TestBatchUpdateAccountsRejectsMissingUpdateFields(t *testing.T) {
 	if recorder.Code != http.StatusBadRequest {
 		t.Fatalf("status = %d, want %d", recorder.Code, http.StatusBadRequest)
 	}
-	assertErrorMessage(t, recorder, "请提供要更新的字段")
+	assertErrorMessage(t, recorder, "please provide the fields to update")
 }
 
-// AT-only 账号(没有 refresh_token,只靠 access_token)是规避 Codex Plus "add
-// phone" 流程的常用形态。导出/迁移以前会因为 rt=="" 直接跳过这些账号,导致
-// issue #123 中的迁移丢号。下面两个测试保护已修好的过滤逻辑。
+// AT-only accounts (no refresh_token, only an access_token) are the common shape used to get around the Codex Plus "add
+// phone" flow. Export and migration used to skip these accounts outright because rt=="", which caused
+// the account loss during migration in issue #123. The two tests below guard the fixed filter logic.
 func TestExportAccountsIncludesATOnly(t *testing.T) {
 	gin.SetMode(gin.TestMode)
 
@@ -3287,7 +3287,7 @@ func TestExportAccountsIncludesATOnly(t *testing.T) {
 	}
 }
 
-// TestExportAccountsChannelScoped Codex 账号页导出按 channel=codex 过滤。
+// TestExportAccountsChannelScoped checks that the Codex account page export filters by channel=codex.
 func TestExportAccountsChannelScoped(t *testing.T) {
 	gin.SetMode(gin.TestMode)
 
@@ -3326,7 +3326,7 @@ func TestExportAccountsChannelScoped(t *testing.T) {
 		t.Fatalf("channel=codex entries = %v, want only the codex account", codexOnly)
 	}
 
-	// 缺省仍导出全部渠道:远程迁移依赖全量语义。
+	// By default all channels are still exported: remote migration depends on the full-set semantics.
 	if all := export("filter=all"); len(all) != 1 {
 		t.Fatalf("default export entries = %d, want 1", len(all))
 	}
@@ -3380,7 +3380,7 @@ func TestListAccountsPopulatesBilledWindows(t *testing.T) {
 		"subscription_expires_at": now.AddDate(0, 1, 0).Format(time.RFC3339),
 	}, "")
 	if err != nil {
-		t.Fatalf("InsertAccountWithCredentials 返回错误: %v", err)
+		t.Fatalf("InsertAccountWithCredentials returned error: %v", err)
 	}
 
 	db.SetUsageLogConfig(database.UsageLogModeFull, 1, 1)
@@ -3394,7 +3394,7 @@ func TestListAccountsPopulatesBilledWindows(t *testing.T) {
 		OutputTokens:   500,
 		TotalTokens:    1500,
 	}); err != nil {
-		t.Fatalf("InsertUsageLog 返回错误: %v", err)
+		t.Fatalf("InsertUsageLog returned error: %v", err)
 	}
 
 	deadline := time.Now().Add(2 * time.Second)
@@ -3414,7 +3414,7 @@ func TestListAccountsPopulatesBilledWindows(t *testing.T) {
 	store := auth.NewStore(db, nil, nil)
 	store.SetLazyMode(true)
 	if err := store.Init(ctx); err != nil {
-		t.Fatalf("store.Init 返回错误: %v", err)
+		t.Fatalf("store.Init returned error: %v", err)
 	}
 	handler := &Handler{db: db, store: store}
 
@@ -3609,7 +3609,7 @@ func TestRestoreAccountReportsRuntimeLoadFailure(t *testing.T) {
 	if recorder.Code != http.StatusInternalServerError {
 		t.Fatalf("status = %d, want %d: %s", recorder.Code, http.StatusInternalServerError, recorder.Body.String())
 	}
-	if !strings.Contains(recorder.Body.String(), "加载运行时失败") {
+	if !strings.Contains(recorder.Body.String(), "failed to load runtime") {
 		t.Fatalf("response = %s, want runtime load failure", recorder.Body.String())
 	}
 	if account := store.FindByID(deletedID); account != nil {
@@ -3669,10 +3669,10 @@ func assertErrorMessage(t *testing.T, recorder *httptest.ResponseRecorder, want 
 	}
 }
 
-// TestUpdateSettingsResponseIncludesPublicPortalFlags 回归 #663：PUT /api/admin/settings
-// 的响应体必须回填三个公开门户开关。此前响应遗漏这些字段，前端「设置」页保存后会用
-// 响应整体覆盖本地表单把它们静默置为 false，下一次「保存设置」再整体提交就把已经开启的
-// /key-usage 等公开页关掉——表现为「开启一天后自动关闭」。
+// TestUpdateSettingsResponseIncludesPublicPortalFlags is a regression test for #663: the response body of PUT /api/admin/settings
+// must echo back the three public portal switches. Before this fix the response left those fields out, so the frontend Settings page
+// replaced its local form with the response and silently set them to false; the next "Save settings" then submitted the whole form again
+// and switched off public pages such as /key-usage that were already enabled. The symptom was "turns off by itself a day after it was enabled".
 func TestUpdateSettingsResponseIncludesPublicPortalFlags(t *testing.T) {
 	gin.SetMode(gin.TestMode)
 
@@ -3727,9 +3727,9 @@ func TestUpdateSettingsResponseIncludesPublicPortalFlags(t *testing.T) {
 	}
 }
 
-// TestUpdateSettingsResponseCoversReadSettingsFields 保证 PUT 与 GET 的响应字段集一致。
-// 前端「设置」页用 PUT 响应整体覆盖本地表单，任何只在 GET 里回填的字段都会在保存后被
-// 静默清空，并在下一次保存时写回（#663 的公开门户开关就是这样被关掉的）。
+// TestUpdateSettingsResponseCoversReadSettingsFields checks that the PUT and GET responses have the same set of fields.
+// The frontend Settings page replaces its local form with the PUT response, so any field that is only filled in by GET is cleared
+// after saving and written back on the next save (this is how the public portal switches in #663 got turned off).
 func TestUpdateSettingsResponseCoversReadSettingsFields(t *testing.T) {
 	gin.SetMode(gin.TestMode)
 

@@ -14,14 +14,14 @@ import (
 	"github.com/codex2api/proxy"
 )
 
-// 订阅状态查询与手动刷新：状态对象由服务端按业务时区计算，前端不再自行按
-// 本机时间判定"今日到期/已超时"。手动刷新绕过后台探针的 6 小时节流，但有独立
-// 的短限流——订阅端点在 Cloudflare 后面靠指纹伪装通过，连点只会抬高被拦概率。
+// Subscription status lookup and manual refresh: the status object is computed on the server in the business time zone, and the frontend no longer decides on its own by
+// the local clock whether a subscription is "due today" or "overdue". Manual refresh bypasses the background probe's 6-hour throttle, but has its own
+// short rate limit: the subscription endpoint passes Cloudflare through fingerprint disguise, so rapid repeated clicks only raise the chance of being blocked.
 
-// subscriptionManualRefreshMinInterval 同一账号两次手动刷新的最小间隔。
+// subscriptionManualRefreshMinInterval is the minimum interval between two manual refreshes of the same account.
 const subscriptionManualRefreshMinInterval = 30 * time.Second
 
-// subscriptionStatusViewForRow 从 DB 行组装订阅状态对象（列表/详情共用）。
+// subscriptionStatusViewForRow builds the subscription status object from a DB row (shared by list and detail).
 func subscriptionStatusViewForRow(row *database.AccountRow, planType string) *auth.SubscriptionStatusView {
 	return subscriptionStatusViewForRowAt(row, planType, time.Now())
 }
@@ -40,17 +40,17 @@ func subscriptionStatusViewForRowAt(row *database.AccountRow, planType string, n
 	return auth.BuildSubscriptionStatusView(planType, expiresAt, meta, now, time.Local)
 }
 
-// GetAccountSubscription 返回账号当前订阅状态对象（幂等，不打上游）。
+// GetAccountSubscription returns the account's current subscription status object (idempotent, does not call upstream).
 // GET /api/accounts/:id/subscription
 func (h *Handler) GetAccountSubscription(c *gin.Context) {
 	id, err := strconv.ParseInt(c.Param("id"), 10, 64)
 	if err != nil {
-		writeError(c, http.StatusBadRequest, "无效的账号 ID")
+		writeError(c, http.StatusBadRequest, "invalid account ID")
 		return
 	}
 	account := h.store.FindByID(id)
 	if account == nil {
-		writeError(c, http.StatusNotFound, "账号不在运行时池中")
+		writeError(c, http.StatusNotFound, "account is not in the runtime pool")
 		return
 	}
 	view := account.SubscriptionStatusView(time.Now())
@@ -61,21 +61,21 @@ func (h *Handler) GetAccountSubscription(c *gin.Context) {
 	c.JSON(http.StatusOK, gin.H{"supported": true, "subscription": view})
 }
 
-// RefreshAccountSubscription 立即向订阅提供方查询一次并返回结果分类与最新状态。
+// RefreshAccountSubscription queries the subscription provider once immediately and returns the result classification and the latest status.
 // POST /api/accounts/:id/subscription/refresh
 //
-// 结果 outcome：updated / unchanged / no_subscription / unsupported / failed。
-// 失败不改 HTTP 状态码（仍 200），由 outcome + error 表达；只有账号不存在、
-// 参数非法与限流才走 4xx。
+// Result outcome: updated / unchanged / no_subscription / unsupported / failed.
+// A failure does not change the HTTP status code (still 200) and is expressed through outcome + error; only a missing account,
+// invalid parameters and rate limiting return 4xx.
 func (h *Handler) RefreshAccountSubscription(c *gin.Context) {
 	id, err := strconv.ParseInt(c.Param("id"), 10, 64)
 	if err != nil {
-		writeError(c, http.StatusBadRequest, "无效的账号 ID")
+		writeError(c, http.StatusBadRequest, "invalid account ID")
 		return
 	}
 	account := h.store.FindByID(id)
 	if account == nil {
-		writeError(c, http.StatusNotFound, "账号不在运行时池中")
+		writeError(c, http.StatusNotFound, "account is not in the runtime pool")
 		return
 	}
 	now := time.Now()
@@ -88,7 +88,7 @@ func (h *Handler) RefreshAccountSubscription(c *gin.Context) {
 			retryAfter := int((subscriptionManualRefreshMinInterval - elapsed).Seconds()) + 1
 			c.Header("Retry-After", strconv.Itoa(retryAfter))
 			c.JSON(http.StatusTooManyRequests, gin.H{
-				"error":        "刚刚已查询过订阅状态，请稍后再试",
+				"error":        "subscription status was queried just now, please try again later",
 				"retry_after":  retryAfter,
 				"subscription": account.SubscriptionStatusView(now),
 			})
@@ -97,7 +97,7 @@ func (h *Handler) RefreshAccountSubscription(c *gin.Context) {
 	}
 	if !account.BeginSubscriptionSync() {
 		c.JSON(http.StatusTooManyRequests, gin.H{
-			"error":        "订阅状态同步进行中",
+			"error":        "subscription status sync is in progress",
 			"retry_after":  5,
 			"subscription": account.SubscriptionStatusView(now),
 		})
@@ -122,8 +122,8 @@ func (h *Handler) RefreshAccountSubscription(c *gin.Context) {
 	c.JSON(http.StatusOK, resp)
 }
 
-// 账号列表「订阅状态」筛选值。expiring_* 含今日到期；pending/failed 看同步状态；
-// unknown 是"套餐需要跟踪但从未拿到任何到期信息"。
+// Values of the account list "subscription status" filter. expiring_* includes accounts due today; pending/failed look at the sync state;
+// unknown means "the plan needs tracking but no expiry information has ever been obtained".
 const (
 	subscriptionFilterActive        = "active"
 	subscriptionFilterExpiring9d    = "expiring_9d"
@@ -143,8 +143,8 @@ var validSubscriptionFilters = map[string]bool{
 	subscriptionFilterPending: true, subscriptionFilterFailed: true, subscriptionFilterUnknown: true,
 }
 
-// subscriptionFilterMatches 按服务端算出的订阅状态对象过滤列表项；不跟踪订阅的
-// 账号（api / 无到期时间的 free）任何筛选值都不命中。
+// subscriptionFilterMatches filters list items by the server-computed subscription status object; accounts that do not track a subscription
+// (api / free without an expiry time) never match any filter value.
 func subscriptionFilterMatches(item *accountListSnapshotItem, filter string, now time.Time) bool {
 	if item == nil || item.Row == nil {
 		return false

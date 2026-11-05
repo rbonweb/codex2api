@@ -134,8 +134,8 @@ func TestGetAccountPageStatsBackfillsMissingOfficialUsage(t *testing.T) {
 	}
 }
 
-// 上游同步成功但窗口内没有数据(官方统计滞后/账号没有官方消耗)时,
-// page-stats 必须下发显式空态并停止回补,而不是让前端永远当"还在加载"。
+// When the upstream sync succeeds but the window has no data (official stats lag, or the account has no official usage),
+// page-stats must send an explicit empty state and stop backfilling, instead of leaving the frontend in "still loading" forever.
 func TestGetAccountPageStatsMarksSyncedWhenUpstreamHasNoData(t *testing.T) {
 	gin.SetMode(gin.TestMode)
 	db := newTestAdminDB(t)
@@ -194,7 +194,7 @@ func TestGetAccountPageStatsMarksSyncedWhenUpstreamHasNoData(t *testing.T) {
 		t.Fatal("official_usage_synced missing: frontend would keep spinning and re-polling")
 	}
 
-	// 再打一次不允许触发新的回补:已同步的账号不进 missing 列表。
+	// Calling again must not trigger a new backfill: synced accounts do not go into the missing list.
 	invokeAccountPageStats(t, handler, []int64{id})
 	time.Sleep(100 * time.Millisecond)
 	mu.Lock()
@@ -204,7 +204,7 @@ func TestGetAccountPageStatsMarksSyncedWhenUpstreamHasNoData(t *testing.T) {
 	}
 }
 
-// 回补失败后要按失败冷却退避,而不是每过 2 分钟的普通冷却就再打一次上游。
+// After a backfill fails, back off for the failure cooldown, instead of hitting the upstream again after every normal 2-minute cooldown.
 func TestWhamDailyBackfillFailureCooldownSkipsRetry(t *testing.T) {
 	gin.SetMode(gin.TestMode)
 	db := newTestAdminDB(t)
@@ -255,7 +255,7 @@ func TestWhamDailyBackfillFailureCooldownSkipsRetry(t *testing.T) {
 		time.Sleep(10 * time.Millisecond)
 	}
 
-	// 越过普通 2 分钟冷却,只留失败冷却:不允许再打上游。
+	// Past the normal 2-minute cooldown, only the failure cooldown remains: no upstream calls are allowed.
 	handler.whamDailyBackfillMu.Lock()
 	delete(handler.whamDailyBackfillLast, id)
 	handler.whamDailyBackfillMu.Unlock()
@@ -268,7 +268,7 @@ func TestWhamDailyBackfillFailureCooldownSkipsRetry(t *testing.T) {
 	}
 	mu.Unlock()
 
-	// 失败冷却过期后允许重试。
+	// Retry is allowed after the failure cooldown expires.
 	handler.whamDailyBackfillMu.Lock()
 	handler.whamDailyBackfillFailedAt[id] = time.Now().Add(-whamDailyUsageBackfillFailureCooldown - time.Minute)
 	delete(handler.whamDailyBackfillLast, id)

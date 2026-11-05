@@ -15,7 +15,7 @@ import (
 	"github.com/gin-gonic/gin"
 )
 
-// isAgentIdentityCredentialRow 判断 DB 账号行是否为 Agent Identity 授权（供列表响应打标）。
+// isAgentIdentityCredentialRow reports whether a DB account row is an Agent Identity credential (used to tag list responses).
 func isAgentIdentityCredentialRow(row *database.AccountRow) bool {
 	if row == nil {
 		return false
@@ -25,15 +25,15 @@ func isAgentIdentityCredentialRow(row *database.AccountRow) bool {
 		strings.TrimSpace(row.GetCredential("agent_private_key")) != ""
 }
 
-// importAgentIdentityReq 是 Agent Identity auth.json 导入的请求体。
+// importAgentIdentityReq is the request body for importing an Agent Identity auth.json.
 type importAgentIdentityReq struct {
 	Name     string `json:"name"`
 	AuthJSON string `json:"auth_json"`
 	ProxyURL string `json:"proxy_url"`
 }
 
-// agentIdentityFields 从 auth.json（agent_identity 对象或 auth_mode=agentIdentity 的根）
-// 解析出的字段，snake_case / camelCase 均兼容。
+// agentIdentityFields reads the fields from auth.json (the agent_identity object, or the root with auth_mode=agentIdentity)
+// and is compatible with both snake_case and camelCase.
 type agentIdentityFields struct {
 	RuntimeID  string
 	PrivateKey string
@@ -65,11 +65,11 @@ func agentIdentityBool(node map[string]any, keys ...string) bool {
 	return false
 }
 
-// resolveAgentIdentityNode 从一个 JSON 对象里定位 Agent Identity 字段所在的节点：
-//   - 有 agent_identity / agentIdentity 子对象 → 取子对象；
-//   - 根上 auth_mode=agentIdentity 或直接带 agent_runtime_id → 取该对象本身。
+// resolveAgentIdentityNode locates the node holding the Agent Identity fields within a JSON object:
+//   - if there is an agent_identity / agentIdentity child object, use that child object;
+//   - if the root has auth_mode=agentIdentity or directly carries agent_runtime_id, use the object itself.
 //
-// 命中返回节点与 true，否则 false。
+// On a match it returns the node and true, otherwise false.
 func resolveAgentIdentityNode(m map[string]any) (map[string]any, bool) {
 	if m == nil {
 		return nil, false
@@ -88,18 +88,18 @@ func resolveAgentIdentityNode(m map[string]any) (map[string]any, bool) {
 	return nil, false
 }
 
-// parseAgentIdentityAuthJSON 解析 Agent Identity auth.json。
+// parseAgentIdentityAuthJSON parses an Agent Identity auth.json.
 func parseAgentIdentityAuthJSON(raw string) (*agentIdentityFields, error) {
 	trimmed := strings.TrimSpace(raw)
 	if trimmed == "" {
-		return nil, fmt.Errorf("auth.json 内容为空")
+		return nil, fmt.Errorf("auth.json content is empty")
 	}
 	var root map[string]any
 	if err := json.Unmarshal([]byte(trimmed), &root); err != nil {
-		return nil, fmt.Errorf("auth.json 不是合法的 JSON: %w", err)
+		return nil, fmt.Errorf("auth.json is not valid JSON: %w", err)
 	}
-	// 先按根级识别；识别不到再穿透 credentials 包装（sub2api / codex2api
-	// 导出的账号 JSON 把 Agent Identity 字段包在 credentials 对象里）。
+	// Detect at the root level first; if that fails, unwrap the credentials wrapper (account JSON exported by sub2api / codex2api
+	// wraps the Agent Identity fields in a credentials object).
 	node, ok := resolveAgentIdentityNode(root)
 	if !ok {
 		if wrapped, wok := root["credentials"].(map[string]any); wok {
@@ -107,7 +107,7 @@ func parseAgentIdentityAuthJSON(raw string) (*agentIdentityFields, error) {
 		}
 	}
 	if !ok {
-		return nil, fmt.Errorf("auth.json 不是 Agent Identity 格式（缺少 agent_identity 或 auth_mode=agentIdentity）")
+		return nil, fmt.Errorf("auth.json is not in Agent Identity format (missing agent_identity or auth_mode=agentIdentity)")
 	}
 
 	fields := &agentIdentityFields{
@@ -128,45 +128,45 @@ func parseAgentIdentityAuthJSON(raw string) (*agentIdentityFields, error) {
 
 func validateAgentIdentityFields(fields *agentIdentityFields) error {
 	if fields == nil {
-		return fmt.Errorf("agent identity 字段为空")
+		return fmt.Errorf("agent identity fields are empty")
 	}
 	runtimeID := strings.TrimSpace(fields.RuntimeID)
 	privateKey := strings.TrimSpace(fields.PrivateKey)
 	accountID := strings.TrimSpace(fields.AccountID)
 	userID := strings.TrimSpace(fields.UserID)
 	if runtimeID == "" || privateKey == "" || accountID == "" || userID == "" {
-		return fmt.Errorf("agent identity 缺少必要字段（agent_runtime_id / agent_private_key / account_id / chatgpt_user_id）")
+		return fmt.Errorf("agent identity is missing required fields (agent_runtime_id / agent_private_key / account_id / chatgpt_user_id)")
 	}
 	if !strings.HasPrefix(runtimeID, "agent-") {
-		return fmt.Errorf("agent_runtime_id 必须以 agent- 开头")
+		return fmt.Errorf("agent_runtime_id must start with agent-")
 	}
 	if err := auth.ValidateCodexAgentIdentityPrivateKey(privateKey); err != nil {
-		return fmt.Errorf("agent identity 私钥无效: %w", err)
+		return fmt.Errorf("agent identity private key is invalid: %w", err)
 	}
 	return nil
 }
 
-// ImportCodexAgentIdentity 导入 Codex Agent Identity auth.json 并创建账号。
-// 不保存 OAuth access/refresh token；每次上游请求用私钥动态签名。
+// ImportCodexAgentIdentity imports a Codex Agent Identity auth.json and creates the account.
+// It does not store the OAuth access/refresh token; each upstream request is signed dynamically with the private key.
 // POST /api/admin/accounts/codex/agent-identity
 func (h *Handler) ImportCodexAgentIdentity(c *gin.Context) {
 	var req importAgentIdentityReq
 	if err := c.ShouldBindJSON(&req); err != nil {
-		writeError(c, http.StatusBadRequest, "请求格式错误")
+		writeError(c, http.StatusBadRequest, "Invalid request format")
 		return
 	}
 	req.Name = security.SanitizeInput(req.Name)
 	req.ProxyURL = security.SanitizeInput(req.ProxyURL)
 	if security.ContainsXSS(req.Name) || security.ContainsSQLInjection(req.Name) {
-		writeError(c, http.StatusBadRequest, "名称包含非法字符")
+		writeError(c, http.StatusBadRequest, "Name contains illegal characters")
 		return
 	}
 	if utf8.RuneCountInString(req.Name) > 100 {
-		writeError(c, http.StatusBadRequest, "名称长度不能超过100字符")
+		writeError(c, http.StatusBadRequest, "Name cannot exceed 100 characters")
 		return
 	}
 	if err := security.ValidateProxyURL(req.ProxyURL); err != nil {
-		writeError(c, http.StatusBadRequest, "代理URL无效")
+		writeError(c, http.StatusBadRequest, "Invalid proxy URL")
 		return
 	}
 
@@ -184,13 +184,13 @@ func (h *Handler) ImportCodexAgentIdentity(c *gin.Context) {
 		return
 	}
 	if duplicate {
-		writeError(c, http.StatusConflict, "该 Agent Identity 账号已存在")
+		writeError(c, http.StatusConflict, "This Agent Identity account already exists")
 		return
 	}
 
 	security.SecurityAuditLog("CODEX_AGENT_IDENTITY_ADDED", fmt.Sprintf("account_id=%d email=%s ip=%s", id, fields.Email, c.ClientIP()))
 	c.JSON(http.StatusOK, gin.H{
-		"message": "成功导入 Agent Identity 账号",
+		"message": "Agent Identity account imported successfully",
 		"id":      id,
 		"email":   fields.Email,
 	})
@@ -214,7 +214,7 @@ func (h *Handler) existingAgentIdentityRuntimeIDs(ctx context.Context) (map[stri
 	}
 	rows, err := h.db.ListActive(ctx)
 	if err != nil {
-		return nil, fmt.Errorf("查询已有 Agent Identity 账号失败: %w", err)
+		return nil, fmt.Errorf("failed to query existing Agent Identity accounts: %w", err)
 	}
 	for _, row := range rows {
 		if isAgentIdentityCredentialRow(row) {
@@ -267,7 +267,7 @@ func (h *Handler) createAgentIdentityAccountIfAbsent(ctx context.Context, fields
 	return h.createAgentIdentityAccountChecked(ctx, fields, name, proxyURL, source, runtimeIDs, false)
 }
 
-// createAgentIdentityAccount 用解析出的字段建号并加载进池，返回账号 ID。
+// createAgentIdentityAccount creates the account from the parsed fields, loads it into the pool, and returns the account ID.
 func (h *Handler) createAgentIdentityAccount(ctx context.Context, fields *agentIdentityFields, name, proxyURL, source string) (int64, error) {
 	if err := validateAgentIdentityFields(fields); err != nil {
 		return 0, err
@@ -307,14 +307,14 @@ func (h *Handler) createAgentIdentityAccount(ctx context.Context, fields *agentI
 	if err := h.store.LoadAccountByID(ctx, id); err != nil {
 		return 0, err
 	}
-	// 导入后异步用量探针：Agent Identity 走 /responses 签名探针，从响应头填充用量进度条。
+	// After import, an asynchronous usage probe runs: Agent Identity uses the signed /responses probe, and fills the usage progress bars from the response headers.
 	h.triggerImportedAccountUsageProbe(id, source)
 	return id, nil
 }
 
-// importAgentIdentityTokens 处理通用导入(JSON 文件/文件夹扫描)里识别出的 Agent Identity
-// 条目：校验私钥、按 runtime_id 去重(批内 + 现有；allowDuplicate 时跳过去重)、建号入池。
-// 返回新增/重复跳过/失败计数，以及新建账号的 ID（供导入方统一绑定分组）。
+// importAgentIdentityTokens handles the Agent Identity entries recognized by the generic import (JSON file / folder scan):
+// it validates the private key, de-duplicates by runtime_id (within the batch and against existing accounts; de-duplication is skipped when allowDuplicate is set), and creates and pools the accounts.
+// It returns the counts of added, skipped duplicates and failures, plus the IDs of newly created accounts (so the importer can bind them to a group in one step).
 func (h *Handler) importAgentIdentityTokens(ctx context.Context, tokens []importToken, settings importSettings) (success, duplicate, failed int, createdIDs []int64) {
 	if len(tokens) == 0 {
 		return 0, 0, 0, nil
@@ -353,8 +353,8 @@ func (h *Handler) importAgentIdentityTokens(ctx context.Context, tokens []import
 	return success, duplicate, failed, createdIDs
 }
 
-// batchImportAgentIdentityReq 是 Agent Identity 文件批量导入的请求体。
-// Files 每项是一个 auth.json 的原始 JSON 内容。
+// batchImportAgentIdentityReq is the request body for batch-importing Agent Identity files.
+// Files holds one raw JSON content per auth.json.
 type batchImportAgentIdentityReq struct {
 	Files    []string `json:"files"`
 	ProxyURL string   `json:"proxy_url"`
@@ -369,25 +369,25 @@ type agentIdentityImportItem struct {
 
 const agentIdentityBatchMaxFiles = 200
 
-// BatchImportCodexAgentIdentity 批量导入 Agent Identity auth.json 文件。
+// BatchImportCodexAgentIdentity batch-imports Agent Identity auth.json files.
 // POST /api/admin/accounts/codex/agent-identity/import
 func (h *Handler) BatchImportCodexAgentIdentity(c *gin.Context) {
 	var req batchImportAgentIdentityReq
 	if err := c.ShouldBindJSON(&req); err != nil {
-		writeError(c, http.StatusBadRequest, "请求格式错误")
+		writeError(c, http.StatusBadRequest, "Invalid request format")
 		return
 	}
 	req.ProxyURL = security.SanitizeInput(req.ProxyURL)
 	if err := security.ValidateProxyURL(req.ProxyURL); err != nil {
-		writeError(c, http.StatusBadRequest, "代理URL无效")
+		writeError(c, http.StatusBadRequest, "Invalid proxy URL")
 		return
 	}
 	if len(req.Files) == 0 {
-		writeError(c, http.StatusBadRequest, "未提供任何文件内容")
+		writeError(c, http.StatusBadRequest, "No file content provided")
 		return
 	}
 	if len(req.Files) > agentIdentityBatchMaxFiles {
-		writeError(c, http.StatusBadRequest, fmt.Sprintf("单次最多导入 %d 个文件", agentIdentityBatchMaxFiles))
+		writeError(c, http.StatusBadRequest, fmt.Sprintf("Up to %d files can be imported at once", agentIdentityBatchMaxFiles))
 		return
 	}
 
@@ -413,7 +413,7 @@ func (h *Handler) BatchImportCodexAgentIdentity(c *gin.Context) {
 		item.Email = fields.Email
 		id, duplicated, err := h.createAgentIdentityAccountChecked(ctx, fields, "", req.ProxyURL, "agent_identity_file_import", runtimeIDs, false)
 		if duplicated {
-			item.Error = "账号已存在，已跳过"
+			item.Error = "Account already exists, skipped"
 			items = append(items, item)
 			continue
 		}

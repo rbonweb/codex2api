@@ -14,10 +14,10 @@ import (
 	"github.com/gin-gonic/gin"
 )
 
-// modelVersionNumberRE 提取模型名中的数字段，用于版本排序（如 gpt-5.6-luna → 5,6）。
+// modelVersionNumberRE extracts the numeric segments of a model name for version sorting (e.g. gpt-5.6-luna → 5,6).
 var modelVersionNumberRE = regexp.MustCompile(`\d+`)
 
-// preferredBillingModelOrder 定价列表优先展示 GPT-6，再展示 GPT-5.6。
+// preferredBillingModelOrder shows GPT-6 first in the pricing list, then GPT-5.6.
 var preferredBillingModelOrder = []string{
 	"gpt-6-astra",
 	"gpt-6-sol",
@@ -27,14 +27,14 @@ var preferredBillingModelOrder = []string{
 	"gpt-5.6-luna",
 }
 
-// modelPreferredRank 返回置顶优先级（越小越靠前）；非置顶模型返回 -1。
+// modelPreferredRank returns the pinned priority (smaller comes first); models that are not pinned return -1.
 func modelPreferredRank(model string) int {
 	lower := strings.ToLower(strings.TrimSpace(model))
 	for i, preferred := range preferredBillingModelOrder {
 		if lower == preferred {
 			return i
 		}
-		// 变体后缀 / 思考强度别名：gpt-5.6-sol-high、gpt-5.6-sol(xhigh)
+		// Variant suffix / reasoning effort aliases: gpt-5.6-sol-high, gpt-5.6-sol(xhigh)
 		if strings.HasPrefix(lower, preferred+"-") || strings.HasPrefix(lower, preferred+"(") {
 			return i
 		}
@@ -42,7 +42,7 @@ func modelPreferredRank(model string) int {
 	return -1
 }
 
-// modelVersionParts 从模型 ID 中取出数字序列，供新→旧排序使用。
+// modelVersionParts extracts the number sequence from a model ID, used for newest-to-oldest sorting.
 func modelVersionParts(model string) []int {
 	matches := modelVersionNumberRE.FindAllString(model, -1)
 	if len(matches) == 0 {
@@ -59,10 +59,10 @@ func modelVersionParts(model string) []int {
 	return parts
 }
 
-// compareModelKeysNewestFirst 比较两个模型键：
-// 1) 置顶模型（sol/terra/luna）固定靠前；
-// 2) 其余按版本号从新到旧；同版本再按名称字典序。
-// 返回 -1 表示 a 应排在 b 前面，1 表示 a 在 b 后面，0 表示相等。
+// compareModelKeysNewestFirst compares two model keys:
+// 1) Pinned models (sol/terra/luna) always come first;
+// 2) Other models sort by version number, newest first; within the same version, by name in lexicographic order.
+// Returns -1 if a should sort before b, 1 if a sorts after b, and 0 if they are equal.
 func compareModelKeysNewestFirst(a, b string) int {
 	if a == b {
 		return 0
@@ -81,12 +81,12 @@ func compareModelKeysNewestFirst(a, b string) int {
 			}
 			return 1
 		}
-		// 同置顶组内按名称稳定排序（sol-high 跟在 sol 后等）。
+		// Within the same pinned group, sort stably by name (e.g. sol-high follows sol).
 		return strings.Compare(a, b)
 	}
 
 	va, vb := modelVersionParts(a), modelVersionParts(b)
-	// 无版本号的模型沉底。
+	// Models without a version number sink to the bottom.
 	if len(va) == 0 && len(vb) == 0 {
 		return strings.Compare(a, b)
 	}
@@ -108,7 +108,7 @@ func compareModelKeysNewestFirst(a, b string) int {
 			return 1
 		}
 	}
-	// 公共前缀相同：段更多视为更高版本（5.6 > 5）。
+	// Same common prefix: more segments count as a higher version (5.6 > 5).
 	if len(va) != len(vb) {
 		if len(va) > len(vb) {
 			return -1
@@ -118,14 +118,14 @@ func compareModelKeysNewestFirst(a, b string) int {
 	return strings.Compare(a, b)
 }
 
-// sortModelKeysNewestFirst 将模型键按版本号从新到旧排序。
+// sortModelKeysNewestFirst sorts model keys by version number, newest first.
 func sortModelKeysNewestFirst(keys []string) {
 	sort.SliceStable(keys, func(i, j int) bool {
 		return compareModelKeysNewestFirst(keys[i], keys[j]) < 0
 	})
 }
 
-// modelPricingRow 是定价管理页每个规范模型的一行：当前生效价 + 来源。
+// modelPricingRow is one row per canonical model on the pricing admin page: the current effective price plus its source.
 type modelPricingRow struct {
 	Model          string                        `json:"model"`
 	Channel        string                        `json:"channel"` // codex
@@ -133,8 +133,8 @@ type modelPricingRow struct {
 	Pricing        database.ModelPricingOverride `json:"pricing"`
 	CanonicalModel string                        `json:"canonical_model,omitempty"`
 	IsAlias        bool                          `json:"is_alias,omitempty"`
-	// MediaUnit 非空表示媒体模型(image=按张、second=按秒),价格看 media_unit_cost
-	// 而非 token 单价;media_unit_cost 为 0 即未定价。
+	// A non-empty MediaUnit marks a media model (image = per image, second = per second), and its price comes from media_unit_cost
+	// rather than the per-token price; a media_unit_cost of 0 means no price is set.
 	MediaUnit string `json:"media_unit,omitempty"`
 }
 
@@ -155,17 +155,17 @@ func modelPricingManagementKeys(ids []string) []string {
 	return out
 }
 
-// ListModelPricing 返回各规范模型的当前生效定价与来源，供设置页定价表展示。
+// ListModelPricing returns the current effective pricing and source of each canonical model, for the pricing table on the settings page.
 func (h *Handler) ListModelPricing(c *gin.Context) {
 	ctx := c.Request.Context()
 
-	// 取当前对外暴露的模型，映射到规范定价键去重（退役模型自然被排除）。
+	// Take the models currently exposed to clients and map them to canonical pricing keys, deduplicated (retired models drop out naturally).
 	collect := func(ids []string) []string {
 		return modelPricingManagementKeys(ids)
 	}
 
 	keys := collect(h.codexPricingModelIDs(ctx))
-	// 每个渠道内按新版本在前排序。
+	// Within each channel, sort newer versions first.
 	sortModelKeysNewestFirst(keys)
 
 	rows := make([]modelPricingRow, 0, len(keys))
@@ -198,14 +198,14 @@ func (h *Handler) ListModelPricing(c *gin.Context) {
 	})
 }
 
-// UpdateModelPricingRequest 设置/清除某模型的 custom 定价覆盖。
+// UpdateModelPricingRequest sets or clears a model's custom pricing override.
 type UpdateModelPricingRequest struct {
 	Model   string                         `json:"model"`
-	Reset   bool                           `json:"reset"`   // true 时清除该模型覆盖，回退代码默认
-	Pricing *database.ModelPricingOverride `json:"pricing"` // reset=false 时必填
+	Reset   bool                           `json:"reset"`   // when true, clears this model's override and falls back to the code default
+	Pricing *database.ModelPricingOverride `json:"pricing"` // required when reset=false
 }
 
-// UpdateModelPricing 写入/清除某模型的 custom 定价覆盖。
+// UpdateModelPricing writes or clears a model's custom pricing override.
 func (h *Handler) UpdateModelPricing(c *gin.Context) {
 	var req UpdateModelPricingRequest
 	if err := c.ShouldBindJSON(&req); err != nil {
@@ -214,7 +214,7 @@ func (h *Handler) UpdateModelPricing(c *gin.Context) {
 	}
 	key := database.PricingManagementModelKey(strings.TrimSpace(req.Model))
 	if key == "" {
-		writeError(c, http.StatusBadRequest, "model 不能为空")
+		writeError(c, http.StatusBadRequest, "model must not be empty")
 		return
 	}
 
@@ -230,7 +230,7 @@ func (h *Handler) UpdateModelPricing(c *gin.Context) {
 		req.Pricing = &normalized
 	}
 	if !req.Reset && (req.Pricing == nil || req.Pricing.IsEmpty()) {
-		writeError(c, http.StatusBadRequest, "pricing 不能为空（或用 reset 清除）")
+		writeError(c, http.StatusBadRequest, "pricing must not be empty (or use reset to clear it)")
 		return
 	}
 	_, err := h.db.MutateModelPricingSettings(ctx, nil, func(overrides map[string]database.ModelPricingOverride) error {
@@ -250,12 +250,12 @@ func (h *Handler) UpdateModelPricing(c *gin.Context) {
 	c.JSON(http.StatusOK, gin.H{"model": key, "reset": req.Reset})
 }
 
-// SyncModelPricingRequest 可选携带一次性同步 URL（同时保存为默认来源）。
+// SyncModelPricingRequest optionally carries a one-off sync URL (also saved as the default source).
 type SyncModelPricingRequest struct {
 	URL string `json:"url"`
 }
 
-// SyncModelPricing 从 JSON URL 同步定价（synced 覆盖，不动 custom）。
+// SyncModelPricing syncs pricing from a JSON URL (synced overrides; custom is left untouched).
 func (h *Handler) SyncModelPricing(c *gin.Context) {
 	var req SyncModelPricingRequest
 	_ = c.ShouldBindJSON(&req)
@@ -267,7 +267,7 @@ func (h *Handler) SyncModelPricing(c *gin.Context) {
 	if h.store != nil {
 		proxyURL = h.store.GetProxyURL()
 	}
-	// 字段即准：直接传设置页 URL 字段的当前值（空 → 用内置默认并清空存储来源）。
+	// The field is authoritative: pass the current value of the URL field on the settings page (empty means use the built-in default and clear the stored source).
 	result, err := proxy.SyncModelPricingFromURL(ctx, h.db, req.URL, proxyURL)
 	if err != nil {
 		writeError(c, http.StatusBadGateway, err.Error())

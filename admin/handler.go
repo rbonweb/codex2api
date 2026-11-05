@@ -42,7 +42,7 @@ import (
 	"github.com/gin-gonic/gin"
 )
 
-// Handler 管理后台 API 处理器
+// Handler for the admin panel API
 type Handler struct {
 	intelligenceDeviceConfig *proxy.DeviceProfileConfig
 	intelligenceOnce         sync.Once
@@ -51,7 +51,7 @@ type Handler struct {
 	qualityTestContext       context.Context
 	qualityTestWG            sync.WaitGroup
 	store                    *auth.Store
-	modelRefreshFuncs        map[string]channelModelRefreshFunc // nil = 各渠道默认实现；测试注入用
+	modelRefreshFuncs        map[string]channelModelRefreshFunc // nil = per-channel default implementation; used for test injection
 	proxyRiskJobsMu          sync.RWMutex
 	proxyRiskJobs            map[string]*proxyRiskScoringJob
 	cache                    cache.TokenCache
@@ -75,15 +75,15 @@ type Handler struct {
 	queryWhamDailyUsage          func(context.Context, *auth.Account, string, string, string) (*proxy.WhamDailyUsageResponse, *http.Response, error)
 	queryWhamDailyTokenBreakdown func(context.Context, *auth.Account, string, string, string) (*proxy.WhamDailyTokenBreakdownResponse, *http.Response, error)
 	sendCodexInvite              func(context.Context, *auth.Account, string, string, string, []string) (*proxy.CodexInviteResult, error)
-	// 列表 page-stats 发现当前页缺少官方结算快照时，按账号做即时回补；
-	// last/in-flight 避免翻页或前端重试把同一号打爆上游，failedAt 给持续
-	// 失败的账号更长的冷却，syncedOnce 记录「成功同步过但上游没有数据」
-	// （官方统计有滞后），让 page-stats 下发显式空态而不是无限触发回补。
+	// When the list page-stats finds that the current page lacks official settlement snapshots, it backfills per account immediately;
+	// last/in-flight prevents page turns or frontend retries from overloading the upstream with one account, and failedAt gives accounts
+	// that keep failing a longer cooldown; syncedOnce records "synced successfully, but upstream returned no data"
+	// (official statistics lag), so page-stats returns an explicit empty state instead of endlessly triggering backfills.
 	whamDailyBackfillMu       sync.Mutex
 	whamDailyBackfillLast     map[int64]time.Time
 	whamDailyBackfillInFlight map[int64]struct{}
 	whamDailyBackfillFailedAt map[int64]time.Time
-	// patWhoAmIFailedAt 记录 PAT 账号 whoami 工作区补全最近一次失败时间（退避用）。
+	// patWhoAmIFailedAt records the time of the most recent failure of PAT account whoami workspace completion (used for backoff).
 	patWhoAmIFailedAt     map[int64]time.Time
 	whamDailySyncedOnce   map[int64]struct{}
 	whamDailyDeepSynced   map[int64]whamDailyDeepState
@@ -105,8 +105,8 @@ type Handler struct {
 	adminAuthThrottle     *adminAuthThrottle
 	imageProxy            *proxy.Handler
 
-	// 导入触发的用量采样队列。固定数量 worker 消费任务，避免“一账号一 goroutine”
-	// 在大文件导入时堆出成千上万个阻塞协程。
+	// Usage-sampling queue triggered by import. A fixed number of workers consume tasks, avoiding "one goroutine per account"
+	// piling up thousands of blocked goroutines during large file imports.
 	importProbeQueueMu sync.Mutex
 	importProbeQueue   []func(context.Context)
 	importProbeWorkers int
@@ -120,31 +120,31 @@ type Handler struct {
 	importLoadNow      func() time.Time
 	importLoadSnapshot func() importRuntimeLoadSnapshot
 
-	// 图表聚合内存缓存（10秒 TTL）
+	// In-memory cache for chart aggregation (10s TTL)
 	chartCacheMu   sync.RWMutex
 	chartCacheData map[string]*chartCacheEntry
 
-	// 账号请求统计缓存,按渠道分键(各渠道各自刷新互不牵连;旧全量路径
-	// 用 "all" 键)。分页路径 stale-while-revalidate,TTL 见 requestCountCacheTTL。
+	// Account request statistics cache, keyed by channel (each channel refreshes independently; the old full-scan path
+	// uses the "all" key). The paged path uses stale-while-revalidate, with the TTL in requestCountCacheTTL.
 	reqCountMu         sync.RWMutex
 	reqCountCache      map[string]*requestCountCacheEntry
 	reqCountRefreshMu  sync.Mutex
 	reqCountRefreshing map[string]bool
-	// 大池分批聚合的断点续跑半成品,见 requestCountStaging。
+	// Resumable intermediate results of batched aggregation for large pools; see requestCountStaging.
 	reqCountStagingMu sync.Mutex
 	reqCountStaging   map[string]*requestCountStaging
 
-	// 管理后台账号分页使用的轻量快照。快照按渠道缓存，只保存筛选、排序和
-	// 当前页定位所需的信息；完整账号响应仍只为当前页构建。
+	// Lightweight snapshot used for account pagination in the admin panel. Snapshots are cached per channel and store only the filters, sorting and
+	// the information needed to locate the current page; the full account response is still built only for the current page.
 	accountListCacheMu sync.RWMutex
 	accountListCache   map[string]*accountListSnapshot
 	accountListBuildMu sync.Mutex
-	// accountCachesGen 在账号变更时递增;重建协程安装快照前校验代数,
-	// 防止变更前就开始读库的在途重建把旧数据写回缓存。
+	// accountCachesGen is incremented on account changes; the rebuild goroutine checks the generation before installing a snapshot,
+	// so an in-flight rebuild that started reading the database before a change cannot write stale data back into the cache.
 	accountCachesGen atomic.Uint64
 
-	// 分析图表使用固定大小的聚合结果，避免把完整号池传给浏览器。与账号
-	// 快照分开缓存，只有展开分析区或 Dashboard runway 时才会构建。
+	// Analytics charts use fixed-size aggregated results to avoid passing the full pool to the browser. Cached separately from the account
+	// snapshot; it is only built when the analytics section is expanded or the Dashboard runway is shown.
 	accountAnalysisCacheMu        sync.RWMutex
 	accountAnalysisCache          map[string]*accountAnalysisCacheEntry
 	accountAnalysisBuildMu        sync.Mutex
@@ -152,8 +152,8 @@ type Handler struct {
 	accountAnalysisTraffic        map[string]*accountAnalysisTrafficCacheEntry
 	accountAnalysisTrafficBuildMu sync.Mutex
 
-	// 「主动重置次数」消耗操作的工作区级互斥锁（workspace -> *sync.Mutex），
-	// 串行化同一上游工作区的并发重置，避免重复消耗与次数计数竞态。
+	// Workspace-level mutex for the "proactive reset count" consume operation (workspace -> *sync.Mutex),
+	// serializes concurrent resets on the same upstream workspace, avoiding duplicate consumption and races on the reset count.
 	resetCreditLocks               sync.Map
 	resetCreditLastSuccess         sync.Map
 	resetCreditSuccessfulIDs       sync.Map
@@ -176,12 +176,12 @@ type Handler struct {
 	resetCreditPostClosed          bool
 	settingsUpdateMu               sync.Mutex
 
-	// 重复账号合并互斥锁：串行化 mergeRefreshedDuplicateIntoExisting，
-	// 防止并发导入同一身份的多个账号时互相合并、把双方都软删（账号丢失）。
+	// Mutex for merging duplicate accounts: serializes mergeRefreshedDuplicateIntoExisting,
+	// prevents concurrent imports of several accounts with the same identity from merging into each other and soft-deleting both (losing accounts).
 	mergeDuplicateMu sync.Mutex
 
-	// Agent Identity 导入互斥锁：串行化 runtime_id 的数据库查重与插入，
-	// 防止并发请求在“检查不存在”后同时建号。
+	// Agent Identity import mutex: serializes the database duplicate check and insert for runtime_id,
+	// prevents concurrent requests from both creating an account after "checking that it does not exist".
 	agentIdentityImportMu sync.Mutex
 }
 
@@ -255,8 +255,8 @@ type chartCacheEntry struct {
 const (
 	adminUsageStatsCacheNamespace = "admin:usage-stats"
 	adminChartCacheNamespace      = "admin:chart-data"
-	// v2:响应结构新增 reconciliation 字段,升版命名空间让 Redis 里
-	// 部署前写入的旧条目失效,避免零值对账在滚动窗口内展示。
+	// v2: the response structure adds a reconciliation field; bumping the namespace version invalidates old entries that Redis holds
+	// written before deployment, so zero-value reconciliation is not shown during the rolling window.
 	adminAPIKeyAccountsNamespace   = "admin:api-key-accounts:v2"
 	adminAPIKeyStatsNamespace      = "admin:api-key-stats"
 	adminAccountWindowsNamespace   = "admin:account-usage-windows"
@@ -277,14 +277,14 @@ func (h *Handler) getRuntimeJSON(ctx context.Context, namespace, key string, des
 	}
 	raw, ok, err := h.cache.GetRuntime(ctx, namespace, key)
 	if err != nil {
-		log.Printf("读取运行态缓存失败: namespace=%s err=%v", namespace, err)
+		log.Printf("failed to read runtime cache: namespace=%s err=%v", namespace, err)
 		return false
 	}
 	if !ok || len(raw) == 0 {
 		return false
 	}
 	if err := json.Unmarshal(raw, dest); err != nil {
-		log.Printf("解析运行态缓存失败: namespace=%s err=%v", namespace, err)
+		log.Printf("failed to parse runtime cache: namespace=%s err=%v", namespace, err)
 		return false
 	}
 	return true
@@ -296,17 +296,17 @@ func (h *Handler) setRuntimeJSON(ctx context.Context, namespace, key string, val
 	}
 	payload, err := json.Marshal(value)
 	if err != nil {
-		log.Printf("编码运行态缓存失败: namespace=%s err=%v", namespace, err)
+		log.Printf("failed to encode runtime cache: namespace=%s err=%v", namespace, err)
 		return
 	}
 	if err := h.cache.SetRuntime(ctx, namespace, key, payload, ttl); err != nil {
-		log.Printf("写入运行态缓存失败: namespace=%s err=%v", namespace, err)
+		log.Printf("failed to write runtime cache: namespace=%s err=%v", namespace, err)
 	}
 }
 
 func validateImportFileSize(fh *multipart.FileHeader) error {
 	if fh.Size > importFileSizeLimitBytes {
-		return fmt.Errorf("文件 %s 大小超过 %s", fh.Filename, importFileSizeLimitLabel)
+		return fmt.Errorf("file %s size exceeds %s", fh.Filename, importFileSizeLimitLabel)
 	}
 	return nil
 }
@@ -329,7 +329,7 @@ func (h *Handler) probeImportedAccountUsage(ctx context.Context, accountID int64
 	if account == nil {
 		return
 	}
-	// Agent Identity 无 AccessToken 但可凭签名做 /responses 探针，不能被此门拦下。
+	// Agent Identity has no AccessToken but can run /responses probes with its signature, so this gate must not stop it.
 	if account.GetAccessToken() == "" && !account.IsCodexAgentIdentity() {
 		return
 	}
@@ -341,20 +341,20 @@ func (h *Handler) probeImportedAccountUsage(ctx context.Context, accountID int64
 	probeCtx, cancel := context.WithTimeout(ctx, 25*time.Second)
 	defer cancel()
 	if err := probeFn(probeCtx, account); err != nil {
-		log.Printf("导入账号 %d 用量采样失败 (%s): %v", accountID, source, err)
+		log.Printf("import account %d usage sampling failed (%s): %v", accountID, source, err)
 		return
 	}
-	// Agent Identity 无 OAuth 身份合并需求（无 RT/AT），不能进入
-	// Codex 的 email+workspace 查重链。
+	// Agent Identity has no OAuth identity to merge (no RT/AT), so it must not enter
+	// the Codex email+workspace duplicate check chain.
 	if !shouldMergeImportedIdentity(account) {
 		return
 	}
-	// AT / codex_at 账号的 OAuth 身份（email + 有效工作区）在插入时无法从
-	// JWT 解出，由上面的 wham 探针补齐并落库。身份既已可知，此刻回查是否与
-	// 已有账号同一身份：若重复则把凭证合并进旧账号并软删本账号——与 RT 路径
-	// refreshImportedAccountAndProbe 对称，补上 AT 导入/添加事后无法去重的缺口。
-	// 合并按 email + 有效工作区身份进行；Chatgpt-Account-Id 覆盖代表独立路由。
-	// 数据库生命周期 ctx 与串行合并锁（防并发导入互相软删）。
+	// The OAuth identity (email + valid workspace) of an AT / codex_at account cannot be decoded from the
+	// JWT at insert time; the wham probe above fills it in and persists it. Now that the identity is known, check right here whether it matches
+	// an existing account: if it is a duplicate, merge the credentials into the old account and soft-delete this one, matching the RT path
+	// refreshImportedAccountAndProbe, closing the gap where AT imports/adds cannot be de-duplicated after the fact.
+	// Merging is keyed by email + valid workspace identity; a Chatgpt-Account-Id override represents a separate route.
+	// Database lifecycle ctx and the serial merge lock (prevents concurrent imports from soft-deleting each other).
 	h.mergeRefreshedDuplicateIntoExistingContext(ctx, accountID, source)
 }
 
@@ -410,7 +410,7 @@ const (
 	importDBWaitBackoff       = 10 * time.Second
 )
 
-// maxAdminPage 限制分页页码，避免 (page-1)*page_size 溢出为负 OFFSET。
+// maxAdminPage limits the page number to avoid (page-1)*page_size overflowing into a negative OFFSET.
 const maxAdminPage = 100000
 
 type importRuntimeLoadSnapshot struct {
@@ -454,8 +454,8 @@ func importDBUsagePercent(snapshot importRuntimeLoadSnapshot) int {
 	return snapshot.DBInUse * 100 / snapshot.DBMaxOpen
 }
 
-// nextImportLoadTier 使用不同的升/降档阈值形成滞回：负载升高立即收紧，
-// 回落则必须越过更低阈值，避免临界 RPM 附近反复增减 worker。
+// nextImportLoadTier uses different up/down thresholds to form hysteresis: when load rises, it tightens immediately,
+// but falling back requires crossing a lower threshold, avoiding repeatedly adding and removing workers near the critical RPM.
 func nextImportLoadTier(current importLoadTier, initialized bool, snapshot importRuntimeLoadSnapshot, dbWaitIncreased bool) importLoadTier {
 	dbUsage := importDBUsagePercent(snapshot)
 	enterHigh := dbWaitIncreased || snapshot.RPM >= 600 || snapshot.Active >= 64 || dbUsage >= 70
@@ -475,7 +475,7 @@ func nextImportLoadTier(current importLoadTier, initialized bool, snapshot impor
 		if dbWaitIncreased || snapshot.RPM >= 400 || snapshot.Active >= 32 || dbUsage >= 50 {
 			return importLoadHigh
 		}
-		// 每次最多降一档，让恢复过程保持平滑。
+		// Step down at most one tier at a time, so recovery stays smooth.
 		return importLoadMedium
 	case importLoadMedium:
 		if enterHigh {
@@ -504,7 +504,7 @@ func importLimitsForTier(tier importLoadTier, snapshot importRuntimeLoadSnapshot
 	case importLoadMedium:
 		limits.db, limits.probe = 8, 6
 	}
-	// 导入最多使用连接池的约四分之一；SQLite 小连接池也不会被导入独占。
+	// Import uses at most about a quarter of the connection pool; a small SQLite pool is not monopolized by imports either.
 	if snapshot.DBMaxOpen > 0 {
 		poolShare := snapshot.DBMaxOpen / 4
 		if poolShare < 1 {
@@ -587,8 +587,8 @@ func acquireAdaptivePermit(ctx context.Context, active *atomic.Int32, limit func
 	}
 }
 
-// runImportProbeTask 把导入预热放进进程内队列，并按当前导入并发上限启动 worker。
-// 排队任务只占一个函数引用，不会各自创建 goroutine；worker 在队列清空后退出。
+// runImportProbeTask puts import warm-ups into an in-process queue and starts workers according to the current import concurrency limit.
+// Queued tasks hold only one function reference and do not each create a goroutine; workers exit once the queue is drained.
 func (h *Handler) runImportProbeTask(fn func(context.Context)) {
 	if h == nil || fn == nil {
 		return
@@ -666,8 +666,8 @@ func (h *Handler) triggerImportedAccountUsageProbe(accountID int64, source strin
 	})
 }
 
-// scheduleImportedAccountWarmup 导入后的换 AT / 用量探测。脚本批量加号和文件导入
-// 必须走同一道并发闸：裸 RT 换 AT 也会打上游，不限流会把网关和鉴权接口一起打满。
+// scheduleImportedAccountWarmup handles the token exchange (AT) / usage probe after import. Scripted bulk account adds and file imports
+// must go through the same concurrency gate: a bare RT-to-AT exchange also hits upstream, and without limits it would saturate the gateway and auth endpoints together.
 func (h *Handler) scheduleImportedAccountWarmup(acc *auth.Account, id int64, source string) {
 	if h == nil || acc == nil || id <= 0 {
 		return
@@ -683,8 +683,8 @@ func (h *Handler) scheduleImportedAccountWarmup(acc *auth.Account, id int64, sou
 	}
 }
 
-// commitImportedRuntimeAccounts 一次写入内存池，再按需排队预热。逐条 AddAccount
-// 会反复抢号池写锁；预热必须在入池之后，refreshAccountByID 靠 DBID 回查运行时账号。
+// commitImportedRuntimeAccounts writes to the in-memory pool in one batch, then queues warm-ups as needed. Calling AddAccount one at a time
+// would repeatedly contend for the pool's write lock; warm-up must happen after entering the pool, since refreshAccountByID looks up the runtime account by DBID.
 func (h *Handler) commitImportedRuntimeAccounts(accounts []*auth.Account, source string, skipRefresh bool) {
 	if h == nil || h.store == nil || len(accounts) == 0 {
 		return
@@ -712,17 +712,17 @@ func (h *Handler) applyImportedAccountUsageState(account *auth.Account, source s
 		return
 	}
 	if h.store.MarkUsage7dRateLimited(account) {
-		log.Printf("导入账号 %d 已按 7d 用量耗尽标记限流 (%s)", account.DBID, source)
+		log.Printf("import account %d marked rate limited after 7d usage was exhausted (%s)", account.DBID, source)
 	}
 }
 
-// importRefreshTransientRetryLimit 是导入换 AT 瞬时失败(超时/代理抖动/上游
-// 5xx/刷新锁竞争)的额外重试次数。瞬时失败不能一次就标粘性 error——error 没有
-// 任何自动重试,语义反而比 RT 死透(有冷却自愈)更重;批量导入撞上代理抖动
-// 会把一批好号永久标死。
+// importRefreshTransientRetryLimit is the number of extra retries for transient import token-exchange failures (timeouts / proxy jitter / upstream
+// 5xx / refresh-lock contention). A transient failure must not immediately set a sticky error: error has no
+// automatic retry, so semantically it is worse than a fully dead RT (which self-heals after cooldown); when a bulk import hits proxy jitter,
+// a batch of good accounts would be permanently marked dead.
 const importRefreshTransientRetryLimit = 3
 
-// importRefreshTransientRetryDelay 是两次导入刷新重试的间隔。var 便于测试缩短。
+// importRefreshTransientRetryDelay is the interval between two import refresh retries. A var, so tests can shorten it.
 var importRefreshTransientRetryDelay = 2 * time.Minute
 
 func (h *Handler) refreshImportedAccountAndProbe(ctx context.Context, accountID int64, source string) {
@@ -734,30 +734,30 @@ func (h *Handler) refreshImportedAccountWithRetry(ctx context.Context, accountID
 		ctx = context.Background()
 	}
 	refreshCtx, cancel := context.WithTimeout(ctx, 30*time.Second)
-	// 导入路径在身份合并后会统一 probe；刷新内部不再先 probe 一次，避免每个
-	// 裸 RT 成功换票后连续打两次 wham/subscription 上游。
+	// The import path runs one unified probe after identity merging; the refresh itself does not probe first, so that
+	// a successful bare RT exchange is not followed by two consecutive hits to the wham/subscription upstream.
 	err := h.refreshAccountByIDWithProbe(refreshCtx, accountID, false)
 	cancel()
 	if err != nil {
-		log.Printf("导入账号 %d 刷新失败(第 %d 次): %v", accountID, attempt+1, err)
+		log.Printf("import account %d refresh failed (attempt %d): %v", accountID, attempt+1, err)
 		if h.scheduleImportedRefreshRetry(accountID, source, attempt, err) {
 			return
 		}
 		h.markImportedRefreshFailure(accountID, err)
 		return
 	}
-	log.Printf("导入账号 %d 刷新成功", accountID)
-	// 裸 RT 导入时身份要等首次刷新后才可知：此刻回查身份重复，
-	// 若与已有账号同一身份则合并凭证并移除本账号（保留旧账号的用量统计）。
+	log.Printf("import account %d refreshed successfully", accountID)
+	// For a bare RT import, the identity is only known after the first refresh: check for an identity duplicate right then,
+	// and if it matches an existing account, merge the credentials and remove this account (keeping the old account's usage statistics).
 	if h.mergeRefreshedDuplicateIntoExistingContext(ctx, accountID, source) {
 		return
 	}
 	h.probeImportedAccountUsage(ctx, accountID, source)
 }
 
-// scheduleImportedRefreshRetry 对瞬时刷新失败安排一次延迟重试:到点后重新走
-// 导入并发闸,不在闸内睡眠占槽。重试窗口内账号保持「刷新中」——这是真实状态
-// 且有界(最多 limit+1 次尝试)。永久失败或重试耗尽返回 false,交给调用方落状态。
+// scheduleImportedRefreshRetry schedules one delayed retry for transient refresh failures: when due, it goes back through the
+// import concurrency gate without sleeping inside the gate to hold a slot. During the retry window the account stays "refreshing"; this is the real state
+// and it is bounded (at most limit+1 attempts). Permanent failures or exhausted retries return false, leaving the caller to set the status.
 func (h *Handler) scheduleImportedRefreshRetry(accountID int64, source string, attempt int, err error) bool {
 	if h == nil || h.store == nil || err == nil {
 		return false
@@ -777,9 +777,9 @@ func (h *Handler) scheduleImportedRefreshRetry(accountID int64, source string, a
 	return true
 }
 
-// markImportedRefreshFailure 导入后换 AT 失败(瞬时失败已重试耗尽)时落状态，
-// 避免裸 RT 一直停在「刷新中」。会话作废 / RT 失效标未授权（时长由 unauthorized
-// 自适应 6/24h 策略决定，入参只是兜底）；其它失败标错误。
+// markImportedRefreshFailure sets the status when the import token exchange fails (transient failures have already exhausted retries),
+// so a bare RT does not stay stuck in "refreshing". A revoked session or invalid RT marks unauthorized (the duration is set by the
+// adaptive 6/24h policy of unauthorized; the input is only a fallback); other failures mark error.
 func (h *Handler) markImportedRefreshFailure(accountID int64, err error) {
 	if h == nil || h.store == nil || err == nil {
 		return
@@ -788,8 +788,8 @@ func (h *Handler) markImportedRefreshFailure(accountID int64, err error) {
 	if acc == nil || acc.GetAccessToken() != "" {
 		return
 	}
-	// store 的刷新路径对不可重试错误已经标过未授权冷却；再标一次会让
-	// FailureStreak 翻倍、自适应冷却直接跳 24h 档，并重复落库。
+	// store's refresh path already applied the unauthorized cooldown to non-retryable errors; marking again would
+	// double FailureStreak, make the adaptive cooldown jump straight to the 24h tier, and persist twice.
 	switch acc.RuntimeStatus() {
 	case "unauthorized", "error":
 		return
@@ -802,10 +802,10 @@ func (h *Handler) markImportedRefreshFailure(accountID int64, err error) {
 	h.store.MarkError(acc, msg)
 }
 
-// mergeRefreshedDuplicateIntoExisting 检查刚刷新完的新导入账号是否与已有账号
-// 同一 OAuth 身份。若重复，把新凭证（refresh_token 优先级最高，可自动续期）
-// 合并进已有账号——codex_* 用量快照键不在更新集里，旧账号的用量统计与按
-// 账号 ID 关联的请求历史全部保留——然后软删新插入的账号。返回 true 表示已合并。
+// mergeRefreshedDuplicateIntoExisting checks whether the newly imported account, just refreshed, is the same
+// OAuth identity as an existing account. If so, it merges the new credentials (refresh_token has the highest priority and can renew automatically)
+// into the existing account; the codex_* usage snapshot keys are not in the update set, so the old account's usage statistics and the
+// request history linked by account ID are all kept; then it soft-deletes the newly inserted account. Returns true if merged.
 func (h *Handler) mergeRefreshedDuplicateIntoExisting(newID int64, source string) bool {
 	return h.mergeRefreshedDuplicateIntoExistingContext(context.Background(), newID, source)
 }
@@ -817,8 +817,8 @@ func (h *Handler) mergeRefreshedDuplicateIntoExistingContext(parent context.Cont
 	if parent == nil {
 		parent = context.Background()
 	}
-	// 串行化合并：并发导入同一身份的多个账号时，两个合并流程若交错执行，
-	// 可能互相把对方选为“已有账号”，导致双方都被软删（账号丢失）。
+	// Serialize merging: when several accounts with the same identity are imported concurrently and two merge flows interleave,
+	// they could each pick the other as the "existing account", causing both to be soft-deleted (losing accounts).
 	h.mergeDuplicateMu.Lock()
 	defer h.mergeDuplicateMu.Unlock()
 
@@ -870,33 +870,33 @@ func (h *Handler) mergeRefreshedDuplicateIntoExistingContext(parent context.Cont
 		proxyURL = strings.TrimSpace(oldRow.ProxyURL)
 	}
 	if err := h.db.UpdateOAuthAccountCredentials(ctx, oldID, updates, proxyURL); err != nil {
-		log.Printf("合并导入账号 %d 凭证到已有账号 %d 失败: %v", newID, oldID, err)
+		log.Printf("failed to merge credentials of imported account %d into existing account %d: %v", newID, oldID, err)
 		return false
 	}
-	// 新凭证刚在刷新/探针里验证过可用，旧账号此前的 error / 401 unauthorized 态
-	// 已经过时：不清掉的话，重授权后的 RT 被合并进来、新账号被软删，用户看到的
-	// 却是旧账号继续挂着"未授权"直到自适应冷却到期（issue #618）。与 JWT 可解出
-	// 身份、走 upsertOAuthIdentityAccount 的导入路径对齐；限速冷却不受影响。
-	if h.clearReimportedAccountErrorState(ctx, oldRow, "合并凭证") {
-		log.Printf("合并导入账号 %d 凭证时已清除已有账号 %d 的错误/401 状态", newID, oldID)
+	// The new credentials were just verified as usable during refresh/probe, so the old account's earlier error / 401 unauthorized state
+	// is out of date: if it is not cleared, the re-authorized RT is merged in, the new account is soft-deleted, and the user sees
+	// the old account still showing "unauthorized" until the adaptive cooldown expires (issue #618). This matches the import path where the JWT yields the
+	// identity and the flow goes through upsertOAuthIdentityAccount; rate-limit cooldowns are not affected.
+	if h.clearReimportedAccountErrorState(ctx, oldRow, "merge credentials") {
+		log.Printf("cleared the error/401 state of existing account %d while merging credentials of imported account %d", newID, oldID)
 	}
-	// 先软删新账号、再重载旧账号：reloadTokenAccount 会异步触发旧账号的
-	// 探针→再合并，若此刻新账号仍活跃，反向查重会把旧账号合并进新账号，
-	// 两边都被软删。软删前置让后续任何查重都看不到新账号。
+	// Soft-delete the new account first, then reload the old one: reloadTokenAccount asynchronously triggers a
+	// probe-then-merge of the old account again; if the new account is still active at that moment, the reverse duplicate check would merge the old account into the new one,
+	// and both would be soft-deleted. Soft-deleting first ensures no later duplicate check can see the new account.
 	if err := h.db.SoftDeleteAccount(ctx, newID); err != nil {
-		log.Printf("软删重复导入账号 %d 失败: %v", newID, err)
+		log.Printf("failed to soft-delete duplicate imported account %d: %v", newID, err)
 	}
 	h.store.RemoveAccount(newID)
 	if err := h.reloadTokenAccount(ctx, oldID, source); err != nil {
-		log.Printf("合并后重载账号 %d 失败: %v", oldID, err)
+		log.Printf("failed to reload account %d after merge: %v", oldID, err)
 	}
 	if err := h.db.InsertAccountEvent(ctx, newID, "deleted", fmt.Sprintf("merged_into_%d", oldID)); err != nil {
-		log.Printf("记录合并账号 %d 删除事件失败: %v", newID, err)
+		log.Printf("failed to record delete event for merged account %d: %v", newID, err)
 	}
 	if err := h.db.InsertAccountEvent(ctx, oldID, "updated", "rt_upgrade_merge"); err != nil {
-		log.Printf("记录合并账号 %d 更新事件失败: %v", oldID, err)
+		log.Printf("failed to record update event for merged account %d: %v", oldID, err)
 	}
-	log.Printf("导入账号 %d 与已有账号 %d 同一 OAuth 身份，已合并凭证（RT 升级）并保留用量统计 (source=%s)", newID, oldID, source)
+	log.Printf("imported account %d has the same OAuth identity as existing account %d; credentials merged (RT upgrade) and usage statistics kept (source=%s)", newID, oldID, source)
 	return true
 }
 
@@ -905,7 +905,7 @@ func (h *Handler) deleteRuntimeCache(ctx context.Context, namespace, key string)
 		return
 	}
 	if err := h.cache.DeleteRuntime(ctx, namespace, key); err != nil {
-		log.Printf("删除运行态缓存失败: namespace=%s err=%v", namespace, err)
+		log.Printf("failed to delete runtime cache: namespace=%s err=%v", namespace, err)
 	}
 }
 
@@ -923,8 +923,8 @@ func (h *Handler) getUsageStatsCached(ctx context.Context, rangeStart, rangeEnd 
 	return h.getUsageStatsFilteredCached(ctx, rangeStart, rangeEnd, channel, database.UsageLogFilter{})
 }
 
-// getUsageStatsFilteredCached 带维度筛选(账号/密钥/模型/端点/搜索等)的完整统计。
-// 维度指纹并入缓存键:同一筛选组合在 30 秒桶内复用,不同组合互不串味。
+// getUsageStatsFilteredCached returns full statistics with dimension filters (account/key/model/endpoint/search, etc.).
+// The dimension fingerprint is folded into the cache key: the same filter combination is reused within a 30-second bucket, and different combinations never mix.
 func (h *Handler) getUsageStatsFilteredCached(ctx context.Context, rangeStart, rangeEnd time.Time, channel string, dim database.UsageLogFilter) (*database.UsageStats, error) {
 	cacheKey := ""
 	cacheTTL := adminUsageStatsCacheTTL
@@ -932,8 +932,8 @@ func (h *Handler) getUsageStatsFilteredCached(ctx context.Context, rangeStart, r
 	if rangeStart.IsZero() && rangeEnd.IsZero() && channel == "" && dimKey == "" {
 		cacheKey = "global"
 	} else if !rangeStart.IsZero() && !rangeEnd.IsZero() {
-		// 仪表盘每 15 秒刷新时 start/end 也会随之平移。按 30 秒桶复用完整统计结果，
-		// 既保留累计、区间、模型和分项口径，又避免同一分钟内重复扫描百万级日志。
+		// When the dashboard refreshes every 15 seconds, start/end shift along with it. Full results are reused within 30-second buckets,
+		// which keeps the cumulative, range, model and breakdown semantics intact and avoids rescanning million-row logs within the same minute.
 		cacheKey = fmt.Sprintf("range:%d:%d:%s%s", rangeStart.Unix()/30, rangeEnd.Unix()/30, channel, dimKey)
 		cacheTTL = adminUsageRangeCacheTTL
 	}
@@ -953,8 +953,8 @@ func (h *Handler) getUsageStatsFilteredCached(ctx context.Context, rangeStart, r
 	return stats, nil
 }
 
-// usageStatsDimensionCacheKey 把维度筛选压成定长指纹(带前导冒号),无筛选时返回空串。
-// 搜索词可能很长且含任意字符,直接拼进缓存键既不稳妥也浪费,统一哈希。
+// usageStatsDimensionCacheKey compresses dimension filters into a fixed-length fingerprint (with a leading colon), and returns an empty string when there are no filters.
+// Search terms can be long and contain arbitrary characters; concatenating them directly into the cache key is neither safe nor efficient, so they are hashed.
 func usageStatsDimensionCacheKey(dim database.UsageLogFilter) string {
 	raw := dim.DimensionKey()
 	if raw == "" {
@@ -993,7 +993,7 @@ func (h *Handler) getUsageStatsSummaryFilteredCached(ctx context.Context, rangeS
 	return stats, nil
 }
 
-// parseUsageChannel 解析 query 里的账号/用量渠道过滤参数。
+// parseUsageChannel parses the account/usage channel filter parameters in the query.
 func parseUsageChannel(c *gin.Context) string {
 	switch strings.ToLower(strings.TrimSpace(c.Query("channel"))) {
 	case database.UpstreamChannelCodex:
@@ -1005,7 +1005,7 @@ func parseUsageChannel(c *gin.Context) string {
 // SetAPIKeyAuthCacheHandler connects management changes to proxy cache invalidation.
 func (h *Handler) SetAPIKeyAuthCacheHandler(handler *proxy.Handler) { h.authCacheProxy = handler }
 
-// NewHandler 创建管理后台处理器
+// NewHandler creates the admin panel handler
 func NewHandler(store *auth.Store, db *database.DB, tc cache.TokenCache, rl *proxy.RateLimiter, adminSecretEnv string) *Handler {
 	handler := &Handler{
 		store:                store,
@@ -1049,20 +1049,20 @@ func NewHandler(store *auth.Store, db *database.DB, tc cache.TokenCache, rl *pro
 		handler.recordAccountEvent = db.InsertAccountEventAsync
 		if workers, _ := ImageJobWorkerCount(); workers == 0 {
 			if err := db.MarkInterruptedImageJobs(context.Background()); err != nil {
-				log.Printf("标记中断生图任务失败: %v", err)
+				log.Printf("failed to mark interrupted image generation job: %v", err)
 			}
 		}
 	}
 	return handler
 }
 
-// SetPoolSizes 设置连接池大小跟踪值（由 main.go 在启动时调用）
+// SetPoolSizes sets the connection pool size tracking values (called by main.go at startup)
 func (h *Handler) SetPoolSizes(pgMaxConns, redisPoolSize int) {
 	h.pgMaxConns = pgMaxConns
 	h.redisPoolSize = redisPoolSize
 }
 
-// RegisterRoutes 注册管理 API 路由
+// RegisterRoutes registers the admin API routes
 func (h *Handler) RegisterRoutes(r *gin.Engine) {
 	r.GET("/p/img/:id", h.GetSignedImageAssetFile)
 	r.GET("/p/backgrounds/:filename", h.GetBackgroundAssetFile)
@@ -1073,7 +1073,7 @@ func (h *Handler) RegisterRoutes(r *gin.Engine) {
 	keyUsage.GET("/me", h.GetPublicAPIKeyUsageSummary)
 	keyUsage.GET("/concurrency", h.GetPublicAPIKeyConcurrency)
 
-	// 账号自助添加公开门户（无 admin 鉴权；开关门控 + IP 限流；见 self_service.go）
+	// Public self-service account add portal (no admin auth; gated by a switch and IP rate limiting; see self_service.go)
 	accountPortal := r.Group("/api/account-portal")
 	accountPortal.Use(h.accountPortalMiddleware())
 	accountPortal.POST("/generate-auth-url", h.GenerateAccountPortalAuthURL)
@@ -1091,8 +1091,8 @@ func (h *Handler) RegisterRoutes(r *gin.Engine) {
 	imageStudioPortal.GET("/assets/:id/file", h.GetPortalImageAssetFile)
 	imageStudioPortal.DELETE("/assets/:id", h.DeletePortalImageAsset)
 
-	// 首次初始化端点（无需鉴权，仅在系统未配置 ADMIN_SECRET 时可用）
-	// 这两个端点必须注册在 adminAuthMiddleware 之外，否则会被 fail-closed 拦截。
+	// First-time setup endpoints (no auth required; only available when ADMIN_SECRET is not configured on the system)
+	// These two endpoints must be registered outside adminAuthMiddleware, otherwise fail-closed would block them.
 	r.GET("/api/admin/bootstrap-status", h.GetBootstrapStatus)
 	r.POST("/api/admin/bootstrap", h.PostBootstrap)
 	// Static, credential-free shell. Generated HTML is delivered by the parent via
@@ -1317,29 +1317,29 @@ func (h *Handler) RegisterRoutes(r *gin.Engine) {
 	api.GET("/proxies/:id/risk-score", h.GetProxyRiskScore)
 	api.GET("/proxies/:id/risk-score/history", h.ListProxyRiskScoreHistory)
 
-	// OAuth 授权流程
+	// OAuth authorization flow
 	api.POST("/oauth/generate-auth-url", h.GenerateOAuthURL)
 	api.POST("/oauth/exchange-code", h.ExchangeOAuthCode)
 	api.GET("/oauth/poll-callback", h.PollOAuthCallback)
 
-	// OAuth 回调端点（无需 admin 鉴权，供 OpenAI 重定向调用）
+	// OAuth callback endpoint (no admin auth required; called by OpenAI redirects)
 	r.GET("/auth/callback", h.OAuthCallback)
 }
 
-// adminAuthMiddleware 管理接口鉴权中间件（增强版，增加安全审计日志）
+// adminAuthMiddleware is the admin interface auth middleware (enhanced version, adds security audit logging)
 //
-// 安全策略（fail-closed）：
-//   - 未配置 ADMIN_SECRET 时一律拒绝（503），防止 /api/admin/* 裸奔。
-//   - 用户应通过前端「首次初始化」页面（无鉴权的 /api/admin/bootstrap 端点）
-//     设置初始密钥，或者在 .env 中显式设置 ADMIN_SECRET 后重启。
+// Security policy (fail-closed):
+//   - Requests are refused (503) whenever ADMIN_SECRET is not configured, to keep /api/admin/* from being exposed unprotected.
+//   - Users should set the initial key on the frontend "first-time setup" page (the unauthenticated /api/admin/bootstrap endpoint)
+//     or set ADMIN_SECRET explicitly in .env and restart.
 func (h *Handler) adminAuthMiddleware() gin.HandlerFunc {
 	return func(c *gin.Context) {
 		adminSecret, source := h.resolveAdminSecret(c.Request.Context())
 		if adminSecret == "" {
-			// fail-closed：拒绝并提示用户配置 ADMIN_SECRET
+			// fail-closed: refuse and tell the user to configure ADMIN_SECRET
 			security.SecurityAuditLog("ADMIN_BLOCKED_NO_SECRET", fmt.Sprintf("path=%s ip=%s", c.Request.URL.Path, c.ClientIP()))
 			c.JSON(http.StatusServiceUnavailable, gin.H{
-				"error": "管理接口未初始化：ADMIN_SECRET 尚未配置。请在浏览器访问 /admin/ 完成首次初始化，或在 .env 中设置 ADMIN_SECRET 后重启。",
+				"error": "Admin interface not initialized: ADMIN_SECRET is not configured. Open /admin/ in a browser to complete first-time setup, or set ADMIN_SECRET in .env and restart.",
 				"code":  "bootstrap_required",
 			})
 			c.Abort()
@@ -1348,7 +1348,7 @@ func (h *Handler) adminAuthMiddleware() gin.HandlerFunc {
 
 		adminKey := c.GetHeader("X-Admin-Key")
 		if adminKey == "" {
-			// 兼容 Authorization: Bearer 方式
+			// Compatible with the Authorization: Bearer form
 			authHeader := c.GetHeader("Authorization")
 			if strings.HasPrefix(authHeader, "Bearer ") {
 				adminKey = strings.TrimPrefix(authHeader, "Bearer ")
@@ -1361,39 +1361,39 @@ func (h *Handler) adminAuthMiddleware() gin.HandlerFunc {
 		if retry := h.adminAuthThrottle.retryAfter(clientIP, time.Now()); retry > 0 {
 			c.Header("Retry-After", strconv.Itoa(int((retry+time.Second-1)/time.Second)))
 			c.AbortWithStatusJSON(http.StatusTooManyRequests, gin.H{
-				"error": "认证失败次数过多，请稍后再试",
+				"error": "Too many failed authentication attempts, please try again later",
 			})
 			return
 		}
 
-		// 清理输入
+		// Sanitize input
 		adminKey = security.SanitizeInput(adminKey)
 
-		// 使用安全比较防止时序攻击
+		// Use constant-time comparison to prevent timing attacks
 		if !security.SecureCompare(adminKey, adminSecret) {
-			// 记录安全审计日志
+			// Record security audit log
 			security.SecurityAuditLog("ADMIN_AUTH_FAILED", fmt.Sprintf("path=%s ip=%s source=%s", c.Request.URL.Path, security.SanitizeLog(clientIP), source))
 			if blocked := h.adminAuthThrottle.recordFailure(clientIP, time.Now()); blocked > 0 {
 				c.Header("Retry-After", strconv.Itoa(int((blocked+time.Second-1)/time.Second)))
 				c.JSON(http.StatusTooManyRequests, gin.H{
-					"error": "认证失败次数过多，请稍后再试",
+					"error": "Too many failed authentication attempts, please try again later",
 				})
 				c.Abort()
 				return
 			}
 			c.JSON(http.StatusUnauthorized, gin.H{
-				"error": "管理密钥无效或缺失",
+				"error": "Admin key is invalid or missing",
 			})
 			c.Abort()
 			return
 		}
 		h.adminAuthThrottle.reset(clientIP)
 
-		// 管理端响应包含 raw_key、auth.json、settings 等秘密，禁止中间缓存保存。
+		// Admin responses contain secrets such as raw_key, auth.json and settings, so intermediate caches must not store them.
 		c.Header("Cache-Control", "no-store")
 		c.Header("Pragma", "no-cache")
 
-		// 成功认证，记录审计日志
+		// Authentication succeeded; record audit log
 		if security.IsSensitiveEndpoint(c.Request.URL.Path) {
 			security.SecurityAuditLog("ADMIN_ACCESS", fmt.Sprintf("path=%s ip=%s method=%s", c.Request.URL.Path, c.ClientIP(), c.Request.Method))
 		}
@@ -1423,7 +1423,7 @@ func (h *Handler) hasConfiguredAdminSecret(ctx context.Context) bool {
 
 // ==================== Stats ====================
 
-// GetStats 获取仪表盘统计
+// GetStats returns dashboard statistics
 func (h *Handler) GetStats(c *gin.Context) {
 	// Large installations may need more than five seconds to aggregate the
 	// dashboard inputs. Keep the request bounded without failing normal loads.
@@ -1473,8 +1473,8 @@ type dashboardAccountCounts struct {
 	disabled    int
 }
 
-// summarizeDashboardAccounts 汇总账号健康计数，并按独立账号渠道拆分。
-// 渠道判定优先用运行时账号，不在池中的行回退 upstream_type 凭据。
+// summarizeDashboardAccounts summarizes account health counts and splits them by independent account channel.
+// Channel determination prefers runtime accounts; rows not in the pool fall back to the upstream_type credentials.
 func summarizeDashboardAccounts(rows []*database.AccountRow, runtimeAccounts []*auth.Account) (dashboardAccountCounts, map[string]dashboardAccountCounts) {
 	runtimeByID := make(map[int64]*auth.Account, len(runtimeAccounts))
 	for _, acc := range runtimeAccounts {
@@ -1500,7 +1500,7 @@ func summarizeDashboardAccounts(rows []*database.AccountRow, runtimeAccounts []*
 		if acc != nil {
 			status = strings.ToLower(strings.TrimSpace(acc.RuntimeStatus()))
 			cooldownReason = ""
-			// 积分顶替限流：状态仍报限流（窗口客观打满），但账号照常参与调度，按可用计。
+			// Credit covering a rate limit: status still reports rate limited (the window is objectively full), but the account keeps participating in scheduling, so it counts as available.
 			usingCredits = acc.UsingCredits()
 		}
 		perChannel := channelCounts[channel]
@@ -1518,7 +1518,7 @@ func summarizeDashboardAccounts(rows []*database.AccountRow, runtimeAccounts []*
 			counts.rateLimited++
 			perChannel.rateLimited++
 		case isDashboardUnsampledAccount(row, acc):
-			// 未采样不当作可用：仪表盘「可用」与账号页正常/调度中对齐。
+			// Unsampled accounts are not counted as available: the dashboard "available" stays aligned with the "normal/scheduling" states on the account page.
 		default:
 			counts.normal++
 			perChannel.normal++
@@ -1580,16 +1580,16 @@ type accountResponse struct {
 	EffectiveWorkspaceID    string `json:"effective_workspace_id,omitempty"`
 	PlanType                string `json:"plan_type"`
 	SubscriptionExpiresAt   string `json:"subscription_expires_at,omitempty"`
-	// Subscription 服务端计算的订阅状态对象（业务状态 + 同步状态）；不跟踪订阅的
-	// 套餐（api/无到期时间的 free）为空。
+	// Subscription is the subscription status object computed server-side (business status + sync status); empty for accounts that do not track a
+	// plan (api / free without an expiry time).
 	Subscription          *auth.SubscriptionStatusView `json:"subscription,omitempty"`
 	Status                string                       `json:"status"`
 	ErrorMessage          string                       `json:"error_message,omitempty"`
 	ATOnly                bool                         `json:"at_only"`
 	CreditEnabled         bool                         `json:"credit_enabled"`
 	CreditSkipUsageWindow bool                         `json:"credit_skip_usage_window"`
-	// UsingCredits 是与 Status 并列的独立信号：用量窗口已打满但积分顶着，
-	// 状态仍是 active（可调度），前端据此在状态徽章旁并列一个「使用积分」徽章。
+	// UsingCredits is a separate signal alongside Status: the usage window is full but credits are covering it,
+	// status is still active (schedulable), and the frontend shows a "using credits" badge next to the status badge.
 	UsingCredits                  bool                       `json:"using_credits,omitempty"`
 	SkipWarmTier                  bool                       `json:"skip_warm_tier"`
 	AccountType                   string                     `json:"account_type,omitempty"`
@@ -1664,8 +1664,8 @@ type accountResponse struct {
 	Reset5hAt                     string                     `json:"reset_5h_at,omitempty"`
 	Reset7dAt                     string                     `json:"reset_7d_at,omitempty"`
 	ResetSparkAt                  string                     `json:"reset_spark_at,omitempty"`
-	Window7dKind                  string                     `json:"usage_window_7d_kind,omitempty"`    // "monthly"(team 月窗)/"weekly"/""；供前端标「30天」而非误标「7天」
-	Window7dSeconds               *int64                     `json:"usage_window_7d_seconds,omitempty"` // 长窗口真实周期秒数
+	Window7dKind                  string                     `json:"usage_window_7d_kind,omitempty"`    // "monthly" (team monthly window) / "weekly" / ""; tells the frontend to label it "30 days" rather than "7 days"
+	Window7dSeconds               *int64                     `json:"usage_window_7d_seconds,omitempty"` // real period of the long window, in seconds
 	Billed5h                      *float64                   `json:"billed_5h"`
 	Billed7d                      *float64                   `json:"billed_7d"`
 	ScoreBreakdown                schedulerBreakdownResponse `json:"scheduler_breakdown"`
@@ -1688,7 +1688,7 @@ type accountResponse struct {
 	Tags                          []string                   `json:"tags"`
 	GroupIDs                      []int64                    `json:"group_ids"`
 	Note                          string                     `json:"note"`
-	// 图片配额信息
+	// Image quota information
 	ImageQuotaRemaining *int   `json:"image_quota_remaining,omitempty"`
 	ImageQuotaTotal     *int   `json:"image_quota_total,omitempty"`
 	TodayUsedCount      *int   `json:"today_used_count,omitempty"`
@@ -1753,7 +1753,7 @@ type schedulerBreakdownResponse struct {
 	SuccessRatePenalty  float64 `json:"success_rate_penalty"`
 }
 
-// ListAccounts 获取账号列表
+// ListAccounts returns the account list
 func (h *Handler) ListAccounts(c *gin.Context) {
 	view := strings.ToLower(strings.TrimSpace(c.Query("view")))
 	timeout := 5 * time.Second
@@ -1763,9 +1763,9 @@ func (h *Handler) ListAccounts(c *gin.Context) {
 	ctx, cancel := context.WithTimeout(c.Request.Context(), timeout)
 	defer cancel()
 
-	// ?view=lite — 轻量视图:只返回身份/绑定字段,跳过用量富化与探测触发。
-	// 供代理绑定弹窗等只需要"账号是谁、绑了哪条代理"的场景,大号池下不再传输
-	// 全量调度指标(代理页卡死问题)。
+	// ?view=lite: lightweight view that returns only identity/binding fields and skips usage enrichment and probe triggers.
+	// Used by scenarios such as the proxy binding dialog that only need "which account it is and which proxy it is bound to"; large pools no longer transfer
+	// the full scheduling metrics (the proxy page freeze issue).
 	if view == "lite" {
 		h.listAccountsLite(c, ctx)
 		return
@@ -1802,7 +1802,7 @@ func (h *Handler) ListAccounts(c *gin.Context) {
 		return
 	}
 
-	// 合并内存中的调度指标
+	// Merge in-memory scheduling metrics
 	accountMap := make(map[int64]*auth.Account)
 	if view == "page" {
 		for _, row := range rows {
@@ -1825,13 +1825,13 @@ func (h *Handler) ListAccounts(c *gin.Context) {
 		}
 		reqCounts, err = h.db.GetAccountRequestCountsByIDs(ctx, pageIDs)
 		if err != nil {
-			log.Printf("获取当前页账号请求统计失败: %v", err)
+			log.Printf("failed to get request stats for the current page's accounts: %v", err)
 			reqCounts = make(map[int64]*database.AccountRequestCount)
 		}
 		usage5h = make(map[int64]*database.AccountTimeRangeUsage)
 		usage7d = make(map[int64]*database.AccountTimeRangeUsage)
 	} else {
-		// 旧全量接口保持原行为和缓存语义。
+		// The legacy full-list endpoint keeps its original behavior and caching semantics.
 		reqCounts = h.getCachedRequestCounts()
 		usage5h, usage7d = h.getAccountUsageWindows(ctx)
 	}
@@ -1860,8 +1860,8 @@ func (h *Handler) ListAccounts(c *gin.Context) {
 				billing5hWindows[accounts[i].ID] = t.Add(-5 * time.Hour)
 			}
 			if t := acc.GetReset7dAt(); !t.IsZero() {
-				// 长窗口起点 = reset - 真实周期。free/team 是月窗(约 30 天),
-				// 写死减 7 天会把起点算到未来,成本恒为 0 (issue #324)。
+				// Long-window start = reset - real period. Free/team are monthly windows (about 30 days),
+				// so hard-coding a 7-day subtraction would put the start in the future and the cost would always be 0 (issue #324).
 				windowDur := 7 * 24 * time.Hour
 				if sec := acc.GetWindow7dSeconds(); sec > 0 {
 					windowDur = time.Duration(sec) * time.Second
@@ -1872,12 +1872,12 @@ func (h *Handler) ListAccounts(c *gin.Context) {
 
 		billed5h, billingErr := h.db.GetAccountsBilledSince(ctx, billing5hWindows)
 		if billingErr != nil {
-			log.Printf("批量获取账号 5h 成本失败: %v", billingErr)
+			log.Printf("batch fetch of account 5h cost failed: %v", billingErr)
 			billed5h = nil
 		}
 		billed7d, billingErr := h.db.GetAccountsBilledSince(ctx, billing7dWindows)
 		if billingErr != nil {
-			log.Printf("批量获取账号 7d 成本失败: %v", billingErr)
+			log.Printf("batch fetch of account 7d cost failed: %v", billingErr)
 			billed7d = nil
 		}
 		for i := range accounts {
@@ -1910,7 +1910,7 @@ func (h *Handler) ListAccounts(c *gin.Context) {
 func (h *Handler) GetAccount(c *gin.Context) {
 	id, err := strconv.ParseInt(c.Param("id"), 10, 64)
 	if err != nil || id <= 0 {
-		writeError(c, http.StatusBadRequest, "无效的账号 ID")
+		writeError(c, http.StatusBadRequest, "Invalid account ID")
 		return
 	}
 
@@ -1928,13 +1928,13 @@ func (h *Handler) GetAccount(c *gin.Context) {
 
 	requestCounts, err := h.db.GetAccountRequestCountsByIDs(ctx, []int64{id})
 	if err != nil {
-		log.Printf("获取账号 %d 请求统计失败: %v", id, err)
+		log.Printf("failed to get request stats for account %d: %v", id, err)
 		requestCounts = make(map[int64]*database.AccountRequestCount)
 	}
 	now := time.Now()
 	usage5h, usage7d, err := h.db.GetAccountUsageWindowsByIDs(ctx, []int64{id}, now.Add(-5*time.Hour), now.AddDate(0, 0, -7))
 	if err != nil {
-		log.Printf("获取账号 %d 用量统计失败: %v", id, err)
+		log.Printf("failed to get usage stats for account %d: %v", id, err)
 		usage5h = make(map[int64]*database.AccountTimeRangeUsage)
 		usage7d = make(map[int64]*database.AccountTimeRangeUsage)
 	}
@@ -1946,7 +1946,7 @@ func (h *Handler) GetAccount(c *gin.Context) {
 			if billed, billedErr := h.db.GetAccountBilledSince(ctx, id, resetAt.Add(-5*time.Hour)); billedErr == nil {
 				resp.Billed5h = &billed
 			} else {
-				log.Printf("获取账号 %d 5h 成本失败: %v", id, billedErr)
+				log.Printf("failed to get 5h cost for account %d: %v", id, billedErr)
 			}
 		}
 		if resetAt := runtimeAccount.GetReset7dAt(); !resetAt.IsZero() {
@@ -1957,15 +1957,15 @@ func (h *Handler) GetAccount(c *gin.Context) {
 			if billed, billedErr := h.db.GetAccountBilledSince(ctx, id, resetAt.Add(-windowDuration)); billedErr == nil {
 				resp.Billed7d = &billed
 			} else {
-				log.Printf("获取账号 %d 长窗口成本失败: %v", id, billedErr)
+				log.Printf("failed to get long-window cost for account %d: %v", id, billedErr)
 			}
 		}
 	}
 	c.JSON(http.StatusOK, resp)
 }
 
-// accountLiteResponse 是 ?view=lite 的账号条目:身份 + 绑定字段,无调度/用量指标。
-// 字段名与完整版 accountResponse 对齐,前端可直接当 AccountRow 子集消费。
+// accountLiteResponse is the ?view=lite account entry: identity and binding fields, with no scheduling or usage metrics.
+// Field names match the full accountResponse, so the frontend can consume it directly as a subset of AccountRow.
 type accountLiteResponse struct {
 	ID            int64  `json:"id"`
 	Name          string `json:"name"`
@@ -1986,7 +1986,7 @@ func (h *Handler) listAccountsLite(c *gin.Context, ctx context.Context) {
 		return
 	}
 
-	// 运行时状态覆盖 DB 状态(与完整视图一致),其余富化一律跳过。
+	// Runtime state overrides the DB state (consistent with the full view); all other enrichment is skipped.
 	runtimeStatus := make(map[int64]string)
 	for _, acc := range h.store.Accounts() {
 		runtimeStatus[acc.DBID] = acc.RuntimeStatus()
@@ -2066,7 +2066,7 @@ func parseAccountSchedulerUpdate(req updateAccountSchedulerReq) (accountSchedule
 	if err != nil {
 		return accountSchedulerUpdate{}, err
 	}
-	// 基础并发覆盖：最小 1，无上限（与全局 max_concurrency 一致）
+	// Base concurrency override: minimum 1, no upper limit (consistent with the global max_concurrency)
 	baseConcurrencyOverride, err := parseOptionalIntegerField(req.BaseConcurrencyOverride, "base_concurrency_override", 1, math.MaxInt64)
 	if err != nil {
 		return accountSchedulerUpdate{}, err
@@ -2128,7 +2128,7 @@ func parseAccountSchedulerUpdate(req updateAccountSchedulerReq) (accountSchedule
 	if err != nil {
 		return accountSchedulerUpdate{}, err
 	}
-	// null 视为重置为默认档 off。
+	// null is treated as resetting to the default tier, off.
 	codexFingerprintMode, err := parseOptionalStringField(req.CodexFingerprintMode, "codex_fingerprint_mode", validateCodexFingerprintMode)
 	if err != nil {
 		return accountSchedulerUpdate{}, err
@@ -2232,7 +2232,7 @@ func parseAccountSchedulerUpdate(req updateAccountSchedulerReq) (accountSchedule
 	}, nil
 }
 
-// validateAccountTimezone 允许空串(=清除);非空必须是可加载的 IANA 时区。
+// validateAccountTimezone allows an empty string (= clear); a non-empty value must be a loadable IANA timezone.
 func validateAccountTimezone(value string) error {
 	v := strings.TrimSpace(value)
 	if v == "" {
@@ -2247,19 +2247,19 @@ func validateAccountTimezone(value string) error {
 	return nil
 }
 
-// validateAccountHref 允许空串(=清除跳转地址,回退 api-base),其余必须是
-// http/https 绝对地址;归一化在写库前由 auth.NormalizeAccountHref 完成。
+// validateAccountHref allows an empty string (= clear the redirect address, falling back to api-base); anything else must be an
+// absolute http/https address; normalization is done by auth.NormalizeAccountHref before the database write.
 func validateAccountHref(value string) error {
 	_, err := auth.NormalizeAccountHref(value)
 	return err
 }
 
-// validateCodexFingerprintMode 允许空串（等价于默认档 off），其余必须是已知档位。
+// validateCodexFingerprintMode allows an empty string (equivalent to the default tier, off); anything else must be a known tier.
 func validateCodexFingerprintMode(value string) error {
 	if value == "" || auth.IsValidCodexFingerprintMode(value) {
 		return nil
 	}
-	return errors.New("必须是 off、device、session、single_machine_multi_window 或 full")
+	return errors.New("must be off, device, session, single_machine_multi_window, or full")
 }
 
 func (u accountSchedulerUpdate) hasChanges() bool {
@@ -2291,12 +2291,12 @@ func optionalBoolFromPtr(value *bool) database.OptionalBool {
 	return database.OptionalBool{Set: true, Value: *value}
 }
 
-// UpdateAccountScheduler 更新账号调度配置。
-// UpdateAccountCredit 更新账号信用设置
+// UpdateAccountScheduler updates the account scheduling configuration.
+// UpdateAccountCredit updates the account credit settings
 func (h *Handler) UpdateAccountCredit(c *gin.Context) {
 	id, err := strconv.ParseInt(c.Param("id"), 10, 64)
 	if err != nil {
-		writeError(c, http.StatusBadRequest, "无效的账号 ID")
+		writeError(c, http.StatusBadRequest, "Invalid account ID")
 		return
 	}
 
@@ -2307,7 +2307,7 @@ func (h *Handler) UpdateAccountCredit(c *gin.Context) {
 	decoder := json.NewDecoder(c.Request.Body)
 	decoder.DisallowUnknownFields()
 	if err := decoder.Decode(&req); err != nil {
-		writeError(c, http.StatusBadRequest, "请求格式错误")
+		writeError(c, http.StatusBadRequest, "Invalid request format")
 		return
 	}
 
@@ -2317,33 +2317,33 @@ func (h *Handler) UpdateAccountCredit(c *gin.Context) {
 		return
 	}
 
-	// 传入 *bool：nil = 不修改该字段
+	// Pass *bool: nil = do not modify this field
 	if err := h.store.UpdateAccountCredit(id, req.CreditEnabled, req.CreditSkipUsageWindow); err != nil {
-		writeError(c, http.StatusInternalServerError, "更新信用设置失败: "+err.Error())
+		writeError(c, http.StatusInternalServerError, "Failed to update credit settings: "+err.Error())
 		return
 	}
 
 	acc = h.store.FindByID(id)
 	if acc != nil {
-		// 开关刚打开时账号可能已经背着用量窗口判罚。不主动释放就得干等到窗口重置，
-		// 而「发现限流了才去开开关」正是最常见的用法。
+		// When the switch is turned on, the account may already be penalized by a usage window. Without actively releasing it, one would have to wait
+		// until the window resets, and "found a rate limit, then turned the switch on" is the most common way it is used.
 		released := h.store.ReleaseUsageWindowCooldownForCredits(acc)
 		c.JSON(http.StatusOK, gin.H{
-			"message":                  "信用设置已更新",
+			"message":                  "Credit settings updated",
 			"credit_enabled":           acc.CreditEnabled,
 			"credit_skip_usage_window": acc.CreditSkipUsageWindow,
 			"using_credits":            acc.UsingCredits(),
 			"cooldown_released":        released,
 		})
 	} else {
-		c.JSON(http.StatusOK, gin.H{"message": "信用设置已更新"})
+		c.JSON(http.StatusOK, gin.H{"message": "Credit settings updated"})
 	}
 }
 
 func (h *Handler) UpdateAccountScheduler(c *gin.Context) {
 	id, err := strconv.ParseInt(c.Param("id"), 10, 64)
 	if err != nil {
-		writeError(c, http.StatusBadRequest, "无效的账号 ID")
+		writeError(c, http.StatusBadRequest, "Invalid account ID")
 		return
 	}
 
@@ -2351,7 +2351,7 @@ func (h *Handler) UpdateAccountScheduler(c *gin.Context) {
 	decoder := json.NewDecoder(c.Request.Body)
 	decoder.DisallowUnknownFields()
 	if err := decoder.Decode(&req); err != nil {
-		writeError(c, http.StatusBadRequest, "请求格式错误")
+		writeError(c, http.StatusBadRequest, "Invalid request format")
 		return
 	}
 
@@ -2367,7 +2367,7 @@ func (h *Handler) UpdateAccountScheduler(c *gin.Context) {
 	if update.AllowedAPIKeyIDs.Set {
 		missingAPIKeyIDs, err := h.findMissingAPIKeyIDs(ctx, update.AllowedAPIKeyIDs.Values)
 		if err != nil {
-			writeError(c, http.StatusInternalServerError, "校验 API Key 失败: "+err.Error())
+			writeError(c, http.StatusInternalServerError, "Failed to verify API Key: "+err.Error())
 			return
 		}
 		if len(missingAPIKeyIDs) > 0 {
@@ -2375,14 +2375,14 @@ func (h *Handler) UpdateAccountScheduler(c *gin.Context) {
 			for _, value := range missingAPIKeyIDs {
 				values = append(values, strconv.FormatInt(value, 10))
 			}
-			writeError(c, http.StatusBadRequest, "allowed_api_key_ids 包含不存在的 API Key ID: "+strings.Join(values, ", "))
+			writeError(c, http.StatusBadRequest, "allowed_api_key_ids contains nonexistent API Key ID: "+strings.Join(values, ", "))
 			return
 		}
 	}
 	if update.GroupIDs.Set {
 		missingGroupIDs, err := h.db.VerifyAccountGroupIDs(ctx, update.GroupIDs.Values)
 		if err != nil {
-			writeError(c, http.StatusInternalServerError, "校验账号分组失败: "+err.Error())
+			writeError(c, http.StatusInternalServerError, "Failed to verify account groups: "+err.Error())
 			return
 		}
 		if len(missingGroupIDs) > 0 {
@@ -2390,7 +2390,7 @@ func (h *Handler) UpdateAccountScheduler(c *gin.Context) {
 			for _, value := range missingGroupIDs {
 				values = append(values, strconv.FormatInt(value, 10))
 			}
-			writeError(c, http.StatusBadRequest, "group_ids 包含不存在的分组 ID: "+strings.Join(values, ", "))
+			writeError(c, http.StatusBadRequest, "group_ids contains nonexistent group ID: "+strings.Join(values, ", "))
 			return
 		}
 		if len(update.GroupIDs.Values) > 0 {
@@ -2400,7 +2400,7 @@ func (h *Handler) UpdateAccountScheduler(c *gin.Context) {
 					writeError(c, http.StatusNotFound, "账号不存在")
 					return
 				}
-				writeError(c, http.StatusInternalServerError, "查询账号失败: "+err.Error())
+				writeError(c, http.StatusInternalServerError, "Failed to query account: "+err.Error())
 				return
 			}
 			if err := h.validateGroupChannelForRows(ctx, []*database.AccountRow{row}, update.GroupIDs.Values); err != nil {
@@ -2419,7 +2419,7 @@ func (h *Handler) UpdateAccountScheduler(c *gin.Context) {
 				writeError(c, http.StatusNotFound, "账号不存在")
 				return
 			}
-			writeError(c, http.StatusInternalServerError, "查询账号失败: "+err.Error())
+			writeError(c, http.StatusInternalServerError, "Failed to query account: "+err.Error())
 			return
 		}
 	}
@@ -2434,7 +2434,7 @@ func (h *Handler) UpdateAccountScheduler(c *gin.Context) {
 				writeError(c, http.StatusNotFound, "账号不存在")
 				return
 			}
-			writeError(c, http.StatusInternalServerError, "查询账号失败: "+err.Error())
+			writeError(c, http.StatusInternalServerError, "Failed to query account: "+err.Error())
 			return
 		}
 		seed := tokenCredentialSeedFromAccountRow(row)
@@ -2447,21 +2447,21 @@ func (h *Handler) UpdateAccountScheduler(c *gin.Context) {
 			if seed.email != "" && effectiveWorkspaceIDFromSeed(seed) != "" {
 				duplicateID, err := h.findOAuthIdentityDuplicate(ctx, seed, id)
 				if err != nil {
-					writeError(c, http.StatusInternalServerError, "校验工作区路由失败: "+err.Error())
+					writeError(c, http.StatusInternalServerError, "Failed to verify workspace route: "+err.Error())
 					return
 				}
 				if duplicateID > 0 {
-					writeError(c, http.StatusConflict, fmt.Sprintf("该登录身份的目标工作区已存在 (id=%d)", duplicateID))
+					writeError(c, http.StatusConflict, fmt.Sprintf("The target workspace for this login identity already exists (id=%d)", duplicateID))
 					return
 				}
 			}
 			duplicateID, err := h.findCredentialWorkspaceRouteDuplicate(ctx, seed, id)
 			if err != nil {
-				writeError(c, http.StatusInternalServerError, "校验凭证工作区路由失败: "+err.Error())
+				writeError(c, http.StatusInternalServerError, "Failed to verify credential workspace route: "+err.Error())
 				return
 			}
 			if duplicateID > 0 {
-				writeError(c, http.StatusConflict, fmt.Sprintf("相同凭证的目标工作区已存在 (id=%d)", duplicateID))
+				writeError(c, http.StatusConflict, fmt.Sprintf("The target workspace for the same credential already exists (id=%d)", duplicateID))
 				return
 			}
 		}
@@ -2472,7 +2472,7 @@ func (h *Handler) UpdateAccountScheduler(c *gin.Context) {
 			writeError(c, http.StatusNotFound, "账号不存在")
 			return
 		}
-		writeError(c, http.StatusInternalServerError, "更新账号调度配置失败: "+err.Error())
+		writeError(c, http.StatusInternalServerError, "Failed to update account scheduling configuration: "+err.Error())
 		return
 	}
 	h.applyAccountSchedulerRuntimeUpdate(id, update)
@@ -2560,7 +2560,7 @@ func parseOptionalCustomHeadersField(raw json.RawMessage) (optionalCustomHeaders
 	}
 	var headers map[string]string
 	if err := json.Unmarshal(raw, &headers); err != nil {
-		return optionalCustomHeaders{}, fmt.Errorf("custom_headers 必须是对象或 null")
+		return optionalCustomHeaders{}, fmt.Errorf("custom_headers must be an object or null")
 	}
 	normalized, err := normalizeCustomHeaders(headers)
 	if err != nil {
@@ -2574,7 +2574,7 @@ func normalizeCustomHeaders(headers map[string]string) (map[string]string, error
 		return nil, nil
 	}
 	if len(headers) > 64 {
-		return nil, fmt.Errorf("custom_headers 最多支持 64 个请求头")
+		return nil, fmt.Errorf("custom_headers supports at most 64 headers")
 	}
 	out := make(map[string]string, len(headers))
 	for rawName, rawValue := range headers {
@@ -2583,18 +2583,18 @@ func normalizeCustomHeaders(headers map[string]string) (map[string]string, error
 			continue
 		}
 		if len(name) > 128 || !isValidHeaderName(name) {
-			return nil, fmt.Errorf("custom_headers 包含无效请求头名称: %s", name)
+			return nil, fmt.Errorf("custom_headers contains an invalid header name: %s", name)
 		}
 		value := strings.TrimSpace(rawValue)
 		if strings.ContainsAny(value, "\r\n") {
-			return nil, fmt.Errorf("custom_headers.%s 不能包含换行符", name)
+			return nil, fmt.Errorf("custom_headers.%s must not contain line breaks", name)
 		}
 		if len(value) > 8192 {
-			return nil, fmt.Errorf("custom_headers.%s 不能超过 8192 字符", name)
+			return nil, fmt.Errorf("custom_headers.%s must not exceed 8192 characters", name)
 		}
 		canonicalName := http.CanonicalHeaderKey(name)
 		if previous, exists := out[canonicalName]; exists && previous != value {
-			return nil, fmt.Errorf("custom_headers 包含大小写重复且值冲突的请求头: %s", canonicalName)
+			return nil, fmt.Errorf("custom_headers contains headers that differ only in case with conflicting values: %s", canonicalName)
 		}
 		out[canonicalName] = value
 	}
@@ -2681,10 +2681,10 @@ func accountCredentialWorkspaceRouteKeys(row *database.AccountRow) []string {
 	return tokenCredentialSeedWorkspaceRouteKeys(tokenCredentialSeedFromAccountRow(row))
 }
 
-// existingCredentialWorkspaceRouteOwners 返回「凭证工作区路由键 → 持有该凭证的
-// 活跃账号 ID」。去重命中时调用方凭 ID 回查账号状态，决定是普通跳过还是
-// 复活一个处于异常态的旧账号。同一路由理论上只有一个活跃账号；万一有多个
-// （allow_duplicate 导入过），保留先遇到的那个即可。
+// existingCredentialWorkspaceRouteOwners returns a map from "credential workspace route key -> the
+// active account ID holding that credential". On a dedup hit, the caller looks up the account state by ID to decide whether to
+// simply skip it or revive an old account in an error state. In theory a route has only one active account; if there are several
+// (imported with allow_duplicate), keeping the first one encountered is enough.
 func (h *Handler) existingCredentialWorkspaceRouteOwners(ctx context.Context) (map[string]int64, error) {
 	if h == nil || h.db == nil {
 		return nil, fmt.Errorf("database is not configured")
@@ -2704,9 +2704,9 @@ func (h *Handler) existingCredentialWorkspaceRouteOwners(ctx context.Context) (m
 	return owners, nil
 }
 
-// reviveDuplicateRouteOwner 在按凭证路由去重命中已有账号后，尝试复活它（仅当
-// 该账号处于 error / unauthorized 态）。返回 true 表示已复活，调用方应计入
-// "更新"而非"重复"。
+// reviveDuplicateRouteOwner, after a dedup hit on an existing account by credential route, tries to revive it (only when
+// the account is in error / unauthorized state). Returns true if revived; the caller should count it as
+// "updated" rather than "duplicate".
 func (h *Handler) reviveDuplicateRouteOwner(ctx context.Context, ownerID int64, source string) bool {
 	if h == nil || h.db == nil || ownerID <= 0 {
 		return false
@@ -2799,7 +2799,7 @@ func parseOptionalStringSliceField(raw json.RawMessage, field string) (optionalS
 	}
 	var values []string
 	if err := json.Unmarshal(raw, &values); err != nil {
-		return optionalStringSlice{}, fmt.Errorf("%s 必须是字符串数组或 null", field)
+		return optionalStringSlice{}, fmt.Errorf("%s must be a string array or null", field)
 	}
 	out := make([]string, 0, len(values))
 	seen := make(map[string]struct{}, len(values))
@@ -2809,7 +2809,7 @@ func parseOptionalStringSliceField(raw json.RawMessage, field string) (optionalS
 			continue
 		}
 		if utf8.RuneCountInString(clean) > 40 {
-			return optionalStringSlice{}, fmt.Errorf("%s 单个标签不能超过 40 字符", field)
+			return optionalStringSlice{}, fmt.Errorf("each tag in %s must not exceed 40 characters", field)
 		}
 		key := strings.ToLower(clean)
 		if _, ok := seen[key]; ok {
@@ -2819,7 +2819,7 @@ func parseOptionalStringSliceField(raw json.RawMessage, field string) (optionalS
 		out = append(out, clean)
 	}
 	if len(out) > 32 {
-		return optionalStringSlice{}, fmt.Errorf("%s 最多 32 个标签", field)
+		return optionalStringSlice{}, fmt.Errorf("%s allows at most 32 tags", field)
 	}
 	return optionalStringSlice{Set: true, Values: out}, nil
 }
@@ -2834,12 +2834,12 @@ func parseOptionalStringField(raw json.RawMessage, field string, validator func(
 
 	var value string
 	if err := json.Unmarshal(raw, &value); err != nil {
-		return database.OptionalString{}, fmt.Errorf("%s 必须是字符串或 null", field)
+		return database.OptionalString{}, fmt.Errorf("%s must be a string or null", field)
 	}
 	value = strings.TrimSpace(value)
 	if validator != nil {
 		if err := validator(value); err != nil {
-			return database.OptionalString{}, fmt.Errorf("%s 无效: %w", field, err)
+			return database.OptionalString{}, fmt.Errorf("%s is invalid: %w", field, err)
 		}
 	}
 	return database.OptionalString{Set: true, Value: value}, nil
@@ -2855,17 +2855,17 @@ func parseOptionalIntegerField(raw json.RawMessage, field string, minValue, maxV
 
 	var number json.Number
 	if err := json.Unmarshal(raw, &number); err != nil {
-		return database.OptionalNullInt64{}, fmt.Errorf("%s 必须是整数或 null", field)
+		return database.OptionalNullInt64{}, fmt.Errorf("%s must be an integer or null", field)
 	}
 	value, err := number.Int64()
 	if err != nil {
-		return database.OptionalNullInt64{}, fmt.Errorf("%s 必须是整数或 null", field)
+		return database.OptionalNullInt64{}, fmt.Errorf("%s must be an integer or null", field)
 	}
 	if value < minValue || value > maxValue {
 		if maxValue == math.MaxInt64 {
-			return database.OptionalNullInt64{}, fmt.Errorf("%s 超出范围，必须 >= %d", field, minValue)
+			return database.OptionalNullInt64{}, fmt.Errorf("%s is out of range, must be >= %d", field, minValue)
 		}
-		return database.OptionalNullInt64{}, fmt.Errorf("%s 超出范围，必须在 %d..%d 之间", field, minValue, maxValue)
+		return database.OptionalNullInt64{}, fmt.Errorf("%s is out of range, must be between %d..%d", field, minValue, maxValue)
 	}
 	return database.OptionalNullInt64{Set: true, Value: sql.NullInt64{Int64: value, Valid: true}}, nil
 }
@@ -2880,14 +2880,14 @@ func parseOptionalRatioField(raw json.RawMessage, field string) (optionalFloat64
 
 	var number json.Number
 	if err := json.Unmarshal(raw, &number); err != nil {
-		return optionalFloat64{}, fmt.Errorf("%s 必须是 0..1 之间的小数或 null", field)
+		return optionalFloat64{}, fmt.Errorf("%s must be a decimal between 0..1 or null", field)
 	}
 	value, err := number.Float64()
 	if err != nil {
-		return optionalFloat64{}, fmt.Errorf("%s 必须是 0..1 之间的小数或 null", field)
+		return optionalFloat64{}, fmt.Errorf("%s must be a decimal between 0..1 or null", field)
 	}
 	if value < 0 || value > 1 {
-		return optionalFloat64{}, fmt.Errorf("%s 超出范围，必须在 0..1 之间", field)
+		return optionalFloat64{}, fmt.Errorf("%s is out of range, must be between 0..1", field)
 	}
 	return optionalFloat64{Set: true, Value: value}, nil
 }
@@ -2902,7 +2902,7 @@ func parseOptionalBoolField(raw json.RawMessage, field string) (database.Optiona
 
 	var value bool
 	if err := json.Unmarshal(raw, &value); err != nil {
-		return database.OptionalBool{}, fmt.Errorf("%s 必须是布尔值或 null", field)
+		return database.OptionalBool{}, fmt.Errorf("%s must be a boolean or null", field)
 	}
 	return database.OptionalBool{Set: true, Value: value}, nil
 }
@@ -2917,7 +2917,7 @@ func parseOptionalNullableBoolField(raw json.RawMessage, field string) (optional
 
 	var value bool
 	if err := json.Unmarshal(raw, &value); err != nil {
-		return optionalNullableBool{}, fmt.Errorf("%s 必须是布尔值或 null", field)
+		return optionalNullableBool{}, fmt.Errorf("%s must be a boolean or null", field)
 	}
 	return optionalNullableBool{Set: true, Value: &value}, nil
 }
@@ -2932,7 +2932,7 @@ func parseOptionalIntegerSliceField(raw json.RawMessage, field string) (database
 
 	var values []json.Number
 	if err := json.Unmarshal(raw, &values); err != nil {
-		return database.OptionalInt64Slice{}, fmt.Errorf("%s 必须是整数数组或 null", field)
+		return database.OptionalInt64Slice{}, fmt.Errorf("%s must be an integer array or null", field)
 	}
 	if len(values) == 0 {
 		return database.OptionalInt64Slice{Set: true, Values: []int64{}}, nil
@@ -2943,10 +2943,10 @@ func parseOptionalIntegerSliceField(raw json.RawMessage, field string) (database
 	for _, number := range values {
 		value, err := number.Int64()
 		if err != nil {
-			return database.OptionalInt64Slice{}, fmt.Errorf("%s 必须是整数数组或 null", field)
+			return database.OptionalInt64Slice{}, fmt.Errorf("%s must be an integer array or null", field)
 		}
 		if value <= 0 {
-			return database.OptionalInt64Slice{}, fmt.Errorf("%s 中的值必须是正整数", field)
+			return database.OptionalInt64Slice{}, fmt.Errorf("values in %s must be positive integers", field)
 		}
 		if _, exists := unique[value]; exists {
 			continue
@@ -3015,7 +3015,7 @@ func effectiveScoreBias(planType string, override sql.NullInt64) int64 {
 	if override.Valid {
 		return override.Int64
 	}
-	// 与 auth.defaultScoreBiasForPlan 保持一致；k12 是教育版 team (issue #282)
+	// Keep consistent with auth.defaultScoreBiasForPlan; k12 is the education-edition team plan (issue #282)
 	switch auth.NormalizePlanType(planType) {
 	case "pro", "plus", "team", "k12":
 		return 50
@@ -3053,9 +3053,9 @@ func allowScoreBias(healthTier string, status string) bool {
 	}
 }
 
-// 这里优先读取 auth 层并行实现新增的 runtime/debug 字段，字段名约定为：
-// DispatchScore / ScoreBiasEffective / BaseConcurrencyEffective。
-// 若主分支尚未集成这些字段，则回退到管理层可推导的兼容值，避免阻塞前后端联调。
+// Prefer the runtime/debug fields newly added by the parallel auth-layer implementation; the field names follow this convention:
+// DispatchScore / ScoreBiasEffective / BaseConcurrencyEffective.
+// If those fields are not yet integrated on the main branch, fall back to compatibility values the admin layer can derive, to avoid blocking front-end/back-end integration.
 func reflectFloat64Field(value interface{}, field string) (float64, bool) {
 	v := reflect.Indirect(reflect.ValueOf(value))
 	if !v.IsValid() || v.Kind() != reflect.Struct {
@@ -3107,7 +3107,7 @@ func (h *Handler) getCachedRequestCounts() map[int64]*database.AccountRequestCou
 	defer cancel()
 	counts, err := h.db.GetAccountRequestCounts(ctx)
 	if err != nil {
-		log.Printf("获取账号请求统计失败: %v", err)
+		log.Printf("failed to get account request stats: %v", err)
 		return make(map[int64]*database.AccountRequestCount)
 	}
 	h.storeRequestCountCache(cacheKey, counts, nil, time.Time{})
@@ -3126,7 +3126,7 @@ func (h *Handler) getAccountUsageWindows(ctx context.Context) (map[int64]*databa
 	now := time.Now()
 	usage5h, usage7d, err := h.db.GetAccountUsageWindows(ctx, now.Add(-5*time.Hour), now.AddDate(0, 0, -7))
 	if err != nil {
-		log.Printf("获取账号 5h/7d 用量统计失败: %v", err)
+		log.Printf("failed to get account 5h/7d usage stats: %v", err)
 		usage5h = make(map[int64]*database.AccountTimeRangeUsage)
 		usage7d = make(map[int64]*database.AccountTimeRangeUsage)
 		return usage5h, usage7d
@@ -3142,10 +3142,10 @@ type addAccountReq struct {
 	ProxyURL       string            `json:"proxy_url"`
 	CustomHeaders  map[string]string `json:"custom_headers"`
 	AllowDuplicate bool              `json:"allow_duplicate"`
-	// SkipRefresh 只入库、不换 AT、不打用量探测。大批量脚本导入时应打开，
-	// 避免每批 50 个裸 RT 立刻拉起无上限的上游刷新把网关打卡。
+	// SkipRefresh only stores the account: it does not exchange the AT and does not run a usage probe. Turn it on for large scripted imports,
+	// to avoid every batch of 50 bare RTs immediately launching unbounded upstream refreshes that choke the gateway.
 	SkipRefresh bool `json:"skip_refresh"`
-	// GroupIDs 让添加时就把新账号绑进指定分组；重复跳过的账号不受影响。
+	// GroupIDs binds the new accounts to the given groups at add time; duplicates that are skipped are not affected.
 	GroupIDs json.RawMessage `json:"group_ids"`
 }
 
@@ -3164,10 +3164,10 @@ func splitAccountCredentialLines(raw string, sanitize bool) []string {
 	return tokens
 }
 
-// accountCredentialDedup 跟踪 RT/ST 原文去重（用于 RT/ST 单账号/批量添加路径）。
-// 身份型（OAuth）去重在文件导入与 AT 路径单独处理，这里只覆盖加入时无法解出身份的 RT/ST。
+// accountCredentialDedup tracks dedup of raw RT/ST text (used by the single-account and batch RT/ST add paths).
+// Identity-based (OAuth) dedup is handled separately in file import and the AT path; this only covers RT/ST whose identity cannot be decoded at add time.
 type accountCredentialDedup struct {
-	// existingOwners 路由键 → 库里持有该凭证的活跃账号 ID。
+	// existingOwners maps route key -> the ID of the active account in the database that holds the credential.
 	existingOwners map[string]int64
 	seenRoutes     map[string]bool
 }
@@ -3178,7 +3178,7 @@ func (h *Handler) newAccountCredentialDedup(ctx context.Context) *accountCredent
 	}
 	existingOwners, err := h.existingCredentialWorkspaceRouteOwners(ctx)
 	if err != nil {
-		log.Printf("查询已有凭证工作区路由失败: %v", err)
+		log.Printf("failed to query existing credential workspace routes: %v", err)
 		existingOwners = make(map[string]int64)
 	}
 	d.existingOwners = existingOwners
@@ -3196,9 +3196,9 @@ func (d *accountCredentialDedup) routeKeys(seed tokenCredentialSeed) []string {
 	return keys
 }
 
-// checkAndMarkOwner 返回该 seed 是否与已有库或本批次重复（应跳过）；非重复时
-// 记录其凭证。重复命中库里已有账号时一并返回该账号 ID（本批次内部重复返回
-// 0），供调用方判断是否复活异常态旧账号。
+// checkAndMarkOwner returns whether this seed duplicates an existing record or one in this batch (and should be skipped); when it is not a
+// duplicate, it records the credential. On a hit against an existing account in the database, it also returns that account's ID (a duplicate within this batch returns
+// 0), so the caller can decide whether to revive an old account in an error state.
 func (d *accountCredentialDedup) checkAndMarkOwner(seed tokenCredentialSeed) (bool, int64) {
 	keys := d.routeKeys(seed)
 	for _, key := range keys {
@@ -3215,38 +3215,38 @@ func (d *accountCredentialDedup) checkAndMarkOwner(seed tokenCredentialSeed) (bo
 	return false, 0
 }
 
-// AddAccount 添加新账号（支持批量：refresh_token/session_token 按行分割）
+// AddAccount adds new accounts (batch supported: refresh_token/session_token split by line)
 func (h *Handler) AddAccount(c *gin.Context) {
 	var req addAccountReq
 	if err := c.ShouldBindJSON(&req); err != nil {
-		writeError(c, http.StatusBadRequest, "请求格式错误")
+		writeError(c, http.StatusBadRequest, "Invalid request format")
 		return
 	}
 
-	// 输入验证和清理
+	// Validate and sanitize input
 	req.Name = security.SanitizeInput(req.Name)
 	req.ProxyURL = security.SanitizeInput(req.ProxyURL)
 
 	if strings.TrimSpace(req.RefreshToken) == "" && strings.TrimSpace(req.SessionToken) == "" {
-		writeError(c, http.StatusBadRequest, "refresh_token 或 session_token 是必填字段")
+		writeError(c, http.StatusBadRequest, "refresh_token or session_token is required")
 		return
 	}
 
-	// 检查XSS和SQL注入
+	// Check for XSS and SQL injection
 	if security.ContainsXSS(req.Name) || security.ContainsSQLInjection(req.Name) {
-		writeError(c, http.StatusBadRequest, "名称包含非法字符")
+		writeError(c, http.StatusBadRequest, "Name contains invalid characters")
 		return
 	}
 
-	// 验证名称长度
+	// Validate name length
 	if utf8.RuneCountInString(req.Name) > 100 {
-		writeError(c, http.StatusBadRequest, "名称长度不能超过100字符")
+		writeError(c, http.StatusBadRequest, "Name must not exceed 100 characters")
 		return
 	}
 
-	// 验证代理URL
+	// Validate proxy URL
 	if err := security.ValidateProxyURL(req.ProxyURL); err != nil {
-		writeError(c, http.StatusBadRequest, "代理URL无效")
+		writeError(c, http.StatusBadRequest, "Invalid proxy URL")
 		return
 	}
 	customHeaders, err := normalizeCustomHeaders(req.CustomHeaders)
@@ -3256,8 +3256,8 @@ func (h *Handler) AddAccount(c *gin.Context) {
 	}
 	req.CustomHeaders = customHeaders
 
-	// 按行分割，支持批量添加。refresh_token 与 session_token 同时填写时，
-	// session_token 可填写一行应用到所有 RT，也可与 RT 行数一一对应。
+	// Split by line to support batch add. When refresh_token and session_token are both filled in,
+	// session_token may be one line applied to every RT, or one line per RT line.
 	refreshTokens := splitAccountCredentialLines(req.RefreshToken, true)
 	sessionTokens := splitAccountCredentialLines(req.SessionToken, true)
 	total := len(refreshTokens)
@@ -3265,7 +3265,7 @@ func (h *Handler) AddAccount(c *gin.Context) {
 		total = len(sessionTokens)
 	}
 	if len(refreshTokens) > 0 && len(sessionTokens) > 1 && len(sessionTokens) != len(refreshTokens) {
-		writeError(c, http.StatusBadRequest, "session_token 行数需为 1 或与 refresh_token 行数一致")
+		writeError(c, http.StatusBadRequest, "session_token line count must be 1 or match the refresh_token line count")
 		return
 	}
 
@@ -3284,17 +3284,17 @@ func (h *Handler) AddAccount(c *gin.Context) {
 	}
 
 	if len(seeds) == 0 {
-		writeError(c, http.StatusBadRequest, "未找到有效的 Refresh Token 或 Session Token")
+		writeError(c, http.StatusBadRequest, "No valid Refresh Token or Session Token found")
 		return
 	}
 
-	// 限制批量添加数量
+	// Limit the batch add count
 	if len(seeds) > 100 {
-		writeError(c, http.StatusBadRequest, "单次最多添加100个账号")
+		writeError(c, http.StatusBadRequest, "Up to 100 accounts can be added at once")
 		return
 	}
 
-	// 分组校验放在插账号之前：分组 ID 打错时不该留下一半已入库的账号。
+	// Validate groups before inserting accounts: a wrong group ID must not leave half of the accounts already stored.
 	groupCtx, groupCancel := context.WithTimeout(c.Request.Context(), 5*time.Second)
 	groupIDs, err := h.resolveImportGroupIDsJSON(groupCtx, req.GroupIDs)
 	groupCancel()
@@ -3333,20 +3333,20 @@ func (h *Handler) AddAccount(c *gin.Context) {
 
 		if dedup != nil {
 			if duplicate, ownerID := dedup.checkAndMarkOwner(seed); duplicate {
-				// 同一凭证再添加一次且旧账号正挂在 error / 401 态：视为要求复活。
+				// The same credential is added again while the old account is in error / 401 state: treat it as a revive request.
 				if h.reviveDuplicateRouteOwner(ctx, ownerID, "manual_add") {
 					revivedCount++
 					continue
 				}
 				duplicateCount++
-				log.Printf("添加账号 %d 已存在（RT/ST 重复），跳过", i+1)
+				log.Printf("account %d already exists (duplicate RT/ST), skipped", i+1)
 				continue
 			}
 		}
 
 		id, err := h.db.InsertAccountWithCredentials(ctx, name, h.newCodexAccountCredentials(seed), req.ProxyURL)
 		if err != nil {
-			log.Printf("批量添加账号 %d 失败: %v", i+1, err)
+			log.Printf("batch add account %d failed: %v", i+1, err)
 			failCount++
 			continue
 		}
@@ -3358,24 +3358,24 @@ func (h *Handler) AddAccount(c *gin.Context) {
 	h.db.BatchInsertAccountEventsAsync(createdIDs.snapshot(), "added", "manual")
 	h.commitImportedRuntimeAccounts(pending, "manual_add", req.SkipRefresh)
 
-	// 记录安全审计日志
+	// Record security audit log
 	security.SecurityAuditLog("ACCOUNTS_ADDED", fmt.Sprintf("success=%d updated=%d duplicate=%d failed=%d ip=%s", successCount, revivedCount, duplicateCount, failCount, c.ClientIP()))
 
-	msg := fmt.Sprintf("成功添加 %d 个账号", successCount)
+	msg := fmt.Sprintf("Added %d accounts", successCount)
 	if revivedCount > 0 {
-		msg += fmt.Sprintf("，%d 个已有账号已恢复", revivedCount)
+		msg += fmt.Sprintf(", %d existing accounts restored", revivedCount)
 	}
 	if duplicateCount > 0 {
-		msg += fmt.Sprintf("，%d 个重复跳过", duplicateCount)
+		msg += fmt.Sprintf(", %d duplicates skipped", duplicateCount)
 	}
 	if failCount > 0 {
-		msg += fmt.Sprintf("，%d 个失败", failCount)
+		msg += fmt.Sprintf(", %d failed", failCount)
 	}
 	boundGroups := len(groupIDs) > 0
 	if err := h.bindImportedAccountGroups(ctx, createdIDs.snapshot(), groupIDs); err != nil {
-		// 账号已入库，只是分组没绑上——必须说出来，否则用户以为绑好了。
+		// The accounts are stored, but the group binding did not go through; this must be reported, or the user will think it was bound.
 		boundGroups = false
-		msg += "，但分组绑定失败: " + err.Error()
+		msg += ", but group binding failed: " + err.Error()
 	}
 
 	newAccountIDs := createdIDs.snapshot()
@@ -3432,7 +3432,7 @@ func (h *Handler) streamAddAccounts(c *gin.Context, req addAccountReq, seeds []t
 
 		if dedup != nil {
 			if duplicate, ownerID := dedup.checkAndMarkOwner(seed); duplicate {
-				// 同一凭证再添加一次且旧账号正挂在 error / 401 态：视为要求复活。
+				// The same credential is added again while the old account is in error / 401 state: treat it as a revive request.
 				if h.reviveDuplicateRouteOwner(ctx, ownerID, "manual_add") {
 					revivedCount++
 				} else {
@@ -3445,7 +3445,7 @@ func (h *Handler) streamAddAccounts(c *gin.Context, req addAccountReq, seeds []t
 
 		id, err := h.db.InsertAccountWithCredentials(ctx, name, h.newCodexAccountCredentials(seed), req.ProxyURL)
 		if err != nil {
-			log.Printf("批量添加账号 %d 失败: %v", i+1, err)
+			log.Printf("batch add account %d failed: %v", i+1, err)
 			failCount++
 			progress(i + 1)
 			continue
@@ -3461,12 +3461,12 @@ func (h *Handler) streamAddAccounts(c *gin.Context, req addAccountReq, seeds []t
 	h.commitImportedRuntimeAccounts(pending, "manual_add", req.SkipRefresh)
 
 	security.SecurityAuditLog("ACCOUNTS_ADDED", fmt.Sprintf("success=%d updated=%d duplicate=%d failed=%d ip=%s", successCount, revivedCount, duplicateCount, failCount, c.ClientIP()))
-	// 绑定必须在 complete 事件之前完成：前端收到 complete 就会刷新列表。
+	// Binding must finish before the complete event: the frontend refreshes the list as soon as it receives complete.
 	if err := h.bindImportedAccountGroups(ctx, createdIDs.snapshot(), groupIDs); err != nil {
 		sendImportEvent(c, importEvent{
 			Type: "progress", Current: total, Total: total,
 			Success: successCount, Updated: revivedCount, Duplicate: duplicateCount, Failed: failCount,
-			Warning: "账号已添加，但分组绑定失败: " + err.Error(),
+			Warning: "Account added, but group binding failed: " + err.Error(),
 		})
 	}
 	newAccountIDs := createdIDs.snapshot()
@@ -3479,22 +3479,22 @@ func (h *Handler) streamAddAccounts(c *gin.Context, req addAccountReq, seeds []t
 	})
 }
 
-// addATAccountReq AT 模式添加账号请求
+// addATAccountReq is the request for adding an account in AT mode
 type addATAccountReq struct {
 	Name           string            `json:"name"`
 	AccessToken    string            `json:"access_token"`
 	ProxyURL       string            `json:"proxy_url"`
 	CustomHeaders  map[string]string `json:"custom_headers"`
 	AllowDuplicate bool              `json:"allow_duplicate"`
-	// GroupIDs 让添加时就把新账号绑进指定分组；重复跳过与命中已有身份被更新的账号不受影响。
+	// GroupIDs binds the new accounts to the given groups at add time; duplicates that are skipped and accounts updated because they matched an existing identity are not affected.
 	GroupIDs json.RawMessage `json:"group_ids"`
 }
 
-// AddATAccount 添加 AT-only 账号（支持批量：access_token 按行分割）
+// AddATAccount adds AT-only accounts (batch supported: access_token split by line)
 func (h *Handler) AddATAccount(c *gin.Context) {
 	var req addATAccountReq
 	if err := c.ShouldBindJSON(&req); err != nil {
-		writeError(c, http.StatusBadRequest, "请求格式错误")
+		writeError(c, http.StatusBadRequest, "Invalid request format")
 		return
 	}
 
@@ -3507,17 +3507,17 @@ func (h *Handler) AddATAccount(c *gin.Context) {
 	}
 
 	if security.ContainsXSS(req.Name) || security.ContainsSQLInjection(req.Name) {
-		writeError(c, http.StatusBadRequest, "名称包含非法字符")
+		writeError(c, http.StatusBadRequest, "Name contains invalid characters")
 		return
 	}
 
 	if utf8.RuneCountInString(req.Name) > 100 {
-		writeError(c, http.StatusBadRequest, "名称长度不能超过100字符")
+		writeError(c, http.StatusBadRequest, "Name must not exceed 100 characters")
 		return
 	}
 
 	if err := security.ValidateProxyURL(req.ProxyURL); err != nil {
-		writeError(c, http.StatusBadRequest, "代理URL无效")
+		writeError(c, http.StatusBadRequest, "invalid proxy URL")
 		return
 	}
 	customHeaders, err := normalizeCustomHeaders(req.CustomHeaders)
@@ -3527,7 +3527,7 @@ func (h *Handler) AddATAccount(c *gin.Context) {
 	}
 	req.CustomHeaders = customHeaders
 
-	// 按行分割，支持批量添加
+	// Split by line, supporting batch addition
 	lines := strings.Split(req.AccessToken, "\n")
 	var tokens []string
 	for _, line := range lines {
@@ -3538,12 +3538,12 @@ func (h *Handler) AddATAccount(c *gin.Context) {
 	}
 
 	if len(tokens) == 0 {
-		writeError(c, http.StatusBadRequest, "未找到有效的 Access Token")
+		writeError(c, http.StatusBadRequest, "no valid Access Token found")
 		return
 	}
 
 	if len(tokens) > 100 {
-		writeError(c, http.StatusBadRequest, "单次最多添加100个账号")
+		writeError(c, http.StatusBadRequest, "at most 100 accounts can be added at once")
 		return
 	}
 
@@ -3570,16 +3570,16 @@ func (h *Handler) AddATAccount(c *gin.Context) {
 	createdIDs := &importedAccountIDs{}
 	pending := make([]*auth.Account, 0, len(tokens))
 
-	// AT 去重：非身份型 AT-only（无法从 JWT 解出 email + 有效工作区，如 codex_at）
-	// 按 access_token 原文去重；身份型 AT 由 upsertOAuthIdentityAccount 按 OAuth 身份
-	//（email + 有效工作区）去重/更新。显式 Chatgpt-Account-Id 可把同一 AT
-	// 拆成多个独立工作区路由；同一路由仍会更新已有账号。
+	// AT dedup: non-identity AT-only entries (email + valid workspace cannot be decoded from the JWT, e.g. codex_at)
+	// Deduplicate by the raw access_token; identity-type ATs are handled by upsertOAuthIdentityAccount by OAuth identity
+	// (email + valid workspace) for deduplication/update. An explicit Chatgpt-Account-Id can split the same AT
+	// into multiple independent workspace routes; the same route still updates the existing account.
 	existingATRoutes := make(map[string]int64)
 	seenATRoutes := make(map[string]bool)
 	workspaceOverrideKnown := openaiidentity.WorkspaceOverrideFromHeaders(customHeaders) != ""
 	if !req.AllowDuplicate || workspaceOverrideKnown {
 		if got, err := h.existingCredentialWorkspaceRouteOwners(ctx); err != nil {
-			log.Printf("查询已有凭证工作区路由失败: %v", err)
+			log.Printf("failed to query existing credential workspace route: %v", err)
 		} else {
 			existingATRoutes = got
 		}
@@ -3599,24 +3599,24 @@ func (h *Handler) AddATAccount(c *gin.Context) {
 			allowDuplicate: req.AllowDuplicate,
 			customHeaders:  customHeaders,
 		})
-		// codex_at 不走 OAuth 身份去重：whoami 补出来的 email+工作区会撞上同工作区的
-		// OAuth 账号，把 PAT 合并进去等于用 PAT 覆盖它的 access_token。PAT 始终按 token 路由键去重。
+		// codex_at does not go through OAuth identity dedup: the email+workspace filled in by whoami would collide with the same-workspace
+		// OAuth account; merging the PAT into it would overwrite that account's access_token with the PAT. PAT is always deduplicated by its token routing key.
 		if seed.accessTokenType != accessTokenTypeCodexAT && seed.email != "" && effectiveWorkspaceIDFromSeed(seed) != "" {
 			id, updated, newAcc, err := h.upsertOAuthIdentityAccountDeferred(ctx, name, req.ProxyURL, seed, "manual_at", overwriteAccountProxy)
 			if err != nil {
-				log.Printf("添加 AT 账号 %d 失败: %v", i+1, err)
+				log.Printf("failed to add AT account %d: %v", i+1, err)
 				failCount++
 				continue
 			}
 			if updated {
-				// 已有账号只更新凭证，不计入"新增"。
+				// An existing account only has its credentials updated; it is not counted as "added".
 				updatedCount++
-				log.Printf("AT 账号 %d 命中已有身份并更新凭证 (id=%d)", i+1, id)
+				log.Printf("AT account %d matched an existing identity and updated its credentials (id=%d)", i+1, id)
 			} else {
 				successCount++
 				createdIDs.add(id)
 				pending = append(pending, newAcc)
-				log.Printf("AT 账号 %d 已加入号池 (id=%d)", i+1, id)
+				log.Printf("AT account %d joined the account pool (id=%d)", i+1, id)
 			}
 			continue
 		}
@@ -3624,23 +3624,23 @@ func (h *Handler) AddATAccount(c *gin.Context) {
 		if !req.AllowDuplicate || workspaceOverrideKnown {
 			routeKey := credentialWorkspaceRouteKey("at", at, seed.customHeaders)
 			if ownerID, exists := existingATRoutes[routeKey]; exists || seenATRoutes[routeKey] {
-				// 同一 AT 再添加一次且旧账号正挂在 error / 401 态：视为要求复活。
+				// The same AT was added again while the old account is in error / 401 state: treat it as a request to revive it.
 				if exists && h.reviveDuplicateRouteOwner(ctx, ownerID, "manual_at") {
 					updatedCount++
 					continue
 				}
 				duplicateCount++
-				log.Printf("AT 账号 %d 已存在（access_token 与目标工作区重复），跳过", i+1)
+				log.Printf("AT account %d already exists (access_token duplicates the target workspace), skipped", i+1)
 				continue
 			}
 			seenATRoutes[routeKey] = true
 		}
 
-		// 去重之后再补身份：重导已知批次不该再付 N 次网络往返。
+		// Fill in identities after dedup: re-importing a known batch should not pay N network round trips again.
 		seed = whoami.hydrate(ctx, seed)
 		id, err := h.db.InsertAccountWithCredentials(ctx, name, h.newCodexAccountCredentials(seed), req.ProxyURL)
 		if err != nil {
-			log.Printf("添加 AT 账号 %d 失败: %v", i+1, err)
+			log.Printf("failed to add AT account %d: %v", i+1, err)
 			failCount++
 			continue
 		}
@@ -3648,31 +3648,31 @@ func (h *Handler) AddATAccount(c *gin.Context) {
 		successCount++
 		createdIDs.add(id)
 
-		// 热加载到内存池（AT-only，无 RT）。codex_at 不走 JWT 解码，
-		// 身份信息后续由 wham 用量查询补齐。
+		// Hot-load into the in-memory pool (AT-only, no RT). codex_at does not go through JWT decoding,
+		// identity info is filled in later by the wham usage query.
 		newAcc := h.newCodexAccountFromSeed(id, req.ProxyURL, seed)
 		pending = append(pending, newAcc)
-		log.Printf("AT 账号 %d 已加入号池 (id=%d, email=%s)", i+1, id, newAcc.Email)
+		log.Printf("AT account %d joined the account pool (id=%d, email=%s)", i+1, id, newAcc.Email)
 	}
 	h.db.BatchInsertAccountEventsAsync(createdIDs.snapshot(), "added", "manual_at")
 	h.commitImportedRuntimeAccounts(pending, "manual_at", false)
 
 	security.SecurityAuditLog("AT_ACCOUNTS_ADDED", fmt.Sprintf("success=%d updated=%d duplicate=%d failed=%d ip=%s", successCount, updatedCount, duplicateCount, failCount, c.ClientIP()))
 
-	msg := fmt.Sprintf("成功新增 %d 个 AT 账号", successCount)
+	msg := fmt.Sprintf("successfully added %d AT accounts", successCount)
 	if updatedCount > 0 {
-		msg += fmt.Sprintf("，%d 个已有账号更新", updatedCount)
+		msg += fmt.Sprintf(", %d existing accounts updated", updatedCount)
 	}
 	if duplicateCount > 0 {
-		msg += fmt.Sprintf("，%d 个重复跳过", duplicateCount)
+		msg += fmt.Sprintf(", %d duplicates skipped", duplicateCount)
 	}
 	if failCount > 0 {
-		msg += fmt.Sprintf("，%d 个失败", failCount)
+		msg += fmt.Sprintf(", %d failed", failCount)
 	}
 	boundGroups := len(groupIDs) > 0
 	if err := h.bindImportedAccountGroups(ctx, createdIDs.snapshot(), groupIDs); err != nil {
 		boundGroups = false
-		msg += "，但分组绑定失败: " + err.Error()
+		msg += ", but group binding failed: " + err.Error()
 	}
 
 	c.JSON(http.StatusOK, gin.H{
@@ -3686,7 +3686,7 @@ func (h *Handler) AddATAccount(c *gin.Context) {
 	})
 }
 
-// streamAddATAccounts 以 SSE 流式推送 AT 批量添加进度（与 streamAddAccounts 对齐）。
+// streamAddATAccounts streams AT batch-add progress over SSE (aligned with streamAddAccounts).
 func (h *Handler) streamAddATAccounts(c *gin.Context, req addATAccountReq, tokens []string, groupIDs []int64) {
 	setupSSE(c)
 
@@ -3708,7 +3708,7 @@ func (h *Handler) streamAddATAccounts(c *gin.Context, req addATAccountReq, token
 	workspaceOverrideKnown := openaiidentity.WorkspaceOverrideFromHeaders(req.CustomHeaders) != ""
 	if !req.AllowDuplicate || workspaceOverrideKnown {
 		if got, err := h.existingCredentialWorkspaceRouteOwners(ctx); err != nil {
-			log.Printf("查询已有凭证工作区路由失败: %v", err)
+			log.Printf("failed to query existing credential workspace route: %v", err)
 		} else {
 			existingATRoutes = got
 		}
@@ -3733,21 +3733,21 @@ func (h *Handler) streamAddATAccounts(c *gin.Context, req addATAccountReq, token
 		}
 
 		seed := normalizeTokenCredentialSeed(tokenCredentialSeed{accessToken: at, allowDuplicate: req.AllowDuplicate, customHeaders: req.CustomHeaders})
-		// 同 AddATAccount：codex_at 不进 OAuth 身份去重，见上方注释。
+		// Same as AddATAccount: codex_at does not go through OAuth identity dedup, see the comment above.
 		if seed.accessTokenType != accessTokenTypeCodexAT && seed.email != "" && effectiveWorkspaceIDFromSeed(seed) != "" {
 			id, updated, newAcc, err := h.upsertOAuthIdentityAccountDeferred(ctx, name, req.ProxyURL, seed, "manual_at", overwriteAccountProxy)
 			if err != nil {
-				log.Printf("添加 AT 账号 %d 失败: %v", i+1, err)
+				log.Printf("failed to add AT account %d: %v", i+1, err)
 				failCount++
 			} else if updated {
-				// 已有账号只更新凭证，不计入"新增"（重复添加时新增应为 0）。
+				// An existing account only has its credentials updated and is not counted as "added" (added should be 0 on a repeat add).
 				updatedCount++
-				log.Printf("AT 账号 %d 命中已有身份并更新凭证 (id=%d)", i+1, id)
+				log.Printf("AT account %d matched an existing identity and updated its credentials (id=%d)", i+1, id)
 			} else {
 				successCount++
 				createdIDs.add(id)
 				pending = append(pending, newAcc)
-				log.Printf("AT 账号 %d 已加入号池 (id=%d)", i+1, id)
+				log.Printf("AT account %d joined the account pool (id=%d)", i+1, id)
 			}
 			progress(i + 1)
 			continue
@@ -3756,7 +3756,7 @@ func (h *Handler) streamAddATAccounts(c *gin.Context, req addATAccountReq, token
 		if !req.AllowDuplicate || workspaceOverrideKnown {
 			routeKey := credentialWorkspaceRouteKey("at", at, seed.customHeaders)
 			if ownerID, exists := existingATRoutes[routeKey]; exists || seenATRoutes[routeKey] {
-				// 同一 AT 再添加一次且旧账号正挂在 error / 401 态：视为要求复活。
+				// The same AT was added again while the old account is in error / 401 state: treat it as a request to revive it.
 				if exists && h.reviveDuplicateRouteOwner(ctx, ownerID, "manual_at") {
 					updatedCount++
 				} else {
@@ -3771,7 +3771,7 @@ func (h *Handler) streamAddATAccounts(c *gin.Context, req addATAccountReq, token
 		seed = whoami.hydrate(ctx, seed)
 		id, err := h.db.InsertAccountWithCredentials(ctx, name, h.newCodexAccountCredentials(seed), req.ProxyURL)
 		if err != nil {
-			log.Printf("添加 AT 账号 %d 失败: %v", i+1, err)
+			log.Printf("failed to add AT account %d: %v", i+1, err)
 			failCount++
 			progress(i + 1)
 			continue
@@ -3787,12 +3787,12 @@ func (h *Handler) streamAddATAccounts(c *gin.Context, req addATAccountReq, token
 	h.commitImportedRuntimeAccounts(pending, "manual_at", false)
 
 	security.SecurityAuditLog("AT_ACCOUNTS_ADDED", fmt.Sprintf("success=%d updated=%d duplicate=%d failed=%d ip=%s", successCount, updatedCount, duplicateCount, failCount, c.ClientIP()))
-	// 绑定必须在 complete 事件之前完成：前端收到 complete 就会刷新列表。
+	// Binding must finish before the complete event: the frontend refreshes the list as soon as it receives complete.
 	if err := h.bindImportedAccountGroups(ctx, createdIDs.snapshot(), groupIDs); err != nil {
 		sendImportEvent(c, importEvent{
 			Type: "progress", Current: total, Total: total,
 			Success: successCount, Updated: updatedCount, Duplicate: duplicateCount, Failed: failCount,
-			Warning: "账号已添加，但分组绑定失败: " + err.Error(),
+			Warning: "accounts added, but group binding failed: " + err.Error(),
 		})
 	}
 	sendImportEvent(c, importEvent{
@@ -3805,35 +3805,35 @@ type updateAccountModelsRequest struct {
 	Models []string `json:"models"`
 }
 
-// UpdateAccountModels 设置 OAuth 账号的支持模型白名单。
-// 空数组 = 清空白名单，放行全部模型；
-// 非空时调度器只会把白名单内模型的请求派给该账号。
+// UpdateAccountModels sets the supported-model allowlist of an OAuth account.
+// An empty array clears the allowlist and allows all models;
+// when non-empty, the scheduler only routes requests for allowlisted models to this account.
 func (h *Handler) UpdateAccountModels(c *gin.Context) {
 	id, err := strconv.ParseInt(c.Param("id"), 10, 64)
 	if err != nil {
-		writeError(c, http.StatusBadRequest, "无效的账号 ID")
+		writeError(c, http.StatusBadRequest, "invalid account ID")
 		return
 	}
 	var req updateAccountModelsRequest
 	if err := c.ShouldBindJSON(&req); err != nil {
-		writeError(c, http.StatusBadRequest, "请求格式错误")
+		writeError(c, http.StatusBadRequest, "invalid request format")
 		return
 	}
 	models := auth.NormalizeAccountModels(req.Models)
 	if len(models) > 200 {
-		writeError(c, http.StatusBadRequest, "模型数量不能超过 200")
+		writeError(c, http.StatusBadRequest, "the number of models must not exceed 200")
 		return
 	}
 	for _, model := range models {
 		if err := security.ValidateModelName(model); err != nil {
-			writeError(c, http.StatusBadRequest, fmt.Sprintf("模型名称无效: %s", model))
+			writeError(c, http.StatusBadRequest, fmt.Sprintf("invalid model name: %s", model))
 			return
 		}
 	}
 
 	account := h.store.FindByID(id)
 	if account == nil {
-		writeError(c, http.StatusNotFound, "账号不在运行时池中")
+		writeError(c, http.StatusNotFound, "account is not in the runtime pool")
 		return
 	}
 
@@ -3848,20 +3848,20 @@ func (h *Handler) UpdateAccountModels(c *gin.Context) {
 	c.JSON(http.StatusOK, gin.H{"models": models})
 }
 
-// SyncAccountUpstreamModels 用账号自身凭据实时拉取上游模型清单，
-// 返回该账号真实可用的模型 slug 列表。账号白名单本身只读不落库，由管理端确认后再保存；
-// 但清单里注册表尚不认识的模型会顺手学习进注册表（只增不改不删，与客户端刷新
-// 选单时的学习同一实现）：否则 Trusted Access for Cyber 这类只有个别账号才有的模型
-// 探测看得见、保存进白名单后 /v1/models 却不列、调用直接报模型不存在（issue #624）。
+// SyncAccountUpstreamModels fetches the upstream model list live using the account's own credentials,
+// and returns the model slug list actually available to this account. The account allowlist itself is read-only and not persisted; it is saved by the admin after confirmation;
+// however, models in the list that the registry does not yet know are learned into the registry along the way (add-only, never modified or deleted, same as the learning done when the client refreshes
+// the picker menu; same implementation). Otherwise a model such as Trusted Access for Cyber, which only some accounts have,
+// is visible to the probe, but after it is saved to the allowlist /v1/models does not list it and calls fail directly with model-not-found (issue #624).
 func (h *Handler) SyncAccountUpstreamModels(c *gin.Context) {
 	id, err := strconv.ParseInt(c.Param("id"), 10, 64)
 	if err != nil {
-		writeError(c, http.StatusBadRequest, "无效的账号 ID")
+		writeError(c, http.StatusBadRequest, "invalid account ID")
 		return
 	}
 	account := h.store.FindByID(id)
 	if account == nil {
-		writeError(c, http.StatusNotFound, "账号不在运行时池中")
+		writeError(c, http.StatusNotFound, "account is not in the runtime pool")
 		return
 	}
 	ctx, cancel := context.WithTimeout(c.Request.Context(), 20*time.Second)
@@ -3869,42 +3869,42 @@ func (h *Handler) SyncAccountUpstreamModels(c *gin.Context) {
 	daybreakSnapshot := account.BeginDaybreakObservation()
 	manifest, err := proxy.FetchCodexModelsManifest(ctx, account, h.store.ResolveProxyForAccount(account), "", "", nil)
 	if err != nil {
-		writeError(c, http.StatusBadGateway, fmt.Sprintf("拉取上游模型清单失败: %s", err.Error()))
+		writeError(c, http.StatusBadGateway, fmt.Sprintf("failed to fetch upstream model list: %s", err.Error()))
 		return
 	}
 	proxy.RecordResponsesLiteSupportFromManifest(manifest.Body)
 	if err := manifest.SaveCapabilities(ctx, h.db); err != nil {
-		writeError(c, http.StatusBadGateway, "保存 Codex 能力快照失败: "+err.Error())
+		writeError(c, http.StatusBadGateway, "failed to save Codex capability snapshot: "+err.Error())
 		return
 	}
 	if err := (proxy.DaybreakObservation{Account: account, Snapshot: daybreakSnapshot, Body: manifest.Body}).Save(ctx, h.db); err != nil {
-		writeError(c, http.StatusBadGateway, "保存 Daybreak 能力失败: "+err.Error())
+		writeError(c, http.StatusBadGateway, "failed to save Daybreak capability: "+err.Error())
 		return
 	}
 	models := auth.NormalizeAccountModels(proxy.ExtractManifestModelSlugs(manifest.Body))
 	if len(models) == 0 {
-		writeError(c, http.StatusBadGateway, "上游模型清单未返回可用模型")
+		writeError(c, http.StatusBadGateway, "upstream model list returned no available models")
 		return
 	}
-	// 学习失败只记日志，不影响本次探测结果的返回。
+	// A learning failure is only logged and does not affect the probe result being returned.
 	if added, learnErr := proxy.LearnModelsFromManifest(ctx, h.db, manifest.Body, time.Now().UTC()); learnErr != nil {
-		log.Printf("[账号 %d] 模型清单学习失败（不影响探测结果）: %v", id, learnErr)
+		log.Printf("[account %d] model list learning failed (probe result not affected): %v", id, learnErr)
 	} else if len(added) > 0 {
-		log.Printf("[账号 %d] 已从上游模型清单学习 %d 个新模型进注册表: %s", id, len(added), strings.Join(added, ", "))
+		log.Printf("[account %d] learned %d new models from the upstream model list into the registry: %s", id, len(added), strings.Join(added, ", "))
 	}
 	c.JSON(http.StatusOK, gin.H{"models": models})
 }
 
-// importToken 导入时的统一 token 载体
+// importToken is the unified token carrier used during import
 type importToken struct {
 	refreshToken          string
 	sessionToken          string
-	accessToken           string // AT-only 兼容路径
+	accessToken           string // AT-only compatibility path
 	name                  string
 	email                 string
 	idToken               string
 	accountID             string
-	chatgptAccountID      string // sub2api 等导出格式中的 ChatGPT 账号唯一标识，用于精确去重
+	chatgptAccountID      string // ChatGPT account unique identifier from export formats such as sub2api, used for precise dedup
 	planType              string
 	expiresAt             string
 	codex7DUsedPercent    string
@@ -3913,32 +3913,32 @@ type importToken struct {
 	codex5HResetAt        string
 	codex5HUsageUpdatedAt string
 	codexUsageUpdatedAt   string
-	// Agent Identity（auth_mode=agentIdentity）：无 RT/ST/AT，凭私钥动态签名。
+	// Agent Identity (auth_mode=agentIdentity): no RT/ST/AT; dynamically signed with a private key.
 	agentRuntimeID  string
 	agentPrivateKey string
 	agentTaskID     string
 	chatgptUserID   string
 	agentFedRAMP    bool
-	// proxyURL 是导入文件里携带的代理，仅在 import_proxy 打开时生效。
-	// 它绝不能进 importTokenSeed / 去重指纹：同一个账号换了代理仍然是同一个账号，
-	// 参与指纹会让它被当成两条独立记录导入两遍。
+	// proxyURL is the proxy carried in the import file; it only takes effect when import_proxy is enabled.
+	// It must never enter importTokenSeed or the dedup fingerprint: the same account with a different proxy is still the same account,
+	// including it in the fingerprint would import it twice as two separate records.
 	proxyURL     string
 	proxyLabel   string
 	proxyEnabled *bool
 }
 
-// importSettings 汇总一次导入请求的表单开关。这些开关要穿过"入口 → 4 个格式
-// 解析函数 → importAccountsCommon"三层，继续用位置参数堆叠会越加越长。
+// importSettings collects the form switches of one import request. These switches have to pass through three layers: the entry point → 4 format
+// parse functions → importAccountsCommon. Continuing to stack them as positional parameters would only get longer.
 type importSettings struct {
-	// defaultProxyURL 是表单里填的代理：文件没带代理、或没开 importProxies 时的兜底。
+	// defaultProxyURL is the proxy entered in the form: the fallback when the file carries no proxy or importProxies is not enabled.
 	defaultProxyURL string
-	// importProxies 打开后采用文件内携带的代理，并把它们注册进代理池。
+	// When importProxies is enabled, the proxies carried in the file are used and registered into the proxy pool.
 	importProxies  bool
 	allowDuplicate bool
 	customHeaders  map[string]string
 }
 
-// proxyForToken 返回该条目最终生效的代理：文件内代理优先，缺失时回落表单值。
+// proxyForToken returns the proxy that finally applies to this entry: the in-file proxy takes priority, falling back to the form value when missing.
 func (s importSettings) proxyForToken(t importToken) string {
 	if s.importProxies {
 		if fromFile := strings.TrimSpace(t.proxyURL); fromFile != "" {
@@ -3948,9 +3948,9 @@ func (s importSettings) proxyForToken(t importToken) string {
 	return strings.TrimSpace(s.defaultProxyURL)
 }
 
-// proxyOverwritePolicyForToken 决定 upsert 命中已有账号时怎么处理代理绑定。
-// 文件带来的代理是被动数据，不覆盖目标端已有的绑定（那里可能已经做过精细分配）；
-// 表单里填的代理是操作员的显式换绑意图，维持既有的覆盖语义。
+// proxyOverwritePolicyForToken decides how the proxy binding is handled when an upsert matches an existing account.
+// A proxy from the file is passive data and does not overwrite the binding already on the target side (it may already have been carefully allocated there);
+// a proxy entered in the form is the operator's explicit intent to rebind, so the existing overwrite semantics are kept.
 func (s importSettings) proxyOverwritePolicyForToken(t importToken) proxyOverwritePolicy {
 	if s.importProxies && strings.TrimSpace(t.proxyURL) != "" {
 		return preserveAccountProxy
@@ -3962,7 +3962,7 @@ func (t importToken) isAgentIdentity() bool {
 	return strings.TrimSpace(t.agentRuntimeID) != "" && strings.TrimSpace(t.agentPrivateKey) != ""
 }
 
-// jsonAgentIdentityNode 是 CLIProxyAPI/Sub2Api 导出里的 agent_identity 子对象。
+// jsonAgentIdentityNode is the agent_identity sub-object in CLIProxyAPI/Sub2Api exports.
 type jsonAgentIdentityNode struct {
 	AgentRuntimeID  string `json:"agent_runtime_id"`
 	AgentPrivateKey string `json:"agent_private_key"`
@@ -3974,13 +3974,13 @@ type jsonAgentIdentityNode struct {
 	FedRAMP         bool   `json:"chatgpt_account_is_fedramp"`
 }
 
-// agentIdentityNodeFromFlatCredentials 从平铺在 credentials 里的 Agent Identity 字段
-// 合成 agent_identity 节点：sub2api / codex2api 的账号导出把这些字段直接摊在
-// credentials 对象上（auth_mode=agentIdentity + agent_runtime_id…），不套
-// agent_identity 子对象。既有子对象则不必调用本函数。
+// agentIdentityNodeFromFlatCredentials synthesizes an agent_identity node from the Agent Identity fields flattened into credentials
+// (agent_identity node): the sub2api / codex2api account exports put these fields directly flat on
+// the credentials object (auth_mode=agentIdentity + agent_runtime_id…), without a wrapping
+// agent_identity sub-object. If the sub-object already exists, this function need not be called.
 func agentIdentityNodeFromFlatCredentials(authMode, runtimeID, privateKey, taskID, accountID, userID, email, planType string, fedramp bool) *jsonAgentIdentityNode {
 	runtimeID = strings.TrimSpace(runtimeID)
-	// 仅当 auth_mode 声明或带 runtime_id 时才认为是 Agent Identity 平铺形态。
+	// Only treat it as the flat Agent Identity form when auth_mode declares it or runtime_id is present.
 	if !strings.EqualFold(strings.TrimSpace(authMode), auth.CodexAuthModeAgentIdentity) && runtimeID == "" {
 		return nil
 	}
@@ -3999,7 +3999,7 @@ func agentIdentityNodeFromFlatCredentials(authMode, runtimeID, privateKey, taskI
 	}
 }
 
-// agentIdentityImportTokenFromNode 把 agent_identity 子对象转成 importToken（无有效字段时返回 ok=false）。
+// agentIdentityImportTokenFromNode converts an agent_identity sub-object into an importToken (returns ok=false when there are no valid fields).
 func agentIdentityImportTokenFromNode(node *jsonAgentIdentityNode, fallbackName string) (importToken, bool) {
 	if node == nil {
 		return importToken{}, false
@@ -4024,7 +4024,7 @@ func agentIdentityImportTokenFromNode(node *jsonAgentIdentityNode, fallbackName 
 	}, true
 }
 
-// jsonAccountEntry CLIProxyAPI 凭证 JSON 条目
+// jsonAccountEntry is a CLIProxyAPI credential JSON entry
 type jsonAccountEntry struct {
 	AuthMode              string                 `json:"auth_mode"`
 	AgentIdentity         *jsonAgentIdentityNode `json:"agent_identity"`
@@ -4081,15 +4081,15 @@ type sub2apiImportPayload struct {
 type sub2apiAccountEntry struct {
 	Name        string                    `json:"name"`
 	Credentials sub2apiAccountCredentials `json:"credentials"`
-	// 代理是账号属性而不是凭据，不同导出实现有的写在条目根上、有的塞进
-	// credentials，两处都收，根上的优先。
+	// A proxy is an account attribute, not a credential. Some export implementations write it on the entry root and others put it into
+	// credentials; both places are accepted, with the root taking precedence.
 	ProxyURL     string `json:"proxy_url"`
 	ProxyLabel   string `json:"proxy_label"`
 	ProxyEnabled *bool  `json:"proxy_enabled"`
 }
 
-// proxyFields 返回该条目最终采用的代理三件套：条目根优先，回退到 credentials。
-// URL 决定用哪一组，避免根上只写了 label 却把 URL 从 credentials 拿过来配错。
+// proxyFields returns the final proxy triple for this entry: the entry root takes priority, falling back to credentials.
+// The URL decides which group is used, to avoid pairing a label written on the root with a URL taken from credentials.
 func (a sub2apiAccountEntry) proxyFields() (string, string, *bool) {
 	if url := strings.TrimSpace(a.ProxyURL); url != "" {
 		return url, strings.TrimSpace(a.ProxyLabel), a.ProxyEnabled
@@ -4168,7 +4168,7 @@ func trimUTF8BOM(data []byte) []byte {
 	return bytes.TrimPrefix(data, utf8BOM)
 }
 
-// parseImportJSONTokens 同时兼容现有扁平 JSON 和 Sub2Api 顶层对象。
+// parseImportJSONTokens accepts both the existing flat JSON and the top-level Sub2Api object.
 func parseImportJSONTokens(data []byte) ([]importToken, error) {
 	data = trimUTF8BOM(data)
 	if !json.Valid(data) {
@@ -4186,25 +4186,25 @@ func parseImportJSONTokens(data []byte) ([]importToken, error) {
 	return nil, nil
 }
 
-// parseUploadedImportJSONFile 打开上传的 JSON 文件并流式解析,不把整个文件读进
-// 内存。multipart 大文件(>32MB)由 ParseMultipartForm 落在临时文件,fh.Open()
-// 返回的 reader 直接喂给流式解析器。
+// parseUploadedImportJSONFile opens the uploaded JSON file and parses it as a stream, without reading the whole file into
+// memory. Large multipart files (>32MB) are stored in a temp file by ParseMultipartForm, and fh.Open()
+// returns a reader that is fed straight into the streaming parser.
 func parseUploadedImportJSONFile(fh *multipart.FileHeader) ([]importToken, error) {
 	f, err := fh.Open()
 	if err != nil {
-		return nil, fmt.Errorf("打开文件 %s 失败", fh.Filename)
+		return nil, fmt.Errorf("failed to open file %s", fh.Filename)
 	}
 	defer f.Close()
 	return parseImportJSONTokensStream(f)
 }
 
-// parseImportJSONTokensStream 流式解析导入 JSON,避免把整个文件(可达 200MB)
-// 一次性读进内存 + 整体 Unmarshal。逐个数组元素解码,内存峰值降到单条账号量级。
-// 覆盖三种形态:顶层数组 [ {...} ]、sub2api 顶层对象 { "accounts": [ {...} ] }、
-// 单个平铺对象 { ... };无法流式判定时回退到全量 parseImportJSONTokens。
+// parseImportJSONTokensStream parses the import JSON as a stream, to avoid loading the whole file (up to 200MB)
+// into memory and unmarshalling it at once. Array elements are decoded one by one, so peak memory drops to the size of a single account.
+// It covers three shapes: a top-level array [ {...} ], a sub2api top-level object { "accounts": [ {...} ] },
+// and a single flat object { ... }; when the shape cannot be determined while streaming, it falls back to the full parseImportJSONTokens.
 func parseImportJSONTokensStream(r io.Reader) ([]importToken, error) {
-	// json.Decoder 不剥 UTF-8 BOM,而部分导出文件带 BOM(与全量路径的
-	// trimUTF8BOM 对齐):peek 前 3 字节,是 BOM 就丢弃。
+	// json.Decoder does not strip the UTF-8 BOM, and some export files carry a BOM (aligned with the full-path
+	// trimUTF8BOM handling): peek the first 3 bytes and discard them if they are a BOM.
 	br := bufio.NewReader(r)
 	if prefix, err := br.Peek(3); err == nil && prefix[0] == 0xef && prefix[1] == 0xbb && prefix[2] == 0xbf {
 		_, _ = br.Discard(3)
@@ -4221,7 +4221,7 @@ func parseImportJSONTokensStream(r io.Reader) ([]importToken, error) {
 
 	switch delim {
 	case '[':
-		// 顶层数组:逐个 jsonAccountEntry 解码。
+		// Top-level array: decode jsonAccountEntry one by one.
 		var tokens []importToken
 		for dec.More() {
 			var entry jsonAccountEntry
@@ -4233,9 +4233,9 @@ func parseImportJSONTokensStream(r io.Reader) ([]importToken, error) {
 		return tokens, nil
 
 	case '{':
-		// 顶层对象:可能是 sub2api {accounts:[...]} 或单个平铺账号对象。
-		// 遍历顶层字段,accounts 数组逐元素流式解码;其余字段(通常很小)收集
-		// 成 RawMessage,遍历完若未见 accounts 则按单个平铺对象重建解析。
+		// Top-level object: either a sub2api {accounts:[...]} or a single flat account object.
+		// Walk the top-level fields; the accounts array is stream-decoded element by element, and the other fields (usually small) are collected
+		// as RawMessage; if accounts is not seen after the walk, rebuild and parse them as a single flat object.
 		var tokens []importToken
 		sawAccounts := false
 		other := map[string]json.RawMessage{}
@@ -4275,8 +4275,8 @@ func parseImportJSONTokensStream(r io.Reader) ([]importToken, error) {
 		if sawAccounts {
 			return tokens, nil
 		}
-		// 没有 accounts 字段:这是单个平铺账号对象,用收集到的字段重建后按
-		// 平铺形态解析(单对象很小,无内存压力)。
+		// No accounts field: this is a single flat account object; rebuild it from the collected fields and then
+		// parse it as the flat form (a single object is small, so there is no memory pressure).
 		objBytes, err := json.Marshal(other)
 		if err != nil {
 			return nil, fmt.Errorf("invalid import json")
@@ -4314,8 +4314,8 @@ func jsonAccountEntriesToTokens(entries []jsonAccountEntry) []importToken {
 		accID := firstNonEmpty(entry.AccountID, entry.User.ID, entry.Account.ID)
 		expiresAt := firstNonEmpty(entry.ExpiresAt.String(), entry.Expired.String(), entry.Expires.String())
 
-		// Agent Identity 条目：无 RT/ST/AT，单独识别。子对象缺失时回退到
-		// 平铺在条目根上的 Agent Identity 字段（sub2api / codex2api 导出形态）。
+		// Agent Identity entry: no RT/ST/AT, recognized separately. When the sub-object is missing, fall back to
+		// the Agent Identity fields flattened on the entry root (the sub2api / codex2api export form).
 		agentNode := entry.AgentIdentity
 		if agentNode == nil {
 			agentNode = agentIdentityNodeFromFlatCredentials(entry.AuthMode, entry.AgentRuntimeID, entry.AgentPrivateKey, entry.AgentTaskID, accID, entry.ChatGPTUserID, email, planType, entry.AgentFedRAMP)
@@ -4368,8 +4368,8 @@ func parseSub2APIJSONImportTokens(data []byte) []importToken {
 	return tokens
 }
 
-// sub2apiAccountEntryToTokens 把单个 sub2api 账号条目转换成 importToken(0 或 1 个)。
-// 从 parseSub2APIJSONImportTokens 抽出,供流式解析逐元素复用,避免两份逻辑漂移。
+// sub2apiAccountEntryToTokens converts a single sub2api account entry into importTokens (0 or 1).
+// Extracted from parseSub2APIJSONImportTokens so the streaming parser can reuse it per element, avoiding two copies of the logic drifting apart.
 func sub2apiAccountEntryToTokens(account sub2apiAccountEntry) []importToken {
 	var tokens []importToken
 	{
@@ -4389,8 +4389,8 @@ func sub2apiAccountEntryToTokens(account sub2apiAccountEntry) []importToken {
 		expiresAt := firstNonEmpty(c.ExpiresAt.String(), c.Expired.String(), c.Expires.String())
 		proxyURL, proxyLabel, proxyEnabled := account.proxyFields()
 
-		// Agent Identity 条目：无 RT/ST/AT，单独识别。子对象缺失时回退到
-		// 平铺在 credentials 里的 Agent Identity 字段（sub2api 导出形态）。
+		// Agent Identity entry: no RT/ST/AT, recognized separately. When the sub-object is missing, fall back to
+		// the Agent Identity fields flattened into credentials (the sub2api export form).
 		agentNode := c.AgentIdentity
 		if agentNode == nil {
 			agentNode = agentIdentityNodeFromFlatCredentials(c.AuthMode, c.AgentRuntimeID, c.AgentPrivateKey, c.AgentTaskID, accID, c.ChatGPTUserID, email, planType, c.AgentFedRAMP)
@@ -4541,7 +4541,7 @@ func importTokenOAuthIdentityKey(t importToken, conflicts map[string]bool) strin
 	return email + "\x00" + workspaceID
 }
 
-// ImportAccounts 批量导入账号（支持 TXT / JSON）
+// ImportAccounts batch-imports accounts (TXT / JSON supported)
 func (h *Handler) ImportAccounts(c *gin.Context) {
 	format := c.DefaultPostForm("format", "txt")
 	customHeaders, err := parseCustomHeadersForm(c.PostForm("custom_headers"))
@@ -4551,13 +4551,13 @@ func (h *Handler) ImportAccounts(c *gin.Context) {
 	}
 	settings := importSettings{
 		defaultProxyURL: c.PostForm("proxy_url"),
-		// TXT 系格式一行一个 token，物理上不可能携带代理。这里忽略开关而不是
-		// 报错，免得前端还要跟着格式切换清理该状态。
+		// TXT-style formats have one token per line and physically cannot carry a proxy. Here the switch is ignored rather than
+		// raising an error, so the frontend does not have to clear that state whenever the format changes.
 		importProxies:  parseBoolForm(c.PostForm("import_proxy")) && (format == "json" || format == "json_at"),
 		allowDuplicate: parseBoolForm(c.PostForm("allow_duplicate")),
 		customHeaders:  customHeaders,
 	}
-	// 分组校验放在解析文件之前：分组 ID 打错时一个账号都不该被导入。
+	// Group validation runs before the file is parsed: if a group ID is wrong, no account should be imported.
 	groupCtx, groupCancel := context.WithTimeout(c.Request.Context(), 5*time.Second)
 	groupIDs, err := h.resolveImportGroupIDsForm(groupCtx, c.PostForm(importGroupIDsField))
 	groupCancel()
@@ -4579,7 +4579,7 @@ func (h *Handler) ImportAccounts(c *gin.Context) {
 	}
 }
 
-// parseBoolForm 解析表单中的布尔开关（1/true/yes/on 视为真）。
+// parseBoolForm parses a boolean switch in the form (1/true/yes/on count as true).
 func parseBoolForm(v string) bool {
 	switch strings.ToLower(strings.TrimSpace(v)) {
 	case "1", "true", "yes", "y", "on":
@@ -4596,7 +4596,7 @@ func parseCustomHeadersForm(raw string) (map[string]string, error) {
 	}
 	var headers map[string]string
 	if err := json.Unmarshal([]byte(trimmed), &headers); err != nil {
-		return nil, fmt.Errorf("custom_headers 必须是 JSON 对象")
+		return nil, fmt.Errorf("custom_headers must be a JSON object")
 	}
 	return normalizeCustomHeaders(headers)
 }
@@ -4608,7 +4608,7 @@ type uploadedImportFile struct {
 
 func readUploadedImportFiles(c *gin.Context) ([]uploadedImportFile, error) {
 	if err := c.Request.ParseMultipartForm(32 << 20); err != nil {
-		return nil, fmt.Errorf("解析表单失败")
+		return nil, fmt.Errorf("failed to parse form")
 	}
 
 	files := c.Request.MultipartForm.File["file"]
@@ -4624,15 +4624,15 @@ func readUploadedImportFiles(c *gin.Context) ([]uploadedImportFile, error) {
 
 		f, err := fh.Open()
 		if err != nil {
-			return nil, fmt.Errorf("打开文件 %s 失败", fh.Filename)
+			return nil, fmt.Errorf("failed to open file %s", fh.Filename)
 		}
 		data, readErr := io.ReadAll(f)
 		closeErr := f.Close()
 		if readErr != nil {
-			return nil, fmt.Errorf("读取文件 %s 失败", fh.Filename)
+			return nil, fmt.Errorf("failed to read file %s", fh.Filename)
 		}
 		if closeErr != nil {
-			return nil, fmt.Errorf("关闭文件 %s 失败", fh.Filename)
+			return nil, fmt.Errorf("failed to close file %s", fh.Filename)
 		}
 
 		result = append(result, uploadedImportFile{name: fh.Filename, data: data})
@@ -4656,7 +4656,7 @@ func importTokensFromTextFiles(files []uploadedImportFile, makeToken func(string
 	return tokens
 }
 
-// importAccountsTXT 通过 TXT 文件导入（每行一个 RT）
+// importAccountsTXT imports from a TXT file (one RT per line)
 func (h *Handler) importAccountsTXT(c *gin.Context, settings importSettings) {
 	files, err := readUploadedImportFiles(c)
 	if err != nil {
@@ -4668,23 +4668,23 @@ func (h *Handler) importAccountsTXT(c *gin.Context, settings importSettings) {
 		return importToken{refreshToken: token}
 	})
 	if len(tokens) == 0 {
-		writeError(c, http.StatusBadRequest, "文件中未找到有效的 Refresh Token")
+		writeError(c, http.StatusBadRequest, "no valid Refresh Token found in file")
 		return
 	}
 
 	h.importAccountsCommon(c, tokens, settings)
 }
 
-// importAccountsJSON 通过 JSON 文件导入（兼容 CLIProxyAPI 凭证格式）
+// importAccountsJSON imports from JSON files (compatible with the CLIProxyAPI credential format)
 func (h *Handler) importAccountsJSON(c *gin.Context, settings importSettings) {
 	if err := c.Request.ParseMultipartForm(32 << 20); err != nil {
-		writeError(c, http.StatusBadRequest, "解析表单失败")
+		writeError(c, http.StatusBadRequest, "failed to parse form")
 		return
 	}
 
 	files := c.Request.MultipartForm.File["file"]
 	if len(files) == 0 {
-		writeError(c, http.StatusBadRequest, "请上传至少一个 JSON 文件")
+		writeError(c, http.StatusBadRequest, "please upload at least one JSON file")
 		return
 	}
 
@@ -4698,7 +4698,7 @@ func (h *Handler) importAccountsJSON(c *gin.Context, settings importSettings) {
 
 		tokens, err := parseUploadedImportJSONFile(fh)
 		if err != nil {
-			writeError(c, http.StatusBadRequest, fmt.Sprintf("文件 %s 不是有效的 JSON 格式", fh.Filename))
+			writeError(c, http.StatusBadRequest, fmt.Sprintf("file %s is not valid JSON", fh.Filename))
 			return
 		}
 
@@ -4706,24 +4706,24 @@ func (h *Handler) importAccountsJSON(c *gin.Context, settings importSettings) {
 	}
 
 	if len(allTokens) == 0 {
-		writeError(c, http.StatusBadRequest, "JSON 文件中未找到有效的 refresh_token 或 access_token")
+		writeError(c, http.StatusBadRequest, "no valid refresh_token or access_token found in JSON file")
 		return
 	}
 
 	h.importAccountsCommon(c, allTokens, settings)
 }
 
-// importAccountsJSONPreferAT 通过 JSON 文件导入，但只信任 access_token，
-// 用于一些导出工具中 refresh_token / session_token 是占位/重复值的场景。
+// importAccountsJSONPreferAT imports from JSON files but only trusts access_token,
+// for cases where refresh_token / session_token in some export tools are placeholder or duplicate values.
 func (h *Handler) importAccountsJSONPreferAT(c *gin.Context, settings importSettings) {
 	if err := c.Request.ParseMultipartForm(32 << 20); err != nil {
-		writeError(c, http.StatusBadRequest, "解析表单失败")
+		writeError(c, http.StatusBadRequest, "failed to parse form")
 		return
 	}
 
 	files := c.Request.MultipartForm.File["file"]
 	if len(files) == 0 {
-		writeError(c, http.StatusBadRequest, "请上传至少一个 JSON 文件")
+		writeError(c, http.StatusBadRequest, "please upload at least one JSON file")
 		return
 	}
 
@@ -4737,7 +4737,7 @@ func (h *Handler) importAccountsJSONPreferAT(c *gin.Context, settings importSett
 
 		tokens, err := parseUploadedImportJSONFile(fh)
 		if err != nil {
-			writeError(c, http.StatusBadRequest, fmt.Sprintf("文件 %s 不是有效的 JSON 格式", fh.Filename))
+			writeError(c, http.StatusBadRequest, fmt.Sprintf("file %s is not valid JSON", fh.Filename))
 			return
 		}
 
@@ -4752,14 +4752,14 @@ func (h *Handler) importAccountsJSONPreferAT(c *gin.Context, settings importSett
 	}
 
 	if len(allTokens) == 0 {
-		writeError(c, http.StatusBadRequest, "JSON 文件中未找到有效的 access_token")
+		writeError(c, http.StatusBadRequest, "no valid access_token found in JSON file")
 		return
 	}
 
 	h.importAccountsCommon(c, allTokens, settings)
 }
 
-// importEvent SSE 导入进度事件
+// importEvent is an SSE import progress event
 type importEvent struct {
 	Type      string `json:"type"` // progress | complete
 	Current   int    `json:"current"`
@@ -4768,33 +4768,33 @@ type importEvent struct {
 	Updated   int    `json:"updated"`
 	Duplicate int    `json:"duplicate"`
 	Failed    int    `json:"failed"`
-	// Warning 用于「账号已入库、但收尾动作出了问题」这类必须告知却不该当成失败的情况，
-	// 例如导入成功但分组绑定失败。空值时序列化省略，老前端不受影响。
+	// Warning is for cases like "the account was stored, but a follow-up step failed": they must be reported but should not be treated as a failure,
+	// for example, the import succeeded but group binding failed. An empty value is omitted when serialized, so older frontends are not affected.
 	Warning string `json:"warning,omitempty"`
-	// CreatedIDs 只在 complete 事件下发，供前端拉取本次导入账号的邀请收益评估。
-	// 空值时省略，老前端不受影响。
+	// CreatedIDs is only sent with the complete event, so the frontend can fetch the invite-earnings evaluation for the accounts imported this time.
+	// Omitted when empty, so older frontends are not affected.
 	CreatedIDs []int64 `json:"created_ids,omitempty"`
-	// 代理注册结果，只在开启"导入文件内代理"时非零。同样 omitempty。
+	// Proxy registration result, non-zero only when "proxies in the import file" is enabled. Also omitempty.
 	ProxiesImported int `json:"proxies_imported,omitempty"`
 	ProxiesSkipped  int `json:"proxies_skipped,omitempty"`
 }
 
-// sendImportEvent 推送一条导入进度事件；返回 false 表示下游连接已经写不进去了。
+// sendImportEvent pushes one import progress event; it returns false when the downstream connection can no longer be written to.
 func sendImportEvent(c *gin.Context, e importEvent) bool {
 	return sendSSEJSON(c, e)
 }
 
-// importProgressInterval 是导入进度事件的推送间隔。
+// importProgressInterval is the push interval for import progress events.
 const importProgressInterval = 200 * time.Millisecond
 
-// runImportProgressPusher 按固定间隔推送导入进度，返回一个在推送协程退出后关闭的
-// channel。三种情况会停：导入结束（done 关闭）、下游断开（reqCtx 取消）、或者写
-// 失败。后两种必须停——导入本身还要继续跑完，但连接已经死了，继续写只会每个
-// 间隔刷一条 broken pipe 日志直到导入结束。
+// runImportProgressPusher pushes import progress at a fixed interval and returns a channel that is closed once the push goroutine exits.
+// It stops in three cases: the import finishes (done is closed), the downstream disconnects (reqCtx is cancelled), or a write
+// fails. The last two must stop: the import itself keeps running to the end, but the connection is already dead, and continuing to write would log a broken pipe every
+// interval until the import ends.
 //
-// 调用方在 close(done) 之后必须等返回的 channel 关闭再写收尾事件：gin 的
-// ResponseWriter 不支持并发写，两边同时写会让事件交错，前端解析不到 complete，
-// 进度条永远停在最后一个百分比。
+// The caller must wait for the returned channel to close after close(done) before writing the final event: gin's
+// ResponseWriter does not support concurrent writes; writing from both sides would interleave events, the frontend would fail to parse complete,
+// and the progress bar would stay stuck at the last percentage.
 func runImportProgressPusher(reqCtx context.Context, done <-chan struct{}, interval time.Duration, snapshot func() importEvent, send func(importEvent) bool) <-chan struct{} {
 	stopped := make(chan struct{})
 	var clientGone <-chan struct{}
@@ -4832,40 +4832,40 @@ func setupSSE(c *gin.Context) {
 func sendSSEJSON(c *gin.Context, event any) bool {
 	data, err := json.Marshal(event)
 	if err != nil {
-		log.Printf("序列化 SSE 事件失败: %v", err)
+		log.Printf("failed to marshal SSE event: %v", err)
 		return false
 	}
 	if _, err := fmt.Fprintf(c.Writer, "data: %s\n\n", data); err != nil {
-		log.Printf("写入 SSE 事件失败: %v", err)
+		log.Printf("failed to write SSE event: %v", err)
 		return false
 	}
 	c.Writer.Flush()
 	return true
 }
 
-// importAccountsCommon 公共的去重、并发插入、SSE 进度推送逻辑（支持 RT 和 AT-only 混合导入）
+// importAccountsCommon is the shared dedup, concurrent insert and SSE progress push logic (supports mixed RT and AT-only imports)
 func (h *Handler) importAccountsCommon(c *gin.Context, tokens []importToken, settings importSettings) {
 	importCustomHeaders := settings.customHeaders
 	allowDuplicate := settings.allowDuplicate
 
-	// 代理注册必须跑在任何账号入库之前——包括下面的 Agent Identity 分支。
-	// registerImportedProxies 会原地规范化 tokens 上的代理 URL，失败则整次导入
-	// 中止：继续写只会产出一批绑着未入池代理、因而不可调度的账号。
-	// 这里还没进 SSE（setupSSE 在去重之后），可以正常返回 HTTP 错误。
+	// Proxy registration must run before any account is stored, including the Agent Identity branch below.
+	// registerImportedProxies normalizes the proxy URLs on tokens in place; if it fails, the whole import
+	// is aborted: continuing to write would only produce a batch of accounts bound to proxies that are not in the pool, and therefore not schedulable.
+	// SSE has not started here (setupSSE runs after dedup), so a normal HTTP error can be returned.
 	var proxyOutcome importProxyOutcome
 	if settings.importProxies {
 		proxyCtx, proxyCancel := context.WithTimeout(context.Background(), 15*time.Second)
 		outcome, err := h.registerImportedProxies(proxyCtx, tokens)
 		proxyCancel()
 		if err != nil {
-			writeError(c, http.StatusInternalServerError, "导入代理失败，未写入任何账号: "+err.Error())
+			writeError(c, http.StatusInternalServerError, "failed to import proxies, no accounts were written: "+err.Error())
 			return
 		}
 		proxyOutcome = outcome
 	}
 
-	// Agent Identity 条目单独处理（无 RT/ST/AT，按 runtime_id 去重、动态签名），
-	// 从常规 token 流里拆出，计数在收尾时并入总响应。
+	// Agent Identity entries are handled separately (no RT/ST/AT, deduplicated by runtime_id, dynamically signed),
+	// split out of the regular token stream; their counts are merged into the total response at the end.
 	var agentTokens, regularTokens []importToken
 	for _, t := range tokens {
 		if t.isAgentIdentity() {
@@ -4880,15 +4880,15 @@ func (h *Handler) importAccountsCommon(c *gin.Context, tokens []importToken, set
 		agentCtx, agentCancel := context.WithTimeout(context.Background(), 30*time.Second)
 		agentSuccess, agentDuplicate, agentFailed, agentCreatedIDs = h.importAgentIdentityTokens(agentCtx, agentTokens, settings)
 		agentCancel()
-		log.Printf("导入: Agent Identity 条目 %d 个（新增 %d，跳过 %d，失败 %d）", len(agentTokens), agentSuccess, agentDuplicate, agentFailed)
+		log.Printf("import: %d Agent Identity entries (added %d, skipped %d, failed %d)", len(agentTokens), agentSuccess, agentDuplicate, agentFailed)
 	}
 	tokens = regularTokens
-	// 文件内去重：
-	// 1) 当 JWT 可解析出 email + workspace_id 时，以它作为 OAuth 身份键；
-	//    同身份同 RT/ST/AT 折叠，同身份不同 RT/ST/AT 整组跳过，避免任选一个覆盖。
-	// 2) 没有 OAuth 身份时，退回到 RT / ST / AT 顺序去重（兼容旧导出格式）。
-	// 3) 同一份文件内若出现"同一个 RT 对应多个不同 chatgpt_account_id"，
-	//    会被全部保留为独立账号；数据库层面 refresh_token 没有 UNIQUE 约束，因此安全。
+	// Dedup within the file:
+	// 1) When email + workspace_id can be parsed from the JWT, use them as the OAuth identity key;
+	//    the same identity with the same RT/ST/AT is collapsed; the same identity with different RT/ST/AT is skipped as a whole group, to avoid arbitrarily picking one to overwrite.
+	// 2) Without an OAuth identity, fall back to deduplicating by RT / ST / AT in that order (compatible with older export formats).
+	// 3) If the same file contains "one RT mapped to several different chatgpt_account_id values",
+	//    they are all kept as independent accounts; refresh_token has no UNIQUE constraint at the database level, so this is safe.
 	conflictingChatGPTIDs := conflictingImportChatGPTIDs(tokens)
 	type oauthIdentityImportState struct {
 		count        int
@@ -4969,7 +4969,7 @@ func (h *Handler) importAccountsCommon(c *gin.Context, tokens []importToken, set
 		}
 	}
 
-	// 数据库去重（独立短超时）
+	// Database dedup (separate short timeout)
 	dedupeCtx, dedupeCancel := context.WithTimeout(context.Background(), 10*time.Second)
 	defer dedupeCancel()
 
@@ -4977,15 +4977,15 @@ func (h *Handler) importAccountsCommon(c *gin.Context, tokens []importToken, set
 	if fileDuplicateCount < 0 {
 		fileDuplicateCount = 0
 	}
-	log.Printf("导入解析: 文件内 %d 条, 去重后 %d 条（%d 条文件内重复，%d 条 OAuth 身份冲突跳过）", len(tokens), len(unique), fileDuplicateCount, ambiguousOAuthIdentityCount)
+	log.Printf("import parse: %d entries in file, %d after dedup (%d duplicates within file, %d skipped due to OAuth identity conflicts)", len(tokens), len(unique), fileDuplicateCount, ambiguousOAuthIdentityCount)
 
 	var newTokens []importToken
 	duplicateCount := ambiguousOAuthIdentityCount
 
-	// 命中「凭证一字不差的已有账号」时：账号状态正常计 duplicate 跳过；正挂在
-	// error / 401 unauthorized 态的进复活队列，稍后与新账号一起处理并计入
-	// "更新"——用户把同一份凭证再导一遍，就是在要求把这个号捞回来（issue #618）。
-	// 队列在去重阶段只读状态、不写库，复活动作放到后面的并发闸里执行。
+	// When it matches an existing account whose credentials are identical word for word: an account in normal state is counted as a duplicate and skipped; one stuck in
+	// error / 401 unauthorized state goes into the revival queue, is processed later together with new accounts, and is counted as
+	// "updated": re-importing the same credentials is a request to bring this account back (issue #618).
+	// The queue only reads state during dedup and does not write to the database; the revival action runs later behind the concurrency gate.
 	var reviveRows []*database.AccountRow
 	queuedReviveIDs := make(map[int64]bool)
 	queueDuplicate := func(row *database.AccountRow) {
@@ -5014,11 +5014,11 @@ func (h *Handler) importAccountsCommon(c *gin.Context, tokens []importToken, set
 				seed := importTokenSeed(t, conflictingChatGPTIDs)
 				seed.customHeaders = cloneCustomHeaders(importCustomHeaders)
 				if duplicateID, err := h.findOAuthIdentityDuplicate(dedupeCtx, seed, 0); err != nil {
-					log.Printf("查询已有 OAuth 身份失败: %v", err)
+					log.Printf("failed to query existing OAuth identity: %v", err)
 				} else if duplicateID > 0 {
 					row, err := h.db.GetAccountByID(dedupeCtx, duplicateID)
 					if err != nil {
-						log.Printf("查询已有 OAuth 账号 %d 失败: %v", duplicateID, err)
+						log.Printf("failed to query existing OAuth account %d: %v", duplicateID, err)
 					} else if importAccountCredentialFingerprint(row) == importTokenCredentialFingerprint(t, conflictingChatGPTIDs) {
 						queueDuplicate(row)
 						continue
@@ -5029,10 +5029,10 @@ func (h *Handler) importAccountsCommon(c *gin.Context, tokens []importToken, set
 		}
 		duplicateCount += knownCount - knownUniqueCount - ambiguousOAuthIdentityCount
 	} else {
-		// 路由键 → 持有者账号 ID；本批次新占的键记 0（无持有者，只用于批内去重）。
+		// Routing key → owner account ID; keys newly claimed in this batch are recorded as 0 (no owner, used only for in-batch dedup).
 		existingCredentialRoutes, err := h.existingCredentialWorkspaceRouteOwners(dedupeCtx)
 		if err != nil {
-			log.Printf("查询已有凭证工作区路由失败: %v", err)
+			log.Printf("failed to query existing credential workspace route: %v", err)
 			existingCredentialRoutes = make(map[string]int64)
 		}
 
@@ -5041,11 +5041,11 @@ func (h *Handler) importAccountsCommon(c *gin.Context, tokens []importToken, set
 			seed.customHeaders = cloneCustomHeaders(importCustomHeaders)
 			if seed.email != "" && effectiveWorkspaceIDFromSeed(seed) != "" {
 				if duplicateID, err := h.findOAuthIdentityDuplicate(dedupeCtx, seed, 0); err != nil {
-					log.Printf("查询已有 OAuth 身份失败: %v", err)
+					log.Printf("failed to query existing OAuth identity: %v", err)
 				} else if duplicateID > 0 {
 					row, err := h.db.GetAccountByID(dedupeCtx, duplicateID)
 					if err != nil {
-						log.Printf("查询已有 OAuth 账号 %d 失败: %v", duplicateID, err)
+						log.Printf("failed to query existing OAuth account %d: %v", duplicateID, err)
 					} else if importAccountCredentialFingerprint(row) == importTokenCredentialFingerprint(t, conflictingChatGPTIDs) {
 						queueDuplicate(row)
 						continue
@@ -5069,7 +5069,7 @@ func (h *Handler) importAccountsCommon(c *gin.Context, tokens []importToken, set
 				var ownerRow *database.AccountRow
 				if ownerID > 0 {
 					if row, err := h.db.GetAccountByID(dedupeCtx, ownerID); err != nil {
-						log.Printf("查询已有凭证账号 %d 失败: %v", ownerID, err)
+						log.Printf("failed to query existing credential account %d: %v", ownerID, err)
 					} else {
 						ownerRow = row
 					}
@@ -5090,15 +5090,15 @@ func (h *Handler) importAccountsCommon(c *gin.Context, tokens []importToken, set
 	}
 	duplicateCount += agentDuplicate
 
-	log.Printf("导入去重: 总计 %d 条, 数据库已存在 %d 条, 待复活 %d 条, 待导入 %d 条", total, duplicateCount, len(reviveRows), len(newTokens))
+	log.Printf("import dedup: total %d, already in database %d, pending revival %d, pending import %d", total, duplicateCount, len(reviveRows), len(newTokens))
 
 	if len(newTokens) == 0 && len(reviveRows) == 0 {
-		// 无常规 token 待导入（可能是纯 Agent Identity 文件）；反映 agent 计数。
+		// No regular tokens to import (possibly a pure Agent Identity file); reflects the agent counts.
 		if err := h.bindImportedAccountGroups(c.Request.Context(), agentCreatedIDs, importGroupIDsFromContext(c)); err != nil {
-			log.Printf("导入: Agent Identity 账号分组绑定失败: %v", err)
+			log.Printf("import: Agent Identity account group binding failed: %v", err)
 		}
 		response := gin.H{
-			"message":   fmt.Sprintf("导入完成：新增 %d 个，跳过 %d 个，失败 %d 个", agentSuccess, duplicateCount, agentFailed),
+			"message":   fmt.Sprintf("import complete: %d added, %d skipped, %d failed", agentSuccess, duplicateCount, agentFailed),
 			"success":   agentSuccess,
 			"duplicate": duplicateCount,
 			"failed":    agentFailed,
@@ -5115,14 +5115,14 @@ func (h *Handler) importAccountsCommon(c *gin.Context, tokens []importToken, set
 		return
 	}
 
-	// 切换到 SSE 流式响应
+	// Switch to an SSE streaming response
 	setupSSE(c)
 
 	var successCount int64
 	var updatedCount int64
 	var failCount int64
 	var current int64
-	// 本次真正新建的账号，收尾时统一绑分组（命中已有账号的分组不动）。
+	// Accounts actually created this time are bound to groups in one go at the end (groups of matched existing accounts are left unchanged).
 	createdIDs := &importedAccountIDs{}
 	createdATIDs := &importedAccountIDs{}
 	createdRTIDs := &importedAccountIDs{}
@@ -5140,12 +5140,12 @@ func (h *Handler) importAccountsCommon(c *gin.Context, tokens []importToken, set
 		pendingRuntime = append(pendingRuntime, pendingRuntimeAccount{account: account, source: source})
 		pendingMu.Unlock()
 	}
-	// 写库并发根据近一分钟代理流量与连接池压力动态调整。生产者在启动 goroutine
-	// 前先拿 permit，因此无论目标并发如何变化，都不会堆积等待中的 goroutine。
+	// Database write concurrency is adjusted dynamically based on proxy traffic over the last minute and connection pool pressure. The producer acquires a permit
+	// before starting a goroutine, so waiting goroutines never pile up no matter how the target concurrency changes.
 	dbLimiter := &adaptiveImportDBLimiter{handler: h}
 	var wg sync.WaitGroup
 
-	// 进度推送 goroutine：定时发送，避免每条都写造成 IO 瓶颈。
+	// Progress push goroutine: sends on a timer, to avoid an IO bottleneck from writing on every entry.
 	done := make(chan struct{})
 	progressStopped := runImportProgressPusher(
 		c.Request.Context(), done, importProgressInterval,
@@ -5163,9 +5163,9 @@ func (h *Handler) importAccountsCommon(c *gin.Context, tokens []importToken, set
 		func(e importEvent) bool { return sendImportEvent(c, e) },
 	)
 
-	// 复活队列：凭证一字不差、但旧账号正挂在 error / 401 态的重复条目。走同一个
-	// 写库并发闸，复活成功计入"更新"，状态已被别的流程清掉则退回"重复"。
-	// duplicateCount 被进度推送 goroutine 并发读取，这里只能改原子计数。
+	// Revival queue: duplicate entries whose credentials are identical word for word but whose old account is stuck in error / 401 state. They go through the same
+	// write concurrency gate; a successful revival counts as "updated", and if another flow has already cleared the state, it falls back to "duplicate".
+	// duplicateCount is read concurrently by the progress push goroutine, so it can only be changed through an atomic counter here.
 	var revivedAsDuplicate int64
 	for _, row := range reviveRows {
 		if !dbLimiter.acquire(context.Background()) {
@@ -5196,8 +5196,8 @@ func (h *Handler) importAccountsCommon(c *gin.Context, tokens []importToken, set
 			defer dbLimiter.release()
 
 			name := tok.name
-			// 文件内代理优先、表单代理兜底；registerImportedProxies 已经把非法值
-			// 清空，所以这里拿到的一定是校验过的 URL。
+			// The in-file proxy takes priority and the form proxy is the fallback; registerImportedProxies has already cleared invalid values
+			// so the URL obtained here is always a validated one.
 			proxyURL := settings.proxyForToken(tok)
 
 			seed := importTokenSeed(tok, conflictingChatGPTIDs)
@@ -5220,14 +5220,14 @@ func (h *Handler) importAccountsCommon(c *gin.Context, tokens []importToken, set
 				id, updated, newAcc, err := h.upsertOAuthIdentityAccountDeferred(upsertCtx, name, proxyURL, seed, importSource, settings.proxyOverwritePolicyForToken(tok))
 				upsertCancel()
 				if err != nil {
-					log.Printf("导入账号 %d/%d 更新或写入失败: %v", idx+1, len(newTokens), err)
+					log.Printf("failed to update or write imported account %d/%d: %v", idx+1, len(newTokens), err)
 					atomic.AddInt64(&failCount, 1)
 					atomic.AddInt64(&current, 1)
 					return
 				}
 
 				if updated {
-					// 已有账号只更新凭证，不计入"新增"，分组也保持原样。
+					// An existing account only has its credentials updated; it is not counted as "added", and its groups stay as they are.
 					atomic.AddInt64(&updatedCount, 1)
 					if h.store != nil {
 						if acc := h.store.FindByID(id); acc != nil {
@@ -5254,7 +5254,7 @@ func (h *Handler) importAccountsCommon(c *gin.Context, tokens []importToken, set
 			}
 
 			if tok.accessToken != "" && tok.refreshToken == "" {
-				// AT-only 导入路径
+				// AT-only import path
 				if name == "" {
 					name = fmt.Sprintf("at-import-%d", idx+1)
 				}
@@ -5264,7 +5264,7 @@ func (h *Handler) importAccountsCommon(c *gin.Context, tokens []importToken, set
 				insertCancel()
 
 				if err != nil {
-					log.Printf("导入 AT 账号 %d/%d 失败: %v", idx+1, len(newTokens), err)
+					log.Printf("failed to import AT account %d/%d: %v", idx+1, len(newTokens), err)
 					atomic.AddInt64(&failCount, 1)
 					atomic.AddInt64(&current, 1)
 					return
@@ -5278,7 +5278,7 @@ func (h *Handler) importAccountsCommon(c *gin.Context, tokens []importToken, set
 				newAcc := h.newCodexAccountFromSeed(id, proxyURL, seed)
 				addPendingRuntime(newAcc, "import_at")
 			} else {
-				// RT 导入路径；如果导入文件里同时带 AT，则先沿用它，后台调度到期前再刷新。
+				// RT import path; if the import file also carries an AT, that AT is used first and refreshed by background scheduling before it expires.
 				if name == "" {
 					name = fmt.Sprintf("import-%d", idx+1)
 				}
@@ -5288,7 +5288,7 @@ func (h *Handler) importAccountsCommon(c *gin.Context, tokens []importToken, set
 				insertCancel()
 
 				if err != nil {
-					log.Printf("导入账号 %d/%d 失败: %v", idx+1, len(newTokens), err)
+					log.Printf("failed to import account %d/%d: %v", idx+1, len(newTokens), err)
 					atomic.AddInt64(&failCount, 1)
 					atomic.AddInt64(&current, 1)
 					return
@@ -5313,8 +5313,8 @@ func (h *Handler) importAccountsCommon(c *gin.Context, tokens []importToken, set
 		for _, pending := range pendingRuntime {
 			accounts = append(accounts, pending.account)
 		}
-		// 一个 Store 锁 + 一个 FastScheduler 锁提交整个批次，避免高 RPM 的 Acquire
-		// 在两个账号之间反复触发全桶排序。
+		// One Store lock plus one FastScheduler lock commit the whole batch, to avoid high-RPM Acquire
+		// repeatedly triggering a full-bucket sort between two accounts.
 		h.store.AddAccounts(accounts)
 		for _, pending := range pendingRuntime {
 			h.applyImportedAccountUsageState(pending.account, pending.source)
@@ -5322,31 +5322,31 @@ func (h *Handler) importAccountsCommon(c *gin.Context, tokens []importToken, set
 		}
 	}
 	close(done)
-	// 等推送 goroutine 真正退出再写收尾事件：gin 的 ResponseWriter 不支持并发写，
-	// 只 close(done) 不等待的话，收尾事件可能和最后一帧进度事件交错，
-	// 前端解析不到 complete，进度条永远停在最后一个百分比。
+	// Wait for the push goroutine to actually exit before writing the final event: gin's ResponseWriter does not support concurrent writes,
+	// if we only close(done) without waiting, the final event may interleave with the last progress frame,
+	// the frontend would fail to parse complete, and the progress bar would stay stuck at the last percentage.
 	<-progressStopped
-	// 推送 goroutine 已退出，可以安全并入复活失败退回的重复计数。
+	// The push goroutine has exited, so it is safe to merge in the duplicate count from failed revivals.
 	duplicateCount += int(atomic.LoadInt64(&revivedAsDuplicate))
 
-	// 发送完成事件（并入 Agent Identity 计数）
+	// Send the complete event (Agent Identity counts merged in)
 	suc := int(atomic.LoadInt64(&successCount)) + agentSuccess
 	upd := int(atomic.LoadInt64(&updatedCount))
 	fai := int(atomic.LoadInt64(&failCount)) + agentFailed
-	// 分组绑定要在 complete 之前完成：前端收到 complete 就会刷新列表，
-	// 晚一步绑定会让人以为没生效。Agent Identity 条目一起绑，避免同一次导入
-	// 只有一半账号进了分组。
+	// Group binding must finish before complete: the frontend refreshes the list as soon as it receives complete,
+	// binding later would make it look as if nothing took effect. Agent Identity entries are bound together, so that one import does not
+	// end up with only half of its accounts in the group.
 	newAccountIDs := append(createdIDs.snapshot(), agentCreatedIDs...)
 	if err := h.bindImportedAccountGroups(c.Request.Context(), newAccountIDs, importGroupIDsFromContext(c)); err != nil {
 		sendImportEvent(c, importEvent{
 			Type: "progress", Current: total, Total: total,
 			Success: suc, Updated: upd, Duplicate: duplicateCount, Failed: fai,
-			Warning: "账号已导入，但分组绑定失败: " + err.Error(),
+			Warning: "accounts imported, but group binding failed: " + err.Error(),
 		})
 	}
-	// 邀请资格探测排在 complete 之前入队，但不等待结果：探测走导入闸门的后台
-	// worker，前端拿到 created_ids 后自行轮询方案接口。阻塞在这里会把一次导入
-	// 的响应拖长到几十秒。
+	// The invite eligibility probe is queued before complete but does not wait for its result: the probe runs on the background worker behind the import gate,
+	// and the frontend polls the plan endpoint itself after receiving created_ids. Blocking here would stretch one import's
+	// response out to tens of seconds.
 	h.scheduleInviteGuideProbes(c.Request.Context(), newAccountIDs)
 
 	sendImportEvent(c, importEvent{
@@ -5358,10 +5358,10 @@ func (h *Handler) importAccountsCommon(c *gin.Context, tokens []importToken, set
 		Warning:         proxyOutcome.warning(),
 	})
 
-	log.Printf("导入完成: success=%d, updated=%d, duplicate=%d, failed=%d, total=%d", suc, upd, duplicateCount, fai, total)
+	log.Printf("import complete: success=%d, updated=%d, duplicate=%d, failed=%d, total=%d", suc, upd, duplicateCount, fai, total)
 }
 
-// importAccountsATTXT 通过 TXT 文件导入 AT-only 账号（每行一个 Access Token）
+// importAccountsATTXT imports AT-only accounts from a TXT file (one Access Token per line)
 func (h *Handler) importAccountsATTXT(c *gin.Context, settings importSettings) {
 	files, err := readUploadedImportFiles(c)
 	if err != nil {
@@ -5373,25 +5373,25 @@ func (h *Handler) importAccountsATTXT(c *gin.Context, settings importSettings) {
 		return importToken{accessToken: token}
 	})
 	if len(tokens) == 0 {
-		writeError(c, http.StatusBadRequest, "文件中未找到有效的 Access Token")
+		writeError(c, http.StatusBadRequest, "no valid Access Token found in file")
 		return
 	}
 
 	h.importAccountsCommon(c, tokens, settings)
 }
 
-// GetAccountUsage 查询单个账号的用量统计
+// GetAccountUsage queries the usage statistics of a single account
 func (h *Handler) GetAccountUsage(c *gin.Context) {
 	id, err := strconv.ParseInt(c.Param("id"), 10, 64)
 	if err != nil {
-		writeError(c, http.StatusBadRequest, "无效的账号 ID")
+		writeError(c, http.StatusBadRequest, "invalid account ID")
 		return
 	}
 	days := 30
 	if raw := strings.TrimSpace(c.Query("days")); raw != "" {
 		parsed, err := strconv.Atoi(raw)
 		if err != nil || parsed < 0 || parsed > 3650 {
-			writeError(c, http.StatusBadRequest, "days 参数无效，需要 0-3650 的整数")
+			writeError(c, http.StatusBadRequest, "invalid days parameter, an integer from 0 to 3650 is required")
 			return
 		}
 		days = parsed
@@ -5408,19 +5408,19 @@ func (h *Handler) GetAccountUsage(c *gin.Context) {
 	c.JSON(http.StatusOK, detail)
 }
 
-// RefreshAccountUsage 同步刷新单个账号的用量快照（优先走零成本的 wham 端点），
-// 完成后返回该账号最新的 5h/7d 用量字段，供前端用量列即时更新进度条。
+// RefreshAccountUsage synchronously refreshes the usage snapshot of a single account (preferring the zero-cost wham endpoint),
+// and after it finishes returns the account's latest 5h/7d usage fields, so the frontend usage column can update its progress bars immediately.
 // POST /api/admin/accounts/:id/usage/refresh
 func (h *Handler) RefreshAccountUsage(c *gin.Context) {
 	id, err := strconv.ParseInt(c.Param("id"), 10, 64)
 	if err != nil {
-		writeError(c, http.StatusBadRequest, "无效的账号 ID")
+		writeError(c, http.StatusBadRequest, "invalid account ID")
 		return
 	}
 
 	account := h.store.FindByID(id)
 	if account == nil {
-		writeError(c, http.StatusNotFound, "账号不在运行时池中")
+		writeError(c, http.StatusNotFound, "account is not in the runtime pool")
 		return
 	}
 
@@ -5428,7 +5428,7 @@ func (h *Handler) RefreshAccountUsage(c *gin.Context) {
 	defer cancel()
 
 	if err := h.ProbeUsageSnapshot(ctx, account); err != nil {
-		writeError(c, http.StatusBadGateway, fmt.Sprintf("刷新用量失败: %s", err.Error()))
+		writeError(c, http.StatusBadGateway, fmt.Sprintf("failed to refresh usage: %s", err.Error()))
 		return
 	}
 
@@ -5492,25 +5492,25 @@ func (h *Handler) accountOperationIdentity(id int64) (string, string) {
 	return runtimeAccountOperationIdentity(h.store.FindByID(id))
 }
 
-// DeleteAccount 删除账号
+// DeleteAccount deletes an account
 func (h *Handler) DeleteAccount(c *gin.Context) {
 	idStr := c.Param("id")
 	id, err := strconv.ParseInt(idStr, 10, 64)
 	if err != nil {
-		writeError(c, http.StatusBadRequest, "无效的账号 ID")
+		writeError(c, http.StatusBadRequest, "invalid account ID")
 		return
 	}
 
 	ctx, cancel := context.WithTimeout(c.Request.Context(), 5*time.Second)
 	defer cancel()
 
-	// 软删除：保留账号数据与事件记录，但从运行时池和 active 列表中移除。
+	// Soft delete: account data and event records are kept, but the account is removed from the runtime pool and the active list.
 	if err := h.deleteAccountByID(ctx, id); err != nil {
 		if errors.Is(err, sql.ErrNoRows) {
 			writeError(c, http.StatusNotFound, "账号不存在")
 			return
 		}
-		writeError(c, http.StatusInternalServerError, "删除失败: "+err.Error())
+		writeError(c, http.StatusInternalServerError, "delete failed: "+err.Error())
 		return
 	}
 	h.pruneAccountsFromSnapshotCaches([]int64{id})
@@ -5541,7 +5541,7 @@ type recycleBinAccountResponse struct {
 	LastTestAt      string   `json:"last_test_at,omitempty"`
 }
 
-// ListRecycleBinAccounts 获取回收站账号列表
+// ListRecycleBinAccounts gets the list of accounts in the recycle bin
 // GET /api/admin/accounts/recycle-bin
 func (h *Handler) ListRecycleBinAccounts(c *gin.Context) {
 	ctx, cancel := context.WithTimeout(c.Request.Context(), 5*time.Second)
@@ -5570,7 +5570,7 @@ func (h *Handler) ListRecycleBinAccounts(c *gin.Context) {
 		if row.DeletedAt.Valid {
 			resp.DeletedAt = row.DeletedAt.Time.Format(time.RFC3339)
 		} else if !row.UpdatedAt.IsZero() {
-			// 旧数据可能没有 deleted_at；软删除会刷新 updated_at，用它兜底。
+			// Old data may have no deleted_at; soft delete refreshes updated_at, which is used as the fallback.
 			resp.DeletedAt = row.UpdatedAt.Format(time.RFC3339)
 		}
 		accounts = append(accounts, resp)
@@ -5578,13 +5578,13 @@ func (h *Handler) ListRecycleBinAccounts(c *gin.Context) {
 	c.JSON(http.StatusOK, gin.H{"accounts": accounts})
 }
 
-// RestoreAccount 将回收站中的账号恢复到账号池
+// RestoreAccount restores an account from the recycle bin to the account pool
 // POST /api/admin/accounts/:id/restore
 func (h *Handler) RestoreAccount(c *gin.Context) {
 	idStr := c.Param("id")
 	id, err := strconv.ParseInt(idStr, 10, 64)
 	if err != nil {
-		writeError(c, http.StatusBadRequest, "无效的账号 ID")
+		writeError(c, http.StatusBadRequest, "invalid account ID")
 		return
 	}
 
@@ -5593,20 +5593,20 @@ func (h *Handler) RestoreAccount(c *gin.Context) {
 
 	if err := h.restoreAccountByID(ctx, id); err != nil {
 		if errors.Is(err, sql.ErrNoRows) {
-			writeError(c, http.StatusNotFound, "回收站中不存在该账号")
+			writeError(c, http.StatusNotFound, "account does not exist in the recycle bin")
 			return
 		}
 		if errors.Is(err, errDuplicateOAuthIdentity) || errors.Is(err, errDuplicateCredentialWorkspaceRoute) {
-			writeError(c, http.StatusConflict, "恢复失败: "+err.Error())
+			writeError(c, http.StatusConflict, "restore failed: "+err.Error())
 			return
 		}
-		writeError(c, http.StatusInternalServerError, "恢复失败: "+err.Error())
+		writeError(c, http.StatusInternalServerError, "restore failed: "+err.Error())
 		return
 	}
-	writeMessage(c, http.StatusOK, "账号已恢复")
+	writeMessage(c, http.StatusOK, "account restored")
 }
 
-// restoreAccountByID 将回收站账号恢复为 active 并重新加入运行时池。
+// restoreAccountByID restores a recycle bin account to active and re-adds it to the runtime pool.
 func (h *Handler) restoreAccountByID(ctx context.Context, id int64) error {
 	row, err := h.db.GetAccountByIDIncludingDeleted(ctx, id)
 	if err != nil {
@@ -5620,7 +5620,7 @@ func (h *Handler) restoreAccountByID(ctx context.Context, id int64) error {
 		if duplicateID, err := h.findOAuthIdentityDuplicate(ctx, seed, id); err != nil {
 			return err
 		} else if duplicateID > 0 {
-			return fmt.Errorf("%w: 已存在相同 OAuth 账号 (id=%d)，请先删除正常账号或清理回收站账号", errDuplicateOAuthIdentity, duplicateID)
+			return fmt.Errorf("%w: an identical OAuth account already exists (id=%d); delete the normal account or clear the recycle bin account first", errDuplicateOAuthIdentity, duplicateID)
 		}
 		if row.GetCredential("workspace_id") != seed.workspaceID {
 			if err := h.db.UpdateCredentials(ctx, id, map[string]interface{}{"workspace_id": seed.workspaceID}); err != nil {
@@ -5631,7 +5631,7 @@ func (h *Handler) restoreAccountByID(ctx context.Context, id int64) error {
 	if duplicateID, err := h.findCredentialWorkspaceRouteDuplicate(ctx, seed, id); err != nil {
 		return err
 	} else if duplicateID > 0 {
-		return fmt.Errorf("%w: 已存在相同凭证和目标工作区的账号 (id=%d)，请先删除正常账号或清理回收站账号", errDuplicateCredentialWorkspaceRoute, duplicateID)
+		return fmt.Errorf("%w: an account with the same credentials and target workspace already exists (id=%d); delete the normal account or clear the recycle bin account first", errDuplicateCredentialWorkspaceRoute, duplicateID)
 	}
 
 	if err := h.db.RestoreAccount(ctx, id); err != nil {
@@ -5639,8 +5639,8 @@ func (h *Handler) restoreAccountByID(ctx context.Context, id int64) error {
 	}
 	if h.store != nil {
 		if err := h.store.LoadAccountByID(ctx, id); err != nil {
-			log.Printf("恢复账号 %d 后加载运行时失败: %v", id, err)
-			return fmt.Errorf("恢复账号后加载运行时失败: %w", err)
+			log.Printf("failed to load runtime after restoring account %d: %v", id, err)
+			return fmt.Errorf("failed to load runtime after restoring account: %w", err)
 		}
 	}
 	h.db.InsertAccountEventAsync(id, "restored", "recycle_bin")
@@ -5672,13 +5672,13 @@ func tokenCredentialSeedFromAccountRow(row *database.AccountRow) tokenCredential
 	})
 }
 
-// PurgeAccount 从回收站彻底删除账号（物理删除）
+// PurgeAccount permanently deletes an account from the recycle bin (physical delete)
 // DELETE /api/admin/accounts/:id/purge
 func (h *Handler) PurgeAccount(c *gin.Context) {
 	idStr := c.Param("id")
 	id, err := strconv.ParseInt(idStr, 10, 64)
 	if err != nil {
-		writeError(c, http.StatusBadRequest, "无效的账号 ID")
+		writeError(c, http.StatusBadRequest, "invalid account ID")
 		return
 	}
 
@@ -5687,36 +5687,36 @@ func (h *Handler) PurgeAccount(c *gin.Context) {
 
 	if err := h.db.PurgeAccount(ctx, id); err != nil {
 		if errors.Is(err, sql.ErrNoRows) {
-			writeError(c, http.StatusNotFound, "回收站中不存在该账号")
+			writeError(c, http.StatusNotFound, "account does not exist in the recycle bin")
 			return
 		}
-		writeError(c, http.StatusInternalServerError, "彻底删除失败: "+err.Error())
+		writeError(c, http.StatusInternalServerError, "permanent delete failed: "+err.Error())
 		return
 	}
 	h.store.RemoveAccount(id)
 	security.SecurityAuditLog("ACCOUNT_PURGED", fmt.Sprintf("account_id=%d ip=%s", id, c.ClientIP()))
-	writeMessage(c, http.StatusOK, "账号已彻底删除")
+	writeMessage(c, http.StatusOK, "account permanently deleted")
 }
 
-// emptyRecycleBinConfirmToken 清空回收站的确认令牌；调用方必须在请求体中
-// 显式携带，防止误调用或脚本一键清空导致账号被不可逆地物理删除。
+// emptyRecycleBinConfirmToken is the confirmation token for emptying the recycle bin; the caller must include it in the request body
+// explicitly, to prevent an accidental call or a one-click script from irreversibly and physically deleting accounts.
 const emptyRecycleBinConfirmToken = "EMPTY-RECYCLE-BIN"
 
-// EmptyRecycleBin 清空回收站
+// EmptyRecycleBin empties the recycle bin
 // DELETE /api/admin/accounts/recycle-bin
-// 请求体必须携带 {"confirm":"EMPTY-RECYCLE-BIN"}，否则拒绝执行。
+// The request body must include {"confirm":"EMPTY-RECYCLE-BIN"}, otherwise the request is rejected.
 func (h *Handler) EmptyRecycleBin(c *gin.Context) {
 	var req struct {
 		Confirm string `json:"confirm"`
 	}
 	if c.Request.Body != nil && c.Request.ContentLength != 0 {
 		if err := c.ShouldBindJSON(&req); err != nil {
-			writeError(c, http.StatusBadRequest, "请求格式错误")
+			writeError(c, http.StatusBadRequest, "invalid request format")
 			return
 		}
 	}
 	if strings.TrimSpace(req.Confirm) != emptyRecycleBinConfirmToken {
-		writeError(c, http.StatusBadRequest, `清空回收站需要确认：请求体需携带 confirm="EMPTY-RECYCLE-BIN"`)
+		writeError(c, http.StatusBadRequest, `empty recycle bin requires confirmation: the request body must include confirm="EMPTY-RECYCLE-BIN"`)
 		return
 	}
 
@@ -5725,23 +5725,23 @@ func (h *Handler) EmptyRecycleBin(c *gin.Context) {
 
 	purged, err := h.db.PurgeDeletedAccounts(ctx)
 	if err != nil {
-		writeError(c, http.StatusInternalServerError, "清空回收站失败: "+err.Error())
+		writeError(c, http.StatusInternalServerError, "failed to empty recycle bin: "+err.Error())
 		return
 	}
 	security.SecurityAuditLog("RECYCLE_BIN_EMPTIED", fmt.Sprintf("purged=%d ip=%s", purged, c.ClientIP()))
-	c.JSON(http.StatusOK, gin.H{"message": "回收站已清空", "purged": purged})
+	c.JSON(http.StatusOK, gin.H{"message": "recycle bin emptied", "purged": purged})
 }
 
-// BatchDeleteAccounts 批量删除账号；stream=true 时以 SSE 返回实时进度。
+// BatchDeleteAccounts batch-deletes accounts; when stream=true, real-time progress is returned over SSE.
 // POST /api/admin/accounts/batch-delete
 func (h *Handler) BatchDeleteAccounts(c *gin.Context) {
 	var req batchAccountIDsRequest
 	if err := c.ShouldBindJSON(&req); err != nil {
-		writeError(c, http.StatusBadRequest, "请求格式错误")
+		writeError(c, http.StatusBadRequest, "invalid request format")
 		return
 	}
 	if req.IDs != nil && req.Selector != nil {
-		writeError(c, http.StatusBadRequest, "ids 与 selector 不能同时提供")
+		writeError(c, http.StatusBadRequest, "ids and selector cannot be provided together")
 		return
 	}
 	var ids []int64
@@ -5759,7 +5759,7 @@ func (h *Handler) BatchDeleteAccounts(c *gin.Context) {
 		ids = resolvedIDs
 	}
 	if len(ids) == 0 {
-		writeError(c, http.StatusBadRequest, "请提供要删除的账号 ID 列表")
+		writeError(c, http.StatusBadRequest, "please provide the list of account IDs to delete")
 		return
 	}
 
@@ -5770,7 +5770,7 @@ func (h *Handler) BatchDeleteAccounts(c *gin.Context) {
 
 	success, fail := h.runBatchDeleteAccounts(c.Request.Context(), ids, nil)
 	c.JSON(http.StatusOK, gin.H{
-		"message": fmt.Sprintf("已删除 %d 个账号，失败 %d 个", success, fail),
+		"message": fmt.Sprintf("deleted %d accounts, %d failed", success, fail),
 		"deleted": success,
 		"success": success,
 		"failed":  fail,
@@ -5862,19 +5862,19 @@ func (h *Handler) runBatchDeleteAccounts(ctx context.Context, ids []int64, onPro
 	return success, fail
 }
 
-// BatchUpdateAccounts 批量更新账号启用、锁定和调度元信息。
+// BatchUpdateAccounts batch-updates account enablement, locking and scheduling metadata.
 // POST /api/admin/accounts/batch-update
 func (h *Handler) BatchUpdateAccounts(c *gin.Context) {
 	var req batchUpdateAccountsReq
 	decoder := json.NewDecoder(c.Request.Body)
 	decoder.DisallowUnknownFields()
 	if err := decoder.Decode(&req); err != nil {
-		writeError(c, http.StatusBadRequest, "请求格式错误")
+		writeError(c, http.StatusBadRequest, "invalid request format")
 		return
 	}
 
 	if req.IDs != nil && req.Selector != nil {
-		writeError(c, http.StatusBadRequest, "ids 与 selector 不能同时提供")
+		writeError(c, http.StatusBadRequest, "ids and selector cannot be provided together")
 		return
 	}
 	var ids []int64
@@ -5892,7 +5892,7 @@ func (h *Handler) BatchUpdateAccounts(c *gin.Context) {
 		ids = resolvedIDs
 	}
 	if len(ids) == 0 {
-		writeError(c, http.StatusBadRequest, "请提供要更新的账号 ID 列表")
+		writeError(c, http.StatusBadRequest, "please provide the list of account IDs to update")
 		return
 	}
 
@@ -5904,7 +5904,7 @@ func (h *Handler) BatchUpdateAccounts(c *gin.Context) {
 	enabled := optionalBoolFromPtr(req.Enabled)
 	locked := optionalBoolFromPtr(req.Locked)
 	if !enabled.Set && !locked.Set && !schedulerUpdate.hasChanges() {
-		writeError(c, http.StatusBadRequest, "请提供要更新的字段")
+		writeError(c, http.StatusBadRequest, "please provide the fields to update")
 		return
 	}
 
@@ -5914,7 +5914,7 @@ func (h *Handler) BatchUpdateAccounts(c *gin.Context) {
 	if schedulerUpdate.AllowedAPIKeyIDs.Set {
 		missingAPIKeyIDs, err := h.findMissingAPIKeyIDs(ctx, schedulerUpdate.AllowedAPIKeyIDs.Values)
 		if err != nil {
-			writeError(c, http.StatusInternalServerError, "校验 API Key 失败: "+err.Error())
+			writeError(c, http.StatusInternalServerError, "failed to validate API key: "+err.Error())
 			return
 		}
 		if len(missingAPIKeyIDs) > 0 {
@@ -5922,14 +5922,14 @@ func (h *Handler) BatchUpdateAccounts(c *gin.Context) {
 			for _, value := range missingAPIKeyIDs {
 				values = append(values, strconv.FormatInt(value, 10))
 			}
-			writeError(c, http.StatusBadRequest, "allowed_api_key_ids 包含不存在的 API Key ID: "+strings.Join(values, ", "))
+			writeError(c, http.StatusBadRequest, "allowed_api_key_ids contains API Key IDs that do not exist: "+strings.Join(values, ", "))
 			return
 		}
 	}
 	if schedulerUpdate.GroupIDs.Set {
 		missingGroupIDs, err := h.db.VerifyAccountGroupIDs(ctx, schedulerUpdate.GroupIDs.Values)
 		if err != nil {
-			writeError(c, http.StatusInternalServerError, "校验账号分组失败: "+err.Error())
+			writeError(c, http.StatusInternalServerError, "failed to validate account groups: "+err.Error())
 			return
 		}
 		if len(missingGroupIDs) > 0 {
@@ -5937,13 +5937,13 @@ func (h *Handler) BatchUpdateAccounts(c *gin.Context) {
 			for _, value := range missingGroupIDs {
 				values = append(values, strconv.FormatInt(value, 10))
 			}
-			writeError(c, http.StatusBadRequest, "group_ids 包含不存在的分组 ID: "+strings.Join(values, ", "))
+			writeError(c, http.StatusBadRequest, "group_ids contains group IDs that do not exist: "+strings.Join(values, ", "))
 			return
 		}
 		if len(schedulerUpdate.GroupIDs.Values) > 0 {
 			rows, err := h.db.ListActive(ctx)
 			if err != nil {
-				writeError(c, http.StatusInternalServerError, "查询账号失败: "+err.Error())
+				writeError(c, http.StatusInternalServerError, "failed to query accounts: "+err.Error())
 				return
 			}
 			idSet := make(map[int64]bool, len(ids))
@@ -5976,7 +5976,7 @@ func (h *Handler) BatchUpdateAccounts(c *gin.Context) {
 		CredentialUpdates:       schedulerUpdate.CredentialUpdates,
 	})
 	if err != nil {
-		writeError(c, http.StatusInternalServerError, "批量更新账号失败: "+err.Error())
+		writeError(c, http.StatusInternalServerError, "batch update of accounts failed: "+err.Error())
 		return
 	}
 
@@ -5985,7 +5985,7 @@ func (h *Handler) BatchUpdateAccounts(c *gin.Context) {
 			if enabled.Set {
 				if !h.store.ApplyAccountEnabled(id, enabled.Value) && enabled.Value {
 					if err := h.store.LoadAccountByID(ctx, id); err != nil {
-						log.Printf("批量启用账号 %d 后加载进调度池失败: %v", id, err)
+						log.Printf("failed to load account %d into the scheduling pool after batch enabling: %v", id, err)
 					}
 				}
 			}
@@ -6005,18 +6005,18 @@ func (h *Handler) BatchUpdateAccounts(c *gin.Context) {
 	success := int64(len(updatedIDs))
 	failed := int64(len(ids)) - success
 	c.JSON(http.StatusOK, gin.H{
-		"message": fmt.Sprintf("已更新 %d 个账号，失败 %d 个", success, failed),
+		"message": fmt.Sprintf("updated %d accounts, %d failed", success, failed),
 		"success": success,
 		"failed":  failed,
 	})
 }
 
-// RefreshAccount 手动刷新账号 AT
+// RefreshAccount manually refreshes an account's AT
 func (h *Handler) RefreshAccount(c *gin.Context) {
 	idStr := c.Param("id")
 	id, err := strconv.ParseInt(idStr, 10, 64)
 	if err != nil {
-		writeError(c, http.StatusBadRequest, "无效的账号 ID")
+		writeError(c, http.StatusBadRequest, "invalid account ID")
 		return
 	}
 
@@ -6025,23 +6025,23 @@ func (h *Handler) RefreshAccount(c *gin.Context) {
 			writeError(c, http.StatusNotFound, err.Error())
 			return
 		}
-		writeError(c, http.StatusInternalServerError, "刷新失败: "+err.Error())
+		writeError(c, http.StatusInternalServerError, "refresh failed: "+err.Error())
 		return
 	}
 
-	writeMessage(c, http.StatusOK, "账号刷新成功")
+	writeMessage(c, http.StatusOK, "Account refreshed successfully")
 }
 
-// BatchRefreshAccounts 批量刷新账号 AT；stream=true 时以 SSE 返回实时进度。
+// BatchRefreshAccounts refreshes account ATs in batch; when stream=true, it returns real-time progress over SSE.
 // POST /api/admin/accounts/batch-refresh
 func (h *Handler) BatchRefreshAccounts(c *gin.Context) {
 	var req batchAccountIDsRequest
 	if err := c.ShouldBindJSON(&req); err != nil {
-		writeError(c, http.StatusBadRequest, "请求格式错误")
+		writeError(c, http.StatusBadRequest, "Invalid request format")
 		return
 	}
 	if req.IDs != nil && req.Selector != nil {
-		writeError(c, http.StatusBadRequest, "ids 与 selector 不能同时提供")
+		writeError(c, http.StatusBadRequest, "ids and selector cannot be provided at the same time")
 		return
 	}
 	var ids []int64
@@ -6059,7 +6059,7 @@ func (h *Handler) BatchRefreshAccounts(c *gin.Context) {
 		ids = resolvedIDs
 	}
 	if len(ids) == 0 {
-		writeError(c, http.StatusBadRequest, "请提供要刷新的账号 ID 列表")
+		writeError(c, http.StatusBadRequest, "Provide the list of account IDs to refresh")
 		return
 	}
 
@@ -6070,7 +6070,7 @@ func (h *Handler) BatchRefreshAccounts(c *gin.Context) {
 
 	success, fail := h.runBatchRefreshAccounts(c.Request.Context(), ids, nil)
 	c.JSON(http.StatusOK, gin.H{
-		"message": fmt.Sprintf("已刷新 %d 个账号，失败 %d 个", success, fail),
+		"message": fmt.Sprintf("Refreshed %d accounts, %d failed", success, fail),
 		"success": success,
 		"failed":  fail,
 	})
@@ -6092,10 +6092,10 @@ func (h *Handler) refreshAccountByIDWithProbe(ctx context.Context, id int64, pro
 		return err
 	}
 
-	// 刷新成功后顺带做一次零成本 wham 用量探针，从服务端权威数据同步订阅到期时间与用量。
-	// 续费后 access/id token 里的 chatgpt_subscription_active_until 不一定立即更新（会滞后），
-	// 仅靠 token 刷新会让"有效期"长期停留在旧值；wham/usage 返回的是服务端当前订阅到期时间。
-	// （issue #300）
+	// After a successful refresh, also run a zero-cost wham usage probe to sync the subscription expiry time and usage from the server's authoritative data.
+	// After renewal, the chatgpt_subscription_active_until claim in the access/id token is not necessarily updated right away (it lags).
+	// Relying on token refresh alone would leave the "validity period" at the old value for a long time; wham/usage returns the server's current subscription expiry time.
+	// (issue #300)
 	if probeAfterRefresh {
 		probe := h.usageProbeFunc()
 		if probe == nil || h.store == nil {
@@ -6104,7 +6104,7 @@ func (h *Handler) refreshAccountByIDWithProbe(ctx context.Context, id int64, pro
 		if acc := h.store.FindByID(id); acc != nil {
 			probeCtx, probeCancel := context.WithTimeout(ctx, 15*time.Second)
 			if err := probe(probeCtx, acc); err != nil {
-				log.Printf("[账号 %d] 刷新后用量/订阅到期探针失败（忽略）: %v", id, err)
+				log.Printf("[account %d] usage/subscription expiry probe after refresh failed (ignored): %v", id, err)
 			}
 			probeCancel()
 		}
@@ -6169,7 +6169,7 @@ func (h *Handler) runBatchRefreshAccounts(ctx context.Context, ids []int64, onPr
 			case sem <- struct{}{}:
 			case <-ctx.Done():
 				atomic.AddInt64(&fail, 1)
-				emitBatchRefreshProgress(onProgress, id, accountName, accountEmail, total, &completed, &success, &fail, "刷新已取消", true)
+				emitBatchRefreshProgress(onProgress, id, accountName, accountEmail, total, &completed, &success, &fail, "Refresh canceled", true)
 				return
 			}
 			defer func() { <-sem }()
@@ -6181,7 +6181,7 @@ func (h *Handler) runBatchRefreshAccounts(ctx context.Context, ids []int64, onPr
 			}
 
 			atomic.AddInt64(&success, 1)
-			emitBatchRefreshProgress(onProgress, id, accountName, accountEmail, total, &completed, &success, &fail, "账号刷新成功", false)
+			emitBatchRefreshProgress(onProgress, id, accountName, accountEmail, total, &completed, &success, &fail, "Account refreshed successfully", false)
 		}()
 	}
 
@@ -6227,12 +6227,12 @@ func emitBatchRefreshProgress(
 	onProgress(event)
 }
 
-// ToggleAccountEnabled 切换账号是否参与调度选择
+// ToggleAccountEnabled toggles whether an account takes part in scheduling selection
 func (h *Handler) ToggleAccountEnabled(c *gin.Context) {
 	idStr := c.Param("id")
 	id, err := strconv.ParseInt(idStr, 10, 64)
 	if err != nil {
-		writeError(c, http.StatusBadRequest, "无效的账号 ID")
+		writeError(c, http.StatusBadRequest, "Invalid account ID")
 		return
 	}
 
@@ -6240,7 +6240,7 @@ func (h *Handler) ToggleAccountEnabled(c *gin.Context) {
 		Enabled *bool `json:"enabled" binding:"required"`
 	}
 	if err := c.ShouldBindJSON(&req); err != nil || req.Enabled == nil {
-		writeError(c, http.StatusBadRequest, "请求格式错误")
+		writeError(c, http.StatusBadRequest, "Invalid request format")
 		return
 	}
 
@@ -6252,42 +6252,42 @@ func (h *Handler) ToggleAccountEnabled(c *gin.Context) {
 			writeError(c, http.StatusNotFound, "账号不存在")
 			return
 		}
-		writeError(c, http.StatusInternalServerError, "更新启用状态失败: "+err.Error())
+		writeError(c, http.StatusInternalServerError, "Failed to update enabled status: "+err.Error())
 		return
 	}
 
-	// 若启用一个尚未进入运行时池的账号（如自助门户提交的待审核账号），ApplyAccountEnabled
-	// 因找不到运行时对象返回 false；此时按需加载进调度池，使「批准」立即生效（issue #393）。
+	// When enabling an account that has not yet entered the runtime pool (such as a pending-review account submitted via the self-service portal), ApplyAccountEnabled
+	// returns false because it cannot find the runtime object; in that case, load the account into the scheduling pool on demand so that "approve" takes effect immediately (issue #393).
 	if !h.store.ApplyAccountEnabled(id, *req.Enabled) && *req.Enabled {
 		if err := h.store.LoadAccountByID(ctx, id); err != nil {
-			log.Printf("启用账号 %d 后加载进调度池失败: %v", id, err)
+			log.Printf("failed to load account %d into scheduling pool after enabling: %v", id, err)
 		}
 	}
 
 	if *req.Enabled {
-		writeMessage(c, http.StatusOK, "账号已启用")
+		writeMessage(c, http.StatusOK, "Account enabled")
 	} else {
-		writeMessage(c, http.StatusOK, "账号已禁用")
+		writeMessage(c, http.StatusOK, "Account disabled")
 	}
 }
 
-// UpdateAccountNote 更新账号备注（通用标识字段）。
+// UpdateAccountNote updates the account note (a general identifier field).
 func (h *Handler) UpdateAccountNote(c *gin.Context) {
 	id, err := strconv.ParseInt(c.Param("id"), 10, 64)
 	if err != nil {
-		writeError(c, http.StatusBadRequest, "无效的账号 ID")
+		writeError(c, http.StatusBadRequest, "Invalid account ID")
 		return
 	}
 	var req struct {
 		Note string `json:"note"`
 	}
 	if err := c.ShouldBindJSON(&req); err != nil {
-		writeError(c, http.StatusBadRequest, "请求格式错误")
+		writeError(c, http.StatusBadRequest, "Invalid request format")
 		return
 	}
 	note := security.SanitizeInput(strings.TrimSpace(req.Note))
 	if utf8.RuneCountInString(note) > 500 {
-		writeError(c, http.StatusBadRequest, "备注长度不能超过 500 字符")
+		writeError(c, http.StatusBadRequest, "Note must not exceed 500 characters")
 		return
 	}
 	ctx, cancel := context.WithTimeout(c.Request.Context(), 3*time.Second)
@@ -6297,18 +6297,18 @@ func (h *Handler) UpdateAccountNote(c *gin.Context) {
 			writeError(c, http.StatusNotFound, "账号不存在")
 			return
 		}
-		writeError(c, http.StatusInternalServerError, "更新备注失败: "+err.Error())
+		writeError(c, http.StatusInternalServerError, "Failed to update note: "+err.Error())
 		return
 	}
-	writeMessage(c, http.StatusOK, "备注已更新")
+	writeMessage(c, http.StatusOK, "Note updated")
 }
 
-// ToggleAccountLock 切换账号的锁定状态
+// ToggleAccountLock toggles the lock state of an account
 func (h *Handler) ToggleAccountLock(c *gin.Context) {
 	idStr := c.Param("id")
 	id, err := strconv.ParseInt(idStr, 10, 64)
 	if err != nil {
-		writeError(c, http.StatusBadRequest, "无效的账号 ID")
+		writeError(c, http.StatusBadRequest, "Invalid account ID")
 		return
 	}
 
@@ -6316,7 +6316,7 @@ func (h *Handler) ToggleAccountLock(c *gin.Context) {
 		Locked bool `json:"locked"`
 	}
 	if err := c.ShouldBindJSON(&req); err != nil {
-		writeError(c, http.StatusBadRequest, "请求格式错误")
+		writeError(c, http.StatusBadRequest, "Invalid request format")
 		return
 	}
 
@@ -6324,11 +6324,11 @@ func (h *Handler) ToggleAccountLock(c *gin.Context) {
 	defer cancel()
 
 	if err := h.db.SetAccountLocked(ctx, id, req.Locked); err != nil {
-		writeError(c, http.StatusInternalServerError, "更新锁定状态失败: "+err.Error())
+		writeError(c, http.StatusInternalServerError, "Failed to update lock state: "+err.Error())
 		return
 	}
 
-	// 同步更新内存中的状态
+	// Sync the update to the in-memory state
 	if acc := h.store.FindByID(id); acc != nil {
 		if req.Locked {
 			atomic.StoreInt32(&acc.Locked, 1)
@@ -6338,9 +6338,9 @@ func (h *Handler) ToggleAccountLock(c *gin.Context) {
 	}
 
 	if req.Locked {
-		writeMessage(c, http.StatusOK, "账号已锁定")
+		writeMessage(c, http.StatusOK, "Account locked")
 	} else {
-		writeMessage(c, http.StatusOK, "账号已解锁")
+		writeMessage(c, http.StatusOK, "Account unlocked")
 	}
 }
 
@@ -6354,8 +6354,8 @@ func accountIsOverloadPaused(acc *auth.Account) bool {
 	return strings.EqualFold(strings.TrimSpace(acc.RuntimeStatus()), "overload_paused")
 }
 
-// resetAccountRuntimeStatus 清冷却/模型冷却。过载暂停只恢复调度，不能清用量快照，
-// 否则 free 账号（只有 30d 窗、没有 5h）列表额度条会先变成 "-"，要等下次探针才回来。
+// resetAccountRuntimeStatus clears cooldowns and model cooldowns. A pause for overload only restores scheduling and must not clear the usage snapshot,
+// otherwise free accounts (which only have a 30d window, no 5h) would first show "-" in the quota bar of the list and only recover after the next probe.
 func (h *Handler) resetAccountRuntimeStatus(ctx context.Context, acc *auth.Account) {
 	keepUsage := accountIsOverloadPaused(acc)
 	h.store.ClearCooldown(acc)
@@ -6367,31 +6367,31 @@ func (h *Handler) resetAccountRuntimeStatus(ctx context.Context, acc *auth.Accou
 	h.syncAccountPlanAfterReset(ctx, acc)
 }
 
-// ResetAccountStatus 重置单个账号状态为正常
+// ResetAccountStatus resets a single account's status to normal
 func (h *Handler) ResetAccountStatus(c *gin.Context) {
 	id, err := strconv.ParseInt(c.Param("id"), 10, 64)
 	if err != nil {
-		writeError(c, http.StatusBadRequest, "无效的账号 ID")
+		writeError(c, http.StatusBadRequest, "Invalid account ID")
 		return
 	}
 
 	acc := h.store.FindByID(id)
 	if acc == nil {
-		writeError(c, http.StatusNotFound, "账号不在运行时池中")
+		writeError(c, http.StatusNotFound, "Account is not in the runtime pool")
 		return
 	}
 
 	h.resetAccountRuntimeStatus(c.Request.Context(), acc)
-	writeMessage(c, http.StatusOK, "账号状态已重置")
+	writeMessage(c, http.StatusOK, "Account status reset")
 }
 
-// BatchResetStatus 批量重置账号状态为正常
+// BatchResetStatus resets account statuses to normal in batch
 func (h *Handler) BatchResetStatus(c *gin.Context) {
 	var req struct {
 		IDs []int64 `json:"ids"`
 	}
 	if err := c.ShouldBindJSON(&req); err != nil || len(req.IDs) == 0 {
-		writeError(c, http.StatusBadRequest, "请提供要重置的账号 ID 列表")
+		writeError(c, http.StatusBadRequest, "Provide the list of account IDs to reset")
 		return
 	}
 
@@ -6408,7 +6408,7 @@ func (h *Handler) BatchResetStatus(c *gin.Context) {
 	}
 
 	c.JSON(http.StatusOK, gin.H{
-		"message": fmt.Sprintf("已重置 %d 个账号状态", success),
+		"message": fmt.Sprintf("Reset status of %d accounts", success),
 		"success": success,
 		"failed":  fail,
 	})
@@ -6417,7 +6417,7 @@ func (h *Handler) BatchResetStatus(c *gin.Context) {
 func (h *Handler) UpdateAccountModelCooldownPolicy(c *gin.Context) {
 	id, err := strconv.ParseInt(c.Param("id"), 10, 64)
 	if err != nil {
-		writeError(c, http.StatusBadRequest, "无效的账号 ID")
+		writeError(c, http.StatusBadRequest, "Invalid account ID")
 		return
 	}
 	acc := h.store.FindByID(id)
@@ -6430,7 +6430,7 @@ func (h *Handler) UpdateAccountModelCooldownPolicy(c *gin.Context) {
 	decoder := json.NewDecoder(c.Request.Body)
 	decoder.DisallowUnknownFields()
 	if err := decoder.Decode(&raw); err != nil {
-		writeError(c, http.StatusBadRequest, "请求格式错误")
+		writeError(c, http.StatusBadRequest, "Invalid request format")
 		return
 	}
 	allowed := map[string]bool{
@@ -6438,12 +6438,12 @@ func (h *Handler) UpdateAccountModelCooldownPolicy(c *gin.Context) {
 	}
 	for key := range raw {
 		if !allowed[key] {
-			writeError(c, http.StatusBadRequest, "未知字段: "+key)
+			writeError(c, http.StatusBadRequest, "Unknown field: "+key)
 			return
 		}
 	}
 	if len(raw) == 0 {
-		writeError(c, http.StatusBadRequest, "至少提供一个策略字段")
+		writeError(c, http.StatusBadRequest, "Provide at least one policy field")
 		return
 	}
 
@@ -6457,7 +6457,7 @@ func (h *Handler) UpdateAccountModelCooldownPolicy(c *gin.Context) {
 		} else {
 			var parsed string
 			if json.Unmarshal(value, &parsed) != nil || !database.IsValidModelCooldownMode(parsed) {
-				writeError(c, http.StatusBadRequest, "mode 必须是 off、fixed、adaptive 或 null")
+				writeError(c, http.StatusBadRequest, "mode must be off, fixed, adaptive, or null")
 				return
 			}
 			parsed = database.NormalizeModelCooldownMode(parsed, database.ModelCooldownModeAdaptive)
@@ -6472,7 +6472,7 @@ func (h *Handler) UpdateAccountModelCooldownPolicy(c *gin.Context) {
 		} else {
 			var parsed int
 			if json.Unmarshal(value, &parsed) != nil || parsed < 1 || parsed > database.MaxModelCooldownSeconds {
-				writeError(c, http.StatusBadRequest, fmt.Sprintf("seconds 必须在 1-%d 之间或为 null", database.MaxModelCooldownSeconds))
+				writeError(c, http.StatusBadRequest, fmt.Sprintf("seconds must be between 1 and %d, or null", database.MaxModelCooldownSeconds))
 				return
 			}
 			seconds = &parsed
@@ -6486,7 +6486,7 @@ func (h *Handler) UpdateAccountModelCooldownPolicy(c *gin.Context) {
 		} else {
 			var parsed bool
 			if json.Unmarshal(value, &parsed) != nil {
-				writeError(c, http.StatusBadRequest, "backoff_enabled 必须是布尔值或 null")
+				writeError(c, http.StatusBadRequest, "backoff_enabled must be a boolean or null")
 				return
 			}
 			backoff = &parsed
@@ -6501,13 +6501,13 @@ func (h *Handler) UpdateAccountModelCooldownPolicy(c *gin.Context) {
 			writeError(c, http.StatusNotFound, "账号不存在")
 			return
 		}
-		writeError(c, http.StatusInternalServerError, "保存模型冷却策略失败: "+err.Error())
+		writeError(c, http.StatusInternalServerError, "Failed to save model cooldown policy: "+err.Error())
 		return
 	}
 	h.store.ApplyAccountModelCooldownPolicyOverride(id, mode, seconds, backoff)
 	effective := h.store.ResolveModelCooldownPolicy(acc)
 	c.JSON(http.StatusOK, gin.H{
-		"message":                   "模型冷却策略已更新",
+		"message":                   "Model cooldown policy updated",
 		"mode_override":             mode,
 		"seconds_override":          seconds,
 		"backoff_enabled_override":  backoff,
@@ -6520,7 +6520,7 @@ func (h *Handler) UpdateAccountModelCooldownPolicy(c *gin.Context) {
 func (h *Handler) ClearAccountModelCooldown(c *gin.Context) {
 	id, err := strconv.ParseInt(c.Param("id"), 10, 64)
 	if err != nil {
-		writeError(c, http.StatusBadRequest, "无效的账号 ID")
+		writeError(c, http.StatusBadRequest, "Invalid account ID")
 		return
 	}
 	acc := h.store.FindByID(id)
@@ -6530,17 +6530,17 @@ func (h *Handler) ClearAccountModelCooldown(c *gin.Context) {
 	}
 	model := strings.TrimSpace(c.Param("model"))
 	if model == "" {
-		writeError(c, http.StatusBadRequest, "模型不能为空")
+		writeError(c, http.StatusBadRequest, "Model must not be empty")
 		return
 	}
 	h.store.ClearModelCooldown(acc, model)
-	writeMessage(c, http.StatusOK, "模型冷却已清除")
+	writeMessage(c, http.StatusOK, "Model cooldown cleared")
 }
 
 func (h *Handler) ClearAllAccountModelCooldowns(c *gin.Context) {
 	id, err := strconv.ParseInt(c.Param("id"), 10, 64)
 	if err != nil {
-		writeError(c, http.StatusBadRequest, "无效的账号 ID")
+		writeError(c, http.StatusBadRequest, "Invalid account ID")
 		return
 	}
 	acc := h.store.FindByID(id)
@@ -6549,7 +6549,7 @@ func (h *Handler) ClearAllAccountModelCooldowns(c *gin.Context) {
 		return
 	}
 	c.JSON(http.StatusOK, gin.H{
-		"message": "账号全部模型冷却已清除",
+		"message": "All model cooldowns for the account cleared",
 		"cleared": h.store.ClearAllModelCooldowns(acc),
 	})
 }
@@ -6562,7 +6562,7 @@ func (h *Handler) syncAccountPlanAfterReset(_ context.Context, acc *auth.Account
 		ctx, cancel := context.WithTimeout(parent, 15*time.Second)
 		defer cancel()
 		if err := h.syncAccountPlanOnReset(ctx, acc); err != nil {
-			log.Printf("[账号 %d] 重置后同步 Codex plan type 失败: %v", acc.DBID, err)
+			log.Printf("[account %d] failed to sync Codex plan type after reset: %v", acc.DBID, err)
 		}
 	})
 }
@@ -6587,14 +6587,14 @@ func (h *Handler) syncSingleAccountPlanOnReset(ctx context.Context, acc *auth.Ac
 
 func (h *Handler) refreshSingleAccount(ctx context.Context, id int64) error {
 	if h == nil || h.store == nil {
-		return fmt.Errorf("账号池未初始化")
+		return fmt.Errorf("account pool is not initialized")
 	}
 	return h.store.RefreshSingle(ctx, id)
 }
 
 // ==================== Health ====================
 
-// GetHealth 系统健康检查（扩展版）
+// GetHealth system health check (extended version)
 func (h *Handler) GetHealth(c *gin.Context) {
 	c.Header("Cache-Control", "no-store")
 	c.JSON(http.StatusOK, healthResponse{
@@ -6607,8 +6607,8 @@ func (h *Handler) GetHealth(c *gin.Context) {
 
 // ==================== Usage ====================
 
-// GetUsageStats 获取使用统计。
-// 支持可选 query 参数 start/end (RFC3339);未传时回落"今日"行为。
+// GetUsageStats returns usage statistics.
+// Supports optional query parameters start/end (RFC3339); when omitted, falls back to the "today" behavior.
 func (h *Handler) GetUsageStats(c *gin.Context) {
 	ctx, cancel := context.WithTimeout(c.Request.Context(), 15*time.Second)
 	defer cancel()
@@ -6619,8 +6619,8 @@ func (h *Handler) GetUsageStats(c *gin.Context) {
 		return
 	}
 
-	// 区间卡片跟随用量页的账号/密钥/模型/端点/搜索等筛选(与 /usage/logs 同一套参数);
-	// 状态类参数(status/error_only 等)对统计无意义,解析后被忽略;累计字段始终全局。
+	// The range cards follow the account/key/model/endpoint/search filters of the usage page (the same parameter set as /usage/logs);
+	// status-type parameters (status/error_only, etc.) are meaningless for statistics, so they are ignored after parsing; cumulative fields are always global.
 	dim, ok := parseUsageLogsFilter(c, rangeStart, rangeEnd)
 	if !ok {
 		return
@@ -6639,8 +6639,8 @@ func (h *Handler) GetUsageStats(c *gin.Context) {
 	c.JSON(http.StatusOK, stats)
 }
 
-// parseUsageStatsRange 解析 /usage/stats 的可选 start/end query。
-// 任一为空则当作零值由调用方决定回退行为(默认"今日");两者都填则要求均合法。
+// parseUsageStatsRange parses the optional start/end query of /usage/stats.
+// If either is empty, it is treated as a zero value and the caller decides the fallback behavior ("today" by default); if both are provided, both must be valid.
 func parseUsageStatsRange(startStr, endStr string) (time.Time, time.Time, error) {
 	startStr = strings.TrimSpace(startStr)
 	endStr = strings.TrimSpace(endStr)
@@ -6648,26 +6648,26 @@ func parseUsageStatsRange(startStr, endStr string) (time.Time, time.Time, error)
 	if startStr != "" {
 		t, err := time.Parse(time.RFC3339, startStr)
 		if err != nil {
-			return time.Time{}, time.Time{}, fmt.Errorf("start 参数格式错误，需要 RFC3339")
+			return time.Time{}, time.Time{}, fmt.Errorf("start parameter has an invalid format, RFC3339 is required")
 		}
 		start = t
 	}
 	if endStr != "" {
 		t, err := time.Parse(time.RFC3339, endStr)
 		if err != nil {
-			return time.Time{}, time.Time{}, fmt.Errorf("end 参数格式错误，需要 RFC3339")
+			return time.Time{}, time.Time{}, fmt.Errorf("end parameter has an invalid format, RFC3339 is required")
 		}
 		end = t
 	}
 	if !start.IsZero() && !end.IsZero() && !end.After(start) {
-		return time.Time{}, time.Time{}, fmt.Errorf("end 必须晚于 start")
+		return time.Time{}, time.Time{}, fmt.Errorf("end must be later than start")
 	}
 	return start, end, nil
 }
 
-// GetAPIKeyTokenStats 返回按 API Key 聚合的 token 用量列表（issue #162）。
-// 支持可选 query 参数 start/end (RFC3339)；缺省回落到"今日"。
-// 不分页/不限条数：前端做排序、搜索、分页。
+// GetAPIKeyTokenStats returns a token usage list aggregated by API key (issue #162).
+// Supports optional query parameters start/end (RFC3339); defaults to "today" when omitted.
+// No pagination or row limit: the frontend handles sorting, search, and pagination.
 func (h *Handler) GetAPIKeyTokenStats(c *gin.Context) {
 	rangeStart, rangeEnd, err := parseUsageStatsRange(c.Query("start"), c.Query("end"))
 	if err != nil {
@@ -6675,7 +6675,7 @@ func (h *Handler) GetAPIKeyTokenStats(c *gin.Context) {
 		return
 	}
 	if !rangeStart.IsZero() && !rangeEnd.IsZero() && rangeEnd.Sub(rangeStart) > 366*24*time.Hour {
-		writeError(c, http.StatusBadRequest, "时间范围不能超过 366 天")
+		writeError(c, http.StatusBadRequest, "Time range must not exceed 366 days")
 		return
 	}
 
@@ -6705,13 +6705,13 @@ func (h *Handler) GetAPIKeyTokenStats(c *gin.Context) {
 	c.JSON(http.StatusOK, response)
 }
 
-// GetAPIKeyAccountStats 返回单个 API Key 按上游账号拆分的用量（账号明细"按 Key 分解"的转置视图）。
-// 支持可选 query 参数 start/end (RFC3339)；缺省回落到"今日"。
+// GetAPIKeyAccountStats returns the usage of a single API key split by upstream account (the transposed view of "breakdown by key" in account details).
+// Supports optional query parameters start/end (RFC3339); defaults to "today" when omitted.
 // GET /api/admin/usage/api-keys/:id/accounts
 func (h *Handler) GetAPIKeyAccountStats(c *gin.Context) {
 	id, err := strconv.ParseInt(c.Param("id"), 10, 64)
 	if err != nil {
-		writeError(c, http.StatusBadRequest, "无效的 API Key ID")
+		writeError(c, http.StatusBadRequest, "Invalid API key ID")
 		return
 	}
 
@@ -6722,7 +6722,7 @@ func (h *Handler) GetAPIKeyAccountStats(c *gin.Context) {
 	}
 
 	if !rangeStart.IsZero() && !rangeEnd.IsZero() && rangeEnd.Sub(rangeStart) > 366*24*time.Hour {
-		writeError(c, http.StatusBadRequest, "时间范围不能超过 366 天")
+		writeError(c, http.StatusBadRequest, "Time range must not exceed 366 days")
 		return
 	}
 
@@ -6848,7 +6848,7 @@ func aggregateAPIKeyAccountGroups(items []database.APIKeyAccountStat) ([]apiKeyA
 	return groups, summary, reconciliation
 }
 
-// GetChartData 返回图表聚合数据（服务端分桶 + 内存缓存）
+// GetChartData returns aggregated chart data (server-side bucketing + in-memory cache)
 func (h *Handler) GetChartData(c *gin.Context) {
 	startStr := c.Query("start")
 	endStr := c.Query("end")
@@ -6857,7 +6857,7 @@ func (h *Handler) GetChartData(c *gin.Context) {
 	startTime, e1 := time.Parse(time.RFC3339, startStr)
 	endTime, e2 := time.Parse(time.RFC3339, endStr)
 	if e1 != nil || e2 != nil {
-		writeError(c, http.StatusBadRequest, "start/end 参数格式错误，需要 RFC3339 格式")
+		writeError(c, http.StatusBadRequest, "start/end parameter has an invalid format, RFC3339 is required")
 		return
 	}
 	bucketMinutes, _ := strconv.Atoi(bucketStr)
@@ -6902,13 +6902,13 @@ func (h *Handler) GetChartData(c *gin.Context) {
 	}
 	h.setRuntimeJSON(ctx, adminChartCacheNamespace, cacheKey, result, adminChartCacheTTL)
 
-	// 写入缓存
+	// Write to cache
 	h.chartCacheMu.Lock()
 	h.chartCacheData[cacheKey] = &chartCacheEntry{
 		data:      result,
 		expiresAt: time.Now().Add(adminChartCacheTTL),
 	}
-	// 清理过期条目（延迟清理，避免内存泄漏）
+	// Clean up expired entries (deferred cleanup to avoid memory leaks)
 	for k, v := range h.chartCacheData {
 		if time.Now().After(v.expiresAt) {
 			delete(h.chartCacheData, k)
@@ -6926,7 +6926,7 @@ func parseOpsErrorPositiveInt64(c *gin.Context, name string) (*int64, bool) {
 	}
 	parsed, err := strconv.ParseInt(raw, 10, 64)
 	if err != nil || parsed <= 0 {
-		writeError(c, http.StatusBadRequest, fmt.Sprintf("%s 参数无效，需要正整数", name))
+		writeError(c, http.StatusBadRequest, fmt.Sprintf("%s parameter is invalid, a positive integer is required", name))
 		return nil, false
 	}
 	return &parsed, true
@@ -6939,13 +6939,13 @@ func parseOpsErrorLogFilter(c *gin.Context, withPaging bool) (database.UsageLogF
 	endStr := strings.TrimSpace(c.Query("end"))
 	if startStr != "" || endStr != "" {
 		if startStr == "" || endStr == "" {
-			writeError(c, http.StatusBadRequest, "start/end 参数需要同时提供")
+			writeError(c, http.StatusBadRequest, "start/end parameters must be provided together")
 			return database.UsageLogFilter{}, false
 		}
 		parsedStart, e1 := time.Parse(time.RFC3339, startStr)
 		parsedEnd, e2 := time.Parse(time.RFC3339, endStr)
 		if e1 != nil || e2 != nil {
-			writeError(c, http.StatusBadRequest, "start/end 参数格式错误，需要 RFC3339 格式")
+			writeError(c, http.StatusBadRequest, "start/end parameter has an invalid format, RFC3339 is required")
 			return database.UsageLogFilter{}, false
 		}
 		startTime = parsedStart
@@ -6989,7 +6989,7 @@ func parseOpsErrorLogFilter(c *gin.Context, withPaging bool) (database.UsageLogF
 	default:
 		statusCode, err := strconv.Atoi(status)
 		if err != nil || statusCode < 100 || statusCode > 599 {
-			writeError(c, http.StatusBadRequest, "status/status_code 参数无效")
+			writeError(c, http.StatusBadRequest, "status/status_code parameter is invalid")
 			return database.UsageLogFilter{}, false
 		}
 		filter.StatusCode = statusCode
@@ -7087,7 +7087,7 @@ type opsErrorExportEntry struct {
 	AttemptIndex       int       `json:"attempt_index"`
 }
 
-// GetOpsErrorLogs 获取运维错误日志
+// GetOpsErrorLogs gets the ops error logs
 func (h *Handler) GetOpsErrorLogs(c *gin.Context) {
 	ctx, cancel := context.WithTimeout(c.Request.Context(), 15*time.Second)
 	defer cancel()
@@ -7104,7 +7104,7 @@ func (h *Handler) GetOpsErrorLogs(c *gin.Context) {
 	c.JSON(http.StatusOK, result)
 }
 
-// ExportOpsErrorLogs 导出运维错误日志 JSON。
+// ExportOpsErrorLogs exports the ops error logs as JSON.
 func (h *Handler) ExportOpsErrorLogs(c *gin.Context) {
 	ctx, cancel := context.WithTimeout(c.Request.Context(), 30*time.Second)
 	defer cancel()
@@ -7116,7 +7116,7 @@ func (h *Handler) ExportOpsErrorLogs(c *gin.Context) {
 	dedupe := parseBoolQueryDefault(c, "dedupe", true)
 	excludedStatusCodes, excludedStatusSet, ok := parseExcludedStatusCodes(c.Query("exclude_status"))
 	if !ok {
-		writeError(c, http.StatusBadRequest, "exclude_status 参数无效")
+		writeError(c, http.StatusBadRequest, "exclude_status parameter is invalid")
 		return
 	}
 
@@ -7331,7 +7331,7 @@ func parseUsageLogBoolFilter(c *gin.Context, name string) (*bool, bool) {
 		value := false
 		return &value, true
 	default:
-		writeError(c, http.StatusBadRequest, name+" 参数无效，需要 true 或 false")
+		writeError(c, http.StatusBadRequest, name+" parameter is invalid, true or false is required")
 		return nil, false
 	}
 }
@@ -7353,7 +7353,7 @@ func parseUsageLogStatusFilter(c *gin.Context, filter *database.UsageLogFilter) 
 	default:
 		statusCode, err := strconv.Atoi(status)
 		if err != nil || statusCode < 100 || statusCode > 599 {
-			writeError(c, http.StatusBadRequest, "status/status_code 参数无效")
+			writeError(c, http.StatusBadRequest, "status/status_code parameter is invalid")
 			return false
 		}
 		filter.StatusCode = statusCode
@@ -7460,7 +7460,7 @@ func parseUsageLogsFilter(c *gin.Context, startTime, endTime time.Time) (databas
 	return filter, true
 }
 
-// GetOpsErrorSummary 获取运维错误日志概览
+// GetOpsErrorSummary gets the summary of the ops error logs
 func (h *Handler) GetOpsErrorSummary(c *gin.Context) {
 	ctx, cancel := context.WithTimeout(c.Request.Context(), 10*time.Second)
 	defer cancel()
@@ -7477,7 +7477,7 @@ func (h *Handler) GetOpsErrorSummary(c *gin.Context) {
 	c.JSON(http.StatusOK, result)
 }
 
-// GetUsageLogsErrorSummary 获取与请求记录筛选联动的错误摘要。
+// GetUsageLogsErrorSummary returns the error summary linked to the request log filters.
 func (h *Handler) GetUsageLogsErrorSummary(c *gin.Context) {
 	ctx, cancel := context.WithTimeout(c.Request.Context(), 10*time.Second)
 	defer cancel()
@@ -7485,13 +7485,13 @@ func (h *Handler) GetUsageLogsErrorSummary(c *gin.Context) {
 	startStr := strings.TrimSpace(c.Query("start"))
 	endStr := strings.TrimSpace(c.Query("end"))
 	if startStr == "" || endStr == "" {
-		writeError(c, http.StatusBadRequest, "start/end 参数需要同时提供")
+		writeError(c, http.StatusBadRequest, "start/end parameters must be provided together")
 		return
 	}
 	startTime, startErr := time.Parse(time.RFC3339, startStr)
 	endTime, endErr := time.Parse(time.RFC3339, endStr)
 	if startErr != nil || endErr != nil {
-		writeError(c, http.StatusBadRequest, "start/end 参数格式错误，需要 RFC3339 格式")
+		writeError(c, http.StatusBadRequest, "start/end parameter has an invalid format, RFC3339 is required")
 		return
 	}
 
@@ -7507,7 +7507,7 @@ func (h *Handler) GetUsageLogsErrorSummary(c *gin.Context) {
 	c.JSON(http.StatusOK, result)
 }
 
-// GetUsageLogs 获取使用日志
+// GetUsageLogs gets the usage logs
 func (h *Handler) GetUsageLogs(c *gin.Context) {
 	ctx, cancel := context.WithTimeout(c.Request.Context(), 15*time.Second)
 	defer cancel()
@@ -7519,11 +7519,11 @@ func (h *Handler) GetUsageLogs(c *gin.Context) {
 		startTime, e1 := time.Parse(time.RFC3339, startStr)
 		endTime, e2 := time.Parse(time.RFC3339, endStr)
 		if e1 != nil || e2 != nil {
-			writeError(c, http.StatusBadRequest, "start/end 参数格式错误，需要 RFC3339 格式")
+			writeError(c, http.StatusBadRequest, "start/end parameter has an invalid format, RFC3339 is required")
 			return
 		}
 
-		// 有 page 参数 → 服务端分页（Usage 页面表格）
+		// With a page parameter → server-side pagination (usage page table)
 		if c.Query("page") != "" {
 			filter, ok := parseUsageLogsFilter(c, startTime, endTime)
 			if !ok {
@@ -7539,7 +7539,7 @@ func (h *Handler) GetUsageLogs(c *gin.Context) {
 			return
 		}
 
-		// 无 page 参数 → 返回全量（Dashboard 图表聚合）
+		// Without a page parameter → return everything (dashboard chart aggregation)
 		logs, err := h.db.ListUsageLogsByTimeRange(ctx, startTime, endTime)
 		if err != nil {
 			writeInternalError(c, err)
@@ -7552,7 +7552,7 @@ func (h *Handler) GetUsageLogs(c *gin.Context) {
 		return
 	}
 
-	// 回退：limit 模式
+	// Fallback: limit mode
 	limit := 50
 	if l := c.Query("limit"); l != "" {
 		if n, err := strconv.Atoi(l); err == nil && n > 0 {
@@ -7570,7 +7570,7 @@ func (h *Handler) GetUsageLogs(c *gin.Context) {
 	c.JSON(http.StatusOK, usageLogsResponse{Logs: logs})
 }
 
-// ClearUsageLogs 清空所有使用日志
+// ClearUsageLogs clears all usage logs
 func (h *Handler) ClearUsageLogs(c *gin.Context) {
 	ctx, cancel := context.WithTimeout(c.Request.Context(), 10*time.Second)
 	defer cancel()
@@ -7583,14 +7583,14 @@ func (h *Handler) ClearUsageLogs(c *gin.Context) {
 	h.chartCacheMu.Lock()
 	h.chartCacheData = make(map[string]*chartCacheEntry)
 	h.chartCacheMu.Unlock()
-	c.JSON(http.StatusOK, gin.H{"message": "日志已清空"})
+	c.JSON(http.StatusOK, gin.H{"message": "Logs cleared"})
 }
 
 // ==================== API Keys ====================
 
-// ListAPIKeys 获取所有 API 密钥（脱敏版本）。
-// view=lite 只返回密钥行本身,跳过窗口费用与最近使用时间:这两项要聚合 usage_logs,
-// 而筛选下拉、横幅等场景用不到,慢盘 SQLite 上每次打开页面都白扫一遍。
+// ListAPIKeys gets all API keys (masked version).
+// view=lite returns only the key rows themselves, skipping the window cost and last-used time: both need to aggregate usage_logs,
+// while the filter dropdowns, banners, and similar places do not need them, and on a slow SQLite disk they would scan everything again on every page open.
 func (h *Handler) ListAPIKeys(c *gin.Context) {
 	ctx, cancel := context.WithTimeout(c.Request.Context(), 5*time.Second)
 	defer cancel()
@@ -7609,7 +7609,7 @@ func (h *Handler) ListAPIKeys(c *gin.Context) {
 		return
 	}
 
-	// 检查是否有任何 key 配置了窗口 cost limit
+	// Check whether any key has a window cost limit configured
 	var need5h, need7d, need30d, needDaily bool
 	for _, k := range keys {
 		if k.Limits.CostLimit5h > 0 {
@@ -7626,7 +7626,7 @@ func (h *Handler) ListAPIKeys(c *gin.Context) {
 		}
 	}
 
-	// 按需批量查询窗口用量
+	// Query window usage in batch on demand
 	var cost5h, cost7d, cost30d, costToday map[int64]float64
 	if need5h {
 		cost5h, _ = h.db.GetAllAPIKeysWindowCost(ctx, 5*time.Hour)
@@ -7641,10 +7641,10 @@ func (h *Handler) ListAPIKeys(c *gin.Context) {
 		costToday, _ = h.db.GetAllAPIKeysCostSince(ctx, database.StartOfDay(time.Now()))
 	}
 
-	// 最近使用时间：一次聚合，失败不阻断列表
+	// Last-used time: one aggregation; a failure does not block the list
 	lastUsedByID, _ := h.db.ListAPIKeyLastUsedAt(ctx)
 
-	// 转换为脱敏响应
+	// Convert to the masked response
 	maskedKeys := make([]*MaskedAPIKeyRow, 0, len(keys))
 	for _, k := range keys {
 		mk := NewMaskedAPIKeyRow(k)
@@ -7687,7 +7687,7 @@ type createKeyReq struct {
 	Limits          *createAPIKeyLimits `json:"limits"`
 }
 
-// generateKey 生成随机 API Key
+// generateKey generates a random API key
 func generateKey() (string, error) {
 	b := make([]byte, 24)
 	if _, err := rand.Read(b); err != nil {
@@ -7696,28 +7696,28 @@ func generateKey() (string, error) {
 	return "sk-" + hex.EncodeToString(b), nil
 }
 
-// CreateAPIKey 创建新 API 密钥（增强版，带输入验证）
+// CreateAPIKey creates a new API key (enhanced version, with input validation)
 func (h *Handler) CreateAPIKey(c *gin.Context) {
 	var req createKeyReq
 	if err := c.ShouldBindJSON(&req); err != nil {
 		req.Name = ""
 	}
 
-	// 输入验证和清理
+	// Input validation and sanitization
 	req.Name = security.SanitizeInput(req.Name)
 	if req.Name == "" {
 		req.Name = "default"
 	}
 
-	// 验证名称长度
+	// Validate name length
 	if utf8.RuneCountInString(req.Name) > 100 {
-		writeError(c, http.StatusBadRequest, "名称长度不能超过100字符")
+		writeError(c, http.StatusBadRequest, "Name must not exceed 100 characters")
 		return
 	}
 
-	// 检查XSS
+	// Check for XSS
 	if security.ContainsXSS(req.Name) {
-		writeError(c, http.StatusBadRequest, "名称包含非法字符")
+		writeError(c, http.StatusBadRequest, "Name contains illegal characters")
 		return
 	}
 
@@ -7733,7 +7733,7 @@ func (h *Handler) CreateAPIKey(c *gin.Context) {
 		return
 	}
 	if quotaLimit > 1000000000 {
-		writeError(c, http.StatusBadRequest, "额度限制过大")
+		writeError(c, http.StatusBadRequest, "Quota limit is too large")
 		return
 	}
 
@@ -7757,10 +7757,10 @@ func (h *Handler) CreateAPIKey(c *gin.Context) {
 			return
 		}
 	} else {
-		// 验证用户提供的key格式
+		// Validate the format of the key supplied by the user
 		key = security.SanitizeInput(key)
 		if !strings.HasPrefix(key, "sk-") || len(key) < 20 {
-			writeError(c, http.StatusBadRequest, "API Key格式无效")
+			writeError(c, http.StatusBadRequest, "API key format is invalid")
 			return
 		}
 	}
@@ -7778,7 +7778,7 @@ func (h *Handler) CreateAPIKey(c *gin.Context) {
 			for _, value := range missing {
 				values = append(values, strconv.FormatInt(value, 10))
 			}
-			writeError(c, http.StatusBadRequest, "allowed_group_ids 包含不存在的分组 ID: "+strings.Join(values, ", "))
+			writeError(c, http.StatusBadRequest, "allowed_group_ids contains group IDs that do not exist: "+strings.Join(values, ", "))
 			return
 		}
 	}
@@ -7809,7 +7809,7 @@ func (h *Handler) CreateAPIKey(c *gin.Context) {
 		Limits:          limits,
 	})
 	if err != nil {
-		writeError(c, http.StatusInternalServerError, "创建失败: "+err.Error())
+		writeError(c, http.StatusInternalServerError, "Creation failed: "+err.Error())
 		return
 	}
 	if allowedGroupIDs.Set {
@@ -7822,11 +7822,11 @@ func (h *Handler) CreateAPIKey(c *gin.Context) {
 		h.store.SetAPIKeyNoAffinityGroups(id, limits.NoAffinityGroupIDs)
 		h.store.SetAPIKeyAllowedPlans(id, limits.PlanAllow)
 	}
-	// 新配的累计额度要立刻开始记账，不等落库侧的 60s 缓存过期。
+	// A newly configured cumulative quota must start metering immediately, without waiting for the 60s cache on the persistence side to expire.
 	h.db.InvalidateScopeQuotaKeyCache()
 	h.invalidateAPIKeyRuntimeCaches(ctx, key)
 
-	// 记录安全审计日志
+	// Record the security audit log
 	security.SecurityAuditLog("API_KEY_CREATED", fmt.Sprintf("id=%d name=%s ip=%s", id, security.SanitizeLog(req.Name), c.ClientIP()))
 
 	var expiresAtResponse *string
@@ -7860,14 +7860,14 @@ type updateAPIKeyReq struct {
 func (h *Handler) UpdateAPIKey(c *gin.Context) {
 	id, err := strconv.ParseInt(c.Param("id"), 10, 64)
 	if err != nil {
-		writeError(c, http.StatusBadRequest, "无效 ID")
+		writeError(c, http.StatusBadRequest, "Invalid ID")
 		return
 	}
 	var req updateAPIKeyReq
 	decoder := json.NewDecoder(c.Request.Body)
 	decoder.DisallowUnknownFields()
 	if err := decoder.Decode(&req); err != nil {
-		writeError(c, http.StatusBadRequest, "请求格式错误")
+		writeError(c, http.StatusBadRequest, "Invalid request format")
 		return
 	}
 	allowedGroupIDs, err := parseOptionalIntegerSliceField(req.AllowedGroupIDs, "allowed_group_ids")
@@ -7899,22 +7899,22 @@ func (h *Handler) UpdateAPIKey(c *gin.Context) {
 	if req.Name != nil {
 		name := security.SanitizeInput(*req.Name)
 		if strings.TrimSpace(name) == "" {
-			writeError(c, http.StatusBadRequest, "名称不能为空")
+			writeError(c, http.StatusBadRequest, "Name must not be empty")
 			return
 		}
 		if utf8.RuneCountInString(name) > 100 {
-			writeError(c, http.StatusBadRequest, "名称长度不能超过100字符")
+			writeError(c, http.StatusBadRequest, "Name must not exceed 100 characters")
 			return
 		}
 		if security.ContainsXSS(name) {
-			writeError(c, http.StatusBadRequest, "名称包含非法字符")
+			writeError(c, http.StatusBadRequest, "Name contains illegal characters")
 			return
 		}
 		req.Name = &name
 	}
 	if quotaLimitSet {
 		if quotaLimit > 1000000000 {
-			writeError(c, http.StatusBadRequest, "额度限制不能超过 1000000000")
+			writeError(c, http.StatusBadRequest, "Quota limit must not exceed 1000000000")
 			return
 		}
 	}
@@ -7930,7 +7930,7 @@ func (h *Handler) UpdateAPIKey(c *gin.Context) {
 			for _, value := range missing {
 				values = append(values, strconv.FormatInt(value, 10))
 			}
-			writeError(c, http.StatusBadRequest, "allowed_group_ids 包含不存在的分组 ID: "+strings.Join(values, ", "))
+			writeError(c, http.StatusBadRequest, "allowed_group_ids contains group IDs that do not exist: "+strings.Join(values, ", "))
 			return
 		}
 		allowedGroupValues = dedupeInt64(allowedGroupIDs.Values)
@@ -7991,8 +7991,8 @@ func (h *Handler) UpdateAPIKey(c *gin.Context) {
 	c.JSON(http.StatusOK, gin.H{"message": "API Key 已更新", "limits": savedLimits})
 }
 
-// sanitizeAPIKeyLimits 把请求体里来的 limits 归一:负值置 0,空白模型名过滤,字符串小写。
-// 同时配置 ModelAllow + ModelDeny 时白名单优先(在 enforce 时已生效),这里不强制清空黑名单。
+// sanitizeAPIKeyLimits normalizes the limits from the request body: negative values are set to 0, blank model names are filtered out, and strings are lowercased.
+// When both ModelAllow and ModelDeny are configured, the allowlist takes precedence (already in effect at enforce time); the blocklist is not forcibly cleared here.
 func sanitizeAPIKeyLimits(in database.APIKeyLimits) database.APIKeyLimits {
 	clean := func(items []string) []string {
 		if len(items) == 0 {
@@ -8039,7 +8039,7 @@ func sanitizeAPIKeyLimits(in database.APIKeyLimits) database.APIKeyLimits {
 		ScopeLimits:            database.NormalizeAPIKeyScopeLimits(in.ScopeLimits),
 		ModelRequestLimits:     in.ModelRequestLimits,
 	}
-	// 归一后旧 bool 与新 policy 保持一致，避免两处配置漂移。
+	// After normalization, the legacy bool and the new policy stay consistent, avoiding configuration drift between the two.
 	out.DisableImageGeneration = out.ImageGenerationPolicy == database.ImageGenerationPolicyBlock
 	if out.ImageGenerationPolicy == database.ImageGenerationPolicyAllow {
 		out.ImageGenerationPolicy = ""
@@ -8056,14 +8056,14 @@ func (h *Handler) validateAPIKeyGroupIDs(ctx context.Context, groupIDs []int64, 
 		return err
 	}
 	if len(missing) > 0 {
-		return fmt.Errorf("%s 包含不存在的分组 ID: %s", field, joinInt64s(missing))
+		return fmt.Errorf("%s contains group IDs that do not exist: %s", field, joinInt64s(missing))
 	}
 	return nil
 }
 
-// validateAPIKeyScopeLimits 校验分组 / 账号维度限额指向的 scope 真实存在（issue #439）。
-// 分组查 DB;账号查运行时账号池（回收站里的账号视为不存在）。指向错误的 ID 会让限额
-// 永远不触发，所以这里直接 400 而不是静默丢弃。
+// validateAPIKeyScopeLimits validates that the scopes pointed to by group- and account-level limits really exist (issue #439).
+// Groups are looked up in the DB; accounts are looked up in the runtime account pool (accounts in the recycle bin are treated as non-existent). Pointing at a wrong ID would make the limit
+// never trigger, so we return 400 here directly instead of silently discarding it.
 func (h *Handler) validateAPIKeyScopeLimits(ctx context.Context, scopes []database.APIKeyScopeLimit) error {
 	if len(scopes) == 0 {
 		return nil
@@ -8083,7 +8083,7 @@ func (h *Handler) validateAPIKeyScopeLimits(ctx context.Context, scopes []databa
 			return err
 		}
 		if len(missing) > 0 {
-			return fmt.Errorf("limits.scope_limits 包含不存在的分组 ID: %s", joinInt64s(missing))
+			return fmt.Errorf("limits.scope_limits contains group IDs that do not exist: %s", joinInt64s(missing))
 		}
 	}
 	if len(accountIDs) > 0 && h.store != nil {
@@ -8094,7 +8094,7 @@ func (h *Handler) validateAPIKeyScopeLimits(ctx context.Context, scopes []databa
 			}
 		}
 		if len(missing) > 0 {
-			return fmt.Errorf("limits.scope_limits 包含不存在的账号 ID: %s", joinInt64s(missing))
+			return fmt.Errorf("limits.scope_limits contains account IDs that do not exist: %s", joinInt64s(missing))
 		}
 	}
 	return nil
@@ -8108,8 +8108,8 @@ func joinInt64s(values []int64) string {
 	return strings.Join(parts, ", ")
 }
 
-// sanitizeImageGenerationPolicy 归一图片工具策略取值（allow/strip/block），并兼容旧的
-// DisableImageGeneration bool：显式 policy 优先，未设时 bool=true 视为 block。
+// sanitizeImageGenerationPolicy normalizes the values of the image tool policy (allow/strip/block), and stays compatible with the old
+// DisableImageGeneration bool: an explicit policy takes precedence; if it is unset, bool=true is treated as block.
 func sanitizeImageGenerationPolicy(in database.APIKeyLimits) string {
 	switch strings.ToLower(strings.TrimSpace(in.ImageGenerationPolicy)) {
 	case database.ImageGenerationPolicyStrip:
@@ -8125,16 +8125,16 @@ func sanitizeImageGenerationPolicy(in database.APIKeyLimits) string {
 	return database.ImageGenerationPolicyAllow
 }
 
-// knownAPIKeyPlanFilters 是账号套餐白名单允许的取值集合。与前端 PlanMultiSelect 的
-// 选项、以及 Accounts 页的套餐筛选保持一致(按原始 plan_type 精确匹配,pro 与 prolite/promax
-// 相互独立)。未知值在 cleanPlanAllow 中被丢弃,避免把打字错误写进过滤条件后导致该
-// Key 永远选不到账号。
+// knownAPIKeyPlanFilters is the set of values allowed by the account plan allowlist. It stays consistent with the
+// options of the frontend PlanMultiSelect and with the plan filter on the Accounts page (exact match on the raw plan_type; pro and prolite/promax
+// are independent of each other). Unknown values are dropped in cleanPlanAllow, so that a typo does not get written into the filter condition and
+// leave the key unable to ever select any account.
 var knownAPIKeyPlanFilters = map[string]struct{}{
 	"free": {}, "plus": {}, "pro": {}, "prolite": {}, "promax": {}, "team": {}, "k12": {}, "go": {},
 	"enterprise": {}, "business": {},
 }
 
-// cleanPlanAllow 归一账号套餐白名单:小写去空白、丢弃未知值并去重。
+// cleanPlanAllow normalizes the account plan allowlist: lowercase, strip whitespace, drop unknown values, and deduplicate.
 func cleanPlanAllow(items []string) []string {
 	if len(items) == 0 {
 		return nil
@@ -8192,7 +8192,7 @@ func parseOptionalAPIKeyQuota(quotaLimitRaw, quotaRaw json.RawMessage) (float64,
 	}
 	var value float64
 	if err := json.Unmarshal(raw, &value); err != nil {
-		return 0, true, fmt.Errorf("额度限制必须是数字")
+		return 0, true, fmt.Errorf("quota limit must be a number")
 	}
 	if value < 0 {
 		return 0, true, fmt.Errorf("额度限制不能小于 0")
@@ -8213,7 +8213,7 @@ func parseOptionalAPIKeyExpiration(raw json.RawMessage, expiresInDays *int) (sql
 	}
 	var value string
 	if err := json.Unmarshal(raw, &value); err != nil {
-		return sql.NullTime{}, true, fmt.Errorf("过期时间格式无效")
+		return sql.NullTime{}, true, fmt.Errorf("expiry time has an invalid format")
 	}
 	expiresAt, err := parseAPIKeyExpiresAt(value, nil)
 	return expiresAt, true, err
@@ -8222,11 +8222,11 @@ func parseOptionalAPIKeyExpiration(raw json.RawMessage, expiresInDays *int) (sql
 func parseAPIKeyExpiresAt(raw string, expiresInDays *int) (sql.NullTime, error) {
 	if expiresInDays != nil {
 		if *expiresInDays < 0 {
-			return sql.NullTime{}, fmt.Errorf("过期天数不能小于 0")
+			return sql.NullTime{}, fmt.Errorf("expiry days must not be less than 0")
 		}
 		if *expiresInDays > 0 {
 			if *expiresInDays > 3650 {
-				return sql.NullTime{}, fmt.Errorf("过期天数不能超过 3650 天")
+				return sql.NullTime{}, fmt.Errorf("expiry days must not exceed 3650")
 			}
 			return sql.NullTime{Time: time.Now().AddDate(0, 0, *expiresInDays), Valid: true}, nil
 		}
@@ -8249,19 +8249,19 @@ func parseAPIKeyExpiresAt(raw string, expiresInDays *int) (sql.NullTime, error) 
 				parsed = parsed.Add(24*time.Hour - time.Nanosecond)
 			}
 			if !parsed.After(time.Now()) {
-				return sql.NullTime{}, fmt.Errorf("过期时间必须晚于当前时间")
+				return sql.NullTime{}, fmt.Errorf("expiry time must be later than the current time")
 			}
 			return sql.NullTime{Time: parsed, Valid: true}, nil
 		}
 	}
-	return sql.NullTime{}, fmt.Errorf("过期时间格式无效")
+	return sql.NullTime{}, fmt.Errorf("expiry time has an invalid format")
 }
 
-// DeleteAPIKey 删除 API 密钥
+// DeleteAPIKey deletes an API key
 func (h *Handler) DeleteAPIKey(c *gin.Context) {
 	id, err := strconv.ParseInt(c.Param("id"), 10, 64)
 	if err != nil {
-		writeError(c, http.StatusBadRequest, "无效 ID")
+		writeError(c, http.StatusBadRequest, "Invalid ID")
 		return
 	}
 
@@ -8273,7 +8273,7 @@ func (h *Handler) DeleteAPIKey(c *gin.Context) {
 		keyToInvalidate = row.Key
 	}
 	if err := h.db.DeleteAPIKey(ctx, id); err != nil {
-		writeError(c, http.StatusInternalServerError, "删除失败: "+err.Error())
+		writeError(c, http.StatusInternalServerError, "Deletion failed: "+err.Error())
 		return
 	}
 	if h.store != nil {
@@ -8363,8 +8363,8 @@ type settingsResponse struct {
 
 	CodexClientVersions []proxy.CodexClientVersionTarget `json:"codex_client_versions"`
 
-	// CodexEffectiveCLIVersion 是当前实际用于出站 UA 的版本(内置常量与同步值取大),
-	// 供设置页"设为同步版本"按钮使用——同步值可能过期或为空,内置值才是下限。
+	// CodexEffectiveCLIVersion is the version actually used for the outbound UA right now (the larger of the built-in constant and the synced value),
+	// for the settings page's "set as synced version" button: the synced value may be stale or empty, so the built-in value is the floor.
 	CodexEffectiveCLIVersion          string   `json:"codex_effective_cli_version"`
 	SchedulerMode                     string   `json:"scheduler_mode"`
 	AffinityMode                      string   `json:"affinity_mode"`
@@ -8394,8 +8394,8 @@ type settingsResponse struct {
 	ReasoningEffortModels             string   `json:"reasoning_effort_models"`
 	ResinURL                          string   `json:"resin_url"`
 	ResinPlatformName                 string   `json:"resin_platform_name"`
-	// CodexEgress 是后端权威的"Codex 渠道当前由谁承担出站"摘要:Resin 启用时代理池与
-	// proxy_url 对 Codex 不生效,界面据此标注,避免三套配置并存看不出谁在生效(issue #679)。
+	// CodexEgress is the backend's authoritative summary of who currently bears the Codex channel's outbound traffic: when Resin is enabled, the proxy pool and
+	// proxy_url have no effect on Codex; the UI labels this accordingly, so that three configurations do not coexist with no visible sign of which one is in effect (issue #679).
 	CodexEgress                        proxy.CodexEgressSummary         `json:"codex_egress"`
 	PromptFilterEnabled                bool                             `json:"prompt_filter_enabled"`
 	PromptFilterMode                   string                           `json:"prompt_filter_mode"`
@@ -8701,28 +8701,28 @@ func normalizeSiteLogo(value string) (string, error) {
 	case strings.HasPrefix(lower, "data:image/") && strings.Contains(lower, ";base64,"):
 		commaIndex := strings.Index(value, ",")
 		if commaIndex < 0 {
-			return "", fmt.Errorf("网站图标 data URL 格式无效")
+			return "", fmt.Errorf("site icon data URL format is invalid")
 		}
 		decoded, err := base64.StdEncoding.DecodeString(strings.TrimSpace(value[commaIndex+1:]))
 		if err != nil {
-			return "", fmt.Errorf("网站图标 base64 数据无效")
+			return "", fmt.Errorf("site icon base64 data is invalid")
 		}
 		if len(decoded) > maxSiteLogoBytes {
-			return "", fmt.Errorf("网站图标不能超过 600KB")
+			return "", fmt.Errorf("site icon must not exceed 600KB")
 		}
 		return value, nil
 	case strings.HasPrefix(lower, "https://") || strings.HasPrefix(lower, "http://"):
 		if len(value) > maxSiteLogoURLChars {
-			return "", fmt.Errorf("网站图标 URL 过长")
+			return "", fmt.Errorf("site icon URL is too long")
 		}
 		return value, nil
 	case strings.HasPrefix(value, "/") && !strings.HasPrefix(value, "//"):
 		if len(value) > maxSiteLogoURLChars {
-			return "", fmt.Errorf("网站图标路径过长")
+			return "", fmt.Errorf("site icon path is too long")
 		}
 		return value, nil
 	default:
-		return "", fmt.Errorf("网站图标仅支持 http(s) URL、站内路径或 data:image base64")
+		return "", fmt.Errorf("site icon only supports http(s) URLs, on-site paths, or data:image base64")
 	}
 }
 
@@ -8736,41 +8736,41 @@ func normalizeBackgroundImage(value string) (string, error) {
 	case strings.HasPrefix(lower, "data:image/") && strings.Contains(lower, ";base64,"):
 		commaIndex := strings.Index(value, ",")
 		if commaIndex < 0 {
-			return "", fmt.Errorf("背景图 data URL 格式无效")
+			return "", fmt.Errorf("background image data URL format is invalid")
 		}
 		decoded, err := base64.StdEncoding.DecodeString(strings.TrimSpace(value[commaIndex+1:]))
 		if err != nil {
-			return "", fmt.Errorf("背景图 base64 数据无效")
+			return "", fmt.Errorf("background image base64 data is invalid")
 		}
 		if len(decoded) > maxBackgroundImageBytes {
-			return "", fmt.Errorf("背景图不能超过 2MB")
+			return "", fmt.Errorf("background image must not exceed 2MB")
 		}
 		return value, nil
 	case strings.HasPrefix(lower, "data:video/mp4") && strings.Contains(lower, ";base64,"):
 		commaIndex := strings.Index(value, ",")
 		if commaIndex < 0 {
-			return "", fmt.Errorf("动态壁纸 data URL 格式无效")
+			return "", fmt.Errorf("animated wallpaper data URL format is invalid")
 		}
 		decoded, err := base64.StdEncoding.DecodeString(strings.TrimSpace(value[commaIndex+1:]))
 		if err != nil {
-			return "", fmt.Errorf("动态壁纸 base64 数据无效")
+			return "", fmt.Errorf("animated wallpaper base64 data is invalid")
 		}
 		if len(decoded) > maxBackgroundVideoBytes {
-			return "", fmt.Errorf("动态壁纸不能超过 40MB")
+			return "", fmt.Errorf("animated wallpaper must not exceed 40MB")
 		}
 		return value, nil
 	case strings.HasPrefix(lower, "https://") || strings.HasPrefix(lower, "http://"):
 		if len(value) > maxBackgroundImageURLChars {
-			return "", fmt.Errorf("背景图 URL 过长")
+			return "", fmt.Errorf("background image URL is too long")
 		}
 		return value, nil
 	case strings.HasPrefix(value, "/") && !strings.HasPrefix(value, "//"):
 		if len(value) > maxBackgroundImageURLChars {
-			return "", fmt.Errorf("背景图路径过长")
+			return "", fmt.Errorf("background image path is too long")
 		}
 		return value, nil
 	default:
-		return "", fmt.Errorf("背景仅支持 http(s) URL、站内路径、data:image base64 或 data:video/mp4 base64")
+		return "", fmt.Errorf("background only supports http(s) URLs, on-site paths, data:image base64, or data:video/mp4 base64")
 	}
 }
 
@@ -8819,7 +8819,7 @@ func backgroundAssetURL(filename string) string {
 func validateConnectionTestContent(content string) (string, error) {
 	normalized := auth.NormalizeTestContent(content)
 	if len([]rune(normalized)) > auth.MaxTestContentRunes {
-		return "", fmt.Errorf("test_content 不能超过 %d 个字符", auth.MaxTestContentRunes)
+		return "", fmt.Errorf("test_content must not exceed %d characters", auth.MaxTestContentRunes)
 	}
 	return normalized, nil
 }
@@ -8879,7 +8879,7 @@ func looksLikeMP4(data []byte) bool {
 
 func normalizeBackgroundUploadMedia(filename, contentType string, data []byte) (string, string, error) {
 	if len(data) == 0 {
-		return "", "", fmt.Errorf("背景文件为空")
+		return "", "", fmt.Errorf("background file is empty")
 	}
 	declared := declaredBackgroundMediaType(filename, contentType)
 	detected := strings.ToLower(strings.TrimSpace(strings.Split(http.DetectContentType(data), ";")[0]))
@@ -8905,7 +8905,7 @@ func normalizeBackgroundUploadMedia(filename, contentType string, data []byte) (
 			return "video/mp4", "mp4", nil
 		}
 	}
-	return "", "", fmt.Errorf("背景仅支持 PNG、JPG、WebP、SVG 或 MP4")
+	return "", "", fmt.Errorf("background only supports PNG, JPG, WebP, SVG, or MP4")
 }
 
 func backgroundUploadLimitBytes(mimeType string) int {
@@ -8917,23 +8917,23 @@ func backgroundUploadLimitBytes(mimeType string) int {
 
 func backgroundUploadTooLargeMessage(mimeType string) string {
 	if mimeType == "video/mp4" {
-		return "MP4 动态壁纸不能超过 40MB"
+		return "MP4 animated wallpaper must not exceed 40MB"
 	}
-	return "背景图片不能超过 20MB"
+	return "background image must not exceed 20MB"
 }
 
 func (h *Handler) UploadBackgroundAsset(c *gin.Context) {
 	fh, err := c.FormFile("file")
 	if err != nil {
-		writeError(c, http.StatusBadRequest, "请选择背景文件")
+		writeError(c, http.StatusBadRequest, "Select a background file")
 		return
 	}
 	if fh.Size <= 0 {
-		writeError(c, http.StatusBadRequest, "背景文件为空")
+		writeError(c, http.StatusBadRequest, "Background file is empty")
 		return
 	}
 	if fh.Size > maxBackgroundAssetUploadBytes {
-		writeError(c, http.StatusBadRequest, "背景文件不能超过 40MB")
+		writeError(c, http.StatusBadRequest, "Background file must not exceed 40MB")
 		return
 	}
 	file, err := fh.Open()
@@ -8949,7 +8949,7 @@ func (h *Handler) UploadBackgroundAsset(c *gin.Context) {
 		return
 	}
 	if len(data) > maxBackgroundAssetUploadBytes {
-		writeError(c, http.StatusBadRequest, "背景文件不能超过 40MB")
+		writeError(c, http.StatusBadRequest, "Background file must not exceed 40MB")
 		return
 	}
 	mimeType, ext, err := normalizeBackgroundUploadMedia(fh.Filename, fh.Header.Get("Content-Type"), data)
@@ -8963,17 +8963,17 @@ func (h *Handler) UploadBackgroundAsset(c *gin.Context) {
 	}
 
 	if err := os.MkdirAll(backgroundAssetDir(), 0o755); err != nil {
-		writeInternalError(c, fmt.Errorf("创建背景目录失败: %w", err))
+		writeInternalError(c, fmt.Errorf("failed to create background directory: %w", err))
 		return
 	}
 	filename := randomBackgroundAssetFilename(ext)
 	fullPath, ok := backgroundAssetPath(filename)
 	if !ok {
-		writeInternalError(c, fmt.Errorf("背景文件路径无效"))
+		writeInternalError(c, fmt.Errorf("background file path is invalid"))
 		return
 	}
 	if err := os.WriteFile(fullPath, data, 0o644); err != nil {
-		writeInternalError(c, fmt.Errorf("保存背景文件失败: %w", err))
+		writeInternalError(c, fmt.Errorf("failed to save background file: %w", err))
 		return
 	}
 
@@ -8988,12 +8988,12 @@ func (h *Handler) UploadBackgroundAsset(c *gin.Context) {
 func (h *Handler) GetBackgroundAssetFile(c *gin.Context) {
 	fullPath, ok := backgroundAssetPath(c.Param("filename"))
 	if !ok {
-		writeError(c, http.StatusNotFound, "背景文件不存在")
+		writeError(c, http.StatusNotFound, "Background file does not exist")
 		return
 	}
 	info, err := os.Stat(fullPath)
 	if err != nil || info.IsDir() {
-		writeError(c, http.StatusNotFound, "背景文件不存在")
+		writeError(c, http.StatusNotFound, "Background file does not exist")
 		return
 	}
 	c.Header("Cache-Control", "public, max-age=31536000, immutable")
@@ -9107,22 +9107,22 @@ func brandingFromSettings(settings *database.SystemSettings) brandingResponse {
 	return resp
 }
 
-// GetBranding 获取公开站点品牌配置（无需管理密钥）。
+// GetBranding gets the public site branding configuration (no admin key required).
 func (h *Handler) GetBranding(c *gin.Context) {
 	ctx, cancel := context.WithTimeout(c.Request.Context(), 3*time.Second)
 	defer cancel()
 	settings, err := h.db.GetSystemSettings(ctx)
 	if err != nil {
-		log.Printf("读取站点品牌配置失败: %v", err)
+		log.Printf("failed to read site branding configuration: %v", err)
 		c.JSON(http.StatusOK, brandingFromSettings(nil))
 		return
 	}
 	c.JSON(http.StatusOK, brandingFromSettings(settings))
 }
 
-// GetSettings 获取当前系统设置
-// GetObservedInstructions 返回最近观测到的客户端透传 instructions 样本，
-// 供管理端在配置 payload 重写规则时查看客户端实际发来的系统提示词原文。
+// GetSettings gets the current system settings
+// GetObservedInstructions returns the most recently observed client pass-through instructions samples,
+// so that admins can see the original system prompt the client actually sent when configuring payload rewrite rules.
 func (h *Handler) GetObservedInstructions(c *gin.Context) {
 	c.JSON(http.StatusOK, gin.H{"samples": proxy.ObservedInstructions()})
 }
@@ -9132,20 +9132,20 @@ func (h *Handler) GetSettings(c *gin.Context) {
 	defer cancel()
 	cacheSettingsStore := h.cacheSettingsStore()
 	if cacheSettingsStore == nil {
-		writeError(c, http.StatusInternalServerError, "响应缓存设置存储不可用")
+		writeError(c, http.StatusInternalServerError, "Response cache settings storage is unavailable")
 		return
 	}
 	responseCacheSettings, err := cacheSettingsStore.GetResponseCacheSettings(ctx)
 	if err != nil {
-		writeError(c, http.StatusInternalServerError, "读取响应缓存设置失败："+err.Error())
+		writeError(c, http.StatusInternalServerError, "Failed to read response cache settings: "+err.Error())
 		return
 	}
 	outputGuardSettings, err := h.db.GetOutputGuardSettings(ctx)
 	if err != nil {
-		// 防护设置读取失败时不能用默认值兜底：代理进程可能仍在用上一次成功
-		// 应用的配置（可能已启用），返回默认值会让 UI 显示与实际运行状态不符。
-		log.Printf("读取输出防护设置失败: %v", err)
-		writeError(c, http.StatusInternalServerError, "读取防护设置失败："+err.Error())
+		// When reading the guard settings fails, do not fall back to defaults: the proxy process may still be using the last successfully
+		// applied configuration (which may have been enabled), and returning defaults would make the UI display something that does not match the actual running state.
+		log.Printf("failed to read output guard settings: %v", err)
+		writeError(c, http.StatusInternalServerError, "Failed to read guard settings: "+err.Error())
 		return
 	}
 	outputGuardEnabled := false
@@ -9186,7 +9186,7 @@ func (h *Handler) GetSettings(c *gin.Context) {
 	autoResetCreditsOnExhaustionEnabled := runtimeCfg.AutoResetCreditsOnExhaustionEnabled
 	autoResetCreditsBeforeExpiryMin := runtimeCfg.AutoResetCreditsBeforeExpiryMin
 	autoActivate5hWindowEnabled := runtimeCfg.AutoActivate5hWindowEnabled
-	// uTLS 优雅关闭等待上限（issue #446）：与自动消费同款，数据库是多实例下的权威来源。
+	// Wait-time cap for graceful uTLS shutdown (issue #446): same as automatic consumption; the database is the authoritative source under multi-instance deployment.
 	utlsShutdownTimeoutMinutes := runtimeCfg.UTLSShutdownTimeoutMin
 	if dbSettings != nil {
 		autoResetCreditsEnabled = dbSettings.AutoResetCreditsEnabled
@@ -9425,7 +9425,7 @@ func (h *Handler) updatePromptFilterCustomPatterns(c *gin.Context, patterns []pr
 	ctx := c.Request.Context()
 	persisted, err := h.db.GetSystemSettings(ctx)
 	if err != nil {
-		writeError(c, http.StatusInternalServerError, "读取现有 Prompt 自定义规则失败："+err.Error())
+		writeError(c, http.StatusInternalServerError, "Failed to read existing Prompt custom rules: "+err.Error())
 		return
 	}
 	persistedRaw := "[]"
@@ -9436,7 +9436,7 @@ func (h *Handler) updatePromptFilterCustomPatterns(c *gin.Context, patterns []pr
 		}
 	}
 	if _, err := promptfilter.ParseCustomPatterns(persistedRaw); err != nil {
-		writeError(c, http.StatusInternalServerError, "数据库中的 Prompt 自定义规则无效，请先修复持久化配置")
+		writeError(c, http.StatusInternalServerError, "Prompt custom rules in the database are invalid; repair the persisted configuration first")
 		return
 	}
 	expectedForCAS := strings.TrimSpace(expectedRaw)
@@ -9453,7 +9453,7 @@ func (h *Handler) updatePromptFilterCustomPatterns(c *gin.Context, patterns []pr
 	replacement := promptfilter.MarshalCustomPatterns(patterns)
 	swapped, err := h.db.CompareAndSwapPromptFilterCustomPatterns(ctx, expectedForCAS, replacement)
 	if err != nil {
-		writeError(c, http.StatusInternalServerError, "保存 Prompt 自定义规则失败："+err.Error())
+		writeError(c, http.StatusInternalServerError, "Failed to save Prompt custom rules: "+err.Error())
 		return
 	}
 	if !swapped {
@@ -9466,44 +9466,44 @@ func (h *Handler) updatePromptFilterCustomPatterns(c *gin.Context, patterns []pr
 				latestCfg.CustomPatterns = latestPatterns
 				h.store.SetPromptFilterConfig(latestCfg)
 			} else {
-				log.Printf("Prompt 自定义规则冲突后无法解析数据库快照: %v", parseErr)
+				log.Printf("failed to parse the database snapshot after a Prompt custom rules conflict: %v", parseErr)
 			}
 		} else if readErr != nil {
-			log.Printf("Prompt 自定义规则冲突后无法刷新数据库快照: %v", readErr)
+			log.Printf("failed to refresh the database snapshot after a Prompt custom rules conflict: %v", readErr)
 		}
-		writeError(c, http.StatusConflict, "Prompt 自定义规则已被其他页面或实例更新，请刷新后重试")
+		writeError(c, http.StatusConflict, "Prompt custom rules were updated by another page or instance; refresh and try again")
 		return
 	}
 	latestCfg := h.store.GetPromptFilterConfig()
 	latestCfg.CustomPatterns = patterns
 	h.store.SetPromptFilterConfig(latestCfg)
-	log.Printf("设置已更新: prompt_filter custom_patterns=%d", len(patterns))
+	log.Printf("settings updated: prompt_filter custom_patterns=%d", len(patterns))
 	h.GetSettings(c)
 }
 
-// UpdateSettings 更新系统设置（实时生效）
+// UpdateSettings updates system settings (takes effect immediately)
 func (h *Handler) UpdateSettings(c *gin.Context) {
 	var req updateSettingsReq
 	if err := c.ShouldBindJSON(&req); err != nil {
-		writeError(c, http.StatusBadRequest, "请求格式错误")
+		writeError(c, http.StatusBadRequest, "Invalid request format")
 		return
 	}
 	if req.PromptFilterCustomPatternsExpected != nil && req.PromptFilterCustomPatterns == nil {
-		writeError(c, http.StatusBadRequest, "Prompt 自定义规则版本快照不能单独提交")
+		writeError(c, http.StatusBadRequest, "The Prompt custom rules version snapshot cannot be submitted on its own")
 		return
 	}
 	if req.PromptFilterCustomPatterns != nil && updateSettingsHasFieldsOtherThanCustomPatterns(req) {
-		writeError(c, http.StatusBadRequest, "Prompt 自定义规则必须单独保存，请刷新后从规则页面重试")
+		writeError(c, http.StatusBadRequest, "Prompt custom rules must be saved on their own; refresh and retry from the rules page")
 		return
 	}
 	h.settingsUpdateMu.Lock()
 	defer h.settingsUpdateMu.Unlock()
 	if req.ResponseCacheConfigGeneration != nil {
-		writeError(c, http.StatusBadRequest, "response_cache_config_generation 为只读字段")
+		writeError(c, http.StatusBadRequest, "response_cache_config_generation is a read-only field")
 		return
 	}
 	if req.OutputGuardConfigGeneration != nil {
-		writeError(c, http.StatusBadRequest, "output_guard_config_generation 为只读字段")
+		writeError(c, http.StatusBadRequest, "output_guard_config_generation is a read-only field")
 		return
 	}
 	if req.CodexImagesMainModel != nil {
@@ -9522,11 +9522,11 @@ func (h *Handler) UpdateSettings(c *gin.Context) {
 		req.OAuthModelCooldownBackoffEnabled != nil ||
 		req.OAuthUnsupportedCooldownSeconds != nil
 	if req.RelayModelCooldownMode != nil && !database.IsValidModelCooldownMode(*req.RelayModelCooldownMode) {
-		writeError(c, http.StatusBadRequest, "relay_model_cooldown_mode 必须是 off、fixed 或 adaptive")
+		writeError(c, http.StatusBadRequest, "relay_model_cooldown_mode must be off, fixed, or adaptive")
 		return
 	}
 	if req.OAuthModelCooldownMode != nil && !database.IsValidModelCooldownMode(*req.OAuthModelCooldownMode) {
-		writeError(c, http.StatusBadRequest, "oauth_model_cooldown_mode 必须是 off、fixed 或 adaptive")
+		writeError(c, http.StatusBadRequest, "oauth_model_cooldown_mode must be off, fixed, or adaptive")
 		return
 	}
 	for field, value := range map[string]*int{
@@ -9534,12 +9534,12 @@ func (h *Handler) UpdateSettings(c *gin.Context) {
 		"oauth_model_cooldown_seconds": req.OAuthModelCooldownSeconds,
 	} {
 		if value != nil && (*value < 1 || *value > database.MaxModelCooldownSeconds) {
-			writeError(c, http.StatusBadRequest, fmt.Sprintf("%s 必须在 1-%d 之间", field, database.MaxModelCooldownSeconds))
+			writeError(c, http.StatusBadRequest, fmt.Sprintf("%s must be between 1 and %d", field, database.MaxModelCooldownSeconds))
 			return
 		}
 	}
 	if value := req.OAuthUnsupportedCooldownSeconds; value != nil && (*value < 0 || *value > database.MaxModelCooldownSeconds) {
-		writeError(c, http.StatusBadRequest, fmt.Sprintf("oauth_unsupported_model_cooldown_seconds 必须在 0-%d 之间（0 表示关闭）", database.MaxModelCooldownSeconds))
+		writeError(c, http.StatusBadRequest, fmt.Sprintf("oauth_unsupported_model_cooldown_seconds must be between 0 and %d (0 means off)", database.MaxModelCooldownSeconds))
 		return
 	}
 	var submittedPromptFilterCustomPatterns []promptfilter.PatternConfig
@@ -9548,16 +9548,16 @@ func (h *Handler) UpdateSettings(c *gin.Context) {
 	if req.PromptFilterCustomPatterns != nil {
 		patterns, err := promptfilter.ParseCustomPatterns(*req.PromptFilterCustomPatterns)
 		if err != nil {
-			writeError(c, http.StatusBadRequest, "Prompt 检查自定义规则 JSON 无效: "+err.Error())
+			writeError(c, http.StatusBadRequest, "Prompt check custom rules JSON is invalid: "+err.Error())
 			return
 		}
 		if err := promptfilter.ValidateCustomPatterns(patterns); err != nil {
-			writeError(c, http.StatusBadRequest, "Prompt 检查自定义规则未通过安全校验: "+err.Error())
+			writeError(c, http.StatusBadRequest, "Prompt check custom rules did not pass security validation: "+err.Error())
 			return
 		}
 		submittedPromptFilterCustomPatterns = patterns
 		if req.PromptFilterCustomPatternsExpected == nil {
-			writeError(c, http.StatusConflict, "Prompt 自定义规则缺少版本快照，请刷新页面后重试")
+			writeError(c, http.StatusConflict, "Prompt custom rules are missing a version snapshot; refresh the page and try again")
 			return
 		}
 		expectedPromptFilterCustomPatterns = strings.TrimSpace(*req.PromptFilterCustomPatternsExpected)
@@ -9565,7 +9565,7 @@ func (h *Handler) UpdateSettings(c *gin.Context) {
 			expectedPromptFilterCustomPatterns = "[]"
 		}
 		if _, err := promptfilter.ParseCustomPatterns(expectedPromptFilterCustomPatterns); err != nil {
-			writeError(c, http.StatusBadRequest, "Prompt 自定义规则版本快照无效: "+err.Error())
+			writeError(c, http.StatusBadRequest, "Prompt custom rules version snapshot is invalid: "+err.Error())
 			return
 		}
 		h.updatePromptFilterCustomPatterns(c, submittedPromptFilterCustomPatterns, expectedPromptFilterCustomPatterns)
@@ -9586,19 +9586,19 @@ func (h *Handler) UpdateSettings(c *gin.Context) {
 
 	if req.AutoPause5hGuardBandPercent != nil {
 		if *req.AutoPause5hGuardBandPercent < 0 || *req.AutoPause5hGuardBandPercent > 100 {
-			writeError(c, http.StatusBadRequest, "auto_pause_5h_guard_band_percent 需在 0 到 100 之间")
+			writeError(c, http.StatusBadRequest, "auto_pause_5h_guard_band_percent must be between 0 and 100")
 			return
 		}
 	}
 	if req.AutoPause5hGuardConcurrency != nil {
 		if *req.AutoPause5hGuardConcurrency < 0 || *req.AutoPause5hGuardConcurrency > 1000 {
-			writeError(c, http.StatusBadRequest, "auto_pause_5h_guard_concurrency 需在 0 到 1000 之间")
+			writeError(c, http.StatusBadRequest, "auto_pause_5h_guard_concurrency must be between 0 and 1000")
 			return
 		}
 	}
 	if req.SmartPacingMinConcurrency != nil {
 		if *req.SmartPacingMinConcurrency < 1 || *req.SmartPacingMinConcurrency > 1000 {
-			writeError(c, http.StatusBadRequest, "smart_pacing_min_concurrency 需在 1 到 1000 之间")
+			writeError(c, http.StatusBadRequest, "smart_pacing_min_concurrency must be between 1 and 1000")
 			return
 		}
 	}
@@ -9606,13 +9606,13 @@ func (h *Handler) UpdateSettings(c *gin.Context) {
 		switch strings.ToLower(strings.TrimSpace(*req.SmartPacingWindows)) {
 		case "5h,7d", "7d,5h", "5h", "7d", "":
 		default:
-			writeError(c, http.StatusBadRequest, "smart_pacing_windows 仅支持 5h,7d / 5h / 7d")
+			writeError(c, http.StatusBadRequest, "smart_pacing_windows only supports 5h,7d / 5h / 7d")
 			return
 		}
 	}
 	if req.AutoResetCreditsBeforeExpiryMin != nil {
 		if *req.AutoResetCreditsBeforeExpiryMin < 10 || *req.AutoResetCreditsBeforeExpiryMin > 10080 {
-			writeError(c, http.StatusBadRequest, "auto_reset_credits_before_expiry_min 需在 10 到 10080 分钟之间")
+			writeError(c, http.StatusBadRequest, "auto_reset_credits_before_expiry_min must be between 10 and 10080 minutes")
 			return
 		}
 	}
@@ -9633,12 +9633,12 @@ func (h *Handler) UpdateSettings(c *gin.Context) {
 	}
 	cacheSettingsStore := h.cacheSettingsStore()
 	if cacheSettingsStore == nil {
-		writeError(c, http.StatusInternalServerError, "响应缓存设置存储不可用")
+		writeError(c, http.StatusInternalServerError, "Response cache settings storage is unavailable")
 		return
 	}
 	responseCacheSettings, err := cacheSettingsStore.GetResponseCacheSettings(c.Request.Context())
 	if err != nil {
-		writeError(c, http.StatusInternalServerError, "读取响应缓存设置失败："+err.Error())
+		writeError(c, http.StatusInternalServerError, "Failed to read response cache settings: "+err.Error())
 		return
 	}
 	if responseCacheUpdate.LocalMaxBytes != nil {
@@ -9668,16 +9668,16 @@ func (h *Handler) UpdateSettings(c *gin.Context) {
 		outputGuardUpdate.MaxChannelBytes != nil ||
 		outputGuardUpdate.MaxRequestBytes != nil
 
-	// 防护设置的读取、合并、校验与 generation 递增全部交给
-	// UpdateSystemSettingsWithOutputGuard 在同一个写事务内完成。这里不再做事务外
-	// 的预读取/预合并/预校验：并发保存时事务外读到的旧值会把合法 patch 误判为
-	// 400，而事务内真正的拒绝又会被当成 500。
+	// Reading, merging, validating, and incrementing the generation of the guard settings are all handled by
+	// UpdateSystemSettingsWithOutputGuard within the same write transaction. There is no longer any pre-read, pre-merge, or pre-validation outside the transaction:
+	// under concurrent saves, old values read outside the transaction would wrongly reject a valid patch with
+	// 400, while a real rejection inside the transaction would be reported as 500.
 	var outputGuardSettings database.OutputGuardSettings
 	if !outputGuardUpdateRequested {
 		latestGuard, err := h.db.GetOutputGuardSettings(c.Request.Context())
 		if err != nil {
-			log.Printf("读取输出防护设置失败: %v", err)
-			writeError(c, http.StatusInternalServerError, "读取防护设置失败："+err.Error())
+			log.Printf("failed to read output guard settings: %v", err)
+			writeError(c, http.StatusInternalServerError, "Failed to read guard settings: "+err.Error())
 			return
 		}
 		outputGuardSettings = latestGuard
@@ -9705,7 +9705,7 @@ func (h *Handler) UpdateSettings(c *gin.Context) {
 	sessionSlotBufferSeconds := database.NormalizeSessionSlotBufferSeconds(int(h.store.GetSessionSlotBuffer() / time.Second))
 	existingSettings, settingsErr := h.db.GetSystemSettings(c.Request.Context())
 	if settingsErr != nil {
-		writeError(c, http.StatusInternalServerError, "读取现有设置失败："+settingsErr.Error())
+		writeError(c, http.StatusInternalServerError, "Failed to read existing settings: "+settingsErr.Error())
 		return
 	}
 	if existingSettings != nil {
@@ -9750,14 +9750,14 @@ func (h *Handler) UpdateSettings(c *gin.Context) {
 	if req.AdminSecret != nil {
 		if h.adminSecretEnv == "" {
 			currentAdminSecret = *req.AdminSecret
-			log.Printf("设置已更新: admin_secret (长度=%d)", len(currentAdminSecret))
+			log.Printf("settings updated: admin_secret (length=%d)", len(currentAdminSecret))
 		} else {
-			log.Printf("检测到环境变量 ADMIN_SECRET，忽略前端提交的 admin_secret")
+			log.Printf("ADMIN_SECRET environment variable detected; ignoring the admin_secret submitted from the frontend")
 		}
 	}
 	if req.SiteName != nil {
 		siteName = database.NormalizeSiteName(*req.SiteName)
-		log.Printf("设置已更新: site_name = %s", siteName)
+		log.Printf("settings updated: site_name = %s", siteName)
 	}
 	if req.SiteLogo != nil {
 		normalized, err := normalizeSiteLogo(*req.SiteLogo)
@@ -9766,7 +9766,7 @@ func (h *Handler) UpdateSettings(c *gin.Context) {
 			return
 		}
 		siteLogo = normalized
-		log.Printf("设置已更新: site_logo (长度=%d)", len(siteLogo))
+		log.Printf("settings updated: site_logo (length=%d)", len(siteLogo))
 	}
 	if req.BackgroundImage != nil {
 		normalized, err := normalizeBackgroundImage(*req.BackgroundImage)
@@ -9775,23 +9775,23 @@ func (h *Handler) UpdateSettings(c *gin.Context) {
 			return
 		}
 		bgCfg.Image = normalized
-		log.Printf("设置已更新: background_image (长度=%d)", len(bgCfg.Image))
+		log.Printf("settings updated: background_image (length=%d)", len(bgCfg.Image))
 	}
 	if req.BackgroundOpacity != nil {
 		bgCfg.Opacity = normalizeBackgroundOpacity(*req.BackgroundOpacity)
-		log.Printf("设置已更新: background_opacity = %d", bgCfg.Opacity)
+		log.Printf("settings updated: background_opacity = %d", bgCfg.Opacity)
 	}
 	if req.BackgroundBlur != nil {
 		bgCfg.Blur = normalizeBackgroundBlur(*req.BackgroundBlur)
-		log.Printf("设置已更新: background_blur = %d", bgCfg.Blur)
+		log.Printf("settings updated: background_blur = %d", bgCfg.Blur)
 	}
 	if req.BackgroundGlassOpacity != nil {
 		bgCfg.GlassOpacity = normalizeBackgroundGlassOpacity(*req.BackgroundGlassOpacity)
-		log.Printf("设置已更新: background_glass_opacity = %d", bgCfg.GlassOpacity)
+		log.Printf("settings updated: background_glass_opacity = %d", bgCfg.GlassOpacity)
 	}
 	if req.BackgroundGlassBlur != nil {
 		bgCfg.GlassBlur = normalizeBackgroundGlassBlur(*req.BackgroundGlassBlur)
-		log.Printf("设置已更新: background_glass_blur = %d", bgCfg.GlassBlur)
+		log.Printf("settings updated: background_glass_blur = %d", bgCfg.GlassBlur)
 	}
 	hasAdminSecret := strings.TrimSpace(currentAdminSecret) != "" || strings.TrimSpace(h.adminSecretEnv) != ""
 	runtimeCfg := proxy.CurrentRuntimeSettings()
@@ -9800,8 +9800,8 @@ func (h *Handler) UpdateSettings(c *gin.Context) {
 	previousAutoResetCreditsOnExhaustionEnabled := runtimeCfg.AutoResetCreditsOnExhaustionEnabled
 	previousAutoResetCreditsBeforeExpiryMin := runtimeCfg.AutoResetCreditsBeforeExpiryMin
 	previousAutoActivate5hWindowEnabled := runtimeCfg.AutoActivate5hWindowEnabled
-	// 数据库是多实例下的权威来源；用持久值作为本次 partial update 的基线，
-	// 避免旧实例保存无关字段时把自动消费配置回滚成自己的陈旧快照。
+	// The database is the authoritative source under multi-instance deployment; the persisted values are the baseline for this partial update,
+	// so that an old instance saving unrelated fields does not roll the automatic consumption config back to its own stale snapshot.
 	runtimeCfg.AutoResetCreditsEnabled = persistedAutoResetCreditsEnabled
 	runtimeCfg.AutoResetCreditsOnExhaustionEnabled = persistedAutoResetCreditsOnExhaustionEnabled
 	runtimeCfg.AutoResetCreditsBeforeExpiryMin = persistedAutoResetCreditsBeforeExpiryMin
@@ -9834,7 +9834,7 @@ func (h *Handler) UpdateSettings(c *gin.Context) {
 		if v < 1 {
 			v = 1
 		}
-		// 不再设上限：由运营按机器与上游承载自行决定
+		// No upper limit: operators decide this themselves based on the machine and the upstream capacity
 		maxConcurrencyToApply = v
 		maxConcurrencyChanged = true
 	}
@@ -9853,7 +9853,7 @@ func (h *Handler) UpdateSettings(c *gin.Context) {
 
 	if req.TestModel != nil && *req.TestModel != "" {
 		h.store.SetTestModel(*req.TestModel)
-		log.Printf("设置已更新: test_model = %s", *req.TestModel)
+		log.Printf("settings updated: test_model = %s", *req.TestModel)
 	}
 
 	if req.TestContent != nil {
@@ -9863,7 +9863,7 @@ func (h *Handler) UpdateSettings(c *gin.Context) {
 			return
 		}
 		h.store.SetTestContent(testContent)
-		log.Printf("设置已更新: test_content (长度=%d)", len([]rune(testContent)))
+		log.Printf("settings updated: test_content (length=%d)", len([]rune(testContent)))
 	}
 
 	if req.TestConcurrency != nil {
@@ -9875,7 +9875,7 @@ func (h *Handler) UpdateSettings(c *gin.Context) {
 			v = 200
 		}
 		h.store.SetTestConcurrency(v)
-		log.Printf("设置已更新: test_concurrency = %d", v)
+		log.Printf("settings updated: test_concurrency = %d", v)
 	}
 
 	if req.BackgroundRefreshIntervalMinutes != nil {
@@ -9887,7 +9887,7 @@ func (h *Handler) UpdateSettings(c *gin.Context) {
 			v = 1440
 		}
 		h.store.SetBackgroundRefreshInterval(time.Duration(v) * time.Minute)
-		log.Printf("设置已更新: background_refresh_interval_minutes = %d", v)
+		log.Printf("settings updated: background_refresh_interval_minutes = %d", v)
 	}
 
 	if req.UsageProbeMaxAgeMinutes != nil {
@@ -9899,7 +9899,7 @@ func (h *Handler) UpdateSettings(c *gin.Context) {
 			v = 10080
 		}
 		h.store.SetUsageProbeMaxAge(time.Duration(v) * time.Minute)
-		log.Printf("设置已更新: usage_probe_max_age_minutes = %d", v)
+		log.Printf("settings updated: usage_probe_max_age_minutes = %d", v)
 	}
 
 	if req.UsageProbeConcurrency != nil {
@@ -9911,12 +9911,12 @@ func (h *Handler) UpdateSettings(c *gin.Context) {
 			v = 128
 		}
 		h.store.SetUsageProbeConcurrency(v)
-		log.Printf("设置已更新: usage_probe_concurrency = %d", v)
+		log.Printf("settings updated: usage_probe_concurrency = %d", v)
 	}
 
 	if req.UsageProbeResponsesFallbackEnabled != nil {
 		h.store.SetUsageProbeResponsesFallbackEnabled(*req.UsageProbeResponsesFallbackEnabled)
-		log.Printf("设置已更新: usage_probe_responses_fallback_enabled = %t", *req.UsageProbeResponsesFallbackEnabled)
+		log.Printf("settings updated: usage_probe_responses_fallback_enabled = %t", *req.UsageProbeResponsesFallbackEnabled)
 	}
 
 	if req.RecoveryProbeIntervalMinutes != nil {
@@ -9928,7 +9928,7 @@ func (h *Handler) UpdateSettings(c *gin.Context) {
 			v = 10080
 		}
 		h.store.SetRecoveryProbeInterval(time.Duration(v) * time.Minute)
-		log.Printf("设置已更新: recovery_probe_interval_minutes = %d", v)
+		log.Printf("settings updated: recovery_probe_interval_minutes = %d", v)
 	}
 
 	if req.CodexOAuthKeepaliveEnabled != nil {
@@ -9936,12 +9936,12 @@ func (h *Handler) UpdateSettings(c *gin.Context) {
 	}
 	if req.LazyMode != nil {
 		h.store.SetLazyMode(*req.LazyMode)
-		log.Printf("设置已更新: lazy_mode = %t", *req.LazyMode)
+		log.Printf("settings updated: lazy_mode = %t", *req.LazyMode)
 	}
 
 	if req.ProxyURL != nil {
 		h.store.SetProxyURL(*req.ProxyURL)
-		log.Printf("设置已更新: proxy_url = %s", security.MaskURLCredentials(*req.ProxyURL))
+		log.Printf("settings updated: proxy_url = %s", security.MaskURLCredentials(*req.ProxyURL))
 	}
 
 	if req.PgMaxConns != nil {
@@ -9954,7 +9954,7 @@ func (h *Handler) UpdateSettings(c *gin.Context) {
 		}
 		h.db.SetMaxOpenConns(v)
 		h.pgMaxConns = v
-		log.Printf("设置已更新: pg_max_conns = %d", v)
+		log.Printf("settings updated: pg_max_conns = %d", v)
 	}
 
 	if req.RedisPoolSize != nil {
@@ -9967,34 +9967,34 @@ func (h *Handler) UpdateSettings(c *gin.Context) {
 		}
 		h.cache.SetPoolSize(v)
 		h.redisPoolSize = v
-		log.Printf("设置已更新: redis_pool_size = %d", v)
+		log.Printf("settings updated: redis_pool_size = %d", v)
 	}
 
 	if req.AutoCleanUnauthorized != nil {
 		h.store.SetAutoCleanUnauthorized(*req.AutoCleanUnauthorized)
-		log.Printf("设置已更新: auto_clean_unauthorized = %t", *req.AutoCleanUnauthorized)
+		log.Printf("settings updated: auto_clean_unauthorized = %t", *req.AutoCleanUnauthorized)
 	}
 
 	if req.AutoCleanRateLimited != nil {
 		h.store.SetAutoCleanRateLimited(*req.AutoCleanRateLimited)
-		log.Printf("设置已更新: auto_clean_rate_limited = %t", *req.AutoCleanRateLimited)
+		log.Printf("settings updated: auto_clean_rate_limited = %t", *req.AutoCleanRateLimited)
 	}
 
 	if req.AutoCleanFullUsage != nil {
 		h.store.SetAutoCleanFullUsage(*req.AutoCleanFullUsage)
-		log.Printf("设置已更新: auto_clean_full_usage = %t", *req.AutoCleanFullUsage)
+		log.Printf("settings updated: auto_clean_full_usage = %t", *req.AutoCleanFullUsage)
 	}
 
 	if req.AutoCleanError != nil {
 		h.store.SetAutoCleanError(*req.AutoCleanError)
-		log.Printf("设置已更新: auto_clean_error = %t", *req.AutoCleanError)
+		log.Printf("settings updated: auto_clean_error = %t", *req.AutoCleanError)
 	}
 
 	var expiredCleaned int
 	if req.AutoCleanExpired != nil {
 		h.store.SetAutoCleanExpired(*req.AutoCleanExpired)
-		log.Printf("设置已更新: auto_clean_expired = %t", *req.AutoCleanExpired)
-		// 开启时立即同步执行一次清理
+		log.Printf("settings updated: auto_clean_expired = %t", *req.AutoCleanExpired)
+		// When turned on, run one cleanup immediately
 		if *req.AutoCleanExpired {
 			expiredCleaned = h.store.CleanExpiredNow()
 		}
@@ -10003,69 +10003,69 @@ func (h *Handler) UpdateSettings(c *gin.Context) {
 	if req.ProxyPoolEnabled != nil {
 		if *req.ProxyPoolEnabled {
 			if err := h.store.ReloadProxyPool(); err != nil {
-				writeError(c, http.StatusInternalServerError, "代理池刷新失败: "+err.Error())
+				writeError(c, http.StatusInternalServerError, "Proxy pool refresh failed: "+err.Error())
 				return
 			}
 		}
 		h.store.SetProxyPoolEnabled(*req.ProxyPoolEnabled)
-		log.Printf("设置已更新: proxy_pool_enabled = %t", *req.ProxyPoolEnabled)
+		log.Printf("settings updated: proxy_pool_enabled = %t", *req.ProxyPoolEnabled)
 	}
 
 	if req.SchedulerEngine != nil {
 		engine := strings.ToLower(strings.TrimSpace(*req.SchedulerEngine))
 		if engine != "legacy" && engine != "shadow" && engine != "indexed" {
-			writeError(c, http.StatusBadRequest, "scheduler_engine 必须是 legacy、shadow 或 indexed")
+			writeError(c, http.StatusBadRequest, "scheduler_engine must be legacy, shadow, or indexed")
 			return
 		}
 		h.store.SetSchedulerEngine(engine)
-		log.Printf("设置已更新: scheduler_engine = %s", engine)
+		log.Printf("settings updated: scheduler_engine = %s", engine)
 	} else if req.FastSchedulerEnabled != nil {
 		h.store.SetFastSchedulerEnabled(*req.FastSchedulerEnabled)
-		log.Printf("设置已更新: fast_scheduler_enabled = %t", *req.FastSchedulerEnabled)
+		log.Printf("settings updated: fast_scheduler_enabled = %t", *req.FastSchedulerEnabled)
 	}
 
 	if req.CodexForceWebsocket != nil {
 		h.store.SetCodexForceWebsocket(*req.CodexForceWebsocket)
 		runtimeCfg.CodexForceWebsocket = *req.CodexForceWebsocket
-		log.Printf("设置已更新: codex_force_websocket = %t", *req.CodexForceWebsocket)
+		log.Printf("settings updated: codex_force_websocket = %t", *req.CodexForceWebsocket)
 	}
 	if req.CodexRequestCompression != nil {
 		h.store.SetCodexRequestCompression(*req.CodexRequestCompression)
 		runtimeCfg.CodexRequestCompression = *req.CodexRequestCompression
-		log.Printf("设置已更新: codex_request_compression = %t", *req.CodexRequestCompression)
+		log.Printf("settings updated: codex_request_compression = %t", *req.CodexRequestCompression)
 	}
 
 	if req.CodexWSWeakNetworkMode != nil {
 		runtimeCfg.CodexWSWeakNetworkMode = *req.CodexWSWeakNetworkMode
-		log.Printf("设置已更新: codex_ws_weak_network_mode = %t", *req.CodexWSWeakNetworkMode)
+		log.Printf("settings updated: codex_ws_weak_network_mode = %t", *req.CodexWSWeakNetworkMode)
 	}
 
 	if req.CodexWSKeepaliveEnabled != nil {
 		h.store.SetCodexWSKeepaliveEnabled(*req.CodexWSKeepaliveEnabled)
-		log.Printf("设置已更新: codex_ws_keepalive_enabled = %t", *req.CodexWSKeepaliveEnabled)
+		log.Printf("settings updated: codex_ws_keepalive_enabled = %t", *req.CodexWSKeepaliveEnabled)
 	}
 
 	if req.CodexWSKeepaliveIntervalSec != nil {
 		h.store.SetCodexWSKeepaliveIntervalSec(*req.CodexWSKeepaliveIntervalSec)
-		log.Printf("设置已更新: codex_ws_keepalive_interval_sec = %d", *req.CodexWSKeepaliveIntervalSec)
+		log.Printf("settings updated: codex_ws_keepalive_interval_sec = %d", *req.CodexWSKeepaliveIntervalSec)
 	}
 
 	if req.CodexWSHideUpstreamErrors != nil {
 		h.store.SetCodexWSHideUpstreamErrors(*req.CodexWSHideUpstreamErrors)
 		runtimeCfg.CodexWSHideErrors = *req.CodexWSHideUpstreamErrors
-		log.Printf("设置已更新: codex_ws_hide_upstream_errors = %t", *req.CodexWSHideUpstreamErrors)
+		log.Printf("settings updated: codex_ws_hide_upstream_errors = %t", *req.CodexWSHideUpstreamErrors)
 	}
 
 	if req.CodexWSSilentRetryEnabled != nil {
 		h.store.SetCodexWSSilentRetryEnabled(*req.CodexWSSilentRetryEnabled)
 		runtimeCfg.CodexWSSilentRetry = *req.CodexWSSilentRetryEnabled
-		log.Printf("设置已更新: codex_ws_silent_retry_enabled = %t", *req.CodexWSSilentRetryEnabled)
+		log.Printf("settings updated: codex_ws_silent_retry_enabled = %t", *req.CodexWSSilentRetryEnabled)
 	}
 
 	if req.CodexWSSizeRouterEnabled != nil {
 		h.store.SetCodexWSSizeRouterEnabled(*req.CodexWSSizeRouterEnabled)
 		runtimeCfg.CodexWSSizeRouter = *req.CodexWSSizeRouterEnabled
-		log.Printf("设置已更新: codex_ws_size_router_enabled = %t", *req.CodexWSSizeRouterEnabled)
+		log.Printf("settings updated: codex_ws_size_router_enabled = %t", *req.CodexWSSizeRouterEnabled)
 	}
 
 	if req.CodexWSSilentMaxRetries != nil {
@@ -10078,147 +10078,147 @@ func (h *Handler) UpdateSettings(c *gin.Context) {
 		}
 		h.store.SetCodexWSSilentMaxRetries(v)
 		runtimeCfg.CodexWSSilentRetries = v
-		log.Printf("设置已更新: codex_ws_silent_max_retries = %d", v)
+		log.Printf("settings updated: codex_ws_silent_max_retries = %d", v)
 	}
 
 	if req.CodexWSBusyAcquireMaxWaitSec != nil {
 		v := database.NormalizeCodexWSBusyAcquireMaxWaitSec(*req.CodexWSBusyAcquireMaxWaitSec)
 		h.store.SetCodexWSBusyAcquireMaxWaitSec(v)
 		runtimeCfg.CodexWSBusyMaxWaitSec = v
-		log.Printf("设置已更新: codex_ws_busy_acquire_max_wait_sec = %d", v)
+		log.Printf("settings updated: codex_ws_busy_acquire_max_wait_sec = %d", v)
 	}
 
 	if req.CodexWSBusyOverflowEnabled != nil {
 		h.store.SetCodexWSBusyOverflowEnabled(*req.CodexWSBusyOverflowEnabled)
 		runtimeCfg.CodexWSBusyOverflow = *req.CodexWSBusyOverflowEnabled
-		log.Printf("设置已更新: codex_ws_busy_overflow_enabled = %t", *req.CodexWSBusyOverflowEnabled)
+		log.Printf("settings updated: codex_ws_busy_overflow_enabled = %t", *req.CodexWSBusyOverflowEnabled)
 	}
 
 	if req.CodexWSBusyPatienceSec != nil {
 		v := database.NormalizeCodexWSBusyPatienceSec(*req.CodexWSBusyPatienceSec)
 		h.store.SetCodexWSBusyPatienceSec(v)
 		runtimeCfg.CodexWSBusyPatienceSec = v
-		log.Printf("设置已更新: codex_ws_busy_patience_sec = %d", v)
+		log.Printf("settings updated: codex_ws_busy_patience_sec = %d", v)
 	}
 
 	if req.CodexWSStatelessSlots != nil {
 		v := database.NormalizeCodexWSStatelessSlots(*req.CodexWSStatelessSlots)
 		h.store.SetCodexWSStatelessSlots(v)
 		runtimeCfg.CodexWSStatelessSlots = v
-		log.Printf("设置已更新: codex_ws_stateless_slots = %d", v)
+		log.Printf("settings updated: codex_ws_stateless_slots = %d", v)
 	}
 
 	if req.CodexWSDownstreamKeepaliveSlots != nil {
 		v := database.NormalizeCodexWSDownstreamKeepaliveSlots(*req.CodexWSDownstreamKeepaliveSlots)
 		h.store.SetCodexWSDownstreamKeepaliveSlots(v)
 		runtimeCfg.CodexWSDownstreamKeepaliveSlots = v
-		log.Printf("设置已更新: codex_ws_downstream_keepalive_slots = %d", v)
+		log.Printf("settings updated: codex_ws_downstream_keepalive_slots = %d", v)
 	}
 
-	// GitHub 访问设置（issue #522）。token 不回显也不落日志，空串表示清除。
+	// GitHub access settings (issue #522). The token is never echoed or logged; an empty string clears it.
 	if req.GithubToken != nil {
 		v := strings.TrimSpace(*req.GithubToken)
 		h.store.SetGithubToken(v)
 		runtimeCfg.GithubToken = v
-		log.Printf("设置已更新: github_token configured=%t", v != "")
+		log.Printf("settings updated: github_token configured=%t", v != "")
 	}
 	if req.GithubProxyURL != nil {
 		v := strings.TrimSpace(*req.GithubProxyURL)
 		h.store.SetGithubProxyURL(v)
 		runtimeCfg.GithubProxyURL = v
-		log.Printf("设置已更新: github_proxy_url = %s", security.MaskURLCredentials(v))
+		log.Printf("settings updated: github_proxy_url = %s", security.MaskURLCredentials(v))
 	}
 
-	// Codex 过载熔断（配置只存 RuntimeSettings，热更新生效）
+	// Codex overload circuit breaker (the config is stored only in RuntimeSettings and takes effect on hot update)
 	if req.CodexOverloadPauseEnabled != nil {
 		runtimeCfg.CodexOverloadPauseEnabled = *req.CodexOverloadPauseEnabled
-		log.Printf("设置已更新: codex_overload_pause_enabled = %t", *req.CodexOverloadPauseEnabled)
+		log.Printf("settings updated: codex_overload_pause_enabled = %t", *req.CodexOverloadPauseEnabled)
 	}
 	if req.CodexOverloadThresholdPercent != nil {
 		v := database.NormalizeCodexOverloadThresholdPercent(*req.CodexOverloadThresholdPercent)
 		runtimeCfg.CodexOverloadThresholdPercent = v
-		log.Printf("设置已更新: codex_overload_threshold_percent = %d", v)
+		log.Printf("settings updated: codex_overload_threshold_percent = %d", v)
 	}
 	if req.CodexOverloadPauseMinutes != nil {
 		v := database.NormalizeCodexOverloadPauseMinutes(*req.CodexOverloadPauseMinutes)
 		runtimeCfg.CodexOverloadPauseMinutes = v
-		log.Printf("设置已更新: codex_overload_pause_minutes = %d", v)
+		log.Printf("settings updated: codex_overload_pause_minutes = %d", v)
 	}
 	if req.CodexOverloadWindowMinutes != nil {
 		v := database.NormalizeCodexOverloadWindowMinutes(*req.CodexOverloadWindowMinutes)
 		runtimeCfg.CodexOverloadWindowMinutes = v
-		log.Printf("设置已更新: codex_overload_window_minutes = %d", v)
+		log.Printf("settings updated: codex_overload_window_minutes = %d", v)
 	}
 
 	if req.OverflowAutoCompactEnabled != nil {
 		h.store.SetOverflowAutoCompactEnabled(*req.OverflowAutoCompactEnabled)
 		runtimeCfg.OverflowAutoCompact = *req.OverflowAutoCompactEnabled
-		log.Printf("设置已更新: overflow_auto_compact_enabled = %t", *req.OverflowAutoCompactEnabled)
+		log.Printf("settings updated: overflow_auto_compact_enabled = %t", *req.OverflowAutoCompactEnabled)
 	}
 
 	if req.CompactViaResponsesEnabled != nil {
 		h.store.SetCompactViaResponsesEnabled(*req.CompactViaResponsesEnabled)
 		runtimeCfg.CompactViaResponses = *req.CompactViaResponsesEnabled
-		log.Printf("设置已更新: compact_via_responses_enabled = %t", *req.CompactViaResponsesEnabled)
+		log.Printf("settings updated: compact_via_responses_enabled = %t", *req.CompactViaResponsesEnabled)
 	}
 
 	if req.CodexPreflightSSEPassthroughEnabled != nil {
 		h.store.SetCodexPreflightSSEPassthroughEnabled(*req.CodexPreflightSSEPassthroughEnabled)
 		runtimeCfg.CodexPreflightSSEPassthrough = *req.CodexPreflightSSEPassthroughEnabled
-		log.Printf("设置已更新: codex_preflight_sse_passthrough_enabled = %t", *req.CodexPreflightSSEPassthroughEnabled)
+		log.Printf("settings updated: codex_preflight_sse_passthrough_enabled = %t", *req.CodexPreflightSSEPassthroughEnabled)
 	}
 
 	if req.FirstTokenExcludesWsAcquire != nil {
 		h.store.SetFirstTokenExcludesWsAcquire(*req.FirstTokenExcludesWsAcquire)
 		runtimeCfg.FirstTokenExcludesWsAcquire = *req.FirstTokenExcludesWsAcquire
-		log.Printf("设置已更新: first_token_excludes_ws_acquire = %t", *req.FirstTokenExcludesWsAcquire)
+		log.Printf("settings updated: first_token_excludes_ws_acquire = %t", *req.FirstTokenExcludesWsAcquire)
 	}
 
 	if req.CodexContinueThinkingEnabled != nil {
 		h.store.SetCodexContinueThinkingEnabled(*req.CodexContinueThinkingEnabled)
 		runtimeCfg.CodexContinueThinking = *req.CodexContinueThinkingEnabled
-		log.Printf("设置已更新: codex_continue_thinking_enabled = %t", *req.CodexContinueThinkingEnabled)
+		log.Printf("settings updated: codex_continue_thinking_enabled = %t", *req.CodexContinueThinkingEnabled)
 	}
 
 	if req.CodexContinueMaxRounds != nil {
 		v := database.NormalizeCodexContinueMaxRounds(*req.CodexContinueMaxRounds)
 		h.store.SetCodexContinueMaxRounds(v)
 		runtimeCfg.CodexContinueMaxRounds = v
-		log.Printf("设置已更新: codex_continue_max_rounds = %d", v)
+		log.Printf("settings updated: codex_continue_max_rounds = %d", v)
 	}
 
 	if req.UTLSShutdownTimeoutMinutes != nil {
 		v := database.NormalizeUTLSShutdownTimeoutMinutes(*req.UTLSShutdownTimeoutMinutes)
 		runtimeCfg.UTLSShutdownTimeoutMin = v
 		utlsShutdownTimeoutMinutes = v
-		log.Printf("设置已更新: utls_shutdown_timeout_minutes = %d", v)
+		log.Printf("settings updated: utls_shutdown_timeout_minutes = %d", v)
 	}
 
 	if req.CodexCLIVersionSyncEnabled != nil {
 		h.store.SetCodexCLIVersionSyncEnabled(*req.CodexCLIVersionSyncEnabled)
 		runtimeCfg.CodexCLIVersionSyncEnabled = *req.CodexCLIVersionSyncEnabled
-		log.Printf("设置已更新: codex_cli_version_sync_enabled = %t", *req.CodexCLIVersionSyncEnabled)
+		log.Printf("settings updated: codex_cli_version_sync_enabled = %t", *req.CodexCLIVersionSyncEnabled)
 	}
 
 	if req.CodexCLIVersionSyncIntervalHours != nil {
 		v := database.NormalizeCodexCLIVersionSyncIntervalHours(*req.CodexCLIVersionSyncIntervalHours)
 		h.store.SetCodexCLIVersionSyncIntervalHours(v)
 		runtimeCfg.CodexCLIVersionSyncIntervalHours = v
-		log.Printf("设置已更新: codex_cli_version_sync_interval_hours = %d", v)
+		log.Printf("settings updated: codex_cli_version_sync_interval_hours = %d", v)
 	}
 
 	if req.SchedulerMode != nil {
 		h.store.SetSchedulerMode(*req.SchedulerMode)
-		log.Printf("设置已更新: scheduler_mode = %s", *req.SchedulerMode)
+		log.Printf("settings updated: scheduler_mode = %s", *req.SchedulerMode)
 	}
 
 	if req.AffinityMode != nil {
 		h.store.SetAffinityMode(*req.AffinityMode)
-		log.Printf("设置已更新: affinity_mode = %s", *req.AffinityMode)
+		log.Printf("settings updated: affinity_mode = %s", *req.AffinityMode)
 	}
 	if req.SessionAffinitySpread != nil {
 		h.store.SetSessionAffinitySpread(*req.SessionAffinitySpread)
-		log.Printf("设置已更新: session_affinity_spread = %t", *req.SessionAffinitySpread)
+		log.Printf("settings updated: session_affinity_spread = %t", *req.SessionAffinitySpread)
 	}
 	previousMaxRetries := h.store.GetMaxRetries()
 	maxRetriesToApply := previousMaxRetries
@@ -10259,13 +10259,13 @@ func (h *Handler) UpdateSettings(c *gin.Context) {
 			v = 30000
 		}
 		h.store.SetRetryIntervalMS(v)
-		log.Printf("设置已更新: retry_interval_ms = %d", v)
+		log.Printf("settings updated: retry_interval_ms = %d", v)
 	}
 
 	if req.TransportRetryPolicy != nil {
 		v := database.NormalizeTransportRetryPolicy(*req.TransportRetryPolicy)
 		h.store.SetTransportRetryPolicy(v)
-		log.Printf("设置已更新: transport_retry_policy = %s", v)
+		log.Printf("settings updated: transport_retry_policy = %s", v)
 	}
 
 	if req.CodexFingerprintDefaultMode != nil {
@@ -10275,27 +10275,27 @@ func (h *Handler) UpdateSettings(c *gin.Context) {
 		}
 		v := auth.NormalizeCodexFingerprintMode(*req.CodexFingerprintDefaultMode)
 		h.store.SetCodexFingerprintDefaultMode(v)
-		log.Printf("设置已更新: codex_fingerprint_default_mode = %s", v)
+		log.Printf("settings updated: codex_fingerprint_default_mode = %s", v)
 	}
 
 	if req.AllowRemoteMigration != nil {
 		if *req.AllowRemoteMigration && !hasAdminSecret {
-			writeError(c, http.StatusBadRequest, "请先设置管理密钥，再启用远程迁移")
+			writeError(c, http.StatusBadRequest, "Set an admin key before enabling remote migration")
 			return
 		}
 		h.store.SetAllowRemoteMigration(*req.AllowRemoteMigration)
-		log.Printf("设置已更新: allow_remote_migration = %t", *req.AllowRemoteMigration)
+		log.Printf("settings updated: allow_remote_migration = %t", *req.AllowRemoteMigration)
 	} else if !hasAdminSecret {
 		h.store.SetAllowRemoteMigration(false)
 	}
 
 	if req.ModelMapping != nil {
 		h.store.SetModelMapping(*req.ModelMapping)
-		log.Printf("设置已更新: model_mapping")
+		log.Printf("settings updated: model_mapping")
 	}
 	if req.CodexModelMapping != nil {
 		h.store.SetCodexModelMapping(*req.CodexModelMapping)
-		log.Printf("设置已更新: codex_model_mapping")
+		log.Printf("settings updated: codex_model_mapping")
 	}
 	if req.PayloadRules != nil {
 		normalized, err := proxy.NormalizePayloadRulesJSON(*req.PayloadRules)
@@ -10308,7 +10308,7 @@ func (h *Handler) UpdateSettings(c *gin.Context) {
 			return
 		}
 		h.store.SetPayloadRules(normalized)
-		log.Printf("设置已更新: payload_rules")
+		log.Printf("settings updated: payload_rules")
 	}
 	if req.ReasoningEffortModels != nil {
 		normalized, err := proxy.NormalizeReasoningEffortModelsJSON(*req.ReasoningEffortModels, proxy.SupportedModelIDs(c.Request.Context(), h.db))
@@ -10317,16 +10317,16 @@ func (h *Handler) UpdateSettings(c *gin.Context) {
 			return
 		}
 		h.store.SetReasoningEffortModels(normalized)
-		log.Printf("设置已更新: reasoning_effort_models")
+		log.Printf("settings updated: reasoning_effort_models")
 	}
 
 	if req.ClientCompatMode != nil {
 		runtimeCfg.ClientCompatMode = proxy.NormalizeClientCompatMode(*req.ClientCompatMode)
-		log.Printf("设置已更新: client_compat_mode = %s", runtimeCfg.ClientCompatMode)
+		log.Printf("settings updated: client_compat_mode = %s", runtimeCfg.ClientCompatMode)
 	}
 	if req.CodexMinCLIVersion != nil {
 		runtimeCfg.CodexMinCLIVersion = strings.TrimSpace(*req.CodexMinCLIVersion)
-		log.Printf("设置已更新: codex_min_cli_version = %s", runtimeCfg.CodexMinCLIVersion)
+		log.Printf("settings updated: codex_min_cli_version = %s", runtimeCfg.CodexMinCLIVersion)
 	}
 	if req.CodexUserAgentConfig != nil {
 		normalized, err := proxy.NormalizeCodexUserAgentConfigJSON(*req.CodexUserAgentConfig)
@@ -10335,55 +10335,55 @@ func (h *Handler) UpdateSettings(c *gin.Context) {
 			return
 		}
 		runtimeCfg.CodexUserAgentConfig = normalized
-		log.Printf("设置已更新: codex_user_agent_config")
+		log.Printf("settings updated: codex_user_agent_config")
 	}
 	if req.CodexTelemetryEnabled != nil {
 		runtimeCfg.CodexTelemetryEnabled = *req.CodexTelemetryEnabled
-		log.Printf("设置已更新: codex_telemetry_enabled = %t", runtimeCfg.CodexTelemetryEnabled)
+		log.Printf("settings updated: codex_telemetry_enabled = %t", runtimeCfg.CodexTelemetryEnabled)
 	}
 	if req.CodexTelemetryTimingDebug != nil {
 		runtimeCfg.CodexTelemetryTimingDebug = *req.CodexTelemetryTimingDebug
-		log.Printf("设置已更新: codex_telemetry_timing_debug = %t", runtimeCfg.CodexTelemetryTimingDebug)
+		log.Printf("settings updated: codex_telemetry_timing_debug = %t", runtimeCfg.CodexTelemetryTimingDebug)
 	}
 	if req.StreamFlushPolicy != nil {
 		runtimeCfg.StreamFlushPolicy = proxy.NormalizeStreamFlushPolicy(*req.StreamFlushPolicy)
-		log.Printf("设置已更新: stream_flush_policy = %s", runtimeCfg.StreamFlushPolicy)
+		log.Printf("settings updated: stream_flush_policy = %s", runtimeCfg.StreamFlushPolicy)
 	}
 	if req.StreamFlushIntervalMS != nil {
 		runtimeCfg.StreamFlushIntervalMS = *req.StreamFlushIntervalMS
-		log.Printf("设置已更新: stream_flush_interval_ms = %d", runtimeCfg.StreamFlushIntervalMS)
+		log.Printf("settings updated: stream_flush_interval_ms = %d", runtimeCfg.StreamFlushIntervalMS)
 	}
 	if req.FirstTokenMode != nil {
 		runtimeCfg.FirstTokenMode = proxy.NormalizeFirstTokenMode(*req.FirstTokenMode)
-		log.Printf("设置已更新: first_token_mode = %s", runtimeCfg.FirstTokenMode)
+		log.Printf("settings updated: first_token_mode = %s", runtimeCfg.FirstTokenMode)
 	}
 	if req.FirstTokenTimeoutSeconds != nil {
 		runtimeCfg.FirstTokenTimeoutSec = *req.FirstTokenTimeoutSeconds
-		log.Printf("设置已更新: first_token_timeout_seconds = %d", runtimeCfg.FirstTokenTimeoutSec)
+		log.Printf("settings updated: first_token_timeout_seconds = %d", runtimeCfg.FirstTokenTimeoutSec)
 	}
 	if req.BillingTierPolicy != nil {
 		runtimeCfg.BillingTierPolicy = proxy.NormalizeBillingTierPolicy(*req.BillingTierPolicy)
-		log.Printf("设置已更新: billing_tier_policy = %s", runtimeCfg.BillingTierPolicy)
+		log.Printf("settings updated: billing_tier_policy = %s", runtimeCfg.BillingTierPolicy)
 	}
 	if req.ShowFullUsageNumbers != nil {
 		showFullUsageNumbers = *req.ShowFullUsageNumbers
-		log.Printf("设置已更新: show_full_usage_numbers = %t", showFullUsageNumbers)
+		log.Printf("settings updated: show_full_usage_numbers = %t", showFullUsageNumbers)
 	}
 	if req.ShowUpstreamModelMismatch != nil {
 		showUpstreamModelMismatch = *req.ShowUpstreamModelMismatch
-		log.Printf("设置已更新: show_upstream_model_mismatch = %t", showUpstreamModelMismatch)
+		log.Printf("settings updated: show_upstream_model_mismatch = %t", showUpstreamModelMismatch)
 	}
 	if req.PublicKeyUsagePageEnabled != nil {
 		publicKeyUsagePageEnabled = *req.PublicKeyUsagePageEnabled
-		log.Printf("设置已更新: public_key_usage_page_enabled = %t", publicKeyUsagePageEnabled)
+		log.Printf("settings updated: public_key_usage_page_enabled = %t", publicKeyUsagePageEnabled)
 	}
 	if req.PublicImageStudioPageEnabled != nil {
 		publicImageStudioPageEnabled = *req.PublicImageStudioPageEnabled
-		log.Printf("设置已更新: public_image_studio_page_enabled = %t", publicImageStudioPageEnabled)
+		log.Printf("settings updated: public_image_studio_page_enabled = %t", publicImageStudioPageEnabled)
 	}
 	if req.PublicAccountPortalPageEnabled != nil {
 		publicAccountPortalPageEnabled = *req.PublicAccountPortalPageEnabled
-		log.Printf("设置已更新: public_account_portal_page_enabled = %t", publicAccountPortalPageEnabled)
+		log.Printf("settings updated: public_account_portal_page_enabled = %t", publicAccountPortalPageEnabled)
 	}
 	if req.AutoPause5hThreshold != nil || req.AutoPause7dThreshold != nil {
 		t5h := h.store.GetGlobalAutoPause5hThreshold()
@@ -10395,49 +10395,49 @@ func (h *Handler) UpdateSettings(c *gin.Context) {
 			t7d = *req.AutoPause7dThreshold
 		}
 		h.store.SetGlobalAutoPauseThresholds(t5h, t7d)
-		log.Printf("设置已更新: auto_pause thresholds 5h=%.4f 7d=%.4f", t5h, t7d)
+		log.Printf("settings updated: auto_pause thresholds 5h=%.4f 7d=%.4f", t5h, t7d)
 	}
 	if req.AutoPause5hGuardBandPercent != nil {
 		h.store.SetAutoPause5hGuardBandPercent(*req.AutoPause5hGuardBandPercent)
-		log.Printf("设置已更新: auto_pause_5h_guard_band_percent = %.2f", *req.AutoPause5hGuardBandPercent)
+		log.Printf("settings updated: auto_pause_5h_guard_band_percent = %.2f", *req.AutoPause5hGuardBandPercent)
 	}
 	if req.AutoPause5hGuardConcurrency != nil {
 		h.store.SetAutoPause5hGuardConcurrency(*req.AutoPause5hGuardConcurrency)
-		log.Printf("设置已更新: auto_pause_5h_guard_concurrency = %d", *req.AutoPause5hGuardConcurrency)
+		log.Printf("settings updated: auto_pause_5h_guard_concurrency = %d", *req.AutoPause5hGuardConcurrency)
 	}
 	if req.SmartPacingEnabled != nil {
 		h.store.SetSmartPacingEnabled(*req.SmartPacingEnabled)
-		log.Printf("设置已更新: smart_pacing_enabled = %t", *req.SmartPacingEnabled)
+		log.Printf("settings updated: smart_pacing_enabled = %t", *req.SmartPacingEnabled)
 	}
 	if req.SmartPacingMinConcurrency != nil {
 		h.store.SetSmartPacingMinConcurrency(*req.SmartPacingMinConcurrency)
-		log.Printf("设置已更新: smart_pacing_min_concurrency = %d", *req.SmartPacingMinConcurrency)
+		log.Printf("settings updated: smart_pacing_min_concurrency = %d", *req.SmartPacingMinConcurrency)
 	}
 	if req.SmartPacingWindows != nil {
 		h.store.SetSmartPacingWindows(*req.SmartPacingWindows)
-		log.Printf("设置已更新: smart_pacing_windows = %s", h.store.GetSmartPacingWindows())
+		log.Printf("settings updated: smart_pacing_windows = %s", h.store.GetSmartPacingWindows())
 	}
 	if req.IgnoreUsageLimitStatus != nil {
 		h.store.SetIgnoreUsageLimitStatus(*req.IgnoreUsageLimitStatus)
-		log.Printf("设置已更新: ignore_usage_limit_status = %t", *req.IgnoreUsageLimitStatus)
+		log.Printf("settings updated: ignore_usage_limit_status = %t", *req.IgnoreUsageLimitStatus)
 	}
 	if req.AutoResetCreditsOnExhaustionEnabled != nil {
 		runtimeCfg.AutoResetCreditsOnExhaustionEnabled = *req.AutoResetCreditsOnExhaustionEnabled
 	}
 	if req.AutoResetCreditsEnabled != nil {
 		runtimeCfg.AutoResetCreditsEnabled = *req.AutoResetCreditsEnabled
-		log.Printf("设置已更新: auto_reset_credits_enabled = %t", *req.AutoResetCreditsEnabled)
+		log.Printf("settings updated: auto_reset_credits_enabled = %t", *req.AutoResetCreditsEnabled)
 	}
 	if req.AutoResetCreditsBeforeExpiryMin != nil {
 		runtimeCfg.AutoResetCreditsBeforeExpiryMin = *req.AutoResetCreditsBeforeExpiryMin
-		log.Printf("设置已更新: auto_reset_credits_before_expiry_min = %d", *req.AutoResetCreditsBeforeExpiryMin)
+		log.Printf("settings updated: auto_reset_credits_before_expiry_min = %d", *req.AutoResetCreditsBeforeExpiryMin)
 	}
 	if req.AutoActivate5hWindowEnabled != nil {
 		runtimeCfg.AutoActivate5hWindowEnabled = *req.AutoActivate5hWindowEnabled
-		log.Printf("设置已更新: auto_activate_5h_window_enabled = %t", *req.AutoActivate5hWindowEnabled)
+		log.Printf("settings updated: auto_activate_5h_window_enabled = %t", *req.AutoActivate5hWindowEnabled)
 	}
-	// 自动消费/自动开窗属于不可逆或有额度成本的操作。先归一化待保存值，但在数据库
-	// 确认保存成功前，运行态继续使用旧配置，避免持久化失败后后台任务仍然开始执行。
+	// Auto-consume and auto-open-window actions are irreversible or cost quota. The pending values are normalized first, but in the database
+	// before the save is confirmed, the runtime keeps using the old config, so a failed persist does not let background tasks start running.
 	runtimeCfg = proxy.NormalizeRuntimeSettings(runtimeCfg)
 	effectiveRuntimeCfg := runtimeCfg
 	if autoResetCreditsChanged {
@@ -10449,8 +10449,8 @@ func (h *Handler) UpdateSettings(c *gin.Context) {
 		effectiveRuntimeCfg.AutoActivate5hWindowEnabled = previousAutoActivate5hWindowEnabled
 	}
 	effectiveRuntimeCfg = proxy.UpdateRuntimeSettings(func(current proxy.RuntimeSettings) proxy.RuntimeSettings {
-		// CodexSyncedCLIVersion 由后台同步任务独立维护；管理员保存其他设置时
-		// 必须保留临界区内读到的最新值，避免反向回滚同步结果。
+		// CodexSyncedCLIVersion is maintained independently by the background sync task; when an admin saves other settings
+		// it must keep the latest value read inside the critical section, so the sync result is not rolled back.
 		effectiveRuntimeCfg.CodexSyncedCLIVersion = current.CodexSyncedCLIVersion
 		effectiveRuntimeCfg.CodexSyncedDesktopMacBuild = current.CodexSyncedDesktopMacBuild
 		effectiveRuntimeCfg.CodexSyncedDesktopWindowsBuild = current.CodexSyncedDesktopWindowsBuild
@@ -10462,17 +10462,17 @@ func (h *Handler) UpdateSettings(c *gin.Context) {
 	if req.UsageLogMode != nil {
 		usageLogMode = database.NormalizeUsageLogMode(*req.UsageLogMode)
 		usageLogChanged = true
-		log.Printf("设置已更新: usage_log_mode = %s", usageLogMode)
+		log.Printf("settings updated: usage_log_mode = %s", usageLogMode)
 	}
 	if req.UsageLogBatchSize != nil {
 		usageLogBatchSize = database.NormalizeUsageLogBatchSize(*req.UsageLogBatchSize)
 		usageLogChanged = true
-		log.Printf("设置已更新: usage_log_batch_size = %d", usageLogBatchSize)
+		log.Printf("settings updated: usage_log_batch_size = %d", usageLogBatchSize)
 	}
 	if req.UsageLogFlushIntervalSeconds != nil {
 		usageLogFlushIntervalSeconds = database.NormalizeUsageLogFlushIntervalSeconds(*req.UsageLogFlushIntervalSeconds)
 		usageLogChanged = true
-		log.Printf("设置已更新: usage_log_flush_interval_seconds = %d", usageLogFlushIntervalSeconds)
+		log.Printf("settings updated: usage_log_flush_interval_seconds = %d", usageLogFlushIntervalSeconds)
 	}
 	if usageLogChanged {
 		h.db.SetUsageLogConfig(usageLogMode, usageLogBatchSize, usageLogFlushIntervalSeconds)
@@ -10516,7 +10516,7 @@ func (h *Handler) UpdateSettings(c *gin.Context) {
 	if req.PromptFilterAdvancedConfig != nil {
 		document, err := promptfilter.MergeAdvancedConfigDocument(promptFilterAdvancedRaw, *req.PromptFilterAdvancedConfig)
 		if err != nil {
-			c.JSON(http.StatusBadRequest, gin.H{"error": "prompt_filter_advanced_config JSON 无效: " + err.Error()})
+			c.JSON(http.StatusBadRequest, gin.H{"error": "prompt_filter_advanced_config JSON is invalid: " + err.Error()})
 			return
 		}
 		promptFilterAdvancedRaw = document.Raw
@@ -10542,7 +10542,7 @@ func (h *Handler) UpdateSettings(c *gin.Context) {
 	if req.PromptFilterDisabledPatterns != nil {
 		disabled, err := promptfilter.ParseDisabledPatterns(*req.PromptFilterDisabledPatterns)
 		if err != nil {
-			writeError(c, http.StatusBadRequest, "Prompt 检查禁用规则 JSON 无效: "+err.Error())
+			writeError(c, http.StatusBadRequest, "Prompt check disabled-rules JSON is invalid: "+err.Error())
 			return
 		}
 		promptFilterCfg.DisabledPatterns = disabled
@@ -10578,20 +10578,20 @@ func (h *Handler) UpdateSettings(c *gin.Context) {
 		promptFilterCfg.Review.Adapter = promptFilterCfg.Advanced.ReviewAdapter
 		promptFilterCfg = promptfilter.NormalizeConfig(promptFilterCfg)
 		if promptFilterCfg.Review.Enabled && strings.TrimSpace(promptFilterCfg.Review.APIKey) == "" {
-			writeError(c, http.StatusBadRequest, "Prompt 检查二次审查已启用时必须填写审查 API Key")
+			writeError(c, http.StatusBadRequest, "Prompt check review API key is required when secondary review is enabled")
 			return
 		}
 		if err := promptfilter.ValidateReviewConfig(promptFilterCfg.Review); err != nil {
-			writeError(c, http.StatusBadRequest, "Prompt 检查审查配置无效: "+err.Error())
+			writeError(c, http.StatusBadRequest, "Prompt check review config is invalid: "+err.Error())
 			return
 		}
 		if _, err := promptfilter.NewEngine(promptFilterCfg); err != nil {
-			writeError(c, http.StatusBadRequest, "Prompt 检查规则无效: "+err.Error())
+			writeError(c, http.StatusBadRequest, "Prompt check rules are invalid: "+err.Error())
 			return
 		}
 	}
 
-	// Resin 粘性代理池配置
+	// Resin sticky proxy pool configuration
 	resinURL := ""
 	resinPlatformName := ""
 	if existingSettings != nil {
@@ -10600,11 +10600,11 @@ func (h *Handler) UpdateSettings(c *gin.Context) {
 	}
 	if req.ResinURL != nil {
 		resinURL = *req.ResinURL
-		log.Printf("设置已更新: resin_url")
+		log.Printf("settings updated: resin_url")
 	}
 	if req.ResinPlatformName != nil {
 		resinPlatformName = *req.ResinPlatformName
-		log.Printf("设置已更新: resin_platform_name")
+		log.Printf("settings updated: resin_platform_name")
 	}
 	if req.ResinURL != nil || req.ResinPlatformName != nil {
 		proxy.SetResinConfig(&proxy.ResinConfig{
@@ -10620,7 +10620,7 @@ func (h *Handler) UpdateSettings(c *gin.Context) {
 		}
 	}
 
-	// 图片存储后端配置
+	// Image storage backend configuration
 	imgCfg := imagestore.CurrentConfig()
 	imgChanged := false
 	if req.ImageStorageBackend != nil {
@@ -10658,20 +10658,20 @@ func (h *Handler) UpdateSettings(c *gin.Context) {
 	imgCfg.LocalDir = imageAssetDir()
 	if imgChanged {
 		if err := imagestore.Configure(imgCfg); err != nil {
-			writeError(c, http.StatusBadRequest, "图片存储配置无效: "+err.Error())
+			writeError(c, http.StatusBadRequest, "image storage config is invalid: "+err.Error())
 			return
 		}
-		// Configure 内部 Normalize 过，重新读出来用于持久化
+		// Configure already calls Normalize internally; re-read the result for persistence.
 		imgCfg = imagestore.CurrentConfig()
-		log.Printf("设置已更新: image_storage_backend = %s", imgCfg.Backend)
+		log.Printf("settings updated: image_storage_backend = %s", imgCfg.Backend)
 	}
 	imgConfigJSON, encodeErr := imagestore.EncodeConfigJSON(imgCfg)
 	if encodeErr != nil {
-		log.Printf("图片存储配置序列化失败: %v", encodeErr)
+		log.Printf("image storage config serialization failed: %v", encodeErr)
 		imgConfigJSON = "{}"
 	}
 
-	// 持久化保存到数据库
+	// Persist to the database
 	systemSettings := &database.SystemSettings{
 		SiteName:                            siteName,
 		SiteLogo:                            siteLogo,
@@ -10806,8 +10806,8 @@ func (h *Handler) UpdateSettings(c *gin.Context) {
 		ModelPricingSyncURL:                 modelPricingSyncURL,
 	}
 
-	// 防护列与 system_settings 其余列在同一行、同一事务中提交：任一写入失败
-	// 都不会留下已保存的防护配置。热应用必须等事务提交成功后再执行。
+	// The guard columns and the other system_settings columns are committed together in the same row and transaction: if any write fails,
+	// no saved guard config is left behind. Hot apply must run only after the transaction commits successfully.
 	var committedOutputGuard database.OutputGuardSettings
 	if outputGuardUpdateRequested {
 		committedOutputGuard, err = h.db.UpdateSystemSettingsWithOutputGuard(c.Request.Context(), systemSettings, outputGuardUpdate)
@@ -10815,87 +10815,87 @@ func (h *Handler) UpdateSettings(c *gin.Context) {
 		err = h.db.UpdateSystemSettings(c.Request.Context(), systemSettings)
 	}
 	if err != nil {
-		log.Printf("无法持久化保存设置: %v", err)
+		log.Printf("cannot persist settings: %v", err)
 		if outputGuardUpdateRequested {
-			// 事务内校验失败是调用方输入问题，映射 400；其余（数据库/IO 等）才是 500。
+			// A validation failure inside the transaction is a caller input problem and maps to 400; everything else (database/IO, etc.) is 500.
 			if errors.Is(err, database.ErrInvalidOutputGuardSettings) {
 				writeError(c, http.StatusBadRequest, err.Error())
 				return
 			}
-			writeError(c, http.StatusInternalServerError, "保存防护设置失败，设置未生效："+err.Error())
+			writeError(c, http.StatusInternalServerError, "Failed to save guard settings, settings not applied: "+err.Error())
 			return
 		}
 		if req.CodexImagesMainModel != nil {
-			writeError(c, http.StatusInternalServerError, "保存生图设置失败，文本驱动模型未生效")
+			writeError(c, http.StatusInternalServerError, "Failed to save image generation settings, text-driven model not applied")
 			return
 		}
 		if req.SessionSlotBufferEnabled != nil || req.SessionSlotBufferSeconds != nil {
-			writeError(c, http.StatusInternalServerError, "保存会话并发槽缓冲设置失败，设置未生效")
+			writeError(c, http.StatusInternalServerError, "Failed to save session concurrency slot buffer settings, settings not applied")
 			return
 		}
 		if modelCooldownUpdateRequested {
-			writeError(c, http.StatusInternalServerError, "保存模型冷却设置前无法持久化系统设置")
+			writeError(c, http.StatusInternalServerError, "Cannot persist system settings before saving model cooldown settings")
 			return
 		}
 		if responseCacheUpdateRequested {
-			writeError(c, http.StatusInternalServerError, "保存响应缓存设置前无法持久化系统设置")
+			writeError(c, http.StatusInternalServerError, "Cannot persist system settings before saving response cache settings")
 			return
 		}
 		if modelsListReadLimitChanged {
-			writeError(c, http.StatusInternalServerError, "保存模型列表读取上限前无法持久化系统设置")
+			writeError(c, http.StatusInternalServerError, "Cannot persist system settings before saving the model list read limit")
 			return
 		}
 		if promptFilterChanged {
-			writeError(c, http.StatusInternalServerError, "保存 Prompt 检查设置失败，设置未生效")
+			writeError(c, http.StatusInternalServerError, "Failed to save Prompt check settings, settings not applied")
 			return
 		}
 		if autoResetCreditsChanged {
 			runtimeCfg = effectiveRuntimeCfg
-			writeError(c, http.StatusInternalServerError, "保存自动消耗设置失败，设置未生效")
+			writeError(c, http.StatusInternalServerError, "Failed to save auto-consume settings, settings not applied")
 			return
 		}
 		if autoActivate5hChanged {
 			runtimeCfg = effectiveRuntimeCfg
-			writeError(c, http.StatusInternalServerError, "保存 5h 窗口自动激活设置失败，设置未生效")
+			writeError(c, http.StatusInternalServerError, "Failed to save 5h window auto-activation settings, settings not applied")
 			return
 		}
 		if continuousRetryChanged {
-			writeError(c, http.StatusInternalServerError, "保存持续重试策略失败，设置未生效")
+			writeError(c, http.StatusInternalServerError, "Failed to save continuous retry policy, settings not applied")
 			return
 		}
-		writeError(c, http.StatusInternalServerError, "保存系统设置失败，设置未生效："+err.Error())
+		writeError(c, http.StatusInternalServerError, "Failed to save system settings, settings not applied: "+err.Error())
 		return
 	} else {
-		// settings 事务提交成功后立即热应用基础运行时上限与全局限流，
-		// 确保后续 UpdateContinuousRetryPolicy 等独立步骤即使失败，
-		// 已提交到数据库的并发/重试/RPM 配置在本实例内存中也保持一致。
+		// Right after the settings transaction commits, hot-apply the base runtime limits and the global rate limit,
+		// so that if later independent steps such as UpdateContinuousRetryPolicy fail,
+		// the concurrency/retry/RPM config already committed to the database also stays consistent in this instance's memory.
 		if maxConcurrencyChanged {
 			h.store.SetMaxConcurrency(maxConcurrencyToApply)
-			log.Printf("设置已更新: max_concurrency = %d", maxConcurrencyToApply)
+			log.Printf("settings updated: max_concurrency = %d", maxConcurrencyToApply)
 		}
 		if maxRetriesChanged {
 			h.store.SetMaxRetries(maxRetriesToApply)
-			log.Printf("设置已更新: max_retries = %d", maxRetriesToApply)
+			log.Printf("settings updated: max_retries = %d", maxRetriesToApply)
 		}
 		if maxRateLimitRetriesChanged {
 			h.store.SetMaxRateLimitRetries(maxRateLimitRetriesToApply)
-			log.Printf("设置已更新: max_rate_limit_retries = %d", maxRateLimitRetriesToApply)
+			log.Printf("settings updated: max_rate_limit_retries = %d", maxRateLimitRetriesToApply)
 		}
 		if globalRPMChanged {
 			h.rateLimiter.UpdateRPM(globalRPMToApply)
-			log.Printf("设置已更新: global_rpm = %d", globalRPMToApply)
+			log.Printf("settings updated: global_rpm = %d", globalRPMToApply)
 		}
 		if outputGuardUpdateRequested {
 			outputGuardSettings = committedOutputGuard
 			if proxy.ApplyOutputGuardSettings(committedOutputGuard) {
-				log.Printf("设置已更新: output_guard generation=%d", committedOutputGuard.ConfigGeneration)
+				log.Printf("settings updated: output_guard generation=%d", committedOutputGuard.ConfigGeneration)
 			} else {
-				log.Printf("输出防护配置已提交，但运行时应用被拒绝（已有更新的 generation 或配置非法）: generation=%d", committedOutputGuard.ConfigGeneration)
+				log.Printf("output guard config committed, but runtime apply was rejected (a newer generation already exists or the config is invalid): generation=%d", committedOutputGuard.ConfigGeneration)
 			}
 		}
 		if req.SessionSlotBufferSeconds != nil {
 			h.store.SetSessionSlotBuffer(time.Duration(sessionSlotBufferSeconds) * time.Second)
-			log.Printf("设置已更新: session_slot_buffer_seconds = %d", sessionSlotBufferSeconds)
+			log.Printf("settings updated: session_slot_buffer_seconds = %d", sessionSlotBufferSeconds)
 		}
 		runtimeCfg.CodexImagesMainModel = codexImagesMainModel
 		proxy.UpdateRuntimeSettings(func(current proxy.RuntimeSettings) proxy.RuntimeSettings {
@@ -10904,12 +10904,12 @@ func (h *Handler) UpdateSettings(c *gin.Context) {
 		})
 		if req.SessionSlotBufferEnabled != nil {
 			h.store.SetSessionSlotBufferEnabled(sessionSlotBufferEnabled)
-			log.Printf("设置已更新: session_slot_buffer_enabled = %t", sessionSlotBufferEnabled)
+			log.Printf("settings updated: session_slot_buffer_enabled = %t", sessionSlotBufferEnabled)
 		}
 		if continuousRetryChanged {
 			committed, updateErr := h.db.UpdateContinuousRetryPolicy(c.Request.Context(), continuousRetryUpdate)
 			if updateErr != nil {
-				writeError(c, http.StatusInternalServerError, "保存持续重试策略失败")
+				writeError(c, http.StatusInternalServerError, "Failed to save continuous retry policy")
 				return
 			}
 			continuousRetryPolicy = committed
@@ -10918,7 +10918,7 @@ func (h *Handler) UpdateSettings(c *gin.Context) {
 				current.ContinuousRetryPolicy = continuousRetryPolicy
 				return current
 			})
-			log.Printf("设置已更新: continuous_retry enabled=%t catch_all=%t categories=%d status_codes=%d error_codes=%d", continuousRetryPolicy.Enabled, continuousRetryPolicy.CatchAll, len(continuousRetryPolicy.Categories), len(continuousRetryPolicy.StatusCodes), len(continuousRetryPolicy.ErrorCodes))
+			log.Printf("settings updated: continuous_retry enabled=%t catch_all=%t categories=%d status_codes=%d error_codes=%d", continuousRetryPolicy.Enabled, continuousRetryPolicy.CatchAll, len(continuousRetryPolicy.Categories), len(continuousRetryPolicy.StatusCodes), len(continuousRetryPolicy.ErrorCodes))
 		}
 		if promptFilterChanged {
 			if req.PromptFilterCustomPatterns == nil {
@@ -10930,11 +10930,11 @@ func (h *Handler) UpdateSettings(c *gin.Context) {
 					if patterns, parseErr := promptfilter.ParseCustomPatterns(persisted.PromptFilterCustomPatterns); parseErr == nil {
 						promptFilterCfg.CustomPatterns = patterns
 					} else {
-						log.Printf("无法解析数据库中的 Prompt 自定义规则，保留当前运行时规则: %v", parseErr)
+						log.Printf("cannot parse the Prompt custom rules in the database, keeping the current runtime rules: %v", parseErr)
 						promptFilterCfg.CustomPatterns = h.store.GetPromptFilterConfig().CustomPatterns
 					}
 				} else {
-					log.Printf("无法重新读取 Prompt 自定义规则，保留当前运行时规则: %v", readErr)
+					log.Printf("cannot re-read the Prompt custom rules, keeping the current runtime rules: %v", readErr)
 					promptFilterCfg.CustomPatterns = h.store.GetPromptFilterConfig().CustomPatterns
 				}
 			}
@@ -10942,11 +10942,11 @@ func (h *Handler) UpdateSettings(c *gin.Context) {
 				// The document was validated before persistence, so reaching this
 				// branch indicates an internal invariant violation. Keep the last
 				// valid runtime state rather than publishing a partial update.
-				log.Printf("无法发布 Prompt 检查运行时配置: %v", err)
-				writeError(c, http.StatusInternalServerError, "Prompt 检查设置已保存，但运行时配置更新失败")
+				log.Printf("cannot publish the Prompt check runtime config: %v", err)
+				writeError(c, http.StatusInternalServerError, "Prompt check settings were saved, but the runtime config update failed")
 				return
 			}
-			log.Printf("设置已更新: prompt_filter enabled=%t mode=%s threshold=%d", promptFilterCfg.Enabled, promptFilterCfg.Mode, promptFilterCfg.Threshold)
+			log.Printf("settings updated: prompt_filter enabled=%t mode=%s threshold=%d", promptFilterCfg.Enabled, promptFilterCfg.Mode, promptFilterCfg.Threshold)
 		}
 		if autoResetCreditsChanged {
 			runtimeCfg = proxy.UpdateRuntimeSettings(func(current proxy.RuntimeSettings) proxy.RuntimeSettings {
@@ -10970,7 +10970,7 @@ func (h *Handler) UpdateSettings(c *gin.Context) {
 		}
 		if modelsListReadLimitChanged {
 			if updateErr := h.db.UpdateModelsListReadMaxBytes(c.Request.Context(), *req.ModelsListReadMaxBytes); updateErr != nil {
-				writeError(c, http.StatusInternalServerError, "保存模型列表读取上限失败："+updateErr.Error())
+				writeError(c, http.StatusInternalServerError, "Failed to save the model list read limit: "+updateErr.Error())
 				return
 			}
 			modelsListReadMaxBytes = *req.ModelsListReadMaxBytes
@@ -10978,7 +10978,7 @@ func (h *Handler) UpdateSettings(c *gin.Context) {
 				current.ModelsListReadMaxBytes = modelsListReadMaxBytes
 				return current
 			})
-			log.Printf("设置已更新: models_list_read_max_bytes = %d", modelsListReadMaxBytes)
+			log.Printf("settings updated: models_list_read_max_bytes = %d", modelsListReadMaxBytes)
 		}
 	}
 
@@ -11003,7 +11003,7 @@ func (h *Handler) UpdateSettings(c *gin.Context) {
 		// blocking the model after it was disabled or shortened.
 		if next := h.store.UnsupportedModelCooldown(); next < previousUnsupported {
 			if cleared := h.store.ClearModelCooldownsByReason(auth.ModelCooldownReasonUnsupported, next); cleared > 0 {
-				log.Printf("设置已更新: oauth_unsupported_model_cooldown_seconds = %d，已清除 %d 条超出新时长的模型不支持冷却", committed.UnsupportedCooldownSeconds(), cleared)
+				log.Printf("settings updated: oauth_unsupported_model_cooldown_seconds = %d, cleared %d model unsupported-cooldown entries that exceed the new duration", committed.UnsupportedCooldownSeconds(), cleared)
 			}
 		}
 	}
@@ -11017,7 +11017,7 @@ func (h *Handler) UpdateSettings(c *gin.Context) {
 			if errors.Is(updateErr, database.ErrInvalidResponseCacheSettings) {
 				writeError(c, http.StatusBadRequest, updateErr.Error())
 			} else {
-				writeError(c, http.StatusInternalServerError, "保存响应缓存设置失败："+updateErr.Error())
+				writeError(c, http.StatusInternalServerError, "Failed to save response cache settings: "+updateErr.Error())
 			}
 			return
 		}
@@ -11026,7 +11026,7 @@ func (h *Handler) UpdateSettings(c *gin.Context) {
 	} else {
 		latest, readErr := cacheSettingsStore.GetResponseCacheSettings(c.Request.Context())
 		if readErr != nil {
-			writeError(c, http.StatusInternalServerError, "读取响应缓存设置失败："+readErr.Error())
+			writeError(c, http.StatusInternalServerError, "Failed to read response cache settings: "+readErr.Error())
 			return
 		}
 		responseCacheSettings = latest
@@ -11234,12 +11234,12 @@ type testImageStorageReq struct {
 	ForcePathStyle bool   `json:"force_path_style"`
 }
 
-// TestImageStorageConnection 用提交的字段临时构造一次 S3Backend，调用 HeadBucket 验证可达性。
-// 不修改任何持久化状态，便于"保存前先点测试连接"。
+// TestImageStorageConnection temporarily builds an S3Backend from the submitted fields and calls HeadBucket to verify reachability.
+// It does not change any persisted state, so the user can click "test connection" before saving.
 func (h *Handler) TestImageStorageConnection(c *gin.Context) {
 	var req testImageStorageReq
 	if err := c.ShouldBindJSON(&req); err != nil {
-		writeError(c, http.StatusBadRequest, "请求格式错误")
+		writeError(c, http.StatusBadRequest, "Invalid request format")
 		return
 	}
 	cfg := imagestore.Config{
@@ -11270,7 +11270,7 @@ func (h *Handler) TestImageStorageConnection(c *gin.Context) {
 	c.JSON(http.StatusOK, gin.H{"ok": true, "bucket": cfg.Bucket})
 }
 
-// ==================== 导出 & 迁移 ====================
+// ==================== export & migration ====================
 
 type cpaExportEntry struct {
 	Type                  string `json:"type"`
@@ -11288,23 +11288,23 @@ type cpaExportEntry struct {
 	AccessToken           string `json:"access_token"`
 	LastRefresh           string `json:"last_refresh"`
 	RefreshToken          string `json:"refresh_token"`
-	// 代理三件套只在 include_proxy=1 时写出：代理 URL 常带明文用户名密码。
-	// ProxyEnabled 用指针区分"文件没带这个字段"（老文件，按启用处理）与
-	// "源端显式禁用"，bool 的零值会被 omitempty 一起吞掉。
+	// The three proxy fields are written only when include_proxy=1: a proxy URL often carries a plaintext username and password.
+	// ProxyEnabled uses a pointer to tell apart "the file does not have this field" (an old file, treated as enabled) and
+	// "the source explicitly disabled it"; a bool's zero value would be swallowed together with omitempty.
 	ProxyURL     string `json:"proxy_url,omitempty"`
 	ProxyLabel   string `json:"proxy_label,omitempty"`
 	ProxyEnabled *bool  `json:"proxy_enabled,omitempty"`
 }
 
-// exportProxyResolver 决定导出条目是否携带账号绑定的代理。零值表示不携带——
-// 导出代理等于导出代理凭据，必须由调用方显式打开。
+// exportProxyResolver decides whether an exported entry carries the account-bound proxy. The zero value means it does not carry it—
+// exporting a proxy is the same as exporting its credentials, so the caller must enable it explicitly.
 type exportProxyResolver struct {
 	include bool
 	byURL   map[string]*database.ProxyRow
 }
 
-// newExportProxyResolver 在 include 为真时读一次代理表，用来给导出条目补上
-// label / enabled。账号绑的自定义代理（不在代理表里）只带 URL。
+// newExportProxyResolver reads the proxy table once when include is true, to fill in the
+// label / enabled. A custom proxy bound to an account (not in the proxy table) carries only the URL.
 func (h *Handler) newExportProxyResolver(ctx context.Context, include bool) exportProxyResolver {
 	if !include {
 		return exportProxyResolver{}
@@ -11312,8 +11312,8 @@ func (h *Handler) newExportProxyResolver(ctx context.Context, include bool) expo
 	resolver := exportProxyResolver{include: true, byURL: make(map[string]*database.ProxyRow)}
 	proxies, err := h.db.ListProxies(ctx)
 	if err != nil {
-		// 代理表读失败不该让整次导出失败：URL 在账号行上，label/enabled 只是附注。
-		log.Printf("导出账号: 读取代理表失败，本次仅导出代理 URL: %v", err)
+		// A failed read of the proxy table should not fail the whole export: the URL is on the account row, and label/enabled are only annotations.
+		log.Printf("export accounts: failed to read the proxy table, only proxy URLs are exported this time: %v", err)
 		return resolver
 	}
 	for _, proxy := range proxies {
@@ -11325,7 +11325,7 @@ func (h *Handler) newExportProxyResolver(ctx context.Context, include bool) expo
 	return resolver
 }
 
-// resolve 返回导出条目该写入的代理 URL / label / 启用状态。
+// resolve returns the proxy URL / label / enabled state to write into the export entry.
 func (r exportProxyResolver) resolve(rawURL string) (string, string, *bool) {
 	if !r.include {
 		return "", "", nil
@@ -11342,9 +11342,9 @@ func (r exportProxyResolver) resolve(rawURL string) (string, string, *bool) {
 	return proxyURL, row.Label, &enabled
 }
 
-// exportIncludeProxy 解析 include_proxy 查询参数；未显式传入时取渠道默认值。
-// 用 Query().Has 做存在性判断而不是空串比较：include_proxy=0 必须能压过
-// 默认开启的渠道。
+// exportIncludeProxy parses the include_proxy query parameter; when it is not passed explicitly, the channel default is used.
+// It uses Query().Has to check presence instead of comparing with an empty string: include_proxy=0 must be able to override
+// a channel that enables it by default.
 func exportIncludeProxy(c *gin.Context, defaultValue bool) bool {
 	if !c.Request.URL.Query().Has("include_proxy") {
 		return defaultValue
@@ -11366,11 +11366,11 @@ type accountAuthJSON struct {
 	LastRefresh  string                `json:"last_refresh"`
 }
 
-// GetAccountAuthJSON 生成单账号可用于 Codex CLI 的 auth.json。
+// GetAccountAuthJSON generates an auth.json for a single account that can be used with the Codex CLI.
 func (h *Handler) GetAccountAuthJSON(c *gin.Context) {
 	id, err := strconv.ParseInt(c.Param("id"), 10, 64)
 	if err != nil {
-		writeError(c, http.StatusBadRequest, "无效的账号 ID")
+		writeError(c, http.StatusBadRequest, "Invalid account ID")
 		return
 	}
 
@@ -11383,7 +11383,7 @@ func (h *Handler) GetAccountAuthJSON(c *gin.Context) {
 			writeError(c, http.StatusNotFound, "账号不存在")
 			return
 		}
-		writeError(c, http.StatusInternalServerError, "查询账号失败: "+err.Error())
+		writeError(c, http.StatusInternalServerError, "Failed to query account: "+err.Error())
 		return
 	}
 
@@ -11392,11 +11392,11 @@ func (h *Handler) GetAccountAuthJSON(c *gin.Context) {
 	idToken := row.GetCredential("id_token")
 	accountID := row.GetCredential("account_id")
 	if refreshToken == "" {
-		writeError(c, http.StatusBadRequest, "该账号没有 refresh_token，无法生成 auth.json")
+		writeError(c, http.StatusBadRequest, "This account has no refresh_token, so auth.json cannot be generated")
 		return
 	}
 	if accessToken == "" || idToken == "" {
-		writeError(c, http.StatusBadRequest, "账号缺少 access_token 或 id_token，请先刷新账号后再生成 auth.json")
+		writeError(c, http.StatusBadRequest, "Account is missing access_token or id_token; refresh the account before generating auth.json")
 		return
 	}
 	if accountID == "" {
@@ -11410,7 +11410,7 @@ func (h *Handler) GetAccountAuthJSON(c *gin.Context) {
 		}
 	}
 	if accountID == "" {
-		writeError(c, http.StatusBadRequest, "账号缺少 account_id，请先刷新账号后再生成 auth.json")
+		writeError(c, http.StatusBadRequest, "Account is missing account_id; refresh the account before generating auth.json")
 		return
 	}
 
@@ -11428,20 +11428,20 @@ func (h *Handler) GetAccountAuthJSON(c *gin.Context) {
 	})
 }
 
-// accountRowToCPAExportEntry 将数据库账号行转为 CPA 导出条目；无凭证时返回 false。
-// proxies 决定是否连同账号绑定的代理一起导出（零值 = 不导出）。
+// accountRowToCPAExportEntry converts a database account row into a CPA export entry; it returns false when there are no credentials.
+// proxies decides whether the account-bound proxy is exported along with it (zero value = do not export).
 func accountRowToCPAExportEntry(row *database.AccountRow, proxies exportProxyResolver) (cpaExportEntry, bool) {
 	if row == nil {
 		return cpaExportEntry{}, false
 	}
 	rt := row.GetCredential("refresh_token")
 	at := row.GetCredential("access_token")
-	// AT-only accounts (没有 refresh_token,只靠 access_token,常用于规避
-	// add-phone 的 Plus 号) 也需要可导出与可迁移。仅当两个凭证都缺失才跳过。
+	// AT-only accounts (no refresh_token, relying only on access_token, often used to avoid
+	// add-phone Plus accounts) also need to be exportable and migratable. Skip only when both credentials are missing.
 	if rt == "" && at == "" {
 		return cpaExportEntry{}, false
 	}
-	// account_id 在凭据中存储为 chatgpt_account_id（新字段）或 account_id（历史字段）
+	// account_id is stored in the credentials as chatgpt_account_id (new field) or account_id (legacy field)
 	accountID := row.GetCredential("chatgpt_account_id")
 	if accountID == "" {
 		accountID = row.GetCredential("account_id")
@@ -11486,23 +11486,23 @@ func parseExportIDSet(idsParam string) map[int64]bool {
 	return idSet
 }
 
-// ExportAccounts 导出账号（CPA JSON 格式）
+// ExportAccounts exports accounts (CPA JSON format)
 func (h *Handler) ExportAccounts(c *gin.Context) {
 	filter := c.DefaultQuery("filter", "healthy")
 	idsParam := c.Query("ids")
 	remote := c.Query("remote")
-	// channel=codex 限定导出渠道:Codex 账号页导出传 codex。缺省导出全部,
-	// 远程迁移(remote=true)依赖全量语义。
+	// channel=codex limits the export to one channel: the Codex accounts page passes codex when exporting. Without it, everything is exported,
+	// Remote migration (remote=true) relies on the full-export semantics.
 	channel := strings.ToLower(strings.TrimSpace(c.Query("channel")))
 
-	// 远程调用需检查 allow_remote_migration
+	// Remote calls must check allow_remote_migration
 	if remote == "true" {
 		if !h.hasConfiguredAdminSecret(c.Request.Context()) {
-			writeError(c, http.StatusForbidden, "请先设置管理密钥，再启用远程迁移")
+			writeError(c, http.StatusForbidden, "Set an admin key before enabling remote migration")
 			return
 		}
 		if !h.store.GetAllowRemoteMigration() {
-			writeError(c, http.StatusForbidden, "远程迁移未启用，请在系统设置中开启")
+			writeError(c, http.StatusForbidden, "Remote migration is not enabled; turn it on in system settings")
 			return
 		}
 	}
@@ -11512,16 +11512,16 @@ func (h *Handler) ExportAccounts(c *gin.Context) {
 
 	rows, err := h.db.ListActiveByChannel(ctx, channel)
 	if err != nil {
-		writeError(c, http.StatusInternalServerError, "查询账号失败: "+err.Error())
+		writeError(c, http.StatusInternalServerError, "Failed to query accounts: "+err.Error())
 		return
 	}
 
-	// 远程迁移同样默认不带代理：目标机未必连得上源机的代理网段，静默继承会让
-	// 整批账号绑上不可达出口。需要时由调用方显式传 include_proxy=1。
+	// Remote migration also does not carry proxies by default: the target machine may not be able to reach the source machine's proxy network, and silently inheriting would make
+	// the whole batch of accounts bind to an unreachable egress. When needed, the caller passes include_proxy=1 explicitly.
 	proxies := h.newExportProxyResolver(ctx, exportIncludeProxy(c, false))
 	idSet := parseExportIDSet(idsParam)
 
-	// 构建运行时状态映射（用于健康过滤）
+	// Build the runtime status map (used for health filtering)
 	runtimeMap := make(map[int64]*auth.Account)
 	if filter == "healthy" {
 		for _, acc := range h.store.Accounts() {
@@ -11551,16 +11551,16 @@ func (h *Handler) ExportAccounts(c *gin.Context) {
 	c.JSON(http.StatusOK, entries)
 }
 
-// ExportRecycleBinAccounts 导出回收站账号（CPA JSON 格式）。
+// ExportRecycleBinAccounts exports recycle bin accounts (CPA JSON format).
 // GET /api/admin/accounts/recycle-bin/export?ids=1,2,3
-// ids 可选：不传则导出回收站全部；传了则只导出指定 ID（须在回收站中）。
+// ids is optional: if omitted, all recycle bin accounts are exported; if given, only the specified IDs are exported (they must be in the recycle bin).
 func (h *Handler) ExportRecycleBinAccounts(c *gin.Context) {
 	ctx, cancel := context.WithTimeout(c.Request.Context(), 15*time.Second)
 	defer cancel()
 
 	rows, err := h.db.ListDeleted(ctx)
 	if err != nil {
-		writeError(c, http.StatusInternalServerError, "查询回收站失败: "+err.Error())
+		writeError(c, http.StatusInternalServerError, "Failed to query recycle bin: "+err.Error())
 		return
 	}
 
@@ -11586,25 +11586,25 @@ type migrateReq struct {
 	AdminKey string `json:"admin_key"`
 }
 
-// MigrateAccounts 从远程 codex2api 实例迁移健康账号（SSE 流式进度）
+// MigrateAccounts migrates healthy accounts from a remote codex2api instance (SSE streaming progress)
 func (h *Handler) MigrateAccounts(c *gin.Context) {
 	if !h.hasConfiguredAdminSecret(c.Request.Context()) {
-		writeError(c, http.StatusForbidden, "请先设置管理密钥，再使用远程迁移")
+		writeError(c, http.StatusForbidden, "Set an admin key before using remote migration")
 		return
 	}
 
 	var req migrateReq
 	if err := c.ShouldBindJSON(&req); err != nil {
-		writeError(c, http.StatusBadRequest, "请求格式错误")
+		writeError(c, http.StatusBadRequest, "Invalid request format")
 		return
 	}
 	if req.URL == "" || req.AdminKey == "" {
-		writeError(c, http.StatusBadRequest, "url 和 admin_key 是必填字段")
+		writeError(c, http.StatusBadRequest, "url and admin_key are required fields")
 		return
 	}
 	parsedURL, err := url.Parse(strings.TrimSpace(req.URL))
 	if err != nil || parsedURL.Host == "" || (parsedURL.Scheme != "http" && parsedURL.Scheme != "https") {
-		writeError(c, http.StatusBadRequest, "url 必须是完整的 http/https 地址")
+		writeError(c, http.StatusBadRequest, "url must be a full http/https address")
 		return
 	}
 
@@ -11616,41 +11616,41 @@ func (h *Handler) MigrateAccounts(c *gin.Context) {
 
 	httpReq, err := http.NewRequestWithContext(fetchCtx, http.MethodGet, exportURL, nil)
 	if err != nil {
-		writeError(c, http.StatusBadRequest, "构建请求失败: "+err.Error())
+		writeError(c, http.StatusBadRequest, "Failed to build request: "+err.Error())
 		return
 	}
 	httpReq.Header.Set("X-Admin-Key", req.AdminKey)
 
 	resp, err := (&http.Client{Timeout: 60 * time.Second}).Do(httpReq)
 	if err != nil {
-		writeError(c, http.StatusBadGateway, "连接远程实例失败: "+err.Error())
+		writeError(c, http.StatusBadGateway, "Failed to connect to remote instance: "+err.Error())
 		return
 	}
 	defer resp.Body.Close()
 
 	if resp.StatusCode != http.StatusOK {
 		body, _ := io.ReadAll(resp.Body)
-		writeError(c, http.StatusBadGateway, fmt.Sprintf("远程实例返回错误 (%d): %s", resp.StatusCode, string(body)))
+		writeError(c, http.StatusBadGateway, fmt.Sprintf("Remote instance returned an error (%d): %s", resp.StatusCode, string(body)))
 		return
 	}
 
 	var remoteAccounts []cpaExportEntry
 	if err := json.NewDecoder(resp.Body).Decode(&remoteAccounts); err != nil {
-		writeError(c, http.StatusBadGateway, "解析远程数据失败: "+err.Error())
+		writeError(c, http.StatusBadGateway, "Failed to parse remote data: "+err.Error())
 		return
 	}
 
 	if len(remoteAccounts) == 0 {
-		c.JSON(http.StatusOK, gin.H{"message": "远程实例没有可迁移的健康账号", "total": 0, "imported": 0, "duplicate": 0, "failed": 0})
+		c.JSON(http.StatusOK, gin.H{"message": "The remote instance has no healthy accounts to migrate", "total": 0, "imported": 0, "duplicate": 0, "failed": 0})
 		return
 	}
 
-	// 转换为 importToken 格式，复用 importAccountsCommon (原生支持 AT-only 混合导入)
+	// Convert to the importToken format and reuse importAccountsCommon (which natively supports mixed AT-only imports)
 	var tokens []importToken
 	for _, entry := range remoteAccounts {
 		rt := strings.TrimSpace(entry.RefreshToken)
 		at := strings.TrimSpace(entry.AccessToken)
-		// 至少需要一种凭证;两者都为空表示账号根本没有可用凭证。
+		// At least one kind of credential is required; if both are empty, the account has no usable credentials at all.
 		if rt == "" && at == "" {
 			continue
 		}
@@ -11676,20 +11676,20 @@ func (h *Handler) MigrateAccounts(c *gin.Context) {
 		})
 	}
 
-	log.Printf("远程迁移: 从 %s 拉取到 %d 个账号，开始导入", remoteURL, len(tokens))
+	log.Printf("remote migration: pulled from %s, %d accounts, starting import", remoteURL, len(tokens))
 	h.importAccountsCommon(c, tokens, importSettings{})
 }
 
 // ==================== Models ====================
 
-// ListModels 返回支持的模型列表（供前端设置页使用）
+// ListModels returns the supported model list (used by the frontend settings page)
 func (h *Handler) ListModels(c *gin.Context) {
 	catalog, _ := proxy.ListModelCatalog(c.Request.Context(), h.db)
 	h.addDaybreakCatalogModels(&catalog)
 	c.JSON(http.StatusOK, catalog)
 }
 
-// SyncModels 从官方 Codex 模型页同步模型注册表。
+// SyncModels syncs the model registry from the official Codex models page.
 func (h *Handler) SyncModels(c *gin.Context) {
 	ctx, cancel := context.WithTimeout(c.Request.Context(), 15*time.Second)
 	defer cancel()
@@ -11706,8 +11706,8 @@ func (h *Handler) SyncModels(c *gin.Context) {
 	c.JSON(http.StatusOK, result)
 }
 
-// SyncCodexCLIVersion 从 openai/codex releases 拉取最新稳定版本，
-// 抬升出站 UA / manifest 的模拟版本（绝不降级），供设置页「立即同步」按钮调用。
+// SyncCodexCLIVersion fetches the latest stable version from openai/codex releases,
+// raises the simulated version of the outbound UA / manifest (never downgrades), called by the "sync now" button on the settings page.
 func (h *Handler) SyncCodexCLIVersion(c *gin.Context) {
 	ctx, cancel := context.WithTimeout(c.Request.Context(), 20*time.Second)
 	defer cancel()
@@ -11724,7 +11724,7 @@ func (h *Handler) SyncCodexCLIVersion(c *gin.Context) {
 	c.JSON(http.StatusOK, result)
 }
 
-// SyncCodexClientVersions 同步 CLI、Desktop 和 VSCode，并返回各来源的独立结果。
+// SyncCodexClientVersions syncs the CLI, Desktop, and VSCode, and returns the independent result for each source.
 func (h *Handler) SyncCodexClientVersions(c *gin.Context) {
 	ctx, cancel := context.WithTimeout(c.Request.Context(), 15*time.Minute)
 	defer cancel()
@@ -11740,10 +11740,10 @@ func (h *Handler) SyncCodexClientVersions(c *gin.Context) {
 	c.JSON(http.StatusOK, result)
 }
 
-// ==================== Codex User-Agent 形态目录与预览 ====================
+// ==================== Codex User-Agent shape catalog and preview ====================
 
-// GetCodexUserAgentCatalog 返回 Codex 客户端形态目录(形态、平台、终端、末尾标记名、
-// CLI 版本→构建号配对与默认号池配比),供设置页做搭配选择。
+// GetCodexUserAgentCatalog returns the Codex client shape catalog (shape, platform, terminal, trailing marker name,
+// CLI version→build number pairing and default account pool ratios), for the settings page to pick a combination from.
 func (h *Handler) GetCodexUserAgentCatalog(c *gin.Context) {
 	c.JSON(http.StatusOK, proxy.CodexUserAgentCatalog())
 }
@@ -11754,9 +11754,9 @@ type codexUserAgentPreviewRequest struct {
 	CodexMinCLIVersion string `json:"codex_min_cli_version"`
 }
 
-// PreviewCodexUserAgent 按表单里尚未保存的 UA 配置算出真实出站身份(User-Agent /
-// Originator / Version),与执行链路同一套规则;号池模式下对前几个 Codex 账号逐个抽样。
-// 兼容模式与最低 CLI 版本可随请求传入(表单值),缺省用当前生效设置。
+// PreviewCodexUserAgent computes the real outbound identity (User-Agent /
+// Originator / Version), using the same rules as the execution path; in account pool mode, it samples the first few Codex accounts one by one.
+// The compatibility mode and minimum CLI version can be passed in the request (form values); by default the currently effective settings are used.
 func (h *Handler) PreviewCodexUserAgent(c *gin.Context) {
 	var req codexUserAgentPreviewRequest
 	if err := c.ShouldBindJSON(&req); err != nil {
@@ -11796,25 +11796,25 @@ func (h *Handler) PreviewCodexUserAgent(c *gin.Context) {
 	c.JSON(http.StatusOK, preview)
 }
 
-// ==================== 账号趋势 ====================
+// ==================== account trend ====================
 
-// GetAccountEventTrend 获取账号增删趋势聚合数据
+// GetAccountEventTrend returns the aggregated account add/remove trend data
 func (h *Handler) GetAccountEventTrend(c *gin.Context) {
 	startStr := c.Query("start")
 	endStr := c.Query("end")
 	if startStr == "" || endStr == "" {
-		writeError(c, http.StatusBadRequest, "start 和 end 参数为必填")
+		writeError(c, http.StatusBadRequest, "start and end parameters are required")
 		return
 	}
 
 	start, err := time.Parse(time.RFC3339, startStr)
 	if err != nil {
-		writeError(c, http.StatusBadRequest, "start 时间格式无效（需 RFC3339）")
+		writeError(c, http.StatusBadRequest, "start time format is invalid (must be RFC3339)")
 		return
 	}
 	end, err := time.Parse(time.RFC3339, endStr)
 	if err != nil {
-		writeError(c, http.StatusBadRequest, "end 时间格式无效（需 RFC3339）")
+		writeError(c, http.StatusBadRequest, "end time format is invalid (must be RFC3339)")
 		return
 	}
 
@@ -11837,24 +11837,24 @@ func (h *Handler) GetAccountEventTrend(c *gin.Context) {
 	c.JSON(http.StatusOK, gin.H{"trend": trend})
 }
 
-// ==================== 清理 ====================
+// ==================== cleanup ====================
 
-// CleanBanned 清理封禁（unauthorized）账号
+// CleanBanned cleans up banned (unauthorized) accounts
 func (h *Handler) CleanBanned(c *gin.Context) {
 	h.cleanByStatus(c, "unauthorized")
 }
 
-// CleanRateLimited 一键清理所有限流账号（含 premium 5h、free 7d、usage_exhausted）
+// CleanRateLimited cleans up all rate-limited accounts in one step (including premium 5h, free 7d, usage_exhausted)
 func (h *Handler) CleanRateLimited(c *gin.Context) {
 	h.cleanAccountTargets(c, h.store.CollectRateLimitedManualTargets(), "manual_clean")
 }
 
-// CleanError 清理错误（error）账号
+// CleanError cleans up error accounts (error status)
 func (h *Handler) CleanError(c *gin.Context) {
 	h.cleanByStatus(c, "error")
 }
 
-// cleanByStatus 按运行时状态清理账号
+// cleanByStatus cleans up accounts by runtime status
 func (h *Handler) cleanByStatus(c *gin.Context, targetStatus string) {
 	h.cleanAccountTargets(c, h.store.CollectCleanTargets(targetStatus, nil), "auto_clean")
 }
@@ -11868,7 +11868,7 @@ func (h *Handler) cleanAccountTargets(c *gin.Context, targets []*auth.Account, e
 	ctx, cancel := context.WithTimeout(c.Request.Context(), 30*time.Second)
 	defer cancel()
 	success, _ := h.runCleanAccounts(ctx, targets, eventReason, nil)
-	c.JSON(http.StatusOK, gin.H{"message": fmt.Sprintf("已清理 %d 个账号", success), "cleaned": success})
+	c.JSON(http.StatusOK, gin.H{"message": fmt.Sprintf("Cleaned up %d accounts", success), "cleaned": success})
 }
 
 func (h *Handler) streamCleanAccounts(c *gin.Context, targets []*auth.Account, eventReason string) {
@@ -11886,7 +11886,7 @@ func (h *Handler) streamCleanAccounts(c *gin.Context, targets []*auth.Account, e
 		Success: success,
 		Failed:  fail,
 		Deleted: success,
-		Message: fmt.Sprintf("已清理 %d 个账号", success),
+		Message: fmt.Sprintf("Cleaned up %d accounts", success),
 	})
 }
 
@@ -11960,20 +11960,20 @@ func normalizeManagedProxyURL(raw string) (string, error) {
 	return normalized, nil
 }
 
-// ListProxies 获取代理列表
+// ListProxies returns the proxy list
 func (h *Handler) ListProxies(c *gin.Context) {
 	ctx, cancel := context.WithTimeout(c.Request.Context(), 5*time.Second)
 	defer cancel()
 
 	proxies, err := h.db.ListProxies(ctx)
 	if err != nil {
-		writeError(c, http.StatusInternalServerError, "获取代理列表失败")
+		writeError(c, http.StatusInternalServerError, "Failed to get proxy list")
 		return
 	}
 	if proxies == nil {
 		proxies = []*database.ProxyRow{}
 	}
-	// 绑定数服务端聚合;失败不阻断列表(前端把 0 当"无绑定"展示)。
+	// Bound counts are aggregated on the server; a failure does not block the list (the frontend shows 0 as "unbound").
 	if boundCounts, err := h.db.CountAccountsByProxyURL(ctx); err == nil {
 		for _, p := range proxies {
 			p.BoundCount = boundCounts[strings.TrimSpace(p.URL)]
@@ -11982,7 +11982,7 @@ func (h *Handler) ListProxies(c *gin.Context) {
 	c.JSON(http.StatusOK, gin.H{"proxies": proxies})
 }
 
-// AddProxies 添加代理（支持批量）
+// AddProxies adds proxies (batch supported)
 func (h *Handler) AddProxies(c *gin.Context) {
 	var req struct {
 		URLs  []string `json:"urls"`
@@ -11990,34 +11990,34 @@ func (h *Handler) AddProxies(c *gin.Context) {
 		Label string   `json:"label"`
 	}
 	if err := c.ShouldBindJSON(&req); err != nil {
-		writeError(c, http.StatusBadRequest, "请求格式错误")
+		writeError(c, http.StatusBadRequest, "Invalid request format")
 		return
 	}
 
-	// 合并单条和批量
+	// Merge single and batch input
 	urls := req.URLs
 	if req.URL != "" {
 		urls = append(urls, req.URL)
 	}
 	if len(urls) == 0 {
-		writeError(c, http.StatusBadRequest, "请提供至少一个代理 URL")
+		writeError(c, http.StatusBadRequest, "Provide at least one proxy URL")
 		return
 	}
 
-	// 过滤空行
+	// Filter out empty lines
 	cleaned := make([]string, 0, len(urls))
 	for _, u := range urls {
 		if strings.TrimSpace(u) != "" {
 			normalizedURL, err := normalizeManagedProxyURL(u)
 			if err != nil {
-				writeError(c, http.StatusBadRequest, "无效的代理 URL: "+err.Error())
+				writeError(c, http.StatusBadRequest, "Invalid proxy URL: "+err.Error())
 				return
 			}
 			cleaned = append(cleaned, normalizedURL)
 		}
 	}
 	if len(cleaned) == 0 {
-		writeError(c, http.StatusBadRequest, "请提供至少一个有效的代理 URL")
+		writeError(c, http.StatusBadRequest, "Provide at least one valid proxy URL")
 		return
 	}
 
@@ -12026,26 +12026,26 @@ func (h *Handler) AddProxies(c *gin.Context) {
 
 	inserted, err := h.db.InsertProxies(ctx, cleaned, req.Label)
 	if err != nil {
-		writeError(c, http.StatusInternalServerError, "添加代理失败: "+err.Error())
+		writeError(c, http.StatusInternalServerError, "Failed to add proxies: "+err.Error())
 		return
 	}
 
 	if err := h.store.ReloadProxyPool(); err != nil {
-		log.Printf("代理已添加，但代理池刷新失败: %v", err)
+		log.Printf("proxies added, but proxy pool refresh failed: %v", err)
 	}
 
 	c.JSON(http.StatusOK, gin.H{
-		"message":  fmt.Sprintf("成功添加 %d 个代理", inserted),
+		"message":  fmt.Sprintf("Added %d proxies", inserted),
 		"inserted": inserted,
 		"total":    len(cleaned),
 	})
 }
 
-// DeleteProxy 删除单个代理，并立即解绑仍引用该 URL 的账号。
+// DeleteProxy deletes a single proxy and immediately unbinds the accounts that still reference its URL.
 func (h *Handler) DeleteProxy(c *gin.Context) {
 	id, err := strconv.ParseInt(c.Param("id"), 10, 64)
 	if err != nil {
-		writeError(c, http.StatusBadRequest, "无效的代理 ID")
+		writeError(c, http.StatusBadRequest, "Invalid proxy ID")
 		return
 	}
 
@@ -12054,35 +12054,35 @@ func (h *Handler) DeleteProxy(c *gin.Context) {
 
 	result, err := h.db.RetireProxiesByIDs(ctx, []int64{id})
 	if err != nil {
-		writeError(c, http.StatusInternalServerError, "删除代理失败")
+		writeError(c, http.StatusInternalServerError, "Failed to delete proxy")
 		return
 	}
 	if result.Deleted == 0 {
-		writeError(c, http.StatusNotFound, "代理不存在")
+		writeError(c, http.StatusNotFound, "Proxy not found")
 		return
 	}
 
 	if err := h.applyRetiredProxiesToRuntime(result.DeletedProxyURLs, result.UnboundAccountIDs); err != nil {
-		log.Printf("代理已删除，但代理池刷新失败: %v", err)
+		log.Printf("proxy deleted, but proxy pool refresh failed: %v", err)
 		c.JSON(http.StatusInternalServerError, gin.H{
-			"error":   "代理已删除，但代理池刷新失败",
+			"error":   "Proxy deleted, but proxy pool refresh failed",
 			"deleted": result.Deleted,
 			"unbound": result.Unbound,
 		})
 		return
 	}
 	c.JSON(http.StatusOK, gin.H{
-		"message": "代理已删除",
+		"message": "Proxy deleted",
 		"deleted": result.Deleted,
 		"unbound": result.Unbound,
 	})
 }
 
-// UpdateProxy 更新代理（启用/禁用/改标签/改 URL）
+// UpdateProxy updates a proxy (enable/disable/change label/change URL)
 func (h *Handler) UpdateProxy(c *gin.Context) {
 	id, err := strconv.ParseInt(c.Param("id"), 10, 64)
 	if err != nil {
-		writeError(c, http.StatusBadRequest, "无效的代理 ID")
+		writeError(c, http.StatusBadRequest, "Invalid proxy ID")
 		return
 	}
 
@@ -12092,13 +12092,13 @@ func (h *Handler) UpdateProxy(c *gin.Context) {
 		Enabled *bool   `json:"enabled"`
 	}
 	if err := c.ShouldBindJSON(&req); err != nil {
-		writeError(c, http.StatusBadRequest, "请求格式错误")
+		writeError(c, http.StatusBadRequest, "Invalid request format")
 		return
 	}
 	if req.URL != nil {
 		normalizedURL, err := normalizeManagedProxyURL(*req.URL)
 		if err != nil {
-			writeError(c, http.StatusBadRequest, "无效的代理 URL: "+err.Error())
+			writeError(c, http.StatusBadRequest, "Invalid proxy URL: "+err.Error())
 			return
 		}
 		req.URL = &normalizedURL
@@ -12110,20 +12110,20 @@ func (h *Handler) UpdateProxy(c *gin.Context) {
 	existing, err := h.db.GetProxy(ctx, id)
 	if err != nil {
 		if errors.Is(err, sql.ErrNoRows) {
-			writeError(c, http.StatusNotFound, "代理不存在")
+			writeError(c, http.StatusNotFound, "Proxy not found")
 			return
 		}
-		writeError(c, http.StatusInternalServerError, "获取代理信息失败")
+		writeError(c, http.StatusInternalServerError, "Failed to get proxy info")
 		return
 	}
 	oldURL := strings.TrimSpace(existing.URL)
 
 	if err := h.db.UpdateProxy(ctx, id, req.URL, req.Label, req.Enabled); err != nil {
 		if errors.Is(err, sql.ErrNoRows) {
-			writeError(c, http.StatusNotFound, "代理不存在")
+			writeError(c, http.StatusNotFound, "Proxy not found")
 			return
 		}
-		writeError(c, http.StatusInternalServerError, "更新代理失败")
+		writeError(c, http.StatusInternalServerError, "Failed to update proxy")
 		return
 	}
 
@@ -12134,7 +12134,7 @@ func (h *Handler) UpdateProxy(c *gin.Context) {
 	if newURL != "" && newURL != oldURL {
 		reboundIDs, rebindErr := h.db.RebindAccountProxyURLs(ctx, oldURL, newURL)
 		if rebindErr != nil {
-			writeError(c, http.StatusInternalServerError, "更新代理绑定失败")
+			writeError(c, http.StatusInternalServerError, "Failed to update proxy binding")
 			return
 		}
 		if h.store != nil {
@@ -12149,20 +12149,20 @@ func (h *Handler) UpdateProxy(c *gin.Context) {
 	}
 
 	if err := h.reloadProxyPool(); err != nil {
-		log.Printf("代理已更新，但代理池刷新失败: %v", err)
-		c.JSON(http.StatusInternalServerError, gin.H{"error": "代理已更新，但代理池刷新失败"})
+		log.Printf("proxy updated, but proxy pool refresh failed: %v", err)
+		c.JSON(http.StatusInternalServerError, gin.H{"error": "Proxy updated, but proxy pool refresh failed"})
 		return
 	}
-	c.JSON(http.StatusOK, gin.H{"message": "代理已更新"})
+	c.JSON(http.StatusOK, gin.H{"message": "Proxy updated"})
 }
 
-// BatchDeleteProxies 批量删除代理
+// BatchDeleteProxies deletes proxies in batch
 func (h *Handler) BatchDeleteProxies(c *gin.Context) {
 	var req struct {
 		IDs []int64 `json:"ids"`
 	}
 	if err := c.ShouldBindJSON(&req); err != nil || len(req.IDs) == 0 {
-		writeError(c, http.StatusBadRequest, "请提供要删除的代理 ID 列表")
+		writeError(c, http.StatusBadRequest, "Provide the list of proxy IDs to delete")
 		return
 	}
 
@@ -12171,52 +12171,52 @@ func (h *Handler) BatchDeleteProxies(c *gin.Context) {
 
 	result, err := h.db.RetireProxiesByIDs(ctx, req.IDs)
 	if err != nil {
-		writeError(c, http.StatusInternalServerError, "批量删除失败")
+		writeError(c, http.StatusInternalServerError, "Batch delete failed")
 		return
 	}
 
 	if err := h.applyRetiredProxiesToRuntime(result.DeletedProxyURLs, result.UnboundAccountIDs); err != nil {
-		log.Printf("代理已批量删除，但代理池刷新失败: %v", err)
+		log.Printf("proxies batch-deleted, but proxy pool refresh failed: %v", err)
 		c.JSON(http.StatusInternalServerError, gin.H{
-			"error":   "代理已删除，但代理池刷新失败",
+			"error":   "Proxy deleted, but proxy pool refresh failed",
 			"deleted": result.Deleted,
 			"unbound": result.Unbound,
 		})
 		return
 	}
 	c.JSON(http.StatusOK, gin.H{
-		"message": fmt.Sprintf("已删除 %d 个代理", result.Deleted),
+		"message": fmt.Sprintf("Deleted %d proxies", result.Deleted),
 		"deleted": result.Deleted,
 		"unbound": result.Unbound,
 	})
 }
 
-// CleanErrorProxies 一键清理测试错误的代理，并解绑引用这些代理的账号。
+// CleanErrorProxies cleans up proxies that failed testing in one step and unbinds the accounts that reference them.
 func (h *Handler) CleanErrorProxies(c *gin.Context) {
 	ctx, cancel := context.WithTimeout(c.Request.Context(), 30*time.Second)
 	defer cancel()
 
 	result, err := h.db.CleanErrorProxies(ctx)
 	if err != nil {
-		log.Printf("清理错误代理失败: %v", err)
-		writeError(c, http.StatusInternalServerError, "清理错误代理失败")
+		log.Printf("failed to clean up error proxies: %v", err)
+		writeError(c, http.StatusInternalServerError, "Failed to clean up error proxies")
 		return
 	}
 
 	if h.store != nil {
 		if err := h.applyRetiredProxiesToRuntime(result.DeletedProxyURLs, result.UnboundAccountIDs); err != nil {
-			log.Printf("错误代理已清理，但代理池刷新失败: %v", err)
+			log.Printf("error proxies cleaned up, but proxy pool refresh failed: %v", err)
 			c.JSON(http.StatusInternalServerError, gin.H{
-				"error":   "错误代理已清理，但代理池刷新失败",
+				"error":   "Error proxies cleaned up, but proxy pool refresh failed",
 				"cleaned": result.Deleted,
 				"unbound": result.Unbound,
 			})
 			return
 		}
 	} else if err := h.reloadProxyPool(); err != nil {
-		log.Printf("错误代理已清理，但代理池刷新失败: %v", err)
+		log.Printf("error proxies cleaned up, but proxy pool refresh failed: %v", err)
 		c.JSON(http.StatusInternalServerError, gin.H{
-			"error":   "错误代理已清理，但代理池刷新失败",
+			"error":   "Error proxies cleaned up, but proxy pool refresh failed",
 			"cleaned": result.Deleted,
 			"unbound": result.Unbound,
 		})
@@ -12224,7 +12224,7 @@ func (h *Handler) CleanErrorProxies(c *gin.Context) {
 	}
 
 	c.JSON(http.StatusOK, gin.H{
-		"message": fmt.Sprintf("已清理 %d 个错误代理并解绑 %d 个账号", result.Deleted, result.Unbound),
+		"message": fmt.Sprintf("Cleaned up %d error proxies and unbound %d accounts", result.Deleted, result.Unbound),
 		"cleaned": result.Deleted,
 		"unbound": result.Unbound,
 	})
@@ -12243,26 +12243,26 @@ func (h *Handler) persistProxyTestResult(ctx context.Context, id int64, expected
 		h.removeProxyURLsFromRuntime([]string{expectedURL})
 	}
 	if err := h.reloadProxyPool(); err != nil {
-		return fmt.Errorf("代理测试状态已保存，但代理池刷新失败: %w", err)
+		return fmt.Errorf("proxy test status saved, but proxy pool refresh failed: %w", err)
 	}
 	return nil
 }
 
 func respondProxyTestSaveError(c *gin.Context, err error, probeMessage string) {
 	if errors.Is(err, database.ErrProxyTestTargetChanged) {
-		c.JSON(http.StatusConflict, gin.H{"error": "代理在测试期间已被修改，请重新测试"})
+		c.JSON(http.StatusConflict, gin.H{"error": "Proxy was modified during the test, please test again"})
 		return
 	}
 	if strings.TrimSpace(probeMessage) == "" {
-		probeMessage = "代理测试已完成"
+		probeMessage = "Proxy test completed"
 	}
-	log.Printf("同步代理测试结果失败: probe_error=%q err=%v", probeMessage, err)
+	log.Printf("failed to sync proxy test result: probe_error=%q err=%v", probeMessage, err)
 	c.JSON(http.StatusInternalServerError, gin.H{
-		"error": fmt.Sprintf("%s；保存测试结果或刷新代理池失败: %v", probeMessage, err),
+		"error": fmt.Sprintf("%s; failed to save test result or refresh proxy pool: %v", probeMessage, err),
 	})
 }
 
-// TestProxy 测试代理连通性与出口 IP 位置
+// TestProxy tests proxy connectivity and the egress IP location
 func (h *Handler) TestProxy(c *gin.Context) {
 	var req struct {
 		URL  string `json:"url"`
@@ -12270,12 +12270,12 @@ func (h *Handler) TestProxy(c *gin.Context) {
 		Lang string `json:"lang"`
 	}
 	if err := c.ShouldBindJSON(&req); err != nil {
-		writeError(c, http.StatusBadRequest, "请提供代理 URL")
+		writeError(c, http.StatusBadRequest, "Provide a proxy URL")
 		return
 	}
 	proxyURL := strings.TrimSpace(req.URL)
 	if proxyURL == "" {
-		writeError(c, http.StatusBadRequest, "请提供代理 URL")
+		writeError(c, http.StatusBadRequest, "Provide a proxy URL")
 		return
 	}
 	expectedURL := proxyURL
@@ -12283,15 +12283,15 @@ func (h *Handler) TestProxy(c *gin.Context) {
 		row, err := h.db.GetProxy(c.Request.Context(), req.ID)
 		if err != nil {
 			if errors.Is(err, sql.ErrNoRows) {
-				writeError(c, http.StatusNotFound, "代理不存在")
+				writeError(c, http.StatusNotFound, "Proxy not found")
 				return
 			}
-			writeError(c, http.StatusInternalServerError, "获取代理信息失败")
+			writeError(c, http.StatusInternalServerError, "Failed to get proxy info")
 			return
 		}
 		storedURL := row.URL
 		if strings.TrimSpace(storedURL) != proxyURL {
-			c.JSON(http.StatusConflict, gin.H{"error": "代理已被修改，请刷新后重新测试"})
+			c.JSON(http.StatusConflict, gin.H{"error": "Proxy was modified; refresh and test again"})
 			return
 		}
 		expectedURL = storedURL

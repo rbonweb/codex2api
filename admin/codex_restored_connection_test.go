@@ -246,7 +246,7 @@ func TestConnectionCodexEmitsDiagnosticsFramesAroundSuccess_CodexUpstream(t *tes
 		t.Fatalf("body preview must include the streamed frames: %s", d.ResponseBody)
 	}
 	for _, event := range events {
-		if event.Type == "content" && strings.Contains(event.Text, "耗时") {
+		if event.Type == "content" && strings.Contains(event.Text, "took") {
 			return
 		}
 	}
@@ -310,7 +310,7 @@ func TestConnectionCodexRequestFailureCarriesDiagnostics_CodexUpstream(t *testin
 	if d == nil || d.DurationMS == nil || d.HTTPStatus != 0 || d.Model == "" {
 		t.Fatalf("request failure must still attach duration diagnostics: %+v", d)
 	}
-	if !strings.HasPrefix(events[1].Error, "请求失败") {
+	if !strings.HasPrefix(events[1].Error, "request failed") {
 		t.Fatalf("error text = %q", events[1].Error)
 	}
 }
@@ -338,7 +338,7 @@ func TestRunSingleBatchTestTimesOutSlowStreamingBody_CodexUpstream(t *testing.T)
 	if status != "failed" {
 		t.Fatalf("status = %q, want failed", status)
 	}
-	if !strings.Contains(msg, "测试超时") {
+	if !strings.Contains(msg, "test timed out") {
 		t.Fatalf("message = %q, want timeout message", msg)
 	}
 	if elapsed > time.Second {

@@ -80,38 +80,38 @@ func (h *Handler) UpsertPromptRiskTrustPolicy(c *gin.Context) {
 	subjectType := strings.TrimSpace(c.Param("subject_type"))
 	subjectKey := strings.TrimSpace(c.Param("subject_key"))
 	if subjectType != database.PromptRiskSubjectNewAPIUser || subjectKey == "" {
-		writeError(c, http.StatusBadRequest, "仅已签名的人员画像可启用自适应可信策略")
+		writeError(c, http.StatusBadRequest, "Adaptive trust policy can only be enabled for signed person profiles")
 		return
 	}
 	var req promptRiskTrustPolicyRequest
 	if err := c.ShouldBindJSON(&req); err != nil {
-		writeError(c, http.StatusBadRequest, "请求体无效")
+		writeError(c, http.StatusBadRequest, "Invalid request body")
 		return
 	}
 	req.Reason = strings.TrimSpace(req.Reason)
 	if req.Reason == "" {
-		writeError(c, http.StatusBadRequest, "请填写启用自适应可信策略的原因")
+		writeError(c, http.StatusBadRequest, "Enter a reason for enabling the adaptive trust policy")
 		return
 	}
 	if req.DurationHours <= 0 {
 		req.DurationHours = 24
 	}
 	if req.DurationHours > 30*24 {
-		writeError(c, http.StatusBadRequest, "自适应可信期限不能超过 30 天")
+		writeError(c, http.StatusBadRequest, "The adaptive trust period cannot exceed 30 days")
 		return
 	}
 	if req.RiskThreshold <= 0 {
 		req.RiskThreshold = 35
 	}
 	if req.RiskThreshold > 100 {
-		writeError(c, http.StatusBadRequest, "恢复审核阈值不能超过 100")
+		writeError(c, http.StatusBadRequest, "The review-restoration threshold cannot exceed 100")
 		return
 	}
 	ctx, cancel := context.WithTimeout(c.Request.Context(), 5*time.Second)
 	defer cancel()
 	profile, err := h.db.GetPromptRiskProfile(ctx, subjectType, subjectKey)
 	if errors.Is(err, sql.ErrNoRows) {
-		writeError(c, http.StatusNotFound, "人员画像不存在")
+		writeError(c, http.StatusNotFound, "Person profile not found")
 		return
 	}
 	if err != nil {
@@ -119,11 +119,11 @@ func (h *Handler) UpsertPromptRiskTrustPolicy(c *gin.Context) {
 		return
 	}
 	if !profile.IsPerson || profile.NewAPIUserID == "" {
-		writeError(c, http.StatusBadRequest, "该画像不是可验证的人员身份")
+		writeError(c, http.StatusBadRequest, "This profile is not a verifiable person identity")
 		return
 	}
 	if profile.RiskScore >= req.RiskThreshold || profile.RiskLevel == database.PromptRiskLevelHigh || profile.RiskLevel == database.PromptRiskLevelCritical {
-		writeError(c, http.StatusConflict, "当前画像风险已达到重新审核阈值，不能启用模型复核豁免")
+		writeError(c, http.StatusConflict, "The current profile risk has reached the re-review threshold, so the model-review exemption cannot be enabled")
 		return
 	}
 	policy, err := h.db.UpsertPromptRiskTrustPolicy(ctx, database.PromptRiskTrustPolicyInput{
@@ -150,14 +150,14 @@ func (h *Handler) RevokePromptRiskTrustPolicy(c *gin.Context) {
 	subjectType := strings.TrimSpace(c.Param("subject_type"))
 	subjectKey := strings.TrimSpace(c.Param("subject_key"))
 	if subjectType != database.PromptRiskSubjectNewAPIUser || subjectKey == "" {
-		writeError(c, http.StatusBadRequest, "自适应可信标识无效")
+		writeError(c, http.StatusBadRequest, "Invalid adaptive trust identifier")
 		return
 	}
 	ctx, cancel := context.WithTimeout(c.Request.Context(), 5*time.Second)
 	defer cancel()
 	policy, err := h.db.RevokePromptRiskTrustPolicy(ctx, subjectType, subjectKey, "管理员撤销自适应可信策略")
 	if errors.Is(err, sql.ErrNoRows) {
-		writeError(c, http.StatusNotFound, "自适应可信策略不存在")
+		writeError(c, http.StatusNotFound, "Adaptive trust policy not found")
 		return
 	}
 	if err != nil {

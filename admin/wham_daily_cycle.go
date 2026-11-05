@@ -9,18 +9,18 @@ import (
 	"github.com/gin-gonic/gin"
 )
 
-// whamDailyCycleReliablePercent 是额度估算被视为可靠的最低已用百分比。
-// 实时百分比是整数，±0.5% 的舍入在 10% 时已经是约 ±5% 的区间，再低就没有参考价值。
+// whamDailyCycleReliablePercent is the minimum used percentage at which the quota estimate is considered reliable.
+// Live percentages are integers, so ±0.5% rounding is already a range of about ±5% at 10%; lower than that it has no reference value.
 const whamDailyCycleReliablePercent = 10
 
-// whamDailyCycleMinPercent 是能反推的最低百分比：低于 0.5% 时舍入下界为 0，除不出来。
+// whamDailyCycleMinPercent is the lowest percentage that can be back-calculated: below 0.5% the rounded lower bound is 0, so division is impossible.
 const whamDailyCycleMinPercent = 0.5
 
-// whamDailyCycleInput 是估算所需的账号窗口快照与本周期官方成本。
+// whamDailyCycleInput holds the account window snapshot and this cycle's official cost, as needed for the estimate.
 //
-// 两个上游数据都给不出周额度的绝对值（拆分端点的 percent 是区间峰值归一化，见
-// usage_wham_breakdown.go），唯一诚实的推法是：本周期已用官方 credits 折美元 ÷
-// wham/usage 的实时已用百分比。它的误差全部来自百分比只有整数精度。
+// Neither upstream data source gives an absolute weekly quota value (the breakdown endpoint's percent is normalized to the interval peak, see
+// usage_wham_breakdown.go). The only honest derivation is: this cycle's used official credits converted to USD ÷
+// the live used percentage from wham/usage. All of its error comes from the percentage having only integer precision.
 type whamDailyCycleInput struct {
 	ResetAt        time.Time
 	WindowSeconds  int64
@@ -28,15 +28,15 @@ type whamDailyCycleInput struct {
 	UsedPercent    float64
 	UsedPercentOK  bool
 	PercentUpdated time.Time
-	// UsedCredits / Days 是周期起始日（UTC 整天）起所有带 counts 数据的快照合计。
-	// 起始日按整天计入：周期通常在一天中间开始，那一天里周期开始前的消耗也会被算进来，
-	// 这部分偏差远小于百分比舍入带来的区间。
+	// UsedCredits / Days are the totals over all snapshots with counts data since the cycle start day (whole UTC day).
+	// The start day counts as a whole day: a cycle usually starts mid-day, so usage from before the cycle started on that day is also counted,
+	// and this deviation is far smaller than the range caused by percentage rounding.
 	UsedCredits float64
 	Days        int
 }
 
-// buildWhamDailyCycle 组装账号当前重置周期的成本与额度估算。窗口信息来自账号在
-// 内存里的用量快照（响应头与 wham/usage 探针都会刷新），不额外打上游。
+// buildWhamDailyCycle assembles the cost and quota estimate for the account's current reset cycle. Window information comes from the account's
+// in-memory usage snapshot (refreshed by both response headers and the wham/usage probe), without calling upstream extra.
 func (h *Handler) buildWhamDailyCycle(ctx context.Context, account *auth.Account, now time.Time) gin.H {
 	if h == nil || h.db == nil || account == nil {
 		return nil
@@ -44,7 +44,7 @@ func (h *Handler) buildWhamDailyCycle(ctx context.Context, account *auth.Account
 	snap := account.GetAccountListRuntimeSnapshot()
 	windowSeconds := snap.Window7dSeconds
 	if windowSeconds <= 0 {
-		// 长窗口长度未知时按 7 天：plus/pro 默认周窗；free/team 月窗在探针刷新后会带上真实长度。
+		// When the long window length is unknown, assume 7 days: plus/pro default to a weekly window; free/team monthly windows carry their real length after the probe refreshes.
 		windowSeconds = int64((7 * 24 * time.Hour) / time.Second)
 	}
 	in := whamDailyCycleInput{
@@ -64,8 +64,8 @@ func (h *Handler) buildWhamDailyCycle(ctx context.Context, account *auth.Account
 	return projectWhamDailyCycle(in, now)
 }
 
-// projectWhamDailyCycle 把窗口快照与本周期成本投影成响应。available 表示窗口与实时
-// 百分比都拿到了；estimate 只在能除得出来时给出，否则 reason 说明原因。
+// projectWhamDailyCycle projects the window snapshot and this cycle's cost into the response. available means the window and live
+// percentage were both obtained; estimate is only given when the division works, otherwise reason explains why.
 func projectWhamDailyCycle(in whamDailyCycleInput, now time.Time) gin.H {
 	out := gin.H{
 		"available":      false,
@@ -80,7 +80,7 @@ func projectWhamDailyCycle(in whamDailyCycleInput, now time.Time) gin.H {
 		out["reason"] = "no_window"
 		return out
 	case !in.ResetAt.After(now):
-		// 重置时间已过而快照没刷新：周期起点算不准，等下一次用量刷新。
+		// The reset time has passed but the snapshot was not refreshed: the cycle start cannot be computed accurately, so wait for the next usage refresh.
 		out["reason"] = "window_stale"
 		return out
 	}
@@ -98,7 +98,7 @@ func projectWhamDailyCycle(in whamDailyCycleInput, now time.Time) gin.H {
 	}
 	switch {
 	case in.UsedCredits <= 0:
-		// free 号 credits 恒 0；付费号周期刚开始时官方统计也可能还没出数。
+		// Free accounts always have 0 credits; for paid accounts, official statistics may not have produced numbers yet right after the cycle starts.
 		out["reason"] = "no_credits"
 	case in.UsedPercent <= whamDailyCycleMinPercent:
 		out["reason"] = "percent_too_low"

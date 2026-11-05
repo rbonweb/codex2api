@@ -18,9 +18,9 @@ import (
 	"github.com/tidwall/gjson"
 )
 
-// Codex 测连诊断:记录本次 Responses 探针的 HTTP 状态、分段耗时、上游返回的
-// 请求/响应标识、x-codex-* 用量窗口头、终态 usage,以及脱敏后的响应头/原始正文。
-// 只描述本次请求,未观测到的字段保持缺省,不用零值顶替。
+// Codex connection-test diagnostics: record the HTTP status of this Responses probe, the per-segment timings, and what the upstream returned:
+// request/response IDs, the x-codex-* usage window headers, the final usage, and the redacted response headers and raw body.
+// It only describes this request; fields that were not observed stay unset and are not filled with zero values.
 
 const codexTestBodyLimit = 64 << 10
 
@@ -29,8 +29,8 @@ type codexTestHeader struct {
 	Value string `json:"value"`
 }
 
-// codexTestWindow 是 x-codex-primary-* / x-codex-secondary-* 三件套的原样投影,
-// window_minutes 决定它是 5h(300)还是 7d(10080)窗口,由前端按分钟数标注。
+// codexTestWindow is a verbatim projection of the x-codex-primary-* / x-codex-secondary-* triplet,
+// window_minutes decides whether it is a 5h (300) or 7d (10080) window; the frontend labels it by minutes.
 type codexTestWindow struct {
 	UsedPercent       *float64 `json:"used_percent,omitempty"`
 	WindowMinutes     *float64 `json:"window_minutes,omitempty"`
@@ -62,9 +62,9 @@ type codexTestDiagnostics struct {
 	ResponseID     string `json:"response_id,omitempty"`
 	CFRay          string `json:"cf_ray,omitempty"`
 	PlanType       string `json:"plan_type,omitempty"`
-	// 安全缓冲:上游可能为额外审查而扣住输出;enabled 只说明该模型开着这项能力,
-	// faster_model 是官方 CLI "Retry with a faster model" 的切换目标,buffered
-	// 才表示本轮真的被缓冲过(事件级 safety_buffering=true)。
+	// Safety buffering: the upstream may hold back output for an extra review; enabled only means this model has the capability turned on,
+	// faster_model is the switch target of the official CLI's "Retry with a faster model"; buffered
+	// means this round was actually buffered (event-level safety_buffering=true).
 	SafetyBufferingEnabled     *bool             `json:"safety_buffering_enabled,omitempty"`
 	SafetyBufferingFasterModel string            `json:"safety_buffering_faster_model,omitempty"`
 	SafetyBuffered             bool              `json:"safety_buffered,omitempty"`
@@ -80,8 +80,8 @@ type codexTestDiagnostics struct {
 	BodyTruncated              bool              `json:"body_truncated,omitempty"`
 }
 
-// codexTestCapture 旁路留存上游正文预览;超限只打截断标记,绝不截断真正被
-// 解析器消费的流。
+// codexTestCapture keeps a side preview of the upstream body; past the limit it only adds a truncation marker and never truncates the stream that is actually being
+// consumed by the parser.
 type codexTestCapture struct {
 	bytes.Buffer
 	limit     int
@@ -101,7 +101,7 @@ func (b *codexTestCapture) Write(p []byte) (int, error) {
 
 var codexTestProxyCredentials = regexp.MustCompile(`(?i)((?:https?|socks5h?)://)[^\s/]+@`)
 
-// codexTestSecrets 收集本次探针可能出现在响应正文/头里的账号凭据,用于脱敏。
+// codexTestSecrets collects the account credentials that may appear in this probe's response body or headers, for redaction.
 func codexTestSecrets(account *auth.Account) []string {
 	if account == nil {
 		return nil
@@ -178,7 +178,7 @@ func newCodexTestRecorder(resp *http.Response, model string, account *auth.Accou
 		start:   start,
 		secrets: secrets,
 		account: account,
-		// 多留一段,保证跨越预览边界的凭据也能被整体替换。
+		// Keep a little extra, so a credential that crosses the preview boundary can still be replaced in full.
 		capture: codexTestCapture{limit: codexTestBodyLimit + lookahead},
 	}
 	if resp == nil {
@@ -206,9 +206,9 @@ func newCodexTestRecorder(resp *http.Response, model string, account *auth.Accou
 	return r
 }
 
-// codexTestTransport 区分 HTTP 直连与强制 WebSocket:WS 路径合成的响应头是 101
-// 握手头,带 Upgrade/Sec-WebSocket-Accept,此时 x-codex-* 用量会以 codex.rate_limits
-// 帧而非响应头出现。
+// codexTestTransport distinguishes a direct HTTP connection from forced WebSocket: the response headers synthesized on the WS path are 101
+// handshake headers with Upgrade/Sec-WebSocket-Accept, and then the x-codex-* usage appears as codex.rate_limits
+// frames rather than as response headers.
 func codexTestTransport(header http.Header) string {
 	if strings.EqualFold(strings.TrimSpace(header.Get("Upgrade")), "websocket") || header.Get("Sec-Websocket-Accept") != "" {
 		return "websocket"
@@ -216,7 +216,7 @@ func codexTestTransport(header http.Header) string {
 	return "http"
 }
 
-// codexTestRequestID 优先取账号自定义的上游请求 ID 头,再回退到常见命名。
+// codexTestRequestID prefers the account's custom upstream request ID header, then falls back to the common names.
 func codexTestRequestID(header http.Header, account *auth.Account) string {
 	if override := strings.TrimSpace(account.GetUpstreamRequestIDHeader()); override != "" && auth.ValidateUpstreamRequestIDHeader(override) == nil {
 		if value := strings.TrimSpace(header.Get(override)); value != "" {
@@ -231,7 +231,7 @@ func codexTestRequestID(header http.Header, account *auth.Account) string {
 	return ""
 }
 
-// observeSafetyBufferingHeaders 读取 x-codex-safety-buffering-* 头;缺席保持缺省。
+// observeSafetyBufferingHeaders reads the x-codex-safety-buffering-* headers; if they are absent, the value stays unset.
 func (r *codexTestRecorder) observeSafetyBufferingHeaders(header http.Header) {
 	if raw := strings.TrimSpace(header.Get("x-codex-safety-buffering-enabled")); raw != "" {
 		if enabled, err := strconv.ParseBool(raw); err == nil {
@@ -269,8 +269,8 @@ func (r *codexTestRecorder) appendHeaders(header http.Header) {
 	}
 }
 
-// codexTestHeaderAllowed 只放行诊断价值明确的响应头:用量窗口、限流、请求标识、
-// 计时与错误摘要;Cookie/认证类头永远不进白名单。
+// codexTestHeaderAllowed only lets through response headers with clear diagnostic value: usage windows, rate limits, request IDs,
+// timing and error summaries; cookie and auth headers never enter the allowlist.
 func codexTestHeaderAllowed(name string) bool {
 	for _, prefix := range []string{"x-codex-", "x-ratelimit-", "openai-"} {
 		if strings.HasPrefix(name, prefix) {
@@ -321,8 +321,8 @@ func (r *codexTestRecorder) contentReceived() {
 	}
 }
 
-// observe 从一帧 Responses SSE 事件(或非 200 的 JSON 错误正文)里提取响应标识、
-// 终态、错误类型与 usage。事件 usage 是终态全量值,直接覆盖而不累加。
+// observe extracts the response ID from one Responses SSE event (or from the JSON error body of a non-200 response),
+// the final state, the error type, and the usage. The event usage is the full final value, so it overwrites rather than adds up.
 func (r *codexTestRecorder) observe(data []byte) {
 	event := gjson.ParseBytes(data)
 	if !event.IsObject() {
@@ -345,9 +345,9 @@ func (r *codexTestRecorder) observe(data []byte) {
 		r.details.SafetyBuffered = true
 	}
 	response := event.Get("response")
-	// 生命周期字段(id/model/status)只认 Responses 对象:流式事件的 response 包裹,
-	// 或非流式顶层 object=response。4xx 错误正文的顶层 status 是数字 HTTP 码,
-	// 流内 error 帧也可能带数字 status,都不能混进 response_status。
+	// Lifecycle fields (id/model/status) are only read from Responses objects: the response wrapper of streaming events,
+	// or a non-streaming top-level object=response. The top-level status of a 4xx error body is a numeric HTTP code,
+	// and an in-stream error frame may also carry a numeric status; neither may be mixed into response_status.
 	lifecycle := response.IsObject()
 	if !lifecycle {
 		response = event
@@ -382,7 +382,7 @@ func (r *codexTestRecorder) observe(data []byte) {
 			r.details.ErrorCode = r.safeValue(code)
 		}
 	}
-	// 流内 error 事件把 code 放在顶层:{"type":"error","code":"...","message":"..."}。
+	// An in-stream error event puts code at the top level: {"type":"error","code":"...","message":"..."}.
 	if eventType == "error" {
 		if code := event.Get("code").String(); code != "" {
 			r.details.ErrorCode = r.safeValue(code)
@@ -406,7 +406,7 @@ func (r *codexTestRecorder) observe(data []byte) {
 	updateCodexTestCount(&u.ReasoningTokens, usage.Get("output_tokens_details.reasoning_tokens"))
 }
 
-// observeRateLimitsFrame 处理 WebSocket 传输下代替响应头出现的 codex.rate_limits 帧。
+// observeRateLimitsFrame handles the codex.rate_limits frame that appears in place of response headers under the WebSocket transport.
 func (r *codexTestRecorder) observeRateLimitsFrame(event gjson.Result) {
 	if plan := firstNonEmptyGJSON(event, "plan_type", "rate_limits.plan_type"); plan != "" {
 		r.details.PlanType = r.safeValue(plan)
@@ -419,8 +419,8 @@ func (r *codexTestRecorder) observeRateLimitsFrame(event gjson.Result) {
 	}
 }
 
-// observeMetadataFrame 把 codex.response.metadata / response.metadata 帧里的上游头
-// 并入白名单头列表(WS 路径下 x-codex-* 只在这里出现)。
+// observeMetadataFrame merges the upstream headers in codex.response.metadata / response.metadata frames
+// into the allowlisted header list (on the WS path, x-codex-* only appears here).
 func (r *codexTestRecorder) observeMetadataFrame(event gjson.Result) {
 	headers := event.Get("headers")
 	if !headers.IsObject() {

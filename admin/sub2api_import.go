@@ -13,11 +13,11 @@ import (
 	"github.com/gin-gonic/gin"
 )
 
-// sub2api 导入支持的范围
+// Scopes supported by the sub2api import
 const (
-	sub2apiScopeAvailable = "available" // 健康且非限流
-	sub2apiScopeHealthy   = "healthy"   // 健康（含限流）
-	sub2apiScopeAll       = "all"       // 全部
+	sub2apiScopeAvailable = "available" // healthy and not rate limited
+	sub2apiScopeHealthy   = "healthy"   // healthy (including rate limited)
+	sub2apiScopeAll       = "all"       // all
 )
 
 type sub2apiCredentialRequest struct {
@@ -31,14 +31,14 @@ type sub2apiImportRequest struct {
 	Scope   string `json:"scope"`
 }
 
-// sub2api 服务端响应外壳：{ code, message, data }
+// sub2api server response envelope: { code, message, data }
 type sub2apiEnvelope struct {
 	Code    int             `json:"code"`
 	Message string          `json:"message"`
 	Data    json.RawMessage `json:"data"`
 }
 
-// sub2api accounts/data 接口返回的账号条目（仅取我们关心的字段）
+// Account entry returned by the sub2api accounts/data endpoint (only the fields we care about)
 type sub2apiDataAccount struct {
 	Name        string                 `json:"name"`
 	Platform    string                 `json:"platform"`
@@ -52,7 +52,7 @@ type sub2apiDataPayload struct {
 	Accounts   []sub2apiDataAccount `json:"accounts"`
 }
 
-// sub2api 分页 list 返回的账号状态条目
+// Account status entry returned by the paginated sub2api list endpoint
 type sub2apiListAccount struct {
 	ID               int64                  `json:"id"`
 	Name             string                 `json:"name"`
@@ -71,7 +71,7 @@ type sub2apiPaginatedItems struct {
 	PageSize int                  `json:"page_size"`
 }
 
-// sub2apiAccountSummary 给前端预览用的合并视图
+// sub2apiAccountSummary is the merged view used for the frontend preview
 type sub2apiAccountSummary struct {
 	Name             string `json:"name"`
 	ChatGPTAccountID string `json:"chatgpt_account_id"`
@@ -95,12 +95,12 @@ type sub2apiPreviewResponse struct {
 	Accounts         []sub2apiAccountSummary `json:"accounts"`
 }
 
-// PreviewSub2APIAccounts 拉取 sub2api 账号情况并返回预览。
-// 凭证仅用于本次请求，不落盘。
+// PreviewSub2APIAccounts fetches the sub2api account status and returns a preview.
+// Credentials are used only for this request and are never written to disk.
 func (h *Handler) PreviewSub2APIAccounts(c *gin.Context) {
 	var req sub2apiCredentialRequest
 	if err := c.ShouldBindJSON(&req); err != nil {
-		writeError(c, http.StatusBadRequest, "请求体解析失败")
+		writeError(c, http.StatusBadRequest, "failed to parse request body")
 		return
 	}
 	baseURL, apiKey, errMsg := normalizeSub2APICreds(req.BaseURL, req.APIKey)
@@ -122,12 +122,12 @@ func (h *Handler) PreviewSub2APIAccounts(c *gin.Context) {
 	c.JSON(http.StatusOK, resp)
 }
 
-// ImportFromSub2API 从 sub2api 拉取账号并按 scope 导入到本系统。
-// 复用 importAccountsCommon 的 SSE 进度推送、chatgpt_account_id 去重等逻辑。
+// ImportFromSub2API fetches accounts from sub2api and imports them into this system according to scope.
+// Reuses importAccountsCommon logic such as SSE progress streaming and chatgpt_account_id deduplication.
 func (h *Handler) ImportFromSub2API(c *gin.Context) {
 	var req sub2apiImportRequest
 	if err := c.ShouldBindJSON(&req); err != nil {
-		writeError(c, http.StatusBadRequest, "请求体解析失败")
+		writeError(c, http.StatusBadRequest, "failed to parse request body")
 		return
 	}
 	baseURL, apiKey, errMsg := normalizeSub2APICreds(req.BaseURL, req.APIKey)
@@ -140,7 +140,7 @@ func (h *Handler) ImportFromSub2API(c *gin.Context) {
 		scope = sub2apiScopeAvailable
 	}
 	if scope != sub2apiScopeAvailable && scope != sub2apiScopeHealthy && scope != sub2apiScopeAll {
-		writeError(c, http.StatusBadRequest, "scope 必须是 available / healthy / all")
+		writeError(c, http.StatusBadRequest, "scope must be available / healthy / all")
 		return
 	}
 
@@ -169,7 +169,7 @@ func (h *Handler) ImportFromSub2API(c *gin.Context) {
 
 	if len(tokens) == 0 {
 		c.JSON(http.StatusOK, gin.H{
-			"message":   "没有匹配范围内的可导入账号",
+			"message":   "no importable accounts match the scope",
 			"success":   0,
 			"duplicate": 0,
 			"failed":    0,
@@ -181,7 +181,7 @@ func (h *Handler) ImportFromSub2API(c *gin.Context) {
 	h.importAccountsCommon(c, tokens, importSettings{})
 }
 
-// sub2apiAccountInternal 后端聚合的中间结构，包含 credentials + 状态。
+// sub2apiAccountInternal is the intermediate structure aggregated by the backend, containing credentials + status.
 type sub2apiAccountInternal struct {
 	Name             string
 	Platform         string
@@ -194,20 +194,20 @@ type sub2apiAccountInternal struct {
 	Credentials      map[string]interface{}
 }
 
-// fetchSub2APISummaries 同时调 list 接口拿状态和 data 接口拿明文凭证，按 chatgpt_account_id 合并。
+// fetchSub2APISummaries calls both the list endpoint (for status) and the data endpoint (for plaintext credentials), and merges them by chatgpt_account_id.
 func fetchSub2APISummaries(ctx context.Context, baseURL, apiKey string) ([]sub2apiAccountInternal, error) {
 	listAccounts, err := sub2apiFetchAllList(ctx, baseURL, apiKey)
 	if err != nil {
-		return nil, fmt.Errorf("拉取 sub2api 账号列表失败: %w", err)
+		return nil, fmt.Errorf("failed to fetch sub2api account list: %w", err)
 	}
 
 	dataPayload, err := sub2apiFetchData(ctx, baseURL, apiKey)
 	if err != nil {
-		return nil, fmt.Errorf("拉取 sub2api 账号明文凭证失败: %w", err)
+		return nil, fmt.Errorf("failed to fetch sub2api plaintext credentials: %w", err)
 	}
 
-	// list 是按 ID 主键的；data 不带 status。我们按 (name, platform) 关联，
-	// 因为 sub2api 的 name 在同 platform 内是唯一键。
+	// list is keyed by ID; data has no status. We match them by (name, platform),
+	// because the name is unique within a platform in sub2api.
 	type listKey struct {
 		name     string
 		platform string
@@ -243,7 +243,7 @@ func fetchSub2APISummaries(ctx context.Context, baseURL, apiKey string) ([]sub2a
 	return out, nil
 }
 
-// summarizeSub2API 从聚合数据生成给前端的预览统计 + 列表。
+// summarizeSub2API builds the preview statistics and list for the frontend from the aggregated data.
 func summarizeSub2API(accounts []sub2apiAccountInternal) sub2apiPreviewResponse {
 	resp := sub2apiPreviewResponse{
 		Accounts: make([]sub2apiAccountSummary, 0, len(accounts)),
@@ -331,11 +331,11 @@ func sub2apiAccountToImportToken(a sub2apiAccountInternal) (importToken, bool) {
 	return tok, true
 }
 
-// sub2apiFetchAllList 分页拉完整 list（带 status 字段）。
+// sub2apiFetchAllList fetches the full paginated list (with the status field).
 func sub2apiFetchAllList(ctx context.Context, baseURL, apiKey string) ([]sub2apiListAccount, error) {
 	var all []sub2apiListAccount
 	const pageSize = 200
-	for page := 1; page <= 50; page++ { // 1 万账号上限的硬保护
+	for page := 1; page <= 50; page++ { // hard guard for the 10,000-account limit
 		u := fmt.Sprintf("%s/api/v1/admin/accounts?page=%d&page_size=%d&platform=openai", baseURL, page, pageSize)
 		var env sub2apiEnvelope
 		if err := sub2apiHTTPGet(ctx, u, apiKey, &env); err != nil {
@@ -346,7 +346,7 @@ func sub2apiFetchAllList(ctx context.Context, baseURL, apiKey string) ([]sub2api
 			break
 		}
 		if err := json.Unmarshal(env.Data, &paged); err != nil {
-			return nil, fmt.Errorf("解析 sub2api list 响应失败: %w", err)
+			return nil, fmt.Errorf("failed to parse sub2api list response: %w", err)
 		}
 		all = append(all, paged.Items...)
 		if int64(len(all)) >= paged.Total || len(paged.Items) == 0 {
@@ -356,7 +356,7 @@ func sub2apiFetchAllList(ctx context.Context, baseURL, apiKey string) ([]sub2api
 	return all, nil
 }
 
-// sub2apiFetchData 拉 /accounts/data，含明文 credentials。
+// sub2apiFetchData fetches /accounts/data, including plaintext credentials.
 func sub2apiFetchData(ctx context.Context, baseURL, apiKey string) (sub2apiDataPayload, error) {
 	u := baseURL + "/api/v1/admin/accounts/data?platform=openai"
 	var env sub2apiEnvelope
@@ -368,16 +368,16 @@ func sub2apiFetchData(ctx context.Context, baseURL, apiKey string) (sub2apiDataP
 		return payload, nil
 	}
 	if err := json.Unmarshal(env.Data, &payload); err != nil {
-		return sub2apiDataPayload{}, fmt.Errorf("解析 sub2api data 响应失败: %w", err)
+		return sub2apiDataPayload{}, fmt.Errorf("failed to parse sub2api data response: %w", err)
 	}
 	return payload, nil
 }
 
-// sub2apiHTTPGet 发送 GET 请求并解析成 envelope。
+// sub2apiHTTPGet sends a GET request and parses the response into an envelope.
 func sub2apiHTTPGet(ctx context.Context, fullURL, apiKey string, out *sub2apiEnvelope) error {
 	req, err := http.NewRequestWithContext(ctx, http.MethodGet, fullURL, nil)
 	if err != nil {
-		return fmt.Errorf("构造请求失败: %w", err)
+		return fmt.Errorf("failed to build request: %w", err)
 	}
 	req.Header.Set("x-api-key", apiKey)
 	req.Header.Set("Accept", "application/json")
@@ -385,25 +385,25 @@ func sub2apiHTTPGet(ctx context.Context, fullURL, apiKey string, out *sub2apiEnv
 	client := &http.Client{Timeout: 30 * time.Second}
 	resp, err := client.Do(req)
 	if err != nil {
-		return fmt.Errorf("调用 sub2api 失败: %w", err)
+		return fmt.Errorf("failed to call sub2api: %w", err)
 	}
 	defer resp.Body.Close()
 
 	body, _ := io.ReadAll(io.LimitReader(resp.Body, 32<<20))
 	if resp.StatusCode == http.StatusUnauthorized {
-		return fmt.Errorf("sub2api 鉴权失败 (401)，请检查 admin api key")
+		return fmt.Errorf("sub2api authentication failed (401), please check the admin api key")
 	}
 	if resp.StatusCode == http.StatusForbidden {
-		return fmt.Errorf("sub2api 拒绝访问 (403)")
+		return fmt.Errorf("sub2api access denied (403)")
 	}
 	if resp.StatusCode >= 400 {
-		return fmt.Errorf("sub2api 返回 HTTP %d: %s", resp.StatusCode, truncateString(string(body), 200))
+		return fmt.Errorf("sub2api returned HTTP %d: %s", resp.StatusCode, truncateString(string(body), 200))
 	}
 	if err := json.Unmarshal(body, out); err != nil {
-		return fmt.Errorf("解析 sub2api 响应失败: %w", err)
+		return fmt.Errorf("failed to parse sub2api response: %w", err)
 	}
 	if out.Code != 0 {
-		return fmt.Errorf("sub2api 报错: %s", out.Message)
+		return fmt.Errorf("sub2api error: %s", out.Message)
 	}
 	return nil
 }
@@ -412,16 +412,16 @@ func normalizeSub2APICreds(rawBaseURL, rawAPIKey string) (string, string, string
 	baseURL := strings.TrimSpace(rawBaseURL)
 	apiKey := strings.TrimSpace(rawAPIKey)
 	if baseURL == "" {
-		return "", "", "请填写 sub2api base_url"
+		return "", "", "please enter the sub2api base_url"
 	}
 	if apiKey == "" {
-		return "", "", "请填写 sub2api admin api key"
+		return "", "", "please enter the sub2api admin api key"
 	}
 	if !strings.HasPrefix(baseURL, "http://") && !strings.HasPrefix(baseURL, "https://") {
-		return "", "", "base_url 必须以 http:// 或 https:// 开头"
+		return "", "", "base_url must start with http:// or https://"
 	}
 	if parsed, err := url.Parse(baseURL); err != nil || parsed.Host == "" {
-		return "", "", "base_url 不是合法的 URL"
+		return "", "", "base_url is not a valid URL"
 	}
 	baseURL = strings.TrimRight(baseURL, "/")
 	return baseURL, apiKey, ""

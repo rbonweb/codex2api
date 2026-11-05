@@ -11,20 +11,20 @@ import (
 	"github.com/tidwall/gjson"
 )
 
-// 网关自身发起的账号探测请求也要进用量记录,并带上可区分的内部原因,让用量页
-// 能把它们和下游流量分开显示:测连(connection_test)与降智检测(quality_test)。
-// 记录写在探针收尾处,与诊断帧共用同一份观测值(耗时、终态 usage、上游标识)。
+// Account probe requests that the gateway itself sends are also written to usage records, with a distinct internal reason, so the usage page
+// can show them separately from downstream traffic: connection tests (connection_test) and intelligence checks (quality_test).
+// The record is written at the end of the probe and shares the same observed values as the diagnostic frame (duration, final usage, upstream identifiers).
 const (
 	internalReasonConnectionTest = "connection_test"
 	internalReasonQualityTest    = "quality_test"
 
-	// 与网关流内断流记账保持同一个内部状态码:请求还没拿到上游响应就失败。
+	// Uses the same internal status code as the gateway's in-stream disconnect accounting: the request failed before any upstream response was received.
 	connectionTestTransportStatus = 598
 
 	contextConnectionTestLastError = "connection_test_last_error"
 )
 
-// connectionTestUsageInput 是探针收尾时从诊断对象抽出的记账字段。
+// connectionTestUsageInput holds the accounting fields extracted from the diagnostic object when the probe finishes.
 type connectionTestUsageInput struct {
 	Reason            string
 	Endpoint          string
@@ -53,8 +53,8 @@ func connectionTestReason(quality *qualityTestRequest) string {
 	return internalReasonConnectionTest
 }
 
-// connectionTestReasoningEffort 从探针请求体里取推理档位:Responses 形状在
-// reasoning.effort。
+// connectionTestReasoningEffort reads the reasoning level from the probe request body: in the Responses shape it is
+// reasoning.effort.
 func connectionTestReasoningEffort(payload []byte) string {
 	if len(payload) == 0 {
 		return ""
@@ -66,8 +66,8 @@ func connectionTestEndpoint(account *auth.Account) string {
 	return "/v1/responses"
 }
 
-// rememberConnectionTestError 记下最后一条推给客户端的错误文案,收尾记账时作为
-// error_message 落库,让用量页的"仅错误"筛选也能看到失败的探针。
+// rememberConnectionTestError records the last error message pushed to the client, so that at accounting time it is stored as
+// error_message, so the usage page's "errors only" filter also shows failed probes.
 func rememberConnectionTestError(c *gin.Context, event testEvent) {
 	if c == nil || event.Type != "error" {
 		return
@@ -95,7 +95,7 @@ func int64PtrValue(v *int64) int {
 	return int(*v)
 }
 
-// connectionTestUsageFromCodex 把 Codex/Responses 探针诊断投影成记账字段。诊断里的 usage 是终态全量值,直接采用。
+// connectionTestUsageFromCodex projects the Codex/Responses probe diagnostics into accounting fields. The usage in the diagnostics is the full final value, so it is used directly.
 func connectionTestUsageFromCodex(d *codexTestDiagnostics, model string) connectionTestUsageInput {
 	in := connectionTestUsageInput{Model: model, EffectiveModel: model}
 	if d == nil {
@@ -121,8 +121,8 @@ func connectionTestUsageFromCodex(d *codexTestDiagnostics, model string) connect
 	return in
 }
 
-// logConnectionTestUsage 把一次探针写进 usage_logs。不经过下游 API Key 记账链路:
-// 探针没有下游身份,只按账号/渠道归属,成本由写入层按模型定价计算。
+// logConnectionTestUsage writes one probe into usage_logs. It does not go through the downstream API key accounting path:
+// the probe has no downstream identity and is attributed only to the account and channel; the cost is calculated by the write layer from model pricing.
 func (h *Handler) logConnectionTestUsage(c *gin.Context, account *auth.Account, in connectionTestUsageInput) {
 	if h == nil || h.db == nil || account == nil {
 		return
@@ -131,7 +131,7 @@ func (h *Handler) logConnectionTestUsage(c *gin.Context, account *auth.Account, 
 		in.ErrorMessage = connectionTestLastError(c)
 	}
 	if in.ErrorMessage != "" && in.UpstreamErrorKind == "" && in.StatusCode >= 200 && in.StatusCode < 300 {
-		// HTTP 200 但流内失败(response.failed / error 事件 / 无输出),按流内错误归类。
+		// HTTP 200 but failed inside the stream (response.failed / error event / no output) is classified as an in-stream error.
 		in.UpstreamErrorKind = "stream_error"
 	}
 	if in.StatusCode == 0 {
@@ -178,7 +178,7 @@ func (h *Handler) logConnectionTestUsage(c *gin.Context, account *auth.Account, 
 	_ = h.db.InsertUsageLog(context.Background(), input)
 }
 
-// logConnectionTestTransportFailure 记录连上游前就失败的探针(拨号/代理/TLS 等)。
+// logConnectionTestTransportFailure records a probe that fails before connecting upstream (dialing, proxy, TLS, etc.).
 func (h *Handler) logConnectionTestTransportFailure(c *gin.Context, account *auth.Account, reason, endpoint, model, effort string, start time.Time, err error) {
 	msg := ""
 	if err != nil {

@@ -13,16 +13,16 @@ import (
 	"github.com/codex2api/auth"
 )
 
-// newTestAgentPrivateKey 生成一把合法的 PKCS8 Ed25519 私钥（base64），供解析测试使用。
+// newTestAgentPrivateKey generates a valid PKCS8 Ed25519 private key (base64) for the parsing tests.
 func newTestAgentPrivateKey(t *testing.T) string {
 	t.Helper()
 	_, priv, err := ed25519.GenerateKey(rand.Reader)
 	if err != nil {
-		t.Fatalf("生成 Ed25519 key 失败: %v", err)
+		t.Fatalf("failed to generate Ed25519 key: %v", err)
 	}
 	der, err := x509.MarshalPKCS8PrivateKey(priv)
 	if err != nil {
-		t.Fatalf("PKCS8 编码失败: %v", err)
+		t.Fatalf("PKCS8 encoding failed: %v", err)
 	}
 	return base64.StdEncoding.EncodeToString(der)
 }
@@ -91,13 +91,13 @@ func TestParseAgentIdentityAuthJSON_Forms(t *testing.T) {
 }
 
 func TestParseAgentIdentityAuthJSON_WrapperMissingFieldsReportsFieldError(t *testing.T) {
-	// credentials 包装被识别为 Agent Identity 后，缺字段应报"缺少必要字段"，
-	// 而不是"不是 Agent Identity 格式"——确认穿透生效。
+	// Once the credentials wrapper is recognized as Agent Identity, a missing field should report "missing required fields",
+	// not "is not in Agent Identity format" — this confirms the unwrapping works.
 	_, err := parseAgentIdentityAuthJSON(`{"credentials":{"auth_mode":"agentIdentity","agent_runtime_id":"agent-rt-1"}}`)
 	if err == nil {
 		t.Fatal("expected missing-field error")
 	}
-	if strings.Contains(err.Error(), "不是 Agent Identity 格式") {
+	if strings.Contains(err.Error(), "is not in Agent Identity format") {
 		t.Fatalf("wrapper should be detected as agent identity, got: %v", err)
 	}
 }

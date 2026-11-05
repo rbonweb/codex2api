@@ -87,7 +87,7 @@ func probeProxyWithTimeout(
 	if proxyURL == "" {
 		return proxyProbeResult{
 			Conclusive: true,
-			Error:      "代理 URL 不能为空",
+			Error:      "proxy URL cannot be empty",
 		}
 	}
 	proxyScheme := ""
@@ -115,7 +115,7 @@ func probeProxyWithTimeout(
 	); err != nil {
 		return proxyProbeResult{
 			Conclusive: true,
-			Error:      fmt.Sprintf("代理 URL 格式错误: %v", err),
+			Error:      fmt.Sprintf("invalid proxy URL format: %v", err),
 		}
 	}
 
@@ -166,7 +166,7 @@ func probeProxyWithTimeout(
 	}
 	if !ipv6Result.Success {
 		if primary.Error != "" {
-			primary.Error += "；IPv4/IPv6 检测目标都不可达"
+			primary.Error += "; IPv4/IPv6 probe targets are all unreachable"
 		}
 		return primary
 	}
@@ -217,7 +217,7 @@ func doProxyProbeRequest(
 		nil,
 	)
 	if err != nil {
-		return proxyProbeResult{Error: fmt.Sprintf("创建代理检测请求失败: %v", err)}
+		return proxyProbeResult{Error: fmt.Sprintf("failed to create the proxy probe request: %v", err)}
 	}
 
 	start := time.Now()
@@ -227,7 +227,7 @@ func doProxyProbeRequest(
 		return proxyProbeResult{
 			Conclusive: proxyProbeErrorIsConclusive(ctx, err, connectionState(), proxyScheme),
 			LatencyMs:  latencyMs,
-			Error:      fmt.Sprintf("连接失败: %v", err),
+			Error:      fmt.Sprintf("connection failed: %v", err),
 		}
 	}
 	defer resp.Body.Close()
@@ -236,26 +236,26 @@ func doProxyProbeRequest(
 		return proxyProbeResult{
 			Conclusive: true,
 			LatencyMs:  latencyMs,
-			Error:      "代理认证失败 (HTTP 407)",
+			Error:      "proxy authentication failed (HTTP 407)",
 		}
 	}
 	if resp.StatusCode < http.StatusOK || resp.StatusCode >= http.StatusMultipleChoices {
 		return proxyProbeResult{
 			LatencyMs: latencyMs,
-			Error:     fmt.Sprintf("代理检测服务暂时不可用 (HTTP %d)", resp.StatusCode),
+			Error:     fmt.Sprintf("proxy probe service temporarily unavailable (HTTP %d)", resp.StatusCode),
 		}
 	}
 	body, err := io.ReadAll(io.LimitReader(resp.Body, proxyProbeMaxBody+1))
 	if err != nil {
 		return proxyProbeResult{
 			LatencyMs: latencyMs,
-			Error:     fmt.Sprintf("读取代理检测服务响应失败: %v", err),
+			Error:     fmt.Sprintf("failed to read the proxy probe service response: %v", err),
 		}
 	}
 	if len(body) > proxyProbeMaxBody {
 		return proxyProbeResult{
 			LatencyMs: latencyMs,
-			Error:     "代理检测服务响应过大",
+			Error:     "proxy probe service response is too large",
 		}
 	}
 	return parseBody(body, latencyMs)
@@ -265,16 +265,16 @@ func parseIPAPIProbeBody(body []byte, latencyMs int) proxyProbeResult {
 	if !gjson.ValidBytes(body) {
 		return proxyProbeResult{
 			LatencyMs: latencyMs,
-			Error:     "代理检测服务返回了无效响应",
+			Error:     "proxy probe service returned an invalid response",
 		}
 	}
 	result := gjson.ParseBytes(body)
 	if result.Get("status").String() != "success" {
 		message := boundedProxyProbeField(result.Get("message").String(), 256)
 		if message == "" {
-			message = "代理检测服务暂时不可用，请稍后重试"
+			message = "the proxy probe service is temporarily unavailable, please try again later"
 		} else {
-			message = "代理检测服务未能完成检测: " + message
+			message = "the proxy probe service could not complete the probe: " + message
 		}
 		return proxyProbeResult{LatencyMs: latencyMs, Error: message}
 	}
@@ -282,7 +282,7 @@ func parseIPAPIProbeBody(body []byte, latencyMs int) proxyProbeResult {
 	if net.ParseIP(ip) == nil {
 		return proxyProbeResult{
 			LatencyMs: latencyMs,
-			Error:     "代理检测服务响应缺少有效的出口 IP",
+			Error:     "proxy probe service response has no valid exit IP",
 		}
 	}
 	country, region, city, isp := parseIPAPIGeoFields(result)
@@ -304,7 +304,7 @@ func parseProxyProbeEchoBody(body []byte, latencyMs int) proxyProbeResult {
 	if err != nil {
 		return proxyProbeResult{
 			LatencyMs: latencyMs,
-			Error:     "代理检测服务响应缺少有效的出口 IP",
+			Error:     "proxy probe service response has no valid exit IP",
 		}
 	}
 	return proxyProbeResult{
@@ -582,30 +582,30 @@ func (h *Handler) TestAllProxies(c *gin.Context) {
 	decoder := json.NewDecoder(c.Request.Body)
 	decoder.DisallowUnknownFields()
 	if err := decoder.Decode(&req); err != nil {
-		writeError(c, http.StatusBadRequest, "请求格式错误或请求体过大")
+		writeError(c, http.StatusBadRequest, "Invalid request format or request body too large")
 		return
 	}
 	var trailing any
 	if err := decoder.Decode(&trailing); !errors.Is(err, io.EOF) {
-		writeError(c, http.StatusBadRequest, "请求只能包含一个 JSON 对象")
+		writeError(c, http.StatusBadRequest, "The request may contain only one JSON object")
 		return
 	}
 	if len(req.IDs) == 0 {
-		writeError(c, http.StatusBadRequest, "请提供要测试的代理 ID")
+		writeError(c, http.StatusBadRequest, "Provide the IDs of the proxies to test")
 		return
 	}
 	if len(req.IDs) > proxyBatchTestMaxIDs {
-		writeError(c, http.StatusBadRequest, fmt.Sprintf("单次最多测试 %d 个代理", proxyBatchTestMaxIDs))
+		writeError(c, http.StatusBadRequest, fmt.Sprintf("At most %d proxies can be tested at once", proxyBatchTestMaxIDs))
 		return
 	}
 	for _, id := range req.IDs {
 		if id <= 0 {
-			writeError(c, http.StatusBadRequest, "代理 ID 必须为正整数")
+			writeError(c, http.StatusBadRequest, "Proxy IDs must be positive integers")
 			return
 		}
 	}
 	if !h.proxyBatchTestMu.TryLock() {
-		writeError(c, http.StatusConflict, "已有批量代理测试正在运行")
+		writeError(c, http.StatusConflict, "A batch proxy test is already running")
 		return
 	}
 	var unlockBatchOnce sync.Once
@@ -616,7 +616,7 @@ func (h *Handler) TestAllProxies(c *gin.Context) {
 
 	rows, err := h.db.ListProxiesByIDs(c.Request.Context(), req.IDs)
 	if err != nil {
-		writeError(c, http.StatusInternalServerError, "获取代理列表失败")
+		writeError(c, http.StatusInternalServerError, "Failed to fetch the proxy list")
 		return
 	}
 	rowsByID := make(map[int64]*database.ProxyRow, len(rows))
@@ -670,9 +670,9 @@ func (h *Handler) TestAllProxies(c *gin.Context) {
 				if result.Conclusive {
 					if err := h.saveProxyTestResult(workCtx, row.ID, row.URL, result); err != nil {
 						if errors.Is(err, database.ErrProxyTestTargetChanged) {
-							result = proxyProbeResult{Error: "代理在测试期间已被修改，请重新测试"}
+							result = proxyProbeResult{Error: "the proxy was modified during the test; test it again"}
 						} else {
-							result = proxyProbeResult{Error: "保存代理测试结果失败: " + err.Error()}
+							result = proxyProbeResult{Error: "failed to save the proxy test result: " + err.Error()}
 						}
 					} else {
 						didWrite.Store(true)
@@ -702,7 +702,7 @@ func (h *Handler) TestAllProxies(c *gin.Context) {
 		reloadErr := ""
 		if didWrite.Load() {
 			if err := h.reloadProxyPool(); err != nil {
-				reloadErr = "代理测试结果已保存，但代理池刷新失败: " + err.Error()
+				reloadErr = "the proxy test result was saved, but the proxy pool refresh failed: " + err.Error()
 			}
 		}
 		unlockBatch()
@@ -717,7 +717,7 @@ func (h *Handler) TestAllProxies(c *gin.Context) {
 	for _, id := range missing {
 		current++
 		failedCount++
-		result := proxyProbeResult{Error: "代理不存在或已被删除"}
+		result := proxyProbeResult{Error: "the proxy does not exist or has been deleted"}
 		if streamOpen && !h.sendProxyBatchTestEvent(c, proxyBatchTestEvent{
 			Type:    "progress",
 			ProxyID: id,

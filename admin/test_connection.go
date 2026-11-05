@@ -24,17 +24,17 @@ import (
 var batchTestAccountTimeout = 30 * time.Second
 var batchTestWhamTimeout = 5 * time.Second
 
-// testEvent SSE 测试事件
+// testEvent is an SSE test event
 type testEvent struct {
 	Type    string `json:"type"`              // test_start | content | diagnostics | test_complete | error
-	Text    string `json:"text,omitempty"`    // 内容文本
-	Model   string `json:"model,omitempty"`   // 测试模型
-	Success bool   `json:"success,omitempty"` // 是否成功
-	Error   string `json:"error,omitempty"`   // 错误信息
-	// Codex/Responses 测连诊断对象。
+	Text    string `json:"text,omitempty"`    // content text
+	Model   string `json:"model,omitempty"`   // test model
+	Success bool   `json:"success,omitempty"` // whether it succeeded
+	Error   string `json:"error,omitempty"`   // error message
+	// Diagnostics object for the Codex/Responses connection test.
 	CodexDiagnostics *codexTestDiagnostics `json:"codex_diagnostics,omitempty"`
-	// Interrupted 标记 error 事件是传输/流中断(连接失败、读流失败、无终态即断开),
-	// 而非上游明确拒绝;降智检测据此决定是否自动重试及展示"已中断"。
+	// Interrupted marks that the error event is a transport or stream interruption (connection failure, stream read failure, or disconnect without a terminal state),
+	// rather than an explicit upstream rejection; the intelligence check uses it to decide whether to retry automatically and whether to show "interrupted".
 	Interrupted bool `json:"interrupted,omitempty"`
 }
 
@@ -77,7 +77,7 @@ func (h *Handler) applyResponsesUsageLimitFailure(account *auth.Account, resp *h
 	return true
 }
 
-// TestConnection 测试账号连接（SSE 流式返回）
+// TestConnection tests the account connection (streamed back over SSE)
 // GET /api/admin/accounts/:id/test
 func (h *Handler) TestConnection(c *gin.Context) {
 	h.testConnection(c, nil)
@@ -87,36 +87,36 @@ func (h *Handler) testConnection(c *gin.Context, quality *qualityTestRequest) {
 	idStr := c.Param("id")
 	id, err := strconv.ParseInt(idStr, 10, 64)
 	if err != nil {
-		c.JSON(http.StatusBadRequest, gin.H{"error": "无效的账号 ID"})
+		c.JSON(http.StatusBadRequest, gin.H{"error": "invalid account ID"})
 		return
 	}
 
-	// 查找运行时账号；回收站中的账号不在运行时池，构建临时账号做连通性
-	// 测试（不参与调度，测试结果不回写账号状态）。
+	// Look up the runtime account; accounts in the recycle bin are not in the runtime pool, so build a temporary account to test connectivity
+	// (it does not take part in scheduling, and the test result is not written back to the account state).
 	account := h.store.FindByID(id)
 	isTransient := false
 	if account == nil {
 		if quality != nil {
-			c.JSON(http.StatusNotFound, gin.H{"error": "账号不在运行时池中"})
+			c.JSON(http.StatusNotFound, gin.H{"error": "account is not in the runtime pool"})
 			return
 		}
 		transient, buildErr := h.store.BuildTransientAccountByID(c.Request.Context(), id)
 		if buildErr != nil || transient == nil {
-			c.JSON(http.StatusNotFound, gin.H{"error": "账号不在运行时池中"})
+			c.JSON(http.StatusNotFound, gin.H{"error": "account is not in the runtime pool"})
 			return
 		}
 		account = transient
 		isTransient = true
 	}
-	// 连接测试虽是 SSE GET，却会写入未授权、错误、限流或恢复状态。等流结束后
-	// 再失效列表/分析快照，避免账号页继续把已判定的 401 账号显示为“未采样”。
+	// A connection test is an SSE GET, yet it writes unauthorized, error, rate-limited or recovered states. Wait until the stream ends
+	// before invalidating the list and analytics snapshots, so the accounts page does not keep showing an account already judged 401 as "unsampled".
 	if !isTransient {
 		defer h.invalidateAccountSnapshotCaches()
 	}
 
-	// Agent Identity 无 AT，凭私钥动态签名，跳过 AT 预检（请求走 Codex 执行器动态签名）。
+	// Agent Identity has no AT and signs dynamically with its private key, so the AT preflight is skipped (the request is signed dynamically by the Codex executor).
 	if !account.IsCodexAgentIdentity() && account.GetAccessToken() == "" {
-		c.JSON(http.StatusBadRequest, gin.H{"error": "账号没有可用的 Access Token，请先刷新"})
+		c.JSON(http.StatusBadRequest, gin.H{"error": "account has no usable Access Token, please refresh it first"})
 		return
 	}
 
@@ -136,7 +136,7 @@ func (h *Handler) testConnection(c *gin.Context, quality *qualityTestRequest) {
 	prompt := c.Query("prompt")
 	hasPrompt := quality == nil && c.Request.URL.Query().Has("prompt")
 	if hasPrompt && (strings.TrimSpace(prompt) == "" || len([]rune(prompt)) > auth.MaxTestContentRunes) {
-		c.JSON(http.StatusBadRequest, gin.H{"error": fmt.Sprintf("测试内容不能为空，且不能超过 %d 个字符", auth.MaxTestContentRunes)})
+		c.JSON(http.StatusBadRequest, gin.H{"error": fmt.Sprintf("test content cannot be empty and cannot exceed %d characters", auth.MaxTestContentRunes)})
 		return
 	}
 	payload := h.buildAccountConnectionTestPayload(c.Request.Context(), account, testModel)
@@ -150,7 +150,7 @@ func (h *Handler) testConnection(c *gin.Context, quality *qualityTestRequest) {
 		payload = buildTestPayloadWithContent(testModel, prompt)
 	}
 
-	// 探针本身也进用量记录:测连 / 降智检测各有独立内部原因,用量页据此打标。
+	// The probe itself is also written to usage records: connection tests and intelligence checks each have their own internal reason, and the usage page tags them accordingly.
 	usageReason := connectionTestReason(quality)
 	if c.GetBool(scheduledTestContextKey) {
 		usageReason = "scheduled_connection_test"
@@ -162,17 +162,17 @@ func (h *Handler) testConnection(c *gin.Context, quality *qualityTestRequest) {
 	usageEndpoint := connectionTestEndpoint(account)
 	usageEffort := connectionTestReasoningEffort(payload)
 
-	// 设置 SSE 响应头
+	// Set the SSE response headers
 	c.Header("Content-Type", "text/event-stream")
 	c.Header("Cache-Control", "no-cache")
 	c.Header("Connection", "keep-alive")
 	c.Header("X-Accel-Buffering", "no")
 	c.Writer.Flush()
 
-	// 发送 test_start
+	// Send test_start
 	sendTestEvent(c, testEvent{Type: "test_start", Model: testModel})
 
-	// 回收站账号：记录最近测试结果；restore_on_success=true 时测试通过自动恢复。
+	// Recycle bin account: record the latest test result; when restore_on_success=true, a passing test restores the account automatically.
 	restoreOnSuccess := isTransient && strings.EqualFold(strings.TrimSpace(c.Query("restore_on_success")), "true")
 	transientOutcome := "failed"
 	if isTransient {
@@ -181,21 +181,21 @@ func (h *Handler) testConnection(c *gin.Context, quality *qualityTestRequest) {
 		}()
 	}
 
-	// 构建最小测试请求体（参考 sub2api createOpenAITestPayload）
-	// 发送请求
+	// Build the minimal test request body (modeled on sub2api createOpenAITestPayload)
+	// Send the request
 	start := time.Now()
 	var resp *http.Response
 	var reqErr error
 	if quality != nil || c.GetBool(scheduledTestContextKey) {
-		// 降智检测和定时激活均使用独立 HTTP SSE，不依赖 WS 续链或重连；
-		// 不受"强制 WebSocket"影响,也不占用/依赖池化长连接。
+		// Intelligence checks and scheduled activations both use a standalone HTTP SSE stream and do not depend on WS continuation or reconnection;
+		// they are not affected by "force WebSocket" and neither occupy nor depend on a pooled long-lived connection.
 		resp, reqErr = proxy.ExecuteRequest(c.Request.Context(), account, payload, "", h.store.ResolveProxyForAccount(account), "", nil, nil, false)
 	} else {
 		resp, reqErr = proxy.ExecuteRequest(c.Request.Context(), account, payload, "", h.store.ResolveProxyForAccount(account), "", nil, nil)
 	}
 	if reqErr != nil {
 		h.logConnectionTestTransportFailure(c, account, usageReason, usageEndpoint, testModel, usageEffort, start, reqErr)
-		event := testEvent{Type: "error", Error: fmt.Sprintf("请求失败: %s", reqErr.Error()), Interrupted: true}
+		event := testEvent{Type: "error", Error: fmt.Sprintf("request failed: %s", reqErr.Error()), Interrupted: true}
 		failed := newCodexTestRecorder(nil, testModel, account, start)
 		event.CodexDiagnostics = failed.finish()
 		event.Error = sanitizeCodexTestText(event.Error, failed.secrets)
@@ -203,9 +203,9 @@ func (h *Handler) testConnection(c *gin.Context, quality *qualityTestRequest) {
 		return
 	}
 	defer resp.Body.Close()
-	// Codex/Responses 测连诊断:拿到响应头即先推一帧(状态码、用量窗口头),流结束后
-	// 再补最终帧(耗时、终态、usage、正文预览)。最终帧在终止事件之后,客户端要读到
-	// SSE 关闭再刷新账号快照。
+	// Codex/Responses connection test diagnostics: as soon as the response headers arrive, push one frame (status code, usage window headers), and after the stream ends,
+	// push a final frame (duration, terminal state, usage, body preview). The final frame comes after the terminal event, so the client must read until
+	// the SSE closes before the account snapshot is refreshed.
 	recorder := newCodexTestRecorder(resp, testModel, account, start)
 	defer func() {
 		diagnostics := recorder.finish()
@@ -222,13 +222,13 @@ func (h *Handler) testConnection(c *gin.Context, quality *qualityTestRequest) {
 		}
 		errBody, _ := io.ReadAll(resp.Body)
 		recorder.observe(errBody)
-		errMsg := fmt.Sprintf("上游返回 %d: %s", resp.StatusCode, truncate(string(errBody), 500))
+		errMsg := fmt.Sprintf("upstream returned %d: %s", resp.StatusCode, truncate(string(errBody), 500))
 		if !isTransient {
 			switch resp.StatusCode {
 			case http.StatusUnauthorized:
 				h.store.MarkCooldownWithError(account, 24*time.Hour, "unauthorized", errMsg)
 			case http.StatusPaymentRequired:
-				// 测连 402 是账号侧计费/工作区拒绝，标成错误，避免继续显示成「未采样」。
+				// A 402 from a connection test is an account-side billing or workspace rejection; mark it as an error so it does not keep showing as "unsampled".
 				if proxy.IsDeactivatedWorkspaceError(errBody) {
 					h.store.MarkDeactivatedWorkspace(account, errMsg)
 				} else {
@@ -244,7 +244,7 @@ func (h *Handler) testConnection(c *gin.Context, quality *qualityTestRequest) {
 				proxy.Apply429Cooldown(h.store, account, errBody, resp, testModel)
 			}
 		}
-		// 429 限流代表账号有效、只是被限流，不计为失败。
+		// 429 rate limiting means the account is valid and only rate limited, so it is not counted as a failure.
 		if isTransient && resp.StatusCode == http.StatusTooManyRequests {
 			transientOutcome = "rate_limited"
 		}
@@ -255,14 +255,14 @@ func (h *Handler) testConnection(c *gin.Context, quality *qualityTestRequest) {
 	var usageState proxy.CodexUsageSyncResult
 	usageStore := h.store
 	if isTransient {
-		usageStore = nil // 临时账号只读取用量头用于展示，不写入存储
+		usageStore = nil // The temporary account only reads usage headers for display and does not write them to storage
 	}
 	usageState = proxy.SyncCodexUsageState(usageStore, account, resp)
 	if !isTransient {
 		applyUsageLimitedTestState(h.store, account, usageState)
 	}
 	if msg, limited := formatUsageLimitedTestError(usageState); limited {
-		// 用量耗尽属于限流类，不计为失败。
+		// Usage exhaustion counts as a rate-limit type and is not counted as a failure.
 		if isTransient {
 			transientOutcome = "rate_limited"
 		}
@@ -270,7 +270,7 @@ func (h *Handler) testConnection(c *gin.Context, quality *qualityTestRequest) {
 		return
 	}
 
-	// 解析 SSE 流
+	// Parse the SSE stream
 	hasContent := false
 	gotTerminal := false
 	sentTerminal := false
@@ -322,7 +322,7 @@ func (h *Handler) testConnection(c *gin.Context, quality *qualityTestRequest) {
 				if isTransient && proxy.IsUsageLimitReachedError(data) {
 					transientOutcome = "rate_limited"
 				}
-				sendTestEvent(c, testEvent{Type: "error", Error: formatUpstreamTestError(data, "上游返回 "+status)})
+				sendTestEvent(c, testEvent{Type: "error", Error: formatUpstreamTestError(data, "upstream returned "+status)})
 				return false
 			}
 			if !hasContent {
@@ -336,8 +336,8 @@ func (h *Handler) testConnection(c *gin.Context, quality *qualityTestRequest) {
 				sendTestEvent(c, testEvent{Type: "error", Error: formatNoOutputUpstreamError(data)})
 				return false
 			}
-			// 测试成功即重置失败/冷却状态，用量限制由调度器自行判断；
-			// 临时账号（回收站）不回写任何调度状态。
+			// A successful test resets the failure/cooldown state; usage limits are judged by the scheduler itself;
+			// temporary accounts (recycle bin) do not write back any scheduling state.
 			if !isTransient && (usageState.UsageWindowLimitsIgnored || (!usageState.Premium5hRateLimited && (!usageState.HasUsage7d || usageState.UsagePct7d < 100))) {
 				h.store.RecordManualTestSuccess(account, time.Since(start))
 			}
@@ -348,7 +348,7 @@ func (h *Handler) testConnection(c *gin.Context, quality *qualityTestRequest) {
 					restoreErr := h.restoreAccountByID(restoreCtx, id)
 					restoreCancel()
 					if restoreErr != nil {
-						sendTestEvent(c, testEvent{Type: "content", Text: "\n\n--- 自动恢复失败: " + restoreErr.Error() + " ---"})
+						sendTestEvent(c, testEvent{Type: "content", Text: "\n\n--- auto-restore failed: " + restoreErr.Error() + " ---"})
 					}
 				}
 			}
@@ -356,7 +356,7 @@ func (h *Handler) testConnection(c *gin.Context, quality *qualityTestRequest) {
 				duration := time.Since(start).Milliseconds()
 				sendTestEvent(c, testEvent{
 					Type: "content",
-					Text: fmt.Sprintf("\n\n--- 耗时 %dms ---", duration),
+					Text: fmt.Sprintf("\n\n--- took %dms ---", duration),
 				})
 			}
 			sendTestEvent(c, testEvent{Type: "test_complete", Success: true})
@@ -371,7 +371,7 @@ func (h *Handler) testConnection(c *gin.Context, quality *qualityTestRequest) {
 			if isTransient && proxy.IsUsageLimitReachedError(data) {
 				transientOutcome = "rate_limited"
 			}
-			sendTestEvent(c, testEvent{Type: "error", Error: formatUpstreamTestError(data, "上游返回 response.failed")})
+			sendTestEvent(c, testEvent{Type: "error", Error: formatUpstreamTestError(data, "upstream returned response.failed")})
 			return false
 		case "error":
 			gotTerminal = true
@@ -382,14 +382,14 @@ func (h *Handler) testConnection(c *gin.Context, quality *qualityTestRequest) {
 			if isTransient && proxy.IsUsageLimitReachedError(data) {
 				transientOutcome = "rate_limited"
 			}
-			sendTestEvent(c, testEvent{Type: "error", Error: formatUpstreamTestError(data, "上游返回 error 事件")})
+			sendTestEvent(c, testEvent{Type: "error", Error: formatUpstreamTestError(data, "upstream returned an error event")})
 			return false
 		}
 		return true
 	})
 
 	if readErr != nil && !sentTerminal {
-		sendTestEvent(c, testEvent{Type: "error", Error: "读取上游流失败: " + readErr.Error(), Interrupted: true})
+		sendTestEvent(c, testEvent{Type: "error", Error: "failed to read upstream stream: " + readErr.Error(), Interrupted: true})
 		return
 	}
 	if !gotTerminal && !sentTerminal {
@@ -402,12 +402,12 @@ func buildConnectionTestPayload(store *auth.Store, model string) []byte {
 	if store != nil {
 		content = store.GetTestContent()
 	}
-	// 多行内容按行随机抽取 + 变量展开（issue #320），减少批量账号
-	// 共用同一句测活内容的指纹特征。单行配置行为不变。
+	// Multi-line content is picked randomly line by line and variables are expanded (issue #320), so batch accounts are less likely to
+	// share the same fingerprint from one identical probe sentence. Single-line configuration behaves as before.
 	return buildTestPayloadWithContent(model, auth.RenderTestContent(content))
 }
 
-// connectionTestContentForAccount 返回测连应发送的用户输入（已做多行抽取与变量展开），取全局测活内容。
+// connectionTestContentForAccount returns the user input a connection test should send (after multi-line picking and variable expansion), taken from the global probe content.
 func (h *Handler) connectionTestContentForAccount(ctx context.Context, account *auth.Account) string {
 	content := auth.DefaultTestContent
 	if h != nil && h.store != nil {
@@ -416,18 +416,18 @@ func (h *Handler) connectionTestContentForAccount(ctx context.Context, account *
 	return auth.RenderTestContent(content)
 }
 
-// buildAccountConnectionTestPayload 构造 Responses 形状的测连请求体；用户输入取全局测活内容。
+// buildAccountConnectionTestPayload builds a Responses-shaped connection test request body; the user input is taken from the global probe content.
 func (h *Handler) buildAccountConnectionTestPayload(ctx context.Context, account *auth.Account, model string) []byte {
 	content := h.connectionTestContentForAccount(ctx, account)
 	return buildTestPayloadWithContent(model, content)
 }
 
-// buildTestPayload 构建默认最小测试请求体
+// buildTestPayload builds the default minimal test request body
 func buildTestPayload(model string) []byte {
 	return buildTestPayloadWithContent(model, auth.DefaultTestContent)
 }
 
-// buildTestPayloadWithContent 构建带自定义用户输入内容的最小测试请求体
+// buildTestPayloadWithContent builds a minimal test request body with custom user input content
 func buildTestPayloadWithContent(model string, content string) []byte {
 	content = auth.NormalizeTestContent(content)
 	payload := []byte(`{}`)
@@ -458,10 +458,10 @@ func formatUsageLimitedTestError(state proxy.CodexUsageSyncResult) (string, bool
 		if remaining < 0 {
 			remaining = 0
 		}
-		return fmt.Sprintf("上游探针返回 200，但 Codex 5h 用量头已达 %.0f%%，账号已保持限流状态，预计 %s 后恢复。", state.UsagePct5h, remaining), true
+		return fmt.Sprintf("upstream probe returned 200, but the Codex 5h usage header has reached %.0f%%, so the account stays in a rate-limited state and is expected to recover after %s.", state.UsagePct5h, remaining), true
 	}
 	if state.HasUsage7d && state.UsagePct7d >= 100 {
-		return fmt.Sprintf("上游探针返回 200，但 Codex 7d 用量头已达 %.0f%%，账号已标记为限流/用量耗尽状态。", state.UsagePct7d), true
+		return fmt.Sprintf("upstream probe returned 200, but the Codex 7d usage header has reached %.0f%%, so the account is marked as rate-limited or usage exhausted.", state.UsagePct7d), true
 	}
 	return "", false
 }
@@ -486,22 +486,22 @@ func applyUsageLimitedTestState(store *auth.Store, account *auth.Account, state 
 	applyUsageLimitedAccountState(store, account, state)
 }
 
-// sendTestEvent 发送 SSE 事件
+// sendTestEvent sends an SSE event
 func sendTestEvent(c *gin.Context, event testEvent) {
 	rememberConnectionTestError(c, event)
 	data, err := json.Marshal(event)
 	if err != nil {
-		log.Printf("序列化测试事件失败: %v", err)
+		log.Printf("failed to serialize test event: %v", err)
 		return
 	}
 	if _, err := fmt.Fprintf(c.Writer, "data: %s\n\n", data); err != nil {
-		log.Printf("写入 SSE 事件失败: %v", err)
+		log.Printf("failed to write SSE event: %v", err)
 		return
 	}
 	c.Writer.Flush()
 }
 
-// truncate 截断字符串
+// truncate cuts a string
 func truncate(s string, maxLen int) string {
 	if len(s) <= maxLen {
 		return s
@@ -581,9 +581,9 @@ func formatUpstreamTestError(data []byte, fallback string) string {
 }
 
 func formatNoOutputUpstreamError(data []byte) string {
-	msg := "上游已完成但没有返回文本输出"
+	msg := "upstream completed but returned no text output"
 	if status := gjson.GetBytes(data, "response.status").String(); status != "" && status != "completed" {
-		msg = "上游响应状态: " + status
+		msg = "upstream response status: " + status
 	}
 	if reason := gjson.GetBytes(data, "response.incomplete_details.reason").String(); reason != "" {
 		msg += " (" + reason + ")"
@@ -593,9 +593,9 @@ func formatNoOutputUpstreamError(data []byte) string {
 
 func formatMissingTerminalUpstreamError(lastEvent []byte) string {
 	if len(lastEvent) == 0 {
-		return "上游流结束但未收到任何事件"
+		return "upstream stream ended without receiving any event"
 	}
-	return formatUpstreamEventDetail("上游流提前结束，未收到 response.completed 或 response.failed", lastEvent)
+	return formatUpstreamEventDetail("upstream stream ended early without receiving response.completed or response.failed", lastEvent)
 }
 
 func firstNonEmptyGJSONString(data []byte, paths ...string) string {
@@ -618,7 +618,7 @@ func formatUpstreamEventDetail(message string, data []byte) string {
 			detail = string(pretty)
 		}
 	}
-	return message + "\n\n上游事件:\n" + truncate(detail, 3000)
+	return message + "\n\nUpstream events:\n" + truncate(detail, 3000)
 }
 
 func isSupportedConnectionTestModel(model string) bool {
@@ -651,7 +651,7 @@ func (h *Handler) connectionTestModelForAccount(ctx context.Context, account *au
 		return h.connectionTestModel(ctx), nil
 	}
 	if !proxy.IsTextTestModelID(ctx, h.db, requested) {
-		return "", fmt.Errorf("不支持的测试模型: %s", requested)
+		return "", fmt.Errorf("unsupported test model: %s", requested)
 	}
 	return requested, nil
 }
@@ -664,11 +664,11 @@ func isTextConnectionModel(model string) bool {
 type batchTestRequest struct {
 	IDs      *[]int64                  `json:"ids"`
 	Selector *accountOperationSelector `json:"selector,omitempty"`
-	// RestoreOnSuccess 仅回收站批量测试使用：测试通过的账号自动恢复到账号池。
+	// RestoreOnSuccess is used only by recycle bin batch tests: accounts that pass are automatically restored to the account pool.
 	RestoreOnSuccess bool `json:"restore_on_success"`
 }
 
-// persistRecycleBinTestResult 将回收站测试结果写入账号 credentials，供列表展示。
+// persistRecycleBinTestResult writes the recycle bin test result into the account credentials for list display.
 func (h *Handler) persistRecycleBinTestResult(id int64, status string) {
 	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
 	defer cancel()
@@ -676,7 +676,7 @@ func (h *Handler) persistRecycleBinTestResult(id int64, status string) {
 		"recycle_last_test_status": status,
 		"recycle_last_test_at":     time.Now().Format(time.RFC3339),
 	}); err != nil {
-		log.Printf("写入回收站测试结果失败 (account %d): %v", id, err)
+		log.Printf("failed to write recycle bin test result (account %d): %v", id, err)
 	}
 }
 
@@ -716,7 +716,7 @@ func batchOperationHTTPStatus(status, message string) int {
 
 	normalized := strings.ToLower(message)
 	for _, marker := range []string{
-		"上游返回 ",
+		"upstream returned ",
 		"http ",
 		"status code ",
 		"status ",
@@ -774,18 +774,18 @@ func resolveBatchTestAccounts(store *auth.Store, ids *[]int64) ([]*auth.Account,
 	return accounts, missing
 }
 
-// BatchTest 批量测试账号连接；未传 ids 时测试所有账号，传 ids 时仅测试指定账号。
+// BatchTest tests account connections in batch; without ids it tests all accounts, with ids it tests only the specified accounts.
 // POST /api/admin/accounts/batch-test
 func (h *Handler) BatchTest(c *gin.Context) {
 	var req batchTestRequest
 	if c.Request.Body != nil && c.Request.ContentLength != 0 {
 		if err := c.ShouldBindJSON(&req); err != nil {
-			writeError(c, http.StatusBadRequest, "请求格式错误")
+			writeError(c, http.StatusBadRequest, "invalid request format")
 			return
 		}
 	}
 	if req.IDs != nil && req.Selector != nil {
-		writeError(c, http.StatusBadRequest, "ids 与 selector 不能同时提供")
+		writeError(c, http.StatusBadRequest, "ids and selector cannot be provided together")
 		return
 	}
 	if req.Selector != nil {
@@ -799,7 +799,7 @@ func (h *Handler) BatchTest(c *gin.Context) {
 		req.IDs = &ids
 	}
 	if req.IDs != nil && len(*req.IDs) == 0 {
-		writeError(c, http.StatusBadRequest, "请提供要测试的账号 ID 列表")
+		writeError(c, http.StatusBadRequest, "provide the list of account IDs to test")
 		return
 	}
 
@@ -807,23 +807,23 @@ func (h *Handler) BatchTest(c *gin.Context) {
 	h.serveBatchTest(c, accounts, missingCount, h.runSingleBatchTest)
 }
 
-// RecycleBinBatchTest 批量测试回收站账号连接；未传 ids 时测试回收站全部账号。
-// 账号以临时对象构建，不参与调度，测试结果不回写任何账号状态。
+// RecycleBinBatchTest tests recycle bin account connections in batch; without ids it tests all accounts in the recycle bin.
+// Accounts are built as temporary objects, do not take part in scheduling, and test results are never written back to any account state.
 // POST /api/admin/accounts/recycle-bin/batch-test
 func (h *Handler) RecycleBinBatchTest(c *gin.Context) {
 	var req batchTestRequest
 	if c.Request.Body != nil && c.Request.ContentLength != 0 {
 		if err := c.ShouldBindJSON(&req); err != nil {
-			writeError(c, http.StatusBadRequest, "请求格式错误")
+			writeError(c, http.StatusBadRequest, "invalid request format")
 			return
 		}
 	}
 	if req.IDs != nil && len(*req.IDs) == 0 {
-		writeError(c, http.StatusBadRequest, "请提供要测试的账号 ID 列表")
+		writeError(c, http.StatusBadRequest, "provide the list of account IDs to test")
 		return
 	}
 	if req.Selector != nil {
-		writeError(c, http.StatusBadRequest, "回收站批量测试不支持 selector")
+		writeError(c, http.StatusBadRequest, "recycle bin batch test does not support selector")
 		return
 	}
 
@@ -881,9 +881,9 @@ func (h *Handler) RecycleBinBatchTest(c *gin.Context) {
 			restoreErr := h.restoreAccountByID(restoreCtx, acc.DBID)
 			restoreCancel()
 			if restoreErr != nil {
-				msg = "测试通过，但自动恢复失败: " + restoreErr.Error()
+				msg = "test passed, but auto-restore failed: " + restoreErr.Error()
 			} else {
-				msg = "测试通过，已自动恢复"
+				msg = "test passed, auto-restored"
 			}
 		}
 		return status, msg
@@ -891,7 +891,7 @@ func (h *Handler) RecycleBinBatchTest(c *gin.Context) {
 	h.serveBatchTest(c, accounts, missing, testFn)
 }
 
-// serveBatchTest 统一处理批量测试的流式/非流式响应；testFn 决定单账号测试行为。
+// serveBatchTest handles both streaming and non-streaming responses of batch tests; testFn decides the behavior of a single-account test.
 func (h *Handler) serveBatchTest(c *gin.Context, accounts []*auth.Account, missingCount int, testFn func(context.Context, *auth.Account) (string, string)) {
 	if strings.EqualFold(c.Query("stream"), "true") {
 		h.streamBatchTest(c, accounts, missingCount, testFn)
@@ -979,7 +979,7 @@ func (h *Handler) runBatchTest(ctx context.Context, accounts []*auth.Account, mi
 			Current: missingCount,
 			Total:   total,
 			Failed:  failedCount,
-			Error:   fmt.Sprintf("%d 个账号不在运行时池中", missingCount),
+			Error:   fmt.Sprintf("%d accounts are not in the runtime pool", missingCount),
 		})
 	}
 
@@ -991,7 +991,7 @@ func (h *Handler) runBatchTest(ctx context.Context, accounts []*auth.Account, mi
 			case sem <- struct{}{}:
 			case <-ctx.Done():
 				atomic.AddInt64(&failedCount, 1)
-				h.emitBatchTestProgress(onProgress, acc.DBID, total, &completedCount, &successCount, &failedCount, &bannedCount, &rateLimitCount, "failed", "测试已取消")
+				h.emitBatchTestProgress(onProgress, acc.DBID, total, &completedCount, &successCount, &failedCount, &bannedCount, &rateLimitCount, "failed", "test cancelled")
 				return
 			}
 			defer func() { <-sem }()
@@ -1072,9 +1072,9 @@ func (h *Handler) runSingleBatchTest(ctx context.Context, acc *auth.Account) (st
 		hasRefreshToken := acc.RefreshToken != ""
 		acc.Mu().RUnlock()
 		if !hasRefreshToken {
-			h.store.MarkError(acc, "批量测试失败: 账号缺少 access_token 和 refresh_token")
+			h.store.MarkError(acc, "batch test failed: account is missing access_token and refresh_token")
 		}
-		return "failed", "账号缺少 access_token 和 refresh_token"
+		return "failed", "account is missing access_token and refresh_token"
 	}
 
 	if status, msg, done := h.batchTestSkipDeactivatedWorkspace(acc); done {
@@ -1090,7 +1090,7 @@ func (h *Handler) runSingleBatchTest(ctx context.Context, acc *auth.Account) (st
 		if msg, ok := batchTestContextFailure(testCtx, modelErr); ok {
 			return "failed", msg
 		}
-		h.store.MarkError(acc, "批量测试失败: "+modelErr.Error())
+		h.store.MarkError(acc, "batch test failed: "+modelErr.Error())
 		return "failed", modelErr.Error()
 	}
 	payload := h.buildAccountConnectionTestPayload(testCtx, acc, testModel)
@@ -1104,7 +1104,7 @@ func (h *Handler) runSingleBatchTest(ctx context.Context, acc *auth.Account) (st
 			}
 			return "failed", msg
 		}
-		h.store.MarkError(acc, "批量测试请求失败: "+err.Error())
+		h.store.MarkError(acc, "batch test request failed: "+err.Error())
 		return "failed", err.Error()
 	}
 	defer resp.Body.Close()
@@ -1120,7 +1120,7 @@ func (h *Handler) runSingleBatchTest(ctx context.Context, acc *auth.Account) (st
 		if status != "success" {
 			return status, msg
 		}
-		// 测试成功即重置失败/冷却状态，用量限制由调度器自行判断
+		// A successful test resets the failure/cooldown state; usage limits are judged by the scheduler itself
 		h.store.RecordManualTestSuccess(acc, time.Since(start))
 		return "success", msg
 	case http.StatusUnauthorized:
@@ -1129,8 +1129,8 @@ func (h *Handler) runSingleBatchTest(ctx context.Context, acc *auth.Account) (st
 			return h.handleBatchTestReadError(testCtx, acc, readErr)
 		}
 		proxy.SyncCodexUsageState(h.store, acc, resp)
-		h.store.MarkCooldownWithError(acc, 24*time.Hour, "unauthorized", fmt.Sprintf("上游返回 %d: %s", resp.StatusCode, truncate(string(body), 300)))
-		return "banned", "上游返回 401: 账号授权失败"
+		h.store.MarkCooldownWithError(acc, 24*time.Hour, "unauthorized", fmt.Sprintf("upstream returned %d: %s", resp.StatusCode, truncate(string(body), 300)))
+		return "banned", "upstream returned 401: account authorization failed"
 	case http.StatusTooManyRequests:
 		body, readErr := readBatchTestErrorBody(testCtx, resp.Body)
 		if readErr != nil {
@@ -1138,31 +1138,31 @@ func (h *Handler) runSingleBatchTest(ctx context.Context, acc *auth.Account) (st
 		}
 		proxy.SyncCodexUsageState(h.store, acc, resp)
 		proxy.Apply429Cooldown(h.store, acc, body, resp, testModel)
-		return "rate_limited", "上游返回 429: 账号触发限流"
+		return "rate_limited", "upstream returned 429: account hit rate limiting"
 	default:
 		body, readErr := readBatchTestErrorBody(testCtx, resp.Body)
 		if readErr != nil {
 			return h.handleBatchTestReadError(testCtx, acc, readErr)
 		}
-		msg := fmt.Sprintf("上游返回 %d: %s", resp.StatusCode, truncate(string(body), 300))
+		msg := fmt.Sprintf("upstream returned %d: %s", resp.StatusCode, truncate(string(body), 300))
 		if resp.StatusCode == http.StatusForbidden && proxy.IsAgentRuntimeDeletedError(body) {
 			h.store.MarkCooldownWithErrorExactDuration(acc, 24*time.Hour, "unauthorized", msg)
 			return "banned", msg
 		}
 		if shouldMarkBatchTestAccountError(resp.StatusCode, body) {
 			if proxy.IsDeactivatedWorkspaceError(body) {
-				h.store.MarkDeactivatedWorkspace(acc, "批量测试"+msg)
+				h.store.MarkDeactivatedWorkspace(acc, "batch test"+msg)
 			} else {
-				h.store.MarkError(acc, "批量测试"+msg)
+				h.store.MarkError(acc, "batch test"+msg)
 			}
 		}
 		return "failed", msg
 	}
 }
 
-// runRecycleBinSingleTest 测试单个回收站账号的连通性。账号是临时对象，
-// 全程不调用任何会回写账号/调度状态的方法（MarkError/MarkCooldown/
-// RecordManualTestSuccess 等），测试结果仅用于展示。
+// runRecycleBinSingleTest tests the connectivity of a single recycle bin account. The account is a temporary object,
+// and the whole run calls no method that writes account or scheduling state back (MarkError/MarkCooldown/
+// RecordManualTestSuccess and so on); the test result is for display only.
 func (h *Handler) runRecycleBinSingleTest(ctx context.Context, acc *auth.Account) (string, string) {
 	testCtx, cancel := context.WithTimeout(ctx, batchTestAccountTimeout)
 	defer cancel()
@@ -1171,7 +1171,7 @@ func (h *Handler) runRecycleBinSingleTest(ctx context.Context, acc *auth.Account
 	}
 
 	if !acc.IsCodexAgentIdentity() && acc.GetAccessToken() == "" {
-		return "failed", "账号缺少可用的 Access Token"
+		return "failed", "account has no usable Access Token"
 	}
 
 	testModel, modelErr := h.connectionTestModelForAccount(testCtx, acc, "")
@@ -1194,7 +1194,7 @@ func (h *Handler) runRecycleBinSingleTest(ctx context.Context, acc *auth.Account
 
 	switch resp.StatusCode {
 	case http.StatusOK:
-		// store 传 nil：只解析用量头用于结果展示，不持久化、不改限流状态。
+		// store is passed as nil: only usage headers are parsed for the result display; nothing is persisted and the rate-limit state is not changed.
 		usageState := proxy.SyncCodexUsageState(nil, acc, resp)
 		if msg, limited := formatUsageLimitedTestError(usageState); limited {
 			return "rate_limited", msg
@@ -1202,10 +1202,10 @@ func (h *Handler) runRecycleBinSingleTest(ctx context.Context, acc *auth.Account
 		return readRecycleBinTestStream(testCtx, resp)
 	case http.StatusUnauthorized:
 		body, _ := readBatchTestErrorBody(testCtx, resp.Body)
-		return "banned", fmt.Sprintf("上游返回 401: %s", truncate(string(body), 300))
+		return "banned", fmt.Sprintf("upstream returned 401: %s", truncate(string(body), 300))
 	case http.StatusTooManyRequests:
 		body, _ := readBatchTestErrorBody(testCtx, resp.Body)
-		return "rate_limited", fmt.Sprintf("上游返回 429: %s", truncate(string(body), 300))
+		return "rate_limited", fmt.Sprintf("upstream returned 429: %s", truncate(string(body), 300))
 	default:
 		body, readErr := readBatchTestErrorBody(testCtx, resp.Body)
 		if readErr != nil {
@@ -1214,12 +1214,12 @@ func (h *Handler) runRecycleBinSingleTest(ctx context.Context, acc *auth.Account
 			}
 			return "failed", readErr.Error()
 		}
-		return "failed", fmt.Sprintf("上游返回 %d: %s", resp.StatusCode, truncate(string(body), 300))
+		return "failed", fmt.Sprintf("upstream returned %d: %s", resp.StatusCode, truncate(string(body), 300))
 	}
 }
 
-// readRecycleBinTestStream 读取测试 SSE 流并判定结果；与
-// readBatchTestStreamResult 等价，但不回写任何账号状态。
+// readRecycleBinTestStream reads the test SSE stream and decides the result; it is equivalent to
+// readBatchTestStreamResult, but does not write back any account state.
 func readRecycleBinTestStream(ctx context.Context, resp *http.Response) (string, string) {
 	hasContent := false
 	gotTerminal := false
@@ -1253,7 +1253,7 @@ func readRecycleBinTestStream(ctx context.Context, resp *http.Response) (string,
 				if proxy.IsUsageLimitReachedError(data) {
 					resultStatus = "rate_limited"
 				}
-				resultMessage = formatUpstreamTestError(data, "上游返回 "+status)
+				resultMessage = formatUpstreamTestError(data, "upstream returned "+status)
 				return false
 			}
 			if !hasContent && extractCompletedOutputText(data) != "" {
@@ -1265,7 +1265,7 @@ func readRecycleBinTestStream(ctx context.Context, resp *http.Response) (string,
 				return false
 			}
 			resultStatus = "success"
-			resultMessage = "测试通过"
+			resultMessage = "test passed"
 			return false
 		case "response.failed":
 			gotTerminal = true
@@ -1273,12 +1273,12 @@ func readRecycleBinTestStream(ctx context.Context, resp *http.Response) (string,
 			if proxy.IsUsageLimitReachedError(data) {
 				resultStatus = "rate_limited"
 			}
-			resultMessage = formatUpstreamTestError(data, "上游返回 response.failed")
+			resultMessage = formatUpstreamTestError(data, "upstream returned response.failed")
 			return false
 		case "error":
 			gotTerminal = true
 			resultStatus = "failed"
-			resultMessage = formatUpstreamTestError(data, "上游返回 error 事件")
+			resultMessage = formatUpstreamTestError(data, "upstream returned an error event")
 			return false
 		}
 		return true
@@ -1296,7 +1296,7 @@ func readRecycleBinTestStream(ctx context.Context, resp *http.Response) (string,
 	if !gotTerminal {
 		return "failed", formatMissingTerminalUpstreamError(lastUpstreamEvent)
 	}
-	return "failed", "上游测试未返回明确结果"
+	return "failed", "upstream test returned no clear result"
 }
 
 func (h *Handler) batchTestSkipDeactivatedWorkspace(acc *auth.Account) (string, string, bool) {
@@ -1327,12 +1327,12 @@ func (h *Handler) batchTestWhamPreflight(ctx context.Context, acc *auth.Account)
 		_ = resp.Body.Close()
 		switch resp.StatusCode {
 		case http.StatusUnauthorized:
-			msg := fmt.Sprintf("WHAM 用量探针返回 %d: %s", resp.StatusCode, truncate(string(body), 300))
+			msg := fmt.Sprintf("WHAM usage probe returned %d: %s", resp.StatusCode, truncate(string(body), 300))
 			h.store.MarkCooldownWithError(acc, 24*time.Hour, "unauthorized", msg)
 			return "banned", msg, true
 		default:
 			if shouldMarkUsageProbeAccountError(resp.StatusCode, body) {
-				msg := fmt.Sprintf("WHAM 用量探针返回 %d: %s", resp.StatusCode, truncate(string(body), 300))
+				msg := fmt.Sprintf("WHAM usage probe returned %d: %s", resp.StatusCode, truncate(string(body), 300))
 				if proxy.IsDeactivatedWorkspaceError(body) {
 					h.store.MarkDeactivatedWorkspace(acc, msg)
 				} else {
@@ -1347,7 +1347,7 @@ func (h *Handler) batchTestWhamPreflight(ctx context.Context, acc *auth.Account)
 	}
 
 	usageState := proxy.ApplyWhamUsage(h.store, acc, usage)
-	// wham 不含订阅到期字段，按需从网页端 /subscriptions 补权威到期时间。(issue #360)
+	// wham has no subscription expiry fields, so the authoritative expiry time is fetched on demand from the web /subscriptions page. (issue #360)
 	proxy.MaybeSyncSubscriptionExpiry(ctx, h.store, acc, h.store.ResolveProxyForAccount(acc))
 	applyUsageLimitedTestState(h.store, acc, usageState)
 	if msg, limited := formatUsageLimitedTestError(usageState); limited {
@@ -1387,7 +1387,7 @@ func (h *Handler) readBatchTestStreamResult(ctx context.Context, acc *auth.Accou
 		case "response.completed":
 			gotTerminal = true
 			if status := gjson.GetBytes(data, "response.status").String(); status == "failed" || status == "incomplete" {
-				resultStatus, resultMessage = h.batchTestTerminalFailure(acc, resp, model, data, "上游返回 "+status)
+				resultStatus, resultMessage = h.batchTestTerminalFailure(acc, resp, model, data, "upstream returned "+status)
 				return false
 			}
 			if !hasContent && extractCompletedOutputText(data) != "" {
@@ -1400,15 +1400,15 @@ func (h *Handler) readBatchTestStreamResult(ctx context.Context, acc *auth.Accou
 				return false
 			}
 			resultStatus = "success"
-			resultMessage = "测试通过"
+			resultMessage = "test passed"
 			return false
 		case "response.failed":
 			gotTerminal = true
-			resultStatus, resultMessage = h.batchTestTerminalFailure(acc, resp, model, data, "上游返回 response.failed")
+			resultStatus, resultMessage = h.batchTestTerminalFailure(acc, resp, model, data, "upstream returned response.failed")
 			return false
 		case "error":
 			gotTerminal = true
-			resultStatus, resultMessage = h.batchTestTerminalFailure(acc, resp, model, data, "上游返回 error 事件")
+			resultStatus, resultMessage = h.batchTestTerminalFailure(acc, resp, model, data, "upstream returned an error event")
 			return false
 		}
 		return true
@@ -1425,7 +1425,7 @@ func (h *Handler) readBatchTestStreamResult(ctx context.Context, acc *auth.Accou
 		h.markBatchTestStreamFailure(acc, msg)
 		return "failed", msg
 	}
-	msg := "上游测试未返回明确结果"
+	msg := "upstream test returned no clear result"
 	h.markBatchTestStreamFailure(acc, msg)
 	return "failed", msg
 }
@@ -1445,7 +1445,7 @@ func (h *Handler) markBatchTestStreamFailure(acc *auth.Account, message string) 
 	}
 	switch acc.RuntimeStatus() {
 	case "active", "ready", "refreshing", "error":
-		h.store.MarkError(acc, "批量测试失败: "+message)
+		h.store.MarkError(acc, "batch test failed: "+message)
 	}
 }
 
@@ -1463,16 +1463,16 @@ func (h *Handler) handleBatchTestReadError(ctx context.Context, acc *auth.Accoun
 		}
 		return "failed", msg
 	}
-	h.store.MarkError(acc, "批量测试读取响应失败: "+err.Error())
+	h.store.MarkError(acc, "batch test failed to read response: "+err.Error())
 	return "failed", err.Error()
 }
 
 func batchTestContextFailure(ctx context.Context, err error) (string, bool) {
 	if errors.Is(ctx.Err(), context.DeadlineExceeded) || errors.Is(err, context.DeadlineExceeded) {
-		return fmt.Sprintf("测试超时: %s 内未完成", batchTestAccountTimeout), true
+		return fmt.Sprintf("test timed out: not finished within %s", batchTestAccountTimeout), true
 	}
 	if errors.Is(ctx.Err(), context.Canceled) || errors.Is(err, context.Canceled) {
-		return "测试已取消", true
+		return "test cancelled", true
 	}
 	return "", false
 }

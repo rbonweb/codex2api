@@ -19,11 +19,11 @@ import (
 // separate management operations.
 func (h *Handler) BatchRefreshCodexUsage(c *gin.Context) {
 	if h.store == nil {
-		writeError(c, http.StatusServiceUnavailable, "账号池不可用")
+		writeError(c, http.StatusServiceUnavailable, "Account pool unavailable")
 		return
 	}
 	if !h.codexUsageRefreshRunning.CompareAndSwap(false, true) {
-		writeError(c, http.StatusConflict, "正在刷新 Codex 用量，请等待当前操作完成")
+		writeError(c, http.StatusConflict, "Codex usage is being refreshed; wait for the current operation to finish")
 		return
 	}
 	defer h.codexUsageRefreshRunning.Store(false)
@@ -100,7 +100,7 @@ func (h *Handler) runCodexUsageRefresh(ctx context.Context, accounts []*auth.Acc
 					return
 				}
 				name, email := runtimeAccountOperationIdentity(account)
-				event := batchOperationEvent{AccountID: account.DBID, AccountName: name, AccountEmail: email, Status: "success", HTTPStatus: http.StatusOK, Message: "用量已更新"}
+				event := batchOperationEvent{AccountID: account.DBID, AccountName: name, AccountEmail: email, Status: "success", HTTPStatus: http.StatusOK, Message: "Usage updated"}
 				if err := h.refreshCodexWhamSnapshot(ctx, account); err != nil {
 					event.Status, event.Error = "failed", err.Error()
 					event.Message = event.Error
@@ -130,10 +130,10 @@ func (h *Handler) refreshCodexWhamSnapshot(ctx context.Context, account *auth.Ac
 	// Recheck at execution time: another management action may have removed or
 	// changed an account while it was queued.
 	if h.store.FindByID(account.DBID) != account || !supportsCodexWhamRefresh(account) {
-		return errors.New("账号已移除或不再支持 WHAM 用量查询")
+		return errors.New("account was removed or no longer supports WHAM usage queries")
 	}
 	if !account.TryBeginUsageProbe() {
-		return errors.New("账号正在刷新用量，请稍后重试")
+		return errors.New("account usage is being refreshed, please retry later")
 	}
 	defer account.FinishUsageProbe()
 	probeCtx, cancel := context.WithTimeout(ctx, 15*time.Second)
@@ -145,17 +145,17 @@ func (h *Handler) refreshCodexWhamSnapshot(ctx context.Context, account *auth.Ac
 	if response != nil && response.StatusCode != http.StatusOK {
 		// A WHAM 401 alone cannot invalidate a codex_at account. Report the
 		// query failure without changing authentication or invoking Responses.
-		return fmt.Errorf("WHAM 上游返回 %d", response.StatusCode)
+		return fmt.Errorf("WHAM upstream returned %d", response.StatusCode)
 	}
 	if err != nil {
 		if probeCtx.Err() != nil {
-			return fmt.Errorf("WHAM 用量查询中止: %w", probeCtx.Err())
+			return fmt.Errorf("WHAM usage query aborted: %w", probeCtx.Err())
 		}
-		return errors.New("WHAM 用量查询失败，请检查代理或网络连接")
+		return errors.New("WHAM usage query failed, check the proxy or network connection")
 	}
 	state := proxy.ApplyWhamUsage(h.store, account, usage)
 	if !state.HasUsage5h && !state.HasUsage7d {
-		return errors.New("WHAM 未返回有效的用量窗口，保留原用量快照")
+		return errors.New("WHAM returned no valid usage window; keeping the existing usage snapshot")
 	}
 	return nil
 }

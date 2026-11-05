@@ -299,7 +299,7 @@ func TestCodexTestRecorderObservesSafetyBuffering(t *testing.T) {
 		t.Fatal("safety_buffering=true must mark the turn as buffered")
 	}
 
-	// WS 路径:头只在 codex.response.metadata 帧里出现。
+	// WS path: the headers only appear in codex.response.metadata frames.
 	ws := newCodexTestRecorder(nil, "gpt-6-astra", nil, time.Now())
 	ws.observe([]byte(`{"type":"codex.response.metadata","headers":{"x-codex-safety-buffering-enabled":"false","x-codex-safety-buffering-faster-model":"gpt-5.6-luna"}}`))
 	if ws.details.SafetyBufferingEnabled == nil || *ws.details.SafetyBufferingEnabled || ws.details.SafetyBufferingFasterModel != "gpt-5.6-luna" {

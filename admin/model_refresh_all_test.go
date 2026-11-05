@@ -18,7 +18,7 @@ func TestRunRefreshAllModels_PartialFailureKeepsOtherChannels(t *testing.T) {
 			return channelModelRefreshResult{Refreshed: 1, Added: []string{"gpt-6-extra"}}
 		},
 		database.UpstreamChannelCodex: func(ctx context.Context, _ modelRefreshEmitter) channelModelRefreshResult {
-			return channelModelRefreshResult{Error: "官方模型页同步失败: boom", Failed: 1}
+			return channelModelRefreshResult{Error: "Official model page sync failed: boom", Failed: 1}
 		},
 		"extra-panic": func(ctx context.Context, _ modelRefreshEmitter) channelModelRefreshResult {
 			panic("extra exploded")
@@ -29,7 +29,7 @@ func TestRunRefreshAllModels_PartialFailureKeepsOtherChannels(t *testing.T) {
 	if len(resp.Channels) != 3 {
 		t.Fatalf("channels = %d, want 3: %+v", len(resp.Channels), resp.Channels)
 	}
-	// 固定顺序：codex 在前，其余渠道按名称排序
+	// Fixed order: codex first, the other channels sorted by name
 	if resp.Channels[0].Channel != database.UpstreamChannelCodex || resp.Channels[1].Channel != "extra-ok" || resp.Channels[2].Channel != "extra-panic" {
 		t.Fatalf("unexpected channel order: %+v", resp.Channels)
 	}
@@ -101,7 +101,7 @@ func TestGroupAccountsByPlan_OneSamplePerPlan(t *testing.T) {
 	for _, g := range groups {
 		plans = append(plans, g.Plan)
 	}
-	// api 组全部禁用 → 不出现；prolite 归一化为 pro；空套餐归入 unknown；按名字排序。
+	// The api group is fully disabled → it does not appear; prolite normalizes to pro; an empty plan goes into unknown; sorted by name.
 	if strings.Join(plans, ",") != "pro,pro-20x,unknown" {
 		t.Fatalf("plans = %v", plans)
 	}

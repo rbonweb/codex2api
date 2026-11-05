@@ -577,7 +577,7 @@ func TestUpdateOAuthAccountCodeDoesNotExposeTokenErrorBody(t *testing.T) {
 			t.Fatalf("response leaked token exchange error body value %q: %s", leaked, body)
 		}
 	}
-	if !strings.Contains(body, "token 兑换失败 (HTTP 400)") {
+	if !strings.Contains(body, "token exchange failed (HTTP 400)") {
 		t.Fatalf("response = %s, want sanitized HTTP status error", body)
 	}
 }
@@ -741,9 +741,9 @@ func TestUpdateOAuthAccountCodeUpdatesExistingAccountInPlace(t *testing.T) {
 	}
 }
 
-// TestUpsertOAuthIdentityAccountClearsBanOnReimport 验证：当一个账号此前被封禁
-// （401 unauthorized）后，重新导入同一身份的有效凭证会清除封禁/错误状态，
-// 使账号脱离 banned 并重新可用（具体可用性仍交由后续 probe 判定）。
+// TestUpsertOAuthIdentityAccountClearsBanOnReimport verifies that when an account was previously banned
+// (401 unauthorized), re-importing valid credentials for the same identity clears the ban/error state,
+// so the account is no longer banned and is usable again (actual usability is still left to a later probe).
 func TestUpsertOAuthIdentityAccountClearsBanOnReimport(t *testing.T) {
 	gin.SetMode(gin.TestMode)
 
@@ -770,7 +770,7 @@ func TestUpsertOAuthIdentityAccountClearsBanOnReimport(t *testing.T) {
 	if acc == nil {
 		t.Fatalf("runtime account %d not found", id)
 	}
-	// 模拟上游 401 封禁
+	// Simulate an upstream 401 ban
 	store.MarkCooldownWithError(acc, time.Hour, "unauthorized", "401 unauthorized")
 	acc.Mu().RLock()
 	bannedTier := acc.HealthTier
@@ -779,7 +779,7 @@ func TestUpsertOAuthIdentityAccountClearsBanOnReimport(t *testing.T) {
 		t.Fatalf("precondition: HealthTier = %q, want banned", bannedTier)
 	}
 
-	// 重新导入同一身份的有效凭证（新的 access token）
+	// Re-import valid credentials for the same identity (new access token)
 	seed := tokenCredentialSeed{
 		accessToken: "fresh-access",
 		email:       "banned@example.com",
@@ -797,7 +797,7 @@ func TestUpsertOAuthIdentityAccountClearsBanOnReimport(t *testing.T) {
 		t.Fatal("upsert reported insert, want update of existing banned account")
 	}
 
-	// DB 错误/封禁态应已被清除
+	// The DB error / ban state should have been cleared
 	row, err := db.GetAccountByID(ctx, id)
 	if err != nil {
 		t.Fatalf("GetAccountByID: %v", err)
@@ -809,7 +809,7 @@ func TestUpsertOAuthIdentityAccountClearsBanOnReimport(t *testing.T) {
 		t.Fatalf("DB cooldown_reason = %q, want cleared", row.CooldownReason)
 	}
 
-	// 运行时账号应脱离 banned
+	// The runtime account should no longer be banned
 	acc = store.FindByID(id)
 	if acc == nil {
 		t.Fatalf("runtime account %d missing after reimport", id)
@@ -822,9 +822,9 @@ func TestUpsertOAuthIdentityAccountClearsBanOnReimport(t *testing.T) {
 	}
 }
 
-// 重新授权(直接对已有账号 exchange-code)拿到新凭证后必须清除 error/401
-// 状态,与重新导入合并路径对齐;否则账号一直挂"异常"等一次可能失败的
-// 异步探针(issue #493)。限流冷却不受影响。
+// After re-authorization (exchange-code directly on an existing account) obtains new credentials, the error/401
+// state must be cleared, aligned with the re-import merge path; otherwise the account stays stuck as "abnormal" waiting on one asynchronous probe that may fail
+// (issue #493). Rate limit cooldowns are not affected.
 func TestUpdateOAuthAccountCodeClearsErrorState(t *testing.T) {
 	gin.SetMode(gin.TestMode)
 	db := newTestAdminDB(t)
@@ -871,7 +871,7 @@ func TestUpdateOAuthAccountCodeClearsErrorState(t *testing.T) {
 }
 
 func TestOAuthCallbackPageEscapesHTML(t *testing.T) {
-	page := oauthCallbackPage(`<script>alert(1)</script>`, `账号 <img src=x onerror=alert(1)>`, false)
+	page := oauthCallbackPage(`<script>alert(1)</script>`, `account <img src=x onerror=alert(1)>`, false)
 	if strings.Contains(page, "<script>") || strings.Contains(page, "<img") {
 		t.Fatalf("callback page contains unescaped HTML: %s", page)
 	}
@@ -913,7 +913,7 @@ func TestOAuthCallbackRejectsCompletedSession(t *testing.T) {
 	c.Request = httptest.NewRequest(http.MethodGet, "/auth/callback?code=replayed&state=state-replay", nil)
 	(&Handler{}).OAuthCallback(c)
 
-	if recorder.Code != http.StatusBadRequest || !strings.Contains(recorder.Body.String(), "已处理") {
-		t.Fatalf("replayed callback = %d %s, want 400 with 已处理", recorder.Code, recorder.Body.String())
+	if recorder.Code != http.StatusBadRequest || !strings.Contains(recorder.Body.String(), "already processed") {
+		t.Fatalf("replayed callback = %d %s, want 400 with already processed", recorder.Code, recorder.Body.String())
 	}
 }

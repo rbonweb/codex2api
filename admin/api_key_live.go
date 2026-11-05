@@ -2,7 +2,7 @@ package admin
 
 import "github.com/codex2api/database"
 
-// 创建时区分未配置和显式关闭；编辑仍使用已有的完整 limits 语义。
+// On create, distinguish "not configured" from "explicitly disabled"; edit still uses the existing full limits semantics.
 type createAPIKeyLimits struct {
 	database.APIKeyLimits
 	AllowLive *bool `json:"allow_live"`

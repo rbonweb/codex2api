@@ -24,8 +24,8 @@ type autoActivate5hScanStats struct {
 	Failed     int
 }
 
-// StartAutoActivate5hWindow 启动 5h 窗口到点后的最小真实请求扫描。设置默认关闭；
-// 开启后 UpdateSettings 会唤醒本循环立即扫描，之后每分钟检查一次。
+// StartAutoActivate5hWindow starts the minimal real-request scan that runs when a 5h window comes due. The setting is off by default;
+// once enabled, UpdateSettings wakes this loop to scan immediately, and it checks once a minute after that.
 func (h *Handler) StartAutoActivate5hWindow(ctx context.Context) {
 	if h == nil || h.store == nil {
 		return
@@ -69,7 +69,7 @@ func (h *Handler) StartAutoActivate5hWindow(ctx context.Context) {
 
 				stats := h.runAutoActivate5hScan(ctx, time.Time{})
 				if stats.Enabled {
-					log.Printf("[auto-activate-5h] 扫描完成: scanned=%d candidates=%d activated=%d failed=%d",
+					log.Printf("[auto-activate-5h] scan finished: scanned=%d candidates=%d activated=%d failed=%d",
 						stats.Scanned, stats.Candidates, stats.Activated, stats.Failed)
 				}
 			}
@@ -77,7 +77,7 @@ func (h *Handler) StartAutoActivate5hWindow(ctx context.Context) {
 	})
 }
 
-// WaitAutoActivate5hWindow 等待后台扫描退出；调用前应先取消传给 Start 的 context。
+// WaitAutoActivate5hWindow waits for the background scan to exit; cancel the context passed to Start before calling it.
 func (h *Handler) WaitAutoActivate5hWindow() {
 	if h != nil {
 		h.autoActivate5hWG.Wait()
@@ -99,7 +99,7 @@ func (h *Handler) runAutoActivate5hScan(ctx context.Context, now time.Time) auto
 	stats := autoActivate5hScanStats{Enabled: enabled}
 	if settingsErr != nil {
 		stats.Failed = 1
-		log.Printf("[auto-activate-5h] 读取系统设置失败，已跳过本轮扫描: %v", settingsErr)
+		log.Printf("[auto-activate-5h] failed to read system settings, skipped this scan round: %v", settingsErr)
 		return stats
 	}
 	if !enabled || h == nil || h.store == nil {
@@ -148,7 +148,7 @@ func (h *Handler) runAutoActivate5hScan(ctx context.Context, now time.Time) auto
 			}
 			statsMu.Unlock()
 			if err != nil {
-				log.Printf("[auto-activate-5h] 账号 %d 开窗失败: %v", account.DBID, err)
+				log.Printf("[auto-activate-5h] account %d failed to open window: %v", account.DBID, err)
 			}
 		}(account)
 	}
@@ -182,7 +182,7 @@ func (h *Handler) autoActivate5hForAccount(ctx context.Context, account *auth.Ac
 	}
 	account.Mark5hWindowActivated(resetAt)
 	h.store.Persist5hWindowActivated(account)
-	log.Printf("[auto-activate-5h] 账号 %d 已发送最小 /responses 以激活下一轮 5h 窗口: reset_at=%s",
+	log.Printf("[auto-activate-5h] account %d sent a minimal /responses to activate the next 5h window: reset_at=%s",
 		account.DBID, resetAt.UTC().Format(time.RFC3339))
 	return true, true, nil
 }

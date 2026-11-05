@@ -22,10 +22,10 @@ func TestUpstreamResetErrorMessage_CreditsOnlyMapsToChineseAndKeepsRaw(t *testin
 	body := []byte(`{"detail":{"code":"rate_limit_not_resettable","reason":"credits_only"}}`)
 	msg := upstreamResetErrorMessage(http.StatusBadRequest, body)
 
-	if !strings.Contains(msg, "额度（credits）计费") {
+	if !strings.Contains(msg, "credits-based billing") {
 		t.Errorf("message missing Chinese explanation: %q", msg)
 	}
-	// 必须保留上游原文，便于排查。
+	// The upstream original text must be preserved, for troubleshooting.
 	if !strings.Contains(msg, "rate_limit_not_resettable") || !strings.Contains(msg, "credits_only") {
 		t.Errorf("message must retain raw upstream body: %q", msg)
 	}
@@ -34,7 +34,7 @@ func TestUpstreamResetErrorMessage_CreditsOnlyMapsToChineseAndKeepsRaw(t *testin
 func TestUpstreamResetErrorMessage_KnownCodeWithoutReason(t *testing.T) {
 	body := []byte(`{"detail":{"code":"rate_limit_not_resettable"}}`)
 	msg := upstreamResetErrorMessage(http.StatusBadRequest, body)
-	if !strings.Contains(msg, "不支持主动重置") {
+	if !strings.Contains(msg, "does not support manual reset") {
 		t.Errorf("expected generic not-resettable Chinese message, got %q", msg)
 	}
 	if !strings.Contains(msg, "rate_limit_not_resettable") {
@@ -48,8 +48,8 @@ func TestUpstreamResetErrorMessage_UnknownCodeFallsBackToRaw(t *testing.T) {
 	if !strings.Contains(msg, "something_new") {
 		t.Errorf("unknown code should fall back to raw body, got %q", msg)
 	}
-	// 未识别 code 时不应硬塞中文说明。
-	if strings.Contains(msg, "（上游：") {
+	// An unrecognized code should not be forced into an explanation.
+	if strings.Contains(msg, "(upstream: ") {
 		t.Errorf("unknown code should not be wrapped with Chinese prefix, got %q", msg)
 	}
 }
@@ -469,8 +469,8 @@ func TestConsumeResetCreditLockedRefreshes401WithSameRequestID(t *testing.T) {
 	}
 }
 
-// 手动重置必须等用量探针跑完再响应。此前响应先于探针返回，前端收到成功立刻刷新，
-// 拿到的还是旧的用量与状态，表现为「点了重置但进度条和状态没变，得去点测试连接再手动刷新」。
+// A manual reset must wait for the usage probe to finish before responding. Previously the response returned before the probe, so the frontend refreshed immediately after success
+// and got the old usage and state, which looked like "I clicked reset but the progress bar and status did not change, so I had to click test connection and refresh manually".
 func TestResetCreditsWaitsForUsageProbeBeforeResponding(t *testing.T) {
 	store := auth.NewStore(nil, nil, &database.SystemSettings{MaxConcurrency: 2, TestConcurrency: 1, TestModel: "gpt-5.4"})
 	account := &auth.Account{DBID: 21, AccountID: "workspace-21", AccessToken: "token", PlanType: "plus"}
@@ -487,7 +487,7 @@ func TestResetCreditsWaitsForUsageProbeBeforeResponding(t *testing.T) {
 		recordAccountEvent: func(int64, string, string) {},
 		probeUsage: func(context.Context, *auth.Account) error {
 			close(probeStarted)
-			// 模拟一次真实的 wham 往返：响应绝不能抢在它前面返回。
+			// Simulate one real wham round-trip: the response must never return ahead of it.
 			time.Sleep(150 * time.Millisecond)
 			probeFinished.Store(true)
 			return nil
@@ -523,8 +523,8 @@ func TestResetCreditsWaitsForUsageProbeBeforeResponding(t *testing.T) {
 	}
 }
 
-// 重置券不可退：客户端断开不得中断已经发出的消费。若消费挂在请求 context 上，
-// 断开会把「已经扣掉的券」报成失败，用户重试时另生成幂等键，同一张券被扣两次。
+// Reset credits cannot be refunded: a client disconnect must not interrupt a consumption already sent. If the consumption hangs off the request context,
+// a disconnect would report a "credit already deducted" as a failure, and on retry the user would generate a new idempotency key, so the same credit is deducted twice.
 func TestResetCreditsSurvivesClientDisconnect(t *testing.T) {
 	store := auth.NewStore(nil, nil, &database.SystemSettings{MaxConcurrency: 2, TestConcurrency: 1, TestModel: "gpt-5.4"})
 	account := &auth.Account{DBID: 23, AccountID: "workspace-23", AccessToken: "token", PlanType: "plus"}
@@ -537,7 +537,7 @@ func TestResetCreditsSurvivesClientDisconnect(t *testing.T) {
 		store: store,
 		consumeResetCredit: func(ctx context.Context, _ *auth.Account, _, _ string) (*proxy.WhamResetResult, *http.Response, error) {
 			consumes++
-			// 上游往返期间客户端已经走了：这里的 context 不能是已取消的。
+			// The client has already left during the upstream round-trip: the context here must not be already canceled.
 			consumeCtxErr = ctx.Err()
 			return &proxy.WhamResetResult{WindowsReset: 1}, &http.Response{StatusCode: http.StatusOK}, nil
 		},
@@ -550,7 +550,7 @@ func TestResetCreditsSurvivesClientDisconnect(t *testing.T) {
 	c, _ := gin.CreateTestContext(rec)
 	c.Params = gin.Params{{Key: "id", Value: "23"}}
 	req := httptest.NewRequest(http.MethodPost, "/api/accounts/23/reset-credits", nil)
-	// 客户端在网关发出上游请求之前就断开。
+	// The client disconnects before the gateway sends the upstream request.
 	cancelledCtx, cancel := context.WithCancel(req.Context())
 	cancel()
 	c.Request = req.WithContext(cancelledCtx)
@@ -568,7 +568,7 @@ func TestResetCreditsSurvivesClientDisconnect(t *testing.T) {
 	}
 }
 
-// 探针不可用时不能把请求挂住：usage_refreshed 报 false，让前端稍后补刷。
+// When the probe is unavailable, the request must not hang: usage_refreshed reports false, so the frontend refreshes again later.
 func TestResetCreditsReportsUnrefreshedWhenProbeMissing(t *testing.T) {
 	store := auth.NewStore(nil, nil, &database.SystemSettings{MaxConcurrency: 2, TestConcurrency: 1, TestModel: "gpt-5.4"})
 	account := &auth.Account{DBID: 22, AccountID: "workspace-22", AccessToken: "token", PlanType: "plus"}
@@ -583,7 +583,7 @@ func TestResetCreditsReportsUnrefreshedWhenProbeMissing(t *testing.T) {
 		recordAccountEvent: func(int64, string, string) {},
 		probeUsage:         nil,
 	}
-	// 关闭后置刷新通道，模拟探针不可用。
+	// Close the post-reset refresh channel to simulate an unavailable probe.
 	handler.resetCreditPostClosed = true
 
 	gin.SetMode(gin.TestMode)

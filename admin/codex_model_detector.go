@@ -51,22 +51,22 @@ type codexDetectorEvent struct {
 func (h *Handler) DetectCodexModel(c *gin.Context) {
 	id, err := strconv.ParseInt(strings.TrimSpace(c.Param("id")), 10, 64)
 	if err != nil {
-		c.JSON(http.StatusBadRequest, gin.H{"error": "无效的账号 ID"})
+		c.JSON(http.StatusBadRequest, gin.H{"error": "Invalid account ID"})
 		return
 	}
 	account := h.store.FindByID(id)
 	if account == nil {
-		c.JSON(http.StatusNotFound, gin.H{"error": "账号不存在或不在运行时池中"})
+		c.JSON(http.StatusNotFound, gin.H{"error": "Account not found or not in the runtime pool"})
 		return
 	}
 	if !account.IsCodexAgentIdentity() && account.GetAccessToken() == "" {
-		c.JSON(http.StatusBadRequest, gin.H{"error": "账号没有可用的 Access Token，请先刷新"})
+		c.JSON(http.StatusBadRequest, gin.H{"error": "Account has no usable Access Token; refresh it first"})
 		return
 	}
 
 	detector, err := h.currentModelTraceDetector(c.Request.Context())
 	if err != nil {
-		c.JSON(http.StatusInternalServerError, gin.H{"error": "ModelTrace 指纹库加载失败"})
+		c.JSON(http.StatusInternalServerError, gin.H{"error": "Failed to load ModelTrace fingerprint library"})
 		return
 	}
 	model, err := h.connectionTestModelForAccount(c.Request.Context(), account, strings.TrimSpace(c.Query("model")))
@@ -87,7 +87,7 @@ func (h *Handler) DetectCodexModel(c *gin.Context) {
 	maxAttempts := samples * codexDetectorAttemptsPerSample
 	challenges, err := detector.GenerateChallenges(maxAttempts)
 	if err != nil {
-		c.JSON(http.StatusInternalServerError, gin.H{"error": "ModelTrace 挑战生成失败"})
+		c.JSON(http.StatusInternalServerError, gin.H{"error": "Failed to generate ModelTrace challenge"})
 		return
 	}
 
@@ -185,7 +185,7 @@ func parseCodexDetectorSamples(raw string) (int, error) {
 	}
 	samples, err := strconv.Atoi(raw)
 	if err != nil || samples < 1 || samples > proxy.ModelTraceTargetOutputs {
-		return 0, fmt.Errorf("检测次数必须是 1 到 %d 的整数", proxy.ModelTraceTargetOutputs)
+		return 0, fmt.Errorf("detection count must be an integer from 1 to %d", proxy.ModelTraceTargetOutputs)
 	}
 	return samples, nil
 }
@@ -197,7 +197,7 @@ func parseCodexDetectorConcurrency(raw string) (int, error) {
 	}
 	concurrency, err := strconv.Atoi(raw)
 	if err != nil || concurrency < 1 || concurrency > maxCodexDetectorConcurrency {
-		return 0, fmt.Errorf("并发数必须是 1 到 %d 的整数", maxCodexDetectorConcurrency)
+		return 0, fmt.Errorf("concurrency must be an integer from 1 to %d", maxCodexDetectorConcurrency)
 	}
 	return concurrency, nil
 }
@@ -230,19 +230,19 @@ func (h *Handler) executeModelDetectorProbe(ctx context.Context, account *auth.A
 		return "", requestErr
 	}
 	if response == nil {
-		return "", fmt.Errorf("上游未返回响应")
+		return "", fmt.Errorf("upstream returned no response")
 	}
 	if response.Body == nil {
-		return "", fmt.Errorf("上游响应没有正文")
+		return "", fmt.Errorf("upstream response has no body")
 	}
 	defer response.Body.Close()
 	if response.StatusCode < 200 || response.StatusCode >= 300 {
 		body, _ := io.ReadAll(io.LimitReader(response.Body, 16*1024))
 		detail := sanitizeDetectorError(string(body))
 		if detail == "" {
-			return "", fmt.Errorf("上游返回 HTTP %d", response.StatusCode)
+			return "", fmt.Errorf("upstream returned HTTP %d", response.StatusCode)
 		}
-		return "", fmt.Errorf("上游返回 HTTP %d: %s", response.StatusCode, detail)
+		return "", fmt.Errorf("upstream returned HTTP %d: %s", response.StatusCode, detail)
 	}
 
 	var answer strings.Builder
@@ -294,13 +294,13 @@ func (h *Handler) executeModelDetectorProbe(ctx context.Context, account *auth.A
 		return "", readErr
 	}
 	if overflow {
-		return "", fmt.Errorf("上游响应文本超过限制")
+		return "", fmt.Errorf("upstream response text exceeds the limit")
 	}
 	if failed {
-		return "", fmt.Errorf("上游响应未完成")
+		return "", fmt.Errorf("upstream response did not complete")
 	}
 	if !terminal || strings.TrimSpace(answer.String()) == "" {
-		return "", fmt.Errorf("上游未返回有效文本")
+		return "", fmt.Errorf("upstream returned no valid text")
 	}
 	return answer.String(), nil
 }

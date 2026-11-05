@@ -72,7 +72,7 @@ func (h *Handler) resolveModelTraceBanks(ctx context.Context) (active, embedded,
 func (h *Handler) currentModelTraceDetector(ctx context.Context) (*proxy.ModelTraceDetector, error) {
 	active, _, _, overrideErr := h.resolveModelTraceBanks(ctx)
 	if overrideErr != nil {
-		log.Printf("[modeltrace] 已安装的指纹库不可用，回退内置版本: %v", overrideErr)
+		log.Printf("[modeltrace] installed fingerprint library unavailable, falling back to the built-in version: %v", overrideErr)
 	}
 	if active == nil {
 		return nil, overrideErr
@@ -103,7 +103,7 @@ func (h *Handler) modelTraceBankStatus(ctx context.Context) (modelTraceBankStatu
 func (h *Handler) GetModelTraceBank(c *gin.Context) {
 	status, err := h.modelTraceBankStatus(c.Request.Context())
 	if err != nil {
-		writeError(c, http.StatusInternalServerError, "ModelTrace 指纹库加载失败")
+		writeError(c, http.StatusInternalServerError, "Failed to load the ModelTrace fingerprint library")
 		return
 	}
 	c.JSON(http.StatusOK, status)
@@ -115,7 +115,7 @@ func (h *Handler) GetModelTraceBank(c *gin.Context) {
 // POST /api/admin/modeltrace/bank/update
 func (h *Handler) UpdateModelTraceBank(c *gin.Context) {
 	if h.db == nil {
-		writeError(c, http.StatusServiceUnavailable, "数据库不可用，无法保存指纹库")
+		writeError(c, http.StatusServiceUnavailable, "Database unavailable; cannot save the fingerprint library")
 		return
 	}
 	ctx, cancel := context.WithTimeout(c.Request.Context(), 90*time.Second)
@@ -125,12 +125,12 @@ func (h *Handler) UpdateModelTraceBank(c *gin.Context) {
 	// installed override, so a read failure aborts the update.
 	storedRevision, err := h.db.GetModelTraceBankRevision(ctx)
 	if err != nil {
-		writeError(c, http.StatusServiceUnavailable, "读取已安装的指纹库失败: "+err.Error())
+		writeError(c, http.StatusServiceUnavailable, "Failed to read the installed fingerprint library: "+err.Error())
 		return
 	}
 	active, _, _, _ := h.resolveModelTraceBanks(ctx)
 	if active == nil {
-		writeError(c, http.StatusInternalServerError, "ModelTrace 指纹库加载失败")
+		writeError(c, http.StatusInternalServerError, "Failed to load the ModelTrace fingerprint library")
 		return
 	}
 	proxyURL := ""
@@ -140,48 +140,48 @@ func (h *Handler) UpdateModelTraceBank(c *gin.Context) {
 
 	revision, err := proxy.FetchLatestModelTraceRevision(ctx, proxyURL)
 	if err != nil {
-		writeError(c, http.StatusBadGateway, "获取 ModelTrace 最新版本失败: "+err.Error())
+		writeError(c, http.StatusBadGateway, "Failed to fetch the latest ModelTrace version: "+err.Error())
 		return
 	}
 	response := modelTraceBankUpdateResponse{}
 	if revision == active.Revision() {
-		response.Message = "已是最新版本"
+		response.Message = "Already on the latest version"
 	} else {
 		body, err := proxy.FetchModelTraceBank(ctx, revision, proxyURL)
 		if err != nil {
-			writeError(c, http.StatusBadGateway, "下载 ModelTrace 指纹库失败: "+err.Error())
+			writeError(c, http.StatusBadGateway, "Failed to download the ModelTrace fingerprint library: "+err.Error())
 			return
 		}
 		candidate, err := proxy.ParseModelTraceBankOverride(body, revision)
 		if err != nil {
-			writeError(c, http.StatusBadGateway, "上游指纹库校验失败: "+err.Error())
+			writeError(c, http.StatusBadGateway, "Upstream fingerprint library validation failed: "+err.Error())
 			return
 		}
 		if !modelTraceBankNewer(candidate, active) {
-			response.Message = "上游指纹库没有比当前版本更新的训练数据"
+			response.Message = "The upstream fingerprint library has no training data newer than the current version"
 		} else {
 			err := h.db.SaveModelTraceBankOverride(ctx, database.ModelTraceBankOverride{
 				Revision: revision, BuiltAt: candidate.Info().BuiltAt, BankJSON: body, InstalledAt: time.Now(),
 			}, storedRevision)
 			if errors.Is(err, database.ErrModelTraceBankConflict) {
-				writeError(c, http.StatusConflict, "指纹库在更新期间被其他操作修改，请刷新后重试")
+				writeError(c, http.StatusConflict, "The fingerprint library was changed by another operation during the update; refresh and try again")
 				return
 			}
 			if err != nil {
-				writeError(c, http.StatusInternalServerError, "保存指纹库失败: "+err.Error())
+				writeError(c, http.StatusInternalServerError, "Failed to save the fingerprint library: "+err.Error())
 				return
 			}
 			proxy.CacheModelTraceOverride(candidate)
 			response.Updated = true
-			response.Message = "指纹库已更新"
+			response.Message = "Fingerprint library updated"
 			response.AddedModels, response.RemovedModels = diffModelTraceModels(active.Models(), candidate.Models())
-			log.Printf("[modeltrace] 指纹库已更新: %s -> %s (新增 %v, 移除 %v)",
+			log.Printf("[modeltrace] fingerprint library updated: %s -> %s (added %v, removed %v)",
 				active.Revision(), revision, response.AddedModels, response.RemovedModels)
 		}
 	}
 	status, err := h.modelTraceBankStatus(ctx)
 	if err != nil {
-		writeError(c, http.StatusInternalServerError, "ModelTrace 指纹库加载失败")
+		writeError(c, http.StatusInternalServerError, "Failed to load the ModelTrace fingerprint library")
 		return
 	}
 	response.modelTraceBankStatus = status
@@ -194,16 +194,16 @@ func (h *Handler) UpdateModelTraceBank(c *gin.Context) {
 // DELETE /api/admin/modeltrace/bank
 func (h *Handler) ResetModelTraceBank(c *gin.Context) {
 	if h.db == nil {
-		writeError(c, http.StatusServiceUnavailable, "数据库不可用")
+		writeError(c, http.StatusServiceUnavailable, "Database unavailable")
 		return
 	}
 	if err := h.db.DeleteModelTraceBankOverride(c.Request.Context()); err != nil {
-		writeError(c, http.StatusInternalServerError, "恢复内置指纹库失败: "+err.Error())
+		writeError(c, http.StatusInternalServerError, "Failed to restore the built-in fingerprint library: "+err.Error())
 		return
 	}
 	status, err := h.modelTraceBankStatus(c.Request.Context())
 	if err != nil {
-		writeError(c, http.StatusInternalServerError, "ModelTrace 指纹库加载失败")
+		writeError(c, http.StatusInternalServerError, "Failed to load the ModelTrace fingerprint library")
 		return
 	}
 	c.JSON(http.StatusOK, status)

@@ -295,13 +295,13 @@ func (h *Handler) ListPromptIntelligenceCandidates(c *gin.Context) {
 func (h *Handler) GetPromptIntelligenceCandidateEvidence(c *gin.Context) {
 	id, err := strconv.ParseInt(c.Param("id"), 10, 64)
 	if err != nil || id <= 0 {
-		writeError(c, http.StatusBadRequest, "候选规则 ID 无效")
+		writeError(c, http.StatusBadRequest, "Invalid candidate rule ID")
 		return
 	}
 	item, err := h.db.GetPromptRuleCandidate(c.Request.Context(), id)
 	if err != nil {
 		if errors.Is(err, sql.ErrNoRows) {
-			writeError(c, http.StatusNotFound, "候选规则不存在")
+			writeError(c, http.StatusNotFound, "Candidate rule not found")
 			return
 		}
 		writeInternalError(c, err)
@@ -313,8 +313,8 @@ func (h *Handler) GetPromptIntelligenceCandidateEvidence(c *gin.Context) {
 		return
 	}
 	evidence := make([]gin.H, 0, len(evidenceRows))
-	// 每条上游 CY 证据都挂着一个 CY 记录；把该 CY 的画像主体（人员 / 会话 / Key / IP /
-	// 上游账号）一并带回，审核证据时能直接看到是哪个用户并跳到画像。
+	// Every upstream CY evidence item is attached to a CY record; bring along that CY's profile subjects (person / conversation / key / IP /
+	// upstream account) so that when reviewing evidence you can directly see which user it is and jump to the profile.
 	subjectsByIncident := map[string][]database.PromptRiskIncidentSubject{}
 	for _, row := range evidenceRows {
 		var metadata any = map[string]any{}
@@ -357,29 +357,29 @@ func (h *Handler) GetPromptIntelligenceCandidateEvidence(c *gin.Context) {
 func (h *Handler) CreatePromptIntelligenceCandidateDraft(c *gin.Context) {
 	id, err := strconv.ParseInt(c.Param("id"), 10, 64)
 	if err != nil || id <= 0 {
-		writeError(c, http.StatusBadRequest, "候选证据 ID 无效")
+		writeError(c, http.StatusBadRequest, "Invalid candidate evidence ID")
 		return
 	}
 	parent, err := h.db.GetPromptRuleCandidate(c.Request.Context(), id)
 	if err != nil {
 		if errors.Is(err, sql.ErrNoRows) {
-			writeError(c, http.StatusNotFound, "候选证据不存在")
+			writeError(c, http.StatusNotFound, "Candidate evidence not found")
 			return
 		}
 		writeInternalError(c, err)
 		return
 	}
 	if parent.Kind != database.PromptRuleCandidateKindEvidence {
-		writeError(c, http.StatusConflict, "只有上游风险证据可以转换为规则草案")
+		writeError(c, http.StatusConflict, "Only upstream risk evidence can be converted into a rule draft")
 		return
 	}
 	if parent.Status != database.PromptRuleCandidateStatusPending {
-		writeError(c, http.StatusConflict, "只有待审核的上游风险证据可以转换为规则草案")
+		writeError(c, http.StatusConflict, "Only pending-review upstream risk evidence can be converted into a rule draft")
 		return
 	}
 	var request promptIntelligenceCandidateDraftRequest
 	if err := c.ShouldBindJSON(&request); err != nil {
-		writeError(c, http.StatusBadRequest, "规则草案参数无效")
+		writeError(c, http.StatusBadRequest, "Invalid rule draft parameters")
 		return
 	}
 	proposal := promptIntelligenceCandidate{
@@ -388,7 +388,7 @@ func (h *Handler) CreatePromptIntelligenceCandidateDraft(c *gin.Context) {
 		Rationale: strings.TrimSpace(request.Rationale),
 	}
 	if proposal.Rationale == "" {
-		proposal.Rationale = fmt.Sprintf("由 CY 证据 #%d 经人工审核创建", parent.ID)
+		proposal.Rationale = fmt.Sprintf("Created from CY evidence #%d after manual review", parent.ID)
 	}
 	if err := validateIntelligenceCandidate(proposal); err != nil {
 		writeError(c, http.StatusBadRequest, err.Error())
@@ -441,13 +441,13 @@ func (h *Handler) CreatePromptIntelligenceCandidateDraft(c *gin.Context) {
 func (h *Handler) PublishPromptIntelligenceCandidate(c *gin.Context) {
 	id, err := strconv.ParseInt(c.Param("id"), 10, 64)
 	if err != nil || id <= 0 {
-		writeError(c, http.StatusBadRequest, "候选规则 ID 无效")
+		writeError(c, http.StatusBadRequest, "Invalid candidate rule ID")
 		return
 	}
 	item, added, updated, err := h.publishPromptIntelligenceCandidate(c.Request.Context(), id)
 	if err != nil {
 		if errors.Is(err, errPromptIntelligenceCandidateNotFound) {
-			writeError(c, http.StatusNotFound, "候选规则不存在")
+			writeError(c, http.StatusNotFound, "Candidate rule not found")
 			return
 		}
 		if errors.Is(err, database.ErrPromptRuleCandidateConflict) {
@@ -467,20 +467,20 @@ func (h *Handler) PublishPromptIntelligenceCandidate(c *gin.Context) {
 func (h *Handler) DismissPromptIntelligenceCandidate(c *gin.Context) {
 	id, err := strconv.ParseInt(c.Param("id"), 10, 64)
 	if err != nil || id <= 0 {
-		writeError(c, http.StatusBadRequest, "候选规则 ID 无效")
+		writeError(c, http.StatusBadRequest, "Invalid candidate rule ID")
 		return
 	}
 	item, err := h.db.GetPromptRuleCandidate(c.Request.Context(), id)
 	if err != nil {
 		if errors.Is(err, sql.ErrNoRows) {
-			writeError(c, http.StatusNotFound, "候选规则不存在")
+			writeError(c, http.StatusNotFound, "Candidate rule not found")
 			return
 		}
 		writeInternalError(c, err)
 		return
 	}
 	if item.Status == database.PromptRuleCandidateStatusPublished {
-		writeError(c, http.StatusConflict, "已发布规则请在规则页面停用或删除，不能从候选区忽略")
+		writeError(c, http.StatusConflict, "Published rules must be disabled or deleted on the rules page; they cannot be ignored from the candidate area")
 		return
 	}
 	item, err = h.db.DismissPromptRuleCandidate(c.Request.Context(), id)
@@ -498,7 +498,7 @@ func (h *Handler) DismissPromptIntelligenceCandidate(c *gin.Context) {
 
 func (h *Handler) runPromptIntelligence(ctx context.Context, cfg promptfilter.IntelligenceConfig) (*promptIntelligenceRun, error) {
 	if !promptIntelligenceRunMu.TryLock() {
-		return nil, fmt.Errorf("规则情报更新任务正在运行")
+		return nil, fmt.Errorf("rule intelligence update task is already running")
 	}
 	defer promptIntelligenceRunMu.Unlock()
 	cfg = promptfilter.NormalizeAdvancedConfig(promptfilter.AdvancedConfig{Intelligence: cfg}).Intelligence
@@ -669,12 +669,12 @@ func searchGitHubPromptIntelligence(ctx context.Context, query string, limit int
 	client := &http.Client{Timeout: 30 * time.Second}
 	resp, err := client.Do(req)
 	if err != nil {
-		return nil, fmt.Errorf("GitHub 搜索失败: %w", err)
+		return nil, fmt.Errorf("GitHub search failed: %w", err)
 	}
 	defer resp.Body.Close()
 	data, _ := io.ReadAll(io.LimitReader(resp.Body, 2<<20))
 	if resp.StatusCode != http.StatusOK {
-		return nil, fmt.Errorf("GitHub 搜索返回 HTTP %d", resp.StatusCode)
+		return nil, fmt.Errorf("GitHub search returned HTTP %d", resp.StatusCode)
 	}
 	var raw struct {
 		Items []map[string]any `json:"items"`
@@ -698,20 +698,20 @@ func stringValue(value any) string {
 
 func (h *Handler) analyzePromptIntelligenceWithPool(ctx context.Context, model string, sources []promptIntelligenceSource) ([]promptIntelligenceCandidate, error) {
 	sourceJSON, _ := json.Marshal(sources)
-	prompt := `你是防御性提示词注入规则分析器。根据公开项目的标题、描述和链接，只提取新的越狱/提示词注入语言特征。不要复述攻击教程，不要生成可执行攻击内容。返回严格 JSON 数组，每项字段为 name、pattern(RE2兼容正则)、weight(1-100)、category、strict、rationale、source_url。最多10项；没有可靠候选就返回[]。公开来源：` + string(sourceJSON)
+	prompt := `You are a defensive prompt-injection rule analyzer. From the titles, descriptions and links of public projects, extract only new jailbreak / prompt-injection language features. Do not repeat attack tutorials and do not generate executable attack content. Return a strict JSON array; each item has the fields name, pattern (RE2-compatible regex), weight (1-100), category, strict, rationale, source_url. At most 10 items; if there are no reliable candidates, return []. Public sources: ` + string(sourceJSON)
 	body, _ := json.Marshal(map[string]any{"model": model, "input": prompt, "stream": false})
 	status, response := h.imageProxy.ExecuteInternalResponse(ctx, body)
 	if status < 200 || status >= 300 {
-		return nil, fmt.Errorf("号池模型分析失败: HTTP %d", status)
+		return nil, fmt.Errorf("account pool model analysis failed: HTTP %d", status)
 	}
 	text := extractResponseOutputText(response)
 	start, end := strings.Index(text, "["), strings.LastIndex(text, "]")
 	if start < 0 || end < start {
-		return nil, fmt.Errorf("号池模型未返回 JSON 候选规则")
+		return nil, fmt.Errorf("account pool model returned no JSON candidate rules")
 	}
 	var candidates []promptIntelligenceCandidate
 	if err := json.Unmarshal([]byte(text[start:end+1]), &candidates); err != nil {
-		return nil, fmt.Errorf("候选规则 JSON 无效: %w", err)
+		return nil, fmt.Errorf("invalid candidate rule JSON: %w", err)
 	}
 	valid := candidates[:0]
 	for _, candidate := range candidates {
@@ -755,7 +755,7 @@ func extractResponseOutputText(data []byte) string {
 
 func validateIntelligenceCandidate(candidate promptIntelligenceCandidate) error {
 	if candidate.Weight < 1 || candidate.Weight > 100 {
-		return fmt.Errorf("规则权重必须为 1-100")
+		return fmt.Errorf("rule weight must be between 1 and 100")
 	}
 	pattern := promptfilter.PatternConfig{
 		Name:     candidate.Name,
@@ -765,7 +765,7 @@ func validateIntelligenceCandidate(candidate promptIntelligenceCandidate) error 
 		Strict:   candidate.Strict,
 	}
 	if issue := promptfilter.AuditPatternConfig(pattern); issue != nil {
-		return fmt.Errorf("候选规则未通过安全校验: %s (%s)", issue.Message, issue.Code)
+		return fmt.Errorf("candidate rule failed safety validation: %s (%s)", issue.Message, issue.Code)
 	}
 	return nil
 }
@@ -859,16 +859,16 @@ func (h *Handler) publishPromptIntelligenceCandidate(ctx context.Context, id int
 	candidate, err := h.db.GetPromptRuleCandidate(ctx, id)
 	if err != nil {
 		if errors.Is(err, sql.ErrNoRows) {
-			return nil, 0, 0, fmt.Errorf("%w: 候选规则不存在", errPromptIntelligenceCandidateNotFound)
+			return nil, 0, 0, fmt.Errorf("%w: candidate rule not found", errPromptIntelligenceCandidateNotFound)
 		}
 		return nil, 0, 0, err
 	}
 	if candidate.Kind != database.PromptRuleCandidateKindPattern || strings.TrimSpace(candidate.RuleJSON) == "" || candidate.RuleJSON == "{}" {
-		return nil, 0, 0, fmt.Errorf("%w: 该记录只是上游风险证据，尚未形成可发布规则", errPromptIntelligenceCandidateInvalid)
+		return nil, 0, 0, fmt.Errorf("%w: this record is only upstream risk evidence and has not yet formed a publishable rule", errPromptIntelligenceCandidateInvalid)
 	}
 	var pattern promptfilter.PatternConfig
 	if err := json.Unmarshal([]byte(candidate.RuleJSON), &pattern); err != nil {
-		return nil, 0, 0, fmt.Errorf("%w: 候选规则内容无效: %v", errPromptIntelligenceCandidateInvalid, err)
+		return nil, 0, 0, fmt.Errorf("%w: candidate rule content is invalid: %v", errPromptIntelligenceCandidateInvalid, err)
 	}
 	proposal := promptIntelligenceCandidate{Name: pattern.Name, Pattern: pattern.Pattern, Weight: pattern.Weight, Category: pattern.Category, Strict: pattern.Strict, Rationale: candidate.Rationale, SourceURL: candidate.SourceURL}
 	if err := validateIntelligenceCandidate(proposal); err != nil {
@@ -893,7 +893,7 @@ func (h *Handler) publishPromptIntelligenceCandidate(ctx context.Context, id int
 		expectedCurrent, _ := json.Marshal(current)
 		expectedCurrentRuleJSON = string(expectedCurrent)
 		if len(current.AllPatterns) > 0 || len(current.AnyPatterns) > 0 || len(current.ExcludePatterns) > 0 || current.MinMatches > 0 {
-			return nil, 0, 0, fmt.Errorf("%w: 同名现有规则包含组合条件，不能用简单候选覆盖；请在规则页面人工复核", database.ErrPromptRuleCandidateConflict)
+			return nil, 0, 0, fmt.Errorf("%w: the existing rule with the same name contains compound conditions and cannot be overwritten by a simple candidate; review it manually on the rules page", database.ErrPromptRuleCandidateConflict)
 		}
 		pattern.Enabled = current.Enabled
 		if !reflect.DeepEqual(current, pattern) {
@@ -914,10 +914,10 @@ func (h *Handler) publishPromptIntelligenceCandidate(ctx context.Context, id int
 		func(mergedJSON string) error {
 			parsed, parseErr := promptfilter.ParseCustomPatterns(mergedJSON)
 			if parseErr != nil {
-				return fmt.Errorf("%w: 当前运行规则集无法解析: %v", database.ErrPromptRuleCandidateConflict, parseErr)
+				return fmt.Errorf("%w: the currently running rule set cannot be parsed: %v", database.ErrPromptRuleCandidateConflict, parseErr)
 			}
 			if validateErr := promptfilter.ValidateCustomPatterns(parsed); validateErr != nil {
-				return fmt.Errorf("%w: 当前运行规则集未通过安全校验: %v", database.ErrPromptRuleCandidateConflict, validateErr)
+				return fmt.Errorf("%w: the currently running rule set failed safety validation: %v", database.ErrPromptRuleCandidateConflict, validateErr)
 			}
 			publishedPatterns = parsed
 			return nil
@@ -1008,7 +1008,7 @@ func (h *Handler) migrateLegacyAutomaticIntelligenceRules(ctx context.Context) e
 		if !exists || !legacyAutomaticPatternEquivalent(current, automatic) {
 			continue
 		}
-		candidate := promptIntelligenceCandidate{Name: current.Name, Pattern: current.Pattern, Weight: current.Weight, Category: current.Category, Strict: false, ChangeType: "new", Rationale: "从历史自动规则迁移至待审核候选"}
+		candidate := promptIntelligenceCandidate{Name: current.Name, Pattern: current.Pattern, Weight: current.Weight, Category: current.Category, Strict: false, ChangeType: "new", Rationale: "migrated from a historical automatic rule to a pending-review candidate"}
 		if validateIntelligenceCandidate(candidate) != nil {
 			continue
 		}
@@ -1123,7 +1123,7 @@ func (h *Handler) migrateLegacyAutomaticIntelligenceRules(ctx context.Context) e
 		h.insertIntelligenceLog(ctx, "intel_migration", action, "", completedCandidates, nil)
 		return nil
 	}
-	return fmt.Errorf("%w: 自动规则迁移期间运行规则已被并发修改，请稍后重试", database.ErrPromptRuleCandidateConflict)
+	return fmt.Errorf("%w: running rules were modified concurrently during automatic rule migration; try again later", database.ErrPromptRuleCandidateConflict)
 }
 
 func (h *Handler) insertIntelligenceLog(ctx context.Context, source, action, model string, value any, errors []string) {

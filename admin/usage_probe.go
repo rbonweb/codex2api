@@ -17,11 +17,11 @@ import (
 	"github.com/tidwall/gjson"
 )
 
-// errWhamUnauthorized 标记 wham 探针遭遇 401。
-// wham（ChatGPT 后端额度端点）与 /responses 网关的鉴权口径不同：纯 AT 导入
-// （codex_at）的账号可能因 token 缺工作区 claim 等原因在 wham 恒 401，
-// 但真实流量完全可用（issue #328）。因此 wham 401 不能单方面定罪封号，
-// 须由 ProbeUsageSnapshot 决定是否用 /responses 探针裁决。
+// errWhamUnauthorized marks that the wham probe hit a 401.
+// wham (the ChatGPT backend quota endpoint) and the /responses gateway apply different authentication rules: accounts imported as plain AT
+// (codex_at) may get a constant 401 from wham, for example because the token lacks the workspace claim,
+// while real traffic works fine (issue #328). So a wham 401 must not on its own convict the account and ban it;
+// ProbeUsageSnapshot must decide whether to use the /responses probe to settle it.
 var errWhamUnauthorized = errors.New("wham usage probe unauthorized")
 
 type usageProbeRequestFunc func(context.Context, *auth.Account, []byte, string, string, string, *proxy.DeviceProfileConfig, http.Header, ...bool) (*http.Response, error)
@@ -41,7 +41,7 @@ func inspectResponsesProbeBody(body []byte) (responsesTerminalOutcome, []byte, e
 	if err != nil {
 		return responsesTerminalUnknown, nil, err
 	}
-	// 测试替身或非流式兼容端点可能直接返回单个事件 JSON。
+	// Test doubles or non-streaming compatible endpoints may return a single event JSON directly.
 	if outcome == responsesTerminalUnknown {
 		outcome = classifyResponsesTerminalEvent(body)
 		if outcome != responsesTerminalUnknown {
@@ -51,20 +51,20 @@ func inspectResponsesProbeBody(body []byte) (responsesTerminalOutcome, []byte, e
 	return outcome, terminalPayload, nil
 }
 
-// ProbeUsageSnapshot 主动刷新账号用量。
+// ProbeUsageSnapshot actively refreshes account usage.
 //
-// 优先尝试 /backend-api/wham/usage（零额度成本的结构化端点）；
-// 失败时（4xx/5xx/网络）回退到给 /backend-api/codex/responses 发一个最小请求
-// （会真实计入用量但保证向下兼容）。Responses 权威限流判定开启且账号已处于
-// 用量冷却时，即使 wham 成功也会补一次 /responses 探针：wham 只更新展示元数据，
-// 只有真实 Responses 结果能确认账号是否已经恢复。
-// 鉴权裁决：wham 401 不单方面封号，由 /responses 回退探针定夺（issue #328）。
+// First try /backend-api/wham/usage (a structured endpoint with zero quota cost);
+// on failure (4xx/5xx/network), fall back to sending a minimal request to /backend-api/codex/responses
+// (this really counts toward usage but stays backward compatible). When the Responses authoritative rate-limit decision is enabled and the account is already in
+// usage cooldown, a /responses probe is sent even if wham succeeds: wham only updates display metadata,
+// and only a real Responses result can confirm whether the account has recovered.
+// Authentication verdict: a wham 401 does not ban the account on its own; the /responses fallback probe decides (issue #328).
 func (h *Handler) ProbeUsageSnapshot(ctx context.Context, account *auth.Account) error {
 	if account == nil {
 		return nil
 	}
-	// Agent Identity 无 AccessToken，wham（Bearer）用不了；直接用 /responses 最小探针
-	// （ExecuteRequest 会用 AgentAssertion 动态签名），从响应头同步用量快照。
+	// Agent Identity has no AccessToken, so wham (Bearer) cannot be used; use the minimal /responses probe directly
+	// (ExecuteRequest signs dynamically with AgentAssertion), and syncs the usage snapshot from the response headers.
 	if account.IsCodexAgentIdentity() {
 		return h.probeUsageViaResponses(ctx, account)
 	}
@@ -76,79 +76,79 @@ func (h *Handler) ProbeUsageSnapshot(ctx context.Context, account *auth.Account)
 		return nil
 	}
 
-	// 默认在限流/冷却（429 或 premium 5h 限流）状态下只做 wham（零成本）。
-	// Responses 权威模式例外：若一直只做 wham，已进入冷却的账号永远没有机会用
-	// Responses 200 自证恢复，整个池可能长期只剩本地 503。
+	// By default, in rate-limited or cooldown state (429 or premium 5h rate limit), only wham is used (zero cost).
+	// Exception in Responses authoritative mode: if only wham is ever used, a cooled-down account never gets a chance to
+	// prove recovery with a Responses 200, and the whole pool could stay on local 503s for a long time.
 	limited := account.InLimitedState()
 	responsesFallback := h.store.UsageProbeResponsesFallbackEnabled()
 	lazyMode := h.store.GetLazyMode()
 	authoritativeRecovery := limited && account.IgnoresUsageLimitStatus() && responsesFallback
 	whamOnly := (limited && !authoritativeRecovery) || (lazyMode && !authoritativeRecovery) || !responsesFallback
 
-	// 1) 优先用 wham（零成本）
+	// 1) Prefer wham (zero cost)
 	if err := h.probeUsageViaWham(ctx, account, limited); err == nil {
 		if !authoritativeRecovery {
 			return nil
 		}
-		log.Printf("[账号 %d] wham 用量元数据刷新成功，继续用 /responses 裁决限流恢复", account.DBID)
+		log.Printf("[account %d] wham usage metadata refreshed, continuing with /responses to decide rate-limit recovery", account.DBID)
 	} else if errors.Is(err, errWhamUnauthorized) {
-		// wham 401 不直接封号（codex_at 账号可能 wham 恒 401 但流量可用，issue #328）：
-		// 能回退时交给 /responses 探针做鉴权最终裁决（200 恢复 / 401 才封）；
-		// 不能回退时仅记录不封——真正失效的 token 会在真实流量 401 时被网关冷却。
+		// A wham 401 does not ban directly (a codex_at account may get a constant wham 401 while its traffic works, issue #328):
+		// when fallback is possible, hand it to the /responses probe for the final authentication verdict (200 recovers / only 401 bans);
+		// when fallback is not possible, only log and do not ban; a truly invalid token is cooled down by the gateway when real traffic gets a 401.
 		if whamOnly {
-			log.Printf("[账号 %d] wham 探针 401，缺少 /responses 佐证（限流/lazy/回退关闭），跳过封禁: %v", account.DBID, err)
+			log.Printf("[account %d] wham probe 401, no /responses corroboration (rate limited / lazy / fallback disabled), skipping ban: %v", account.DBID, err)
 			return err
 		}
-		log.Printf("[账号 %d] wham 探针 401，交由 /responses 探针裁决鉴权状态: %v", account.DBID, err)
+		log.Printf("[account %d] wham probe 401, leaving the authentication state to the /responses probe: %v", account.DBID, err)
 	} else {
 		if whamOnly {
-			log.Printf("[账号 %d] wham 用量探测失败，已按配置/限流状态跳过 /responses 探针: %v", account.DBID, err)
+			log.Printf("[account %d] wham usage probe failed, skipped the /responses probe per configuration / rate-limit state: %v", account.DBID, err)
 			return err
 		}
-		log.Printf("[账号 %d] wham 用量探测失败，回退到 /responses 探针: %v", account.DBID, err)
+		log.Printf("[account %d] wham usage probe failed, falling back to the /responses probe: %v", account.DBID, err)
 	}
 
-	// 2) Fallback: 原有的 /responses 最小探针
+	// 2) Fallback: the existing minimal /responses probe
 	return h.probeUsageViaResponses(ctx, account)
 }
 
-// probeUsageViaWham 通过 /backend-api/wham/usage 拉取用量，
-// 不消耗任何 token 额度。
+// probeUsageViaWham fetches usage through /backend-api/wham/usage,
+// consuming no token quota.
 //
-// limited=true 表示账号正处于 429 冷却 / premium 5h 限流状态：本次仅为零成本刷新
-// 「主动重置次数」与用量快照，不上报成功、也不清除冷却（冷却解除交给恢复探针/到期判断），
-// 避免把一次额度查询误判为账号已恢复。
+// limited=true means the account is in a 429 cooldown / premium 5h rate-limit state: this call is only a zero-cost refresh
+// of the "active reset count" and usage snapshot. It does not report success or clear the cooldown (lifting the cooldown is left to the recovery probe / expiry check),
+// so that a quota lookup is not mistaken for the account having recovered.
 func (h *Handler) probeUsageViaWham(ctx context.Context, account *auth.Account, limited bool) error {
 	probeStartedAt := time.Now()
 	usage, resp, err := proxy.QueryWhamUsage(ctx, account, h.store.ResolveProxyForAccount(account))
 	if resp != nil {
-		// QueryWhamUsage 在非 200 时不会读 body；这里读取一小段用于账号错误详情。
+		// QueryWhamUsage does not read the body on non-200; here a short piece is read for the account error details.
 		body, _ := io.ReadAll(io.LimitReader(resp.Body, 64<<10))
 		_ = resp.Body.Close()
 		switch resp.StatusCode {
 		case http.StatusUnauthorized:
 			if isDefinitiveRevokedTokenError(body) {
-				// 与缺少 workspace claim 等普通 WHAM 401 不同，token_revoked /
-				// token_invalidated 是上游对 OAuth 凭据失效的明确裁决，不需要
-				// /responses 二次佐证。否则关闭 fallback 时账号会永久停在“未采样”。
+				// Unlike an ordinary WHAM 401 such as a missing workspace claim, token_revoked /
+				// token_invalidated is the upstream's explicit verdict that the OAuth credential is invalid, and needs no
+				// /responses corroboration. Otherwise, with fallback disabled, the account would stay "unsampled" forever.
 				h.store.ReportRequestFailure(account, "client", 0)
-				errorMsg := fmt.Sprintf("用量探针上游返回 %d: %s", resp.StatusCode, truncate(string(body), 300))
+				errorMsg := fmt.Sprintf("usage probe upstream returned %d: %s", resp.StatusCode, truncate(string(body), 300))
 				h.store.MarkCooldownWithError(account, 24*time.Hour, "unauthorized", errorMsg)
 				return nil
 			}
-			// 不在此处上报失败/封号：wham 401 对 codex_at 账号可能是误报，
-			// 反复计入失败样本还会污染健康统计。交由 ProbeUsageSnapshot 裁决。
-			return fmt.Errorf("%w: 上游返回 %d: %s", errWhamUnauthorized, resp.StatusCode, truncate(string(body), 300))
+			// Do not report a failure or ban here: a wham 401 may be a false positive for codex_at accounts,
+			// and repeatedly counting it as a failure sample would also pollute health statistics. Leave the verdict to ProbeUsageSnapshot.
+			return fmt.Errorf("%w: upstream returned %d: %s", errWhamUnauthorized, resp.StatusCode, truncate(string(body), 300))
 		case http.StatusTooManyRequests:
 			h.store.ReportRequestFailure(account, "client", 0)
 		case http.StatusPaymentRequired, http.StatusForbidden:
-			// 与 wham 401 不同，deactivated_workspace 是上游对工作区状态的明确裁决
-			// （错误体带 detail.code），不存在鉴权口径差异导致的误报；wham-only 模式
-			// 下若不在此标错，被封 team 空间的账号会以"可用"无限留在池里、采样
-			// 永远失败。仅在错误体确认时动手，裸 402/403 保持通用失败路径。
+			// Unlike a wham 401, deactivated_workspace is the upstream's explicit verdict on the workspace state
+			// (the error body carries detail.code), so there is no false positive from differing authentication rules; in wham-only mode
+			// if it is not marked as an error here, an account whose team workspace was banned would stay in the pool forever as "available", and sampling would
+			// keep failing. Act only when the error body confirms it; a bare 402/403 keeps the generic failure path.
 			if shouldMarkUsageProbeAccountError(resp.StatusCode, body) {
 				h.store.ReportRequestFailure(account, "client", 0)
-				errorMsg := fmt.Sprintf("用量探针上游返回 %d: %s", resp.StatusCode, truncate(string(body), 300))
+				errorMsg := fmt.Sprintf("usage probe upstream returned %d: %s", resp.StatusCode, truncate(string(body), 300))
 				if resp.StatusCode == http.StatusForbidden && proxy.IsAgentRuntimeDeletedError(body) {
 					h.store.MarkCooldownWithErrorExactDuration(account, 24*time.Hour, "unauthorized", errorMsg)
 				} else {
@@ -166,8 +166,8 @@ func (h *Handler) probeUsageViaWham(ctx context.Context, account *auth.Account, 
 	}
 
 	state := proxy.ApplyWhamUsage(h.store, account, usage)
-	// wham 不含订阅到期字段，按需从网页端 /subscriptions 补权威到期时间
-	// （带节流，best-effort，失败不影响探针结果）。(issue #360)
+	// wham does not include subscription expiry fields, so the authoritative expiry time is fetched on demand from the web /subscriptions page
+	// (throttled, best effort; a failure does not affect the probe result). (issue #360)
 	proxy.MaybeSyncSubscriptionExpiry(ctx, h.store, account, h.store.ResolveProxyForAccount(account))
 	if limited {
 		if state.UsageWindowLimitsIgnored {
@@ -181,18 +181,18 @@ func (h *Handler) probeUsageViaWham(ctx context.Context, account *auth.Account, 
 			// retry with a complete response.
 			return nil
 		}
-		// 限流/冷却态下，用 wham 返回的权威用量窗口重新判定：
-		// 若上游已重置窗口、不再限流（例如官方提前重置了 5h/7d 用量），
-		// 则主动解除限流冷却，无需等待冷却到期或用户手动测试连接。
-		// 仍不调用 ReportRequestSuccess，避免把一次零成本额度查询计入健康成功样本。
+		// In rate-limited / cooldown state, re-judge using the authoritative usage window returned by wham:
+		// if upstream has reset the window and is no longer rate limiting (for example, the official side reset the 5h/7d usage early),
+		// actively lift the rate-limit cooldown, without waiting for the cooldown to expire or for the user to run a connection test manually.
+		// Still do not call ReportRequestSuccess, so a zero-cost quota lookup is not counted as a healthy success sample.
 		if !applyUsageLimitedAccountState(h.store, account, state) {
 			h.store.ClearUsageLimitCooldownSince(account, probeStartedAt)
-			log.Printf("[账号 %d] wham 显示限流窗口已重置，自动解除限流冷却", account.DBID)
+			log.Printf("[account %d] wham shows the rate-limit window has reset, automatically lifting the rate-limit cooldown", account.DBID)
 		}
 		return nil
 	}
 	h.store.ReportRequestSuccess(account, 0)
-	// 用量未耗尽时重置冷却
+	// Reset the cooldown when usage is not exhausted
 	if !applyUsageLimitedAccountState(h.store, account, state) {
 		if state.HasUsage5h || state.HasUsage7d || state.Cleared5h {
 			h.store.ClearUsageLimitCooldownSince(account, probeStartedAt)
@@ -201,8 +201,8 @@ func (h *Handler) probeUsageViaWham(ctx context.Context, account *auth.Account, 
 	return nil
 }
 
-// probeUsageViaResponses 原有探针：发送最小 /responses 请求，
-// 通过响应头同步 Codex 用量状态。会真实消耗少量 token。
+// probeUsageViaResponses is the existing probe: it sends a minimal /responses request,
+// and syncs the Codex usage state from the response headers. It really consumes a small number of tokens.
 func (h *Handler) probeUsageViaResponses(ctx context.Context, account *auth.Account) error {
 	probeStartedAt := time.Now()
 	payload := buildConnectionTestPayload(h.store, h.store.GetTestModel())
@@ -224,26 +224,26 @@ func (h *Handler) probeUsageViaResponses(ctx context.Context, account *auth.Acco
 	case http.StatusOK:
 		outcome, terminalPayload, inspectErr := inspectResponsesProbeBody(body)
 		if inspectErr != nil {
-			return fmt.Errorf("读取 Responses 恢复探针终止事件失败: %w", inspectErr)
+			return fmt.Errorf("failed to read the Responses recovery probe terminal event: %w", inspectErr)
 		}
 		switch outcome {
 		case responsesTerminalUsageLimited:
 			h.applyResponsesUsageLimitFailure(account, resp, h.store.GetTestModel(), terminalPayload)
 			return nil
 		case responsesTerminalFailed:
-			return fmt.Errorf("Responses 恢复探针未成功: %s", formatUpstreamTestError(terminalPayload, "上游返回失败终止事件"))
+			return fmt.Errorf("Responses recovery probe did not succeed: %s", formatUpstreamTestError(terminalPayload, "upstream returned a failure terminal event"))
 		case responsesTerminalUnknown:
-			return fmt.Errorf("Responses 恢复探针缺少明确终止事件")
+			return fmt.Errorf("Responses recovery probe is missing a clear terminal event")
 		}
 		h.store.ReportRequestSuccess(account, 0)
-		// 只有用量未耗尽时才重置状态
+		// Reset the state only when usage is not exhausted
 		if !applyUsageLimitedAccountState(h.store, account, usageState) {
 			h.store.ClearUsageLimitCooldownSince(account, probeStartedAt)
 		}
 		return nil
 	case http.StatusUnauthorized:
 		h.store.ReportRequestFailure(account, "client", 0)
-		h.store.MarkCooldownWithError(account, 24*time.Hour, "unauthorized", fmt.Sprintf("用量探针上游返回 %d: %s", resp.StatusCode, truncate(string(body), 300)))
+		h.store.MarkCooldownWithError(account, 24*time.Hour, "unauthorized", fmt.Sprintf("usage probe upstream returned %d: %s", resp.StatusCode, truncate(string(body), 300)))
 		return nil
 	case http.StatusTooManyRequests:
 		h.store.ReportRequestFailure(account, "client", 0)
@@ -256,7 +256,7 @@ func (h *Handler) probeUsageViaResponses(ctx context.Context, account *auth.Acco
 			return nil
 		}
 		if shouldMarkUsageProbeAccountError(resp.StatusCode, body) {
-			errorMsg := fmt.Sprintf("用量探针上游返回 %d: %s", resp.StatusCode, truncate(string(body), 300))
+			errorMsg := fmt.Sprintf("usage probe upstream returned %d: %s", resp.StatusCode, truncate(string(body), 300))
 			if resp.StatusCode == http.StatusForbidden && proxy.IsAgentRuntimeDeletedError(body) {
 				h.store.MarkCooldownWithErrorExactDuration(account, 24*time.Hour, "unauthorized", errorMsg)
 			} else {
@@ -269,7 +269,7 @@ func (h *Handler) probeUsageViaResponses(ctx context.Context, account *auth.Acco
 		} else if resp.StatusCode >= 400 {
 			h.store.ReportRequestFailure(account, "client", 0)
 		}
-		return fmt.Errorf("探针返回状态 %d", resp.StatusCode)
+		return fmt.Errorf("probe returned status %d", resp.StatusCode)
 	}
 }
 
@@ -293,8 +293,8 @@ func shouldMarkUsageProbeAccountError(statusCode int, body []byte) bool {
 	}
 }
 
-// ForceUsageProbe 主动触发一次"忽略缓存阈值"的全量用量探针，并立即返回。
-// 真正的探针在后台并发执行（受 usage_probe_concurrency 限制）。
+// ForceUsageProbe actively triggers one full usage probe that "ignores the cache threshold", and returns immediately.
+// The actual probes run concurrently in the background (limited by usage_probe_concurrency).
 func (h *Handler) ForceUsageProbe(c *gin.Context) {
 	h.store.TriggerUsageProbeForceAsync()
 	payload := gin.H{

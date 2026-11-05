@@ -363,7 +363,7 @@ func TestValidateImportFileSize(t *testing.T) {
 	if err == nil {
 		t.Fatal("expected oversized file error, got nil")
 	}
-	if got, want := err.Error(), "文件 too-big.txt 大小超过 200MB"; got != want {
+	if got, want := err.Error(), "file too-big.txt size exceeds 200MB"; got != want {
 		t.Fatalf("error = %q, want %q", got, want)
 	}
 }
@@ -387,8 +387,8 @@ func TestImportAccountsJSONReturnsExistingNoTokenMessageForUnsupportedJSON(t *te
 	if err := json.Unmarshal(recorder.Body.Bytes(), &payload); err != nil {
 		t.Fatalf("decode response: %v", err)
 	}
-	if got := payload["error"]; got != "JSON 文件中未找到有效的 refresh_token 或 access_token" {
-		t.Fatalf("error = %q, want %q", got, "JSON 文件中未找到有效的 refresh_token 或 access_token")
+	if got := payload["error"]; got != "no valid refresh_token or access_token found in JSON file" {
+		t.Fatalf("error = %q, want %q", got, "no valid refresh_token or access_token found in JSON file")
 	}
 }
 
@@ -411,8 +411,8 @@ func TestImportAccountsJSONRejectsInvalidJSONFile(t *testing.T) {
 	if err := json.Unmarshal(recorder.Body.Bytes(), &payload); err != nil {
 		t.Fatalf("decode response: %v", err)
 	}
-	if got := payload["error"]; got != "文件 broken.json 不是有效的 JSON 格式" {
-		t.Fatalf("error = %q, want %q", got, "文件 broken.json 不是有效的 JSON 格式")
+	if got := payload["error"]; got != "file broken.json is not valid JSON" {
+		t.Fatalf("error = %q, want %q", got, "file broken.json is not valid JSON")
 	}
 }
 
@@ -1062,9 +1062,9 @@ func TestAddAccountRTRefreshUsesImportProbeGate(t *testing.T) {
 }
 
 func TestImportedATAndRTWarmupsReserveCapacityAtHighProbeSetting(t *testing.T) {
-	// probeImportedAccountUsage 结束时还会检查 Daybreak 模型能力；probeUsage
-	// 回调没有替换这条请求。使用不转发的本地代理，让该检查确定地快速失败，
-	// 避免假凭证真的访问上游并占住导入并发槽。
+	// probeImportedAccountUsage also checks Daybreak model capabilities when it finishes; the probeUsage
+	// callback does not replace this request. Use a local proxy that does not forward, so that check fails deterministically and quickly,
+	// so fake credentials do not really reach the upstream and hold an import concurrency slot.
 	t.Setenv("CODEX_TRANSPORT_MODE", "standard")
 	var modelChecks atomic.Int64
 	modelsProxy := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
@@ -1132,7 +1132,7 @@ func TestImportedATAndRTWarmupsReserveCapacityAtHighProbeSetting(t *testing.T) {
 	}
 	handler.commitImportedRuntimeAccounts(accounts, "test_import", false)
 
-	// 4 个 AT 各探测一次；4 个 RT 各刷新并探测一次。
+	// Probe each of the 4 ATs once; refresh and probe each of the 4 RTs once.
 	const wantFinished = 12
 	deadline := time.Now().Add(3 * time.Second)
 	for {
@@ -1147,7 +1147,7 @@ func TestImportedATAndRTWarmupsReserveCapacityAtHighProbeSetting(t *testing.T) {
 		}
 		time.Sleep(10 * time.Millisecond)
 	}
-	// 队列和 worker 均已退出，检查 RT 刷新没有偷偷多跑一次 probe。
+	// The queue and workers have both exited; check that the RT refresh did not quietly run one extra probe.
 	if got := finished.Load(); got != wantFinished {
 		t.Fatalf("finished warmup operations = %d, want exactly %d (RT refresh probed twice)", got, wantFinished)
 	}
@@ -1192,7 +1192,7 @@ func newMultipartRequest(t *testing.T, files map[string]string) *http.Request {
 	return req
 }
 
-// workspace_id 无法从 JWT 识别时，允许重复添加可保留相同邮箱的多个账号。
+// When workspace_id cannot be read from the JWT, adding duplicates is allowed so that several accounts with the same email can coexist.
 func TestImportAccountsCommonAllowsDuplicateWithoutWorkspace(t *testing.T) {
 	gin.SetMode(gin.TestMode)
 
@@ -1286,7 +1286,7 @@ func TestImportAccountsCommonSeparatesCredentialWorkspaceRoutes(t *testing.T) {
 	}
 }
 
-// TestAddAccountDedupsRefreshToken 验证：RT 单账号添加默认按 RT 原文对已有库去重。
+// TestAddAccountDedupsRefreshToken checks that adding a single RT account deduplicates against the existing store by the raw RT by default.
 func TestAddAccountDedupsRefreshToken(t *testing.T) {
 	gin.SetMode(gin.TestMode)
 
@@ -1322,7 +1322,7 @@ func TestAddAccountDedupsRefreshToken(t *testing.T) {
 		return resp
 	}
 
-	// 默认：重复 RT 应被跳过
+	// Default: a duplicate RT should be skipped
 	resp := doAdd(`{"refresh_token":"rt-existing"}`)
 	if dup := resp["duplicate"]; dup != float64(1) {
 		t.Fatalf("duplicate = %v, want 1", dup)
@@ -1331,7 +1331,7 @@ func TestAddAccountDedupsRefreshToken(t *testing.T) {
 		t.Fatalf("active rows = %d, want 1 (duplicate skipped)", len(rows))
 	}
 
-	// 勾选允许重复：同一 RT 应被新建
+	// With "allow duplicates" ticked: the same RT should be created
 	resp = doAdd(`{"refresh_token":"rt-existing","allow_duplicate":true}`)
 	if suc := resp["success"]; suc != float64(1) {
 		t.Fatalf("success = %v, want 1", suc)
@@ -1413,8 +1413,8 @@ func TestAddAccountSeparatesRefreshTokenWorkspaceRoutes(t *testing.T) {
 	}
 }
 
-// 重复添加同一身份的 AT（JWT 身份）时，命中已有账号应计入"更新"而非"新增"，
-// 新增计数保持为 0（不再把更新的账号重复计进 success/duplicate）。
+// When the same identity's AT (a JWT identity) is added again, a hit on an existing account counts as an "update", not an "add",
+// so the add count stays at 0 (updated accounts are no longer counted again in success/duplicate).
 func TestAddATAccountCountsUpdateNotNew(t *testing.T) {
 	gin.SetMode(gin.TestMode)
 
@@ -1458,22 +1458,22 @@ func TestAddATAccountCountsUpdateNotNew(t *testing.T) {
 		return resp
 	}
 
-	// 首次添加：应新增 1。
+	// First add: should add 1.
 	resp := doAddAT(makeAT(time.Now().Add(2 * time.Hour)))
 	if resp["success"] != float64(1) || resp["updated"] != float64(0) {
 		t.Fatalf("first add: success=%v updated=%v, want 1/0", resp["success"], resp["updated"])
 	}
 
-	// 再次添加同身份（AT 已轮换，exp 不同）：应计入更新，新增为 0。
+	// Add the same identity again (the AT was rotated, exp differs): should count as an update, with 0 added.
 	resp = doAddAT(makeAT(time.Now().Add(3 * time.Hour)))
 	if resp["success"] != float64(0) {
-		t.Fatalf("re-add success = %v, want 0 (更新不应计入新增)", resp["success"])
+		t.Fatalf("re-add success = %v, want 0 (an update must not count as an add)", resp["success"])
 	}
 	if resp["updated"] != float64(1) {
 		t.Fatalf("re-add updated = %v, want 1", resp["updated"])
 	}
 
-	// 库里始终只有一个账号。
+	// The store always holds only one account.
 	if rows, _ := db.ListActive(context.Background()); len(rows) != 1 {
 		t.Fatalf("active rows = %d, want 1", len(rows))
 	}
@@ -1602,7 +1602,7 @@ func TestStreamAddOpaqueATPersistsWorkspaceRoute(t *testing.T) {
 	}
 }
 
-// RT 刷新后 workspace 身份可知时，应把新凭证合并进已有账号。
+// When the workspace identity is known after an RT refresh, the new credentials should be merged into the existing account.
 func TestMergeRefreshedDuplicateIntoExisting(t *testing.T) {
 	gin.SetMode(gin.TestMode)
 
@@ -1610,7 +1610,7 @@ func TestMergeRefreshedDuplicateIntoExisting(t *testing.T) {
 	store := auth.NewStore(db, nil, &database.SystemSettings{MaxConcurrency: 2, TestConcurrency: 1, TestModel: "gpt-5.4"})
 	handler := &Handler{db: db, store: store}
 
-	// 已有 AT 账号：带用量统计
+	// Existing AT account: with usage stats
 	oldID, err := db.InsertAccountWithCredentials(context.Background(), "at-first", map[string]interface{}{
 		"access_token":          "at-rotation-1",
 		"email":                 "solo@example.com",
@@ -1636,7 +1636,7 @@ func TestMergeRefreshedDuplicateIntoExisting(t *testing.T) {
 		t.Fatalf("SetAccountGroups old: %v", err)
 	}
 
-	// 新导入的 RT 账号：刷新完成后身份与旧账号相同
+	// Newly imported RT account: after the refresh its identity matches the old account
 	newID, err := db.InsertAccountWithCredentials(context.Background(), "rt-later", map[string]interface{}{
 		"refresh_token": "rt-fresh",
 		"access_token":  "at-rotation-2",
@@ -1657,13 +1657,13 @@ func TestMergeRefreshedDuplicateIntoExisting(t *testing.T) {
 		t.Fatalf("GetAccountByID old: %v", err)
 	}
 	if got := oldRow.GetCredential("refresh_token"); got != "rt-fresh" {
-		t.Fatalf("refresh_token = %q, want rt-fresh (RT 应升级进旧账号)", got)
+		t.Fatalf("refresh_token = %q, want rt-fresh (the RT should be upgraded into the old account)", got)
 	}
 	if got := oldRow.GetCredential("access_token"); got != "at-rotation-2" {
 		t.Fatalf("access_token = %q, want at-rotation-2", got)
 	}
 	if got := oldRow.GetCredential("codex_7d_used_percent"); got != "42.5" {
-		t.Fatalf("codex_7d_used_percent = %q, want 42.5 (用量统计必须保留)", got)
+		t.Fatalf("codex_7d_used_percent = %q, want 42.5 (usage stats must be kept)", got)
 	}
 	runtimeOld := store.FindByID(oldID)
 	if runtimeOld == nil {
@@ -1805,7 +1805,7 @@ func TestMergeRefreshedDuplicatePreservesOverrideBackedRoute(t *testing.T) {
 	}
 }
 
-// wham 返回的 account_id 不作为 JWT workspace_id；无法解析 workspace 的账号可并存。
+// The account_id returned by wham is not used as the JWT workspace_id; accounts whose workspace cannot be parsed can coexist.
 func TestProbeImportedAccountUsageKeepsUnknownWorkspaceDuplicate(t *testing.T) {
 	gin.SetMode(gin.TestMode)
 
@@ -1813,7 +1813,7 @@ func TestProbeImportedAccountUsageKeepsUnknownWorkspaceDuplicate(t *testing.T) {
 	store := auth.NewStore(db, nil, &database.SystemSettings{MaxConcurrency: 2, TestConcurrency: 1, TestModel: "gpt-5.4"})
 	handler := &Handler{db: db, store: store}
 
-	// 已有账号：身份完整、带用量统计。
+	// Existing account: complete identity, with usage stats.
 	oldID, err := db.InsertAccountWithCredentials(context.Background(), "at-first", map[string]interface{}{
 		"access_token":          "at-old",
 		"email":                 "solo@example.com",
@@ -1825,7 +1825,7 @@ func TestProbeImportedAccountUsageKeepsUnknownWorkspaceDuplicate(t *testing.T) {
 		t.Fatalf("Insert old: %v", err)
 	}
 
-	// 新添加的 codex_at 账号：插入时无身份，仅有 access_token 原文。
+	// Newly added codex_at account: no identity at insert time, only the raw access_token.
 	newID, err := db.InsertAccountWithCredentials(context.Background(), "at-new", map[string]interface{}{
 		"access_token": "at-new",
 	}, "")
@@ -1834,7 +1834,7 @@ func TestProbeImportedAccountUsageKeepsUnknownWorkspaceDuplicate(t *testing.T) {
 	}
 	store.AddAccount(&auth.Account{DBID: newID, AccessToken: "at-new", Status: auth.StatusReady})
 
-	// 模拟 wham 探针：只补齐旧 account_id，不产生 workspace_id。
+	// Simulate the wham probe: it only fills in the old account_id and does not produce a workspace_id.
 	handler.probeUsage = func(ctx context.Context, acc *auth.Account) error {
 		store.UpdateAccountIdentity(acc, "solo@example.com", "workspace-probe1")
 		return nil
@@ -1858,7 +1858,7 @@ func TestProbeImportedAccountUsageKeepsUnknownWorkspaceDuplicate(t *testing.T) {
 		t.Fatalf("access_token = %q, want at-old", got)
 	}
 	if got := oldRow.GetCredential("codex_7d_used_percent"); got != "37.0" {
-		t.Fatalf("codex_7d_used_percent = %q, want 37.0 (用量统计必须保留)", got)
+		t.Fatalf("codex_7d_used_percent = %q, want 37.0 (usage stats must be kept)", got)
 	}
 	newRow, err := db.GetAccountByID(context.Background(), newID)
 	if err != nil {
@@ -1869,7 +1869,7 @@ func TestProbeImportedAccountUsageKeepsUnknownWorkspaceDuplicate(t *testing.T) {
 	}
 }
 
-// workspace 已知时，历史 allow_duplicate 标记不能绕过去重。
+// When the workspace is known, a legacy allow_duplicate flag must not bypass deduplication.
 func TestMergeRefreshedDuplicateIgnoresAllowDuplicate(t *testing.T) {
 	gin.SetMode(gin.TestMode)
 
@@ -1969,8 +1969,8 @@ func TestParseImportJSONTokensHandlesSessionJSONWithoutAccessToken(t *testing.T)
 	}
 }
 
-// 平铺在 credentials 里的 Agent Identity 条目（sub2api 导出形态）应被通用 JSON
-// 导入识别，而不是当作"无凭据"静默丢弃（issue #424 同根因）。
+// Agent Identity entries flattened into credentials (the sub2api export shape) should be recognised by the generic JSON
+// import instead of being silently dropped as "no credentials" (same root cause as issue #424).
 func TestParseImportJSONTokensAgentIdentityFlatCredentials(t *testing.T) {
 	pk := newTestAgentPrivateKey(t)
 	data := []byte(`{
@@ -2008,8 +2008,8 @@ func TestParseImportJSONTokensAgentIdentityFlatCredentials(t *testing.T) {
 	}
 }
 
-// 流式解析器必须与全量解析器对所有形态产出完全一致的 tokens——覆盖顶层数组、
-// 单个平铺对象(带 BOM)、sub2api {accounts:[...]}、多余顶层字段、空 accounts。
+// The streaming parser must produce exactly the same tokens as the full parser for every shape: a top-level array,
+// a single flat object (with BOM), sub2api {accounts:[...]}, extra top-level fields and an empty accounts list.
 func TestParseImportJSONTokensStreamMatchesFullParse(t *testing.T) {
 	cases := map[string]string{
 		"flat-array":      `[{"refresh_token":"rt-1","email":"a@x.com"},{"access_token":"at-2","email":"b@x.com"},{"refresh_token":"","access_token":""}]`,
@@ -2037,7 +2037,7 @@ func TestParseImportJSONTokensStreamMatchesFullParse(t *testing.T) {
 	}
 }
 
-// BOM + 流式:json.Decoder 不吃 BOM,parseImportJSONTokensStream 须先剥。
+// BOM + streaming: json.Decoder does not accept a BOM, so parseImportJSONTokensStream must strip it first.
 func TestParseImportJSONTokensStreamHandlesBOM(t *testing.T) {
 	body := append([]byte{0xef, 0xbb, 0xbf}, []byte(`{"refresh_token":"rt-bom"}`)...)
 	stream, err := parseImportJSONTokensStream(bytes.NewReader(body))
@@ -2070,7 +2070,7 @@ func TestAdaptiveImportLimitsUseHysteresisAndDatabasePressure(t *testing.T) {
 	if got := h.adaptiveImportLimits(); got != (importConcurrencyLimits{db: 8, probe: 6}) {
 		t.Fatalf("medium-load limits = %+v, want db=8 probe=6", got)
 	}
-	// 介于升档(180)和降档(120)阈值之间时保持中档，避免抖动。
+	// Between the upgrade (180) and downgrade (120) thresholds, stay at the middle tier to avoid flapping.
 	snapshot.RPM = 150
 	if got := h.adaptiveImportLimits(); got != (importConcurrencyLimits{db: 8, probe: 6}) {
 		t.Fatalf("hysteresis limits = %+v, want medium tier", got)
@@ -2084,7 +2084,7 @@ func TestAdaptiveImportLimitsUseHysteresisAndDatabasePressure(t *testing.T) {
 	if got := h.adaptiveImportLimits(); got != (importConcurrencyLimits{db: 4, probe: 4}) {
 		t.Fatalf("high-load limits = %+v, want db=4 probe=4", got)
 	}
-	// 高档每次最多降一档。
+	// The high tier drops at most one tier at a time.
 	snapshot.RPM = 0
 	if got := h.adaptiveImportLimits(); got != (importConcurrencyLimits{db: 4, probe: 4}) {
 		t.Fatalf("early recovery limits = %+v, want high tier during hold", got)
@@ -2213,8 +2213,8 @@ func TestRunImportProbeTaskUsesEightWorkersAtLowLoad(t *testing.T) {
 	wg.Wait()
 }
 
-// 导入采样 worker pool:同一时刻在途任务数不超过容量，超出的任务只进队列，
-// 不会各自创建一个阻塞 goroutine。
+// The import sampling worker pool: the number of in-flight tasks at any moment never exceeds its capacity, and extra tasks only go into the queue
+// without each creating a blocked goroutine.
 func TestRunImportProbeTaskConcurrencyGate(t *testing.T) {
 	store := auth.NewStore(nil, nil, &database.SystemSettings{MaxConcurrency: 1})
 	store.SetUsageProbeConcurrency(2)
@@ -2240,7 +2240,7 @@ func TestRunImportProbeTaskConcurrencyGate(t *testing.T) {
 			atomic.AddInt32(&inFlight, -1)
 		})
 	}
-	// 给两个 worker 时间拿到任务；其余四个应该仍是普通队列元素。
+	// Give the two workers time to take tasks; the other four should still be plain queue elements.
 	time.Sleep(150 * time.Millisecond)
 	if peak := atomic.LoadInt32(&maxSeen); peak > 2 {
 		close(release)

@@ -25,7 +25,7 @@ import (
 func (h *Handler) imageStudioPortalAuthMiddleware() gin.HandlerFunc {
 	return func(c *gin.Context) {
 		if h == nil || h.db == nil {
-			writeError(c, http.StatusServiceUnavailable, "服务未就绪")
+			writeError(c, http.StatusServiceUnavailable, "service not ready")
 			c.Abort()
 			return
 		}
@@ -38,7 +38,7 @@ func (h *Handler) imageStudioPortalAuthMiddleware() gin.HandlerFunc {
 			return
 		}
 		if !ok {
-			writeError(c, http.StatusNotFound, "生图门户未启用")
+			writeError(c, http.StatusNotFound, "image studio portal is not enabled")
 			c.Abort()
 			return
 		}
@@ -59,7 +59,7 @@ func (h *Handler) portalAPIKeyAuthFallback() gin.HandlerFunc {
 	return func(c *gin.Context) {
 		key := extractPublicAPIKey(c)
 		if key == "" {
-			writeError(c, http.StatusUnauthorized, "缺少 Authorization Bearer API Key")
+			writeError(c, http.StatusUnauthorized, "missing Authorization Bearer API Key")
 			c.Abort()
 			return
 		}
@@ -69,7 +69,7 @@ func (h *Handler) portalAPIKeyAuthFallback() gin.HandlerFunc {
 		if err != nil {
 			if errors.Is(err, sql.ErrNoRows) {
 				security.SecurityAuditLog("IMAGE_STUDIO_AUTH_FAILED", "ip="+security.SanitizeLog(c.ClientIP())+" key="+security.MaskAPIKey(key))
-				writeError(c, http.StatusUnauthorized, "API Key 无效或不存在")
+				writeError(c, http.StatusUnauthorized, "API Key is invalid or does not exist")
 				c.Abort()
 				return
 			}
@@ -78,17 +78,17 @@ func (h *Handler) portalAPIKeyAuthFallback() gin.HandlerFunc {
 			return
 		}
 		if !row.Enabled {
-			writeError(c, http.StatusUnauthorized, "API Key 已停用")
+			writeError(c, http.StatusUnauthorized, "API Key is disabled")
 			c.Abort()
 			return
 		}
 		if row.IsExpired(time.Now()) {
-			writeError(c, http.StatusUnauthorized, "API Key 已过期")
+			writeError(c, http.StatusUnauthorized, "API Key has expired")
 			c.Abort()
 			return
 		}
 		if row.IsQuotaExhausted() && c.Request.Method != http.MethodGet {
-			writeError(c, http.StatusForbidden, "API Key 配额已用尽")
+			writeError(c, http.StatusForbidden, "API Key quota is used up")
 			c.Abort()
 			return
 		}
@@ -135,12 +135,12 @@ func (h *Handler) CreatePortalImageJob(c *gin.Context) {
 	defer releaseIntake()
 	apiKey := portalAPIKeyFromContext(c)
 	if apiKey == nil {
-		writeError(c, http.StatusUnauthorized, "缺少或无效的 API Key")
+		writeError(c, http.StatusUnauthorized, "missing or invalid API Key")
 		return
 	}
 	var req imageGenerationJobPayload
 	if err := c.ShouldBindJSON(&req); err != nil {
-		writeError(c, http.StatusBadRequest, "请求体无效")
+		writeError(c, http.StatusBadRequest, "invalid request body")
 		return
 	}
 	if err := normalizePortalImageJobPayload(&req, false); err != nil {
@@ -160,12 +160,12 @@ func (h *Handler) CreatePortalImageEditJob(c *gin.Context) {
 	defer releaseIntake()
 	apiKey := portalAPIKeyFromContext(c)
 	if apiKey == nil {
-		writeError(c, http.StatusUnauthorized, "缺少或无效的 API Key")
+		writeError(c, http.StatusUnauthorized, "missing or invalid API Key")
 		return
 	}
 	var req imageGenerationJobPayload
 	if err := c.ShouldBindJSON(&req); err != nil {
-		writeError(c, http.StatusBadRequest, "请求体无效")
+		writeError(c, http.StatusBadRequest, "invalid request body")
 		return
 	}
 	if err := normalizePortalImageJobPayload(&req, true); err != nil {
@@ -182,14 +182,14 @@ func normalizePortalImageJobPayload(req *imageGenerationJobPayload, editMode boo
 		return err
 	}
 	if req == nil {
-		return errors.New("请求体无效")
+		return errors.New("invalid request body")
 	}
 	req.Prompt = strings.TrimSpace(req.Prompt)
 	if req.Prompt == "" {
-		return errors.New("提示词不能为空")
+		return errors.New("prompt must not be empty")
 	}
 	if len([]rune(req.Prompt)) > 8000 {
-		return errors.New("提示词不能超过 8000 个字符")
+		return errors.New("prompt must not exceed 8000 characters")
 	}
 	req.Model = normalizeImageStudioModel(req.Model)
 	if req.Model == "" {
@@ -205,22 +205,22 @@ func normalizePortalImageJobPayload(req *imageGenerationJobPayload, editMode boo
 	req.Style = normalizeOptionalImageParam(req.Style)
 	normalizedUpscale, err := normalizeImageJobUpscale(req.Model, req.Size, req.Upscale)
 	if err != nil {
-		return errors.New("放大规格必须为 2k 或 4k")
+		return errors.New("upscale size must be 2k or 4k")
 	}
 	req.Upscale = normalizedUpscale
 	count, err := normalizeImageJobOutputCount(req.N)
 	if err != nil {
-		return fmt.Errorf("生成数量必须在 1 到 %d 之间", maxImageJobOutputCount)
+		return fmt.Errorf("the number of images must be between 1 and %d", maxImageJobOutputCount)
 	}
 	req.N = count
 	req.TemplateID = 0 // portal never selects admin templates by id write
 
 	if editMode {
 		if len(req.InputImages) == 0 {
-			return errors.New("图生图需要上传参考图片")
+			return errors.New("image-to-image requires uploading reference images")
 		}
 		if len(req.InputImages) > proxy.MaxImageEditInputCount {
-			return errors.New("参考图片数量超过限制")
+			return errors.New("too many reference images")
 		}
 	} else {
 		req.InputImages = nil
@@ -310,7 +310,7 @@ func (h *Handler) enqueuePortalImageJob(c *gin.Context, apiKey *database.APIKeyR
 func (h *Handler) ListPortalImageJobs(c *gin.Context) {
 	apiKey := portalAPIKeyFromContext(c)
 	if apiKey == nil {
-		writeError(c, http.StatusUnauthorized, "缺少或无效的 API Key")
+		writeError(c, http.StatusUnauthorized, "missing or invalid API Key")
 		return
 	}
 	page, pageSize := paginationParams(c, 20)
@@ -334,12 +334,12 @@ func (h *Handler) ListPortalImageJobs(c *gin.Context) {
 func (h *Handler) GetPortalImageJob(c *gin.Context) {
 	apiKey := portalAPIKeyFromContext(c)
 	if apiKey == nil {
-		writeError(c, http.StatusUnauthorized, "缺少或无效的 API Key")
+		writeError(c, http.StatusUnauthorized, "missing or invalid API Key")
 		return
 	}
 	id, err := parsePositiveIDParam(c, "id")
 	if err != nil {
-		writeError(c, http.StatusBadRequest, "无效 ID")
+		writeError(c, http.StatusBadRequest, "invalid ID")
 		return
 	}
 	ctx, cancel := context.WithTimeout(c.Request.Context(), 10*time.Second)
@@ -351,7 +351,7 @@ func (h *Handler) GetPortalImageJob(c *gin.Context) {
 		job, err = h.db.GetImageGenerationJob(ctx, id)
 	}
 	if errors.Is(err, sql.ErrNoRows) {
-		writeError(c, http.StatusNotFound, "任务不存在")
+		writeError(c, http.StatusNotFound, "job does not exist")
 		return
 	}
 	if err != nil {
@@ -359,7 +359,7 @@ func (h *Handler) GetPortalImageJob(c *gin.Context) {
 		return
 	}
 	if job.APIKeyID != apiKey.ID {
-		writeError(c, http.StatusNotFound, "任务不存在")
+		writeError(c, http.StatusNotFound, "job does not exist")
 		return
 	}
 	if c.Query("include_cache") == "1" && c.Query("summary") != "1" {
@@ -372,19 +372,19 @@ func (h *Handler) GetPortalImageJob(c *gin.Context) {
 func (h *Handler) DeletePortalImageJob(c *gin.Context) {
 	apiKey := portalAPIKeyFromContext(c)
 	if apiKey == nil {
-		writeError(c, http.StatusUnauthorized, "缺少或无效的 API Key")
+		writeError(c, http.StatusUnauthorized, "missing or invalid API Key")
 		return
 	}
 	id, err := parsePositiveIDParam(c, "id")
 	if err != nil {
-		writeError(c, http.StatusBadRequest, "无效 ID")
+		writeError(c, http.StatusBadRequest, "invalid ID")
 		return
 	}
 	ctx, cancel := context.WithTimeout(c.Request.Context(), 10*time.Second)
 	defer cancel()
 	job, err := h.db.GetImageGenerationJob(ctx, id)
 	if errors.Is(err, sql.ErrNoRows) {
-		writeError(c, http.StatusNotFound, "任务不存在")
+		writeError(c, http.StatusNotFound, "job does not exist")
 		return
 	}
 	if err != nil {
@@ -392,16 +392,16 @@ func (h *Handler) DeletePortalImageJob(c *gin.Context) {
 		return
 	}
 	if job.APIKeyID != apiKey.ID {
-		writeError(c, http.StatusNotFound, "任务不存在")
+		writeError(c, http.StatusNotFound, "job does not exist")
 		return
 	}
 	if job.Status == database.ImageJobQueued || job.Status == database.ImageJobRunning {
-		writeError(c, http.StatusConflict, "任务仍在处理中，完成或失败后才能删除")
+		writeError(c, http.StatusConflict, "job is still being processed; it can only be deleted after it completes or fails")
 		return
 	}
 	if err := h.db.DeleteImageGenerationJob(ctx, id); err != nil {
 		if errors.Is(err, sql.ErrNoRows) {
-			writeError(c, http.StatusNotFound, "任务不存在")
+			writeError(c, http.StatusNotFound, "job does not exist")
 			return
 		}
 		writeInternalError(c, err)
@@ -422,7 +422,7 @@ func (h *Handler) DeletePortalImageJob(c *gin.Context) {
 func (h *Handler) ListPortalImageAssets(c *gin.Context) {
 	apiKey := portalAPIKeyFromContext(c)
 	if apiKey == nil {
-		writeError(c, http.StatusUnauthorized, "缺少或无效的 API Key")
+		writeError(c, http.StatusUnauthorized, "missing or invalid API Key")
 		return
 	}
 	page, pageSize := paginationParams(c, 24)
@@ -442,19 +442,19 @@ func (h *Handler) ListPortalImageAssets(c *gin.Context) {
 func (h *Handler) GetPortalImageAssetFile(c *gin.Context) {
 	apiKey := portalAPIKeyFromContext(c)
 	if apiKey == nil {
-		writeError(c, http.StatusUnauthorized, "缺少或无效的 API Key")
+		writeError(c, http.StatusUnauthorized, "missing or invalid API Key")
 		return
 	}
 	id, err := parsePositiveIDParam(c, "id")
 	if err != nil {
-		writeError(c, http.StatusBadRequest, "无效 ID")
+		writeError(c, http.StatusBadRequest, "invalid ID")
 		return
 	}
 	ctx, cancel := context.WithTimeout(c.Request.Context(), 10*time.Second)
 	defer cancel()
 	ownerKeyID, err := h.db.GetImageAssetJobAPIKeyID(ctx, id)
 	if errors.Is(err, sql.ErrNoRows) {
-		writeError(c, http.StatusNotFound, "图片不存在")
+		writeError(c, http.StatusNotFound, "image does not exist")
 		return
 	}
 	if err != nil {
@@ -462,12 +462,12 @@ func (h *Handler) GetPortalImageAssetFile(c *gin.Context) {
 		return
 	}
 	if ownerKeyID != apiKey.ID {
-		writeError(c, http.StatusNotFound, "图片不存在")
+		writeError(c, http.StatusNotFound, "image does not exist")
 		return
 	}
 	asset, err := h.db.GetImageAsset(ctx, id)
 	if errors.Is(err, sql.ErrNoRows) {
-		writeError(c, http.StatusNotFound, "图片不存在")
+		writeError(c, http.StatusNotFound, "image does not exist")
 		return
 	}
 	if err != nil {
@@ -484,19 +484,19 @@ func (h *Handler) GetPortalImageAssetFile(c *gin.Context) {
 func (h *Handler) DeletePortalImageAsset(c *gin.Context) {
 	apiKey := portalAPIKeyFromContext(c)
 	if apiKey == nil {
-		writeError(c, http.StatusUnauthorized, "缺少或无效的 API Key")
+		writeError(c, http.StatusUnauthorized, "missing or invalid API Key")
 		return
 	}
 	id, err := parsePositiveIDParam(c, "id")
 	if err != nil {
-		writeError(c, http.StatusBadRequest, "无效 ID")
+		writeError(c, http.StatusBadRequest, "invalid ID")
 		return
 	}
 	ctx, cancel := context.WithTimeout(c.Request.Context(), 10*time.Second)
 	defer cancel()
 	ownerKeyID, err := h.db.GetImageAssetJobAPIKeyID(ctx, id)
 	if errors.Is(err, sql.ErrNoRows) {
-		writeError(c, http.StatusNotFound, "图片不存在")
+		writeError(c, http.StatusNotFound, "image does not exist")
 		return
 	}
 	if err != nil {
@@ -504,12 +504,12 @@ func (h *Handler) DeletePortalImageAsset(c *gin.Context) {
 		return
 	}
 	if ownerKeyID != apiKey.ID {
-		writeError(c, http.StatusNotFound, "图片不存在")
+		writeError(c, http.StatusNotFound, "image does not exist")
 		return
 	}
 	asset, err := h.db.GetImageAsset(ctx, id)
 	if errors.Is(err, sql.ErrNoRows) {
-		writeError(c, http.StatusNotFound, "图片不存在")
+		writeError(c, http.StatusNotFound, "image does not exist")
 		return
 	}
 	if err != nil {

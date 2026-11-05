@@ -25,26 +25,26 @@ func TestWhamDailyUsageDueTargetsUsesPerStatusIntervals(t *testing.T) {
 	authoritative.SetCooldownUntil(now.Add(12*time.Hour), auth.ResponsesRateLimitedCooldownReason)
 	all := []*auth.Account{active, limited, authoritative}
 
-	// 首轮：没有计时记录，三个账号都要刷。
+	// First round: there are no timing records, so all three accounts are refreshed.
 	lastAttempt := map[int64]time.Time{}
 	if targets := whamDailyUsageDueTargets(all, lastAttempt, now); len(targets) != 3 {
 		t.Fatalf("first round targets = %d, want 3", len(targets))
 	}
 
-	// 半小时后：正常账号未到 1h，限流账号未到 6h，都不刷。
+	// Half an hour later: normal accounts have not reached 1h and rate-limited accounts have not reached 6h, so neither is refreshed.
 	half := now.Add(30 * time.Minute)
 	if targets := whamDailyUsageDueTargets(all, lastAttempt, half); len(targets) != 0 {
 		t.Fatalf("30m targets = %d, want 0", len(targets))
 	}
 
-	// 一小时后：正常账号到期，限流账号继续等。
+	// One hour later: normal accounts are due, rate-limited accounts keep waiting.
 	hourLater := now.Add(time.Hour)
 	targets := whamDailyUsageDueTargets(all, lastAttempt, hourLater)
 	if len(targets) != 1 || targets[0].DBID != 1 {
 		t.Fatalf("1h targets = %+v, want only account 1", targets)
 	}
 
-	// 六小时后：限流账号也到期了。
+	// Six hours later: rate-limited accounts are due too.
 	sixLater := now.Add(6 * time.Hour)
 	targets = whamDailyUsageDueTargets(all, lastAttempt, sixLater)
 	found := map[int64]bool{}
@@ -67,7 +67,7 @@ func TestWhamDailyUsageDueTargetsRecoveredAccountResumesHourly(t *testing.T) {
 		t.Fatalf("first round targets = %d, want 1", len(targets))
 	}
 
-	// 冷却结束恢复后，按正常 1h 间隔判定，而不是继续背着 6h。
+	// After the cooldown ends and the account recovers, it is judged by the normal 1h interval, not kept on 6h.
 	recovered := &auth.Account{DBID: 3, AccessToken: "token"}
 	hourLater := now.Add(time.Hour)
 	if targets := whamDailyUsageDueTargets([]*auth.Account{recovered}, lastAttempt, hourLater); len(targets) != 1 {

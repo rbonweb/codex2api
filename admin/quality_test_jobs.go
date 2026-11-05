@@ -23,34 +23,34 @@ func (h *Handler) WaitQualityTests()                     { h.qualityTestWG.Wait(
 
 func (h *Handler) CreateQualityTestJob(c *gin.Context) {
 	if h.db == nil || (h.qualityTestContext != nil && h.qualityTestContext.Err() != nil) {
-		c.JSON(http.StatusServiceUnavailable, gin.H{"error": "检测任务服务不可用"})
+		c.JSON(http.StatusServiceUnavailable, gin.H{"error": "Quality test job service unavailable"})
 		return
 	}
 	c.Request.Body = http.MaxBytesReader(c.Writer, c.Request.Body, 128*1024)
 	var req qualityTestRequest
 	if err := c.ShouldBindJSON(&req); err != nil {
-		c.JSON(http.StatusBadRequest, gin.H{"error": "无效的检测请求"})
+		c.JSON(http.StatusBadRequest, gin.H{"error": "Invalid test request"})
 		return
 	}
 	req.Model = strings.TrimSpace(req.Model)
 	req.ReasoningEffort = strings.ToLower(strings.TrimSpace(req.ReasoningEffort))
 	if req.Model == "" || len(req.Model) > 200 || strings.TrimSpace(req.Prompt) == "" || len(req.Prompt) > qualityTestPromptLimit {
-		c.JSON(http.StatusBadRequest, gin.H{"error": "请选择模型，测试提示词不能为空且不能超过 16000 字节"})
+		c.JSON(http.StatusBadRequest, gin.H{"error": "Select a model; the test prompt cannot be empty and cannot exceed 16000 bytes"})
 		return
 	}
 	timeout := time.Duration(req.TimeoutMinutes) * time.Minute
 	if req.TimeoutMinutes != 0 && (timeout < database.QualityTestMinTimeout || timeout > database.QualityTestMaxTimeout) {
-		c.JSON(http.StatusBadRequest, gin.H{"error": fmt.Sprintf("超时上限需在 %d-%d 分钟之间", int(database.QualityTestMinTimeout.Minutes()), int(database.QualityTestMaxTimeout.Minutes()))})
+		c.JSON(http.StatusBadRequest, gin.H{"error": fmt.Sprintf("Timeout must be between %d and %d minutes", int(database.QualityTestMinTimeout.Minutes()), int(database.QualityTestMaxTimeout.Minutes()))})
 		return
 	}
 	id, err := strconv.ParseInt(c.Param("id"), 10, 64)
 	if err != nil || id <= 0 {
-		c.JSON(http.StatusBadRequest, gin.H{"error": "无效的账号 ID"})
+		c.JSON(http.StatusBadRequest, gin.H{"error": "Invalid account ID"})
 		return
 	}
 	account := h.store.FindByID(id)
 	if account == nil {
-		c.JSON(http.StatusNotFound, gin.H{"error": "账号不在运行时池中"})
+		c.JSON(http.StatusNotFound, gin.H{"error": "Account is not in the runtime pool"})
 		return
 	}
 	if err := h.validateQualityTestForAccount(c.Request.Context(), account, req); err != nil {
@@ -66,7 +66,7 @@ func (h *Handler) CreateQualityTestJob(c *gin.Context) {
 	account.Mu().RUnlock()
 	row, err := h.db.GetAccountByID(c.Request.Context(), id)
 	if err != nil {
-		c.JSON(http.StatusInternalServerError, gin.H{"error": "读取账号信息失败"})
+		c.JSON(http.StatusInternalServerError, gin.H{"error": "Failed to read account information"})
 		return
 	}
 	if row != nil && row.Name != "" {
@@ -83,7 +83,7 @@ func (h *Handler) CreateQualityTestJob(c *gin.Context) {
 			c.JSON(http.StatusConflict, gin.H{"error": err.Error()})
 			return
 		}
-		c.JSON(http.StatusInternalServerError, gin.H{"error": "保存检测任务失败"})
+		c.JSON(http.StatusInternalServerError, gin.H{"error": "Failed to save the test job"})
 		return
 	}
 	if presetKind == "custom" {
@@ -94,11 +94,11 @@ func (h *Handler) CreateQualityTestJob(c *gin.Context) {
 	h.qualityTestWG.Add(1)
 	if !h.startDBBackgroundTaskWithParent(h.qualityTestContext, func(parent context.Context) { defer h.qualityTestWG.Done(); h.runQualityTestJob(parent, *job, req) }) {
 		h.qualityTestWG.Done()
-		job.Status, job.Error = "interrupted", "服务正在关闭，请重新发起检测"
+		job.Status, job.Error = "interrupted", "The service is shutting down; start the test again"
 		if err := h.db.FinishQualityTest(ctx, *job); err != nil {
 			log.Printf("[quality-test] job=%d admission finalization failed: %v", job.ID, err)
 		}
-		c.JSON(http.StatusServiceUnavailable, gin.H{"error": "检测任务服务正在关闭"})
+		c.JSON(http.StatusServiceUnavailable, gin.H{"error": "The test job service is shutting down"})
 		return
 	}
 	c.JSON(http.StatusAccepted, gin.H{"job": job})
@@ -133,7 +133,7 @@ func (h *Handler) ListQualityTests(c *gin.Context) {
 	}
 	jobs, err := h.db.ListQualityTests(c.Request.Context(), page, size, filter)
 	if err != nil {
-		c.JSON(http.StatusInternalServerError, gin.H{"error": "读取检测记录失败"})
+		c.JSON(http.StatusInternalServerError, gin.H{"error": "Failed to read test records"})
 		return
 	}
 	c.JSON(http.StatusOK, jobs)
@@ -142,16 +142,16 @@ func (h *Handler) ListQualityTests(c *gin.Context) {
 func (h *Handler) GetQualityTest(c *gin.Context) {
 	id, err := strconv.ParseInt(c.Param("id"), 10, 64)
 	if err != nil || id <= 0 {
-		c.JSON(http.StatusBadRequest, gin.H{"error": "无效的检测记录 ID"})
+		c.JSON(http.StatusBadRequest, gin.H{"error": "Invalid test record ID"})
 		return
 	}
 	job, err := h.db.GetQualityTestJob(c.Request.Context(), id)
 	if errors.Is(err, sql.ErrNoRows) {
-		c.JSON(http.StatusNotFound, gin.H{"error": "检测记录不存在"})
+		c.JSON(http.StatusNotFound, gin.H{"error": "Test record not found"})
 		return
 	}
 	if err != nil {
-		c.JSON(http.StatusInternalServerError, gin.H{"error": "读取检测记录失败"})
+		c.JSON(http.StatusInternalServerError, gin.H{"error": "Failed to read test records"})
 		return
 	}
 	c.JSON(http.StatusOK, gin.H{"job": job})
@@ -160,11 +160,11 @@ func (h *Handler) GetQualityTest(c *gin.Context) {
 func (h *Handler) CancelQualityTest(c *gin.Context) {
 	id, err := strconv.ParseInt(c.Param("id"), 10, 64)
 	if err != nil || id <= 0 {
-		c.JSON(http.StatusBadRequest, gin.H{"error": "无效的检测记录 ID"})
+		c.JSON(http.StatusBadRequest, gin.H{"error": "Invalid test record ID"})
 		return
 	}
 	if err := h.db.CancelQualityTest(c.Request.Context(), id); err != nil {
-		c.JSON(http.StatusInternalServerError, gin.H{"error": "停止检测失败"})
+		c.JSON(http.StatusInternalServerError, gin.H{"error": "Failed to stop the test"})
 		return
 	}
 	h.GetQualityTest(c)
@@ -187,7 +187,7 @@ func (w *qualityJobWriter) Write(body []byte) (int, error) {
 			Error string `json:"error"`
 		}
 		if err := json.Unmarshal(body, &payload); err != nil {
-			payload.Error = fmt.Sprintf("检测请求失败 (HTTP %d)", w.status)
+			payload.Error = fmt.Sprintf("test request failed (HTTP %d)", w.status)
 		}
 		w.emit(testEvent{Type: "error", Error: payload.Error})
 	} else {
@@ -214,7 +214,7 @@ func (h *Handler) runQualityTestJob(parent context.Context, job database.Quality
 		switch event.Type {
 		case "content":
 			if len(job.Output)+len(event.Text) > 1<<20 {
-				job.Error = "输出超过 1 MiB 上限，已停止生成"
+				job.Error = "Output exceeded the 1 MiB limit; generation stopped"
 				cancel()
 				return
 			}
@@ -258,7 +258,7 @@ func (h *Handler) runQualityTestJob(parent context.Context, job database.Quality
 				status, err := h.db.QualityTestStatus(ctx, job.ID)
 				if err != nil {
 					mu.Lock()
-					job.Error = "读取检测任务状态失败"
+					job.Error = "Failed to read the test job status"
 					mu.Unlock()
 					cancel()
 					return
@@ -274,7 +274,7 @@ func (h *Handler) runQualityTestJob(parent context.Context, job database.Quality
 				if changed {
 					if err := h.db.SaveQualityTestProgress(ctx, snapshot); err != nil {
 						mu.Lock()
-						job.Error = "保存检测进度失败，任务已停止"
+						job.Error = "Failed to save test progress; the job has stopped"
 						mu.Unlock()
 						cancel()
 						return
@@ -286,7 +286,7 @@ func (h *Handler) runQualityTestJob(parent context.Context, job database.Quality
 	defer func() {
 		if recovered := recover(); recovered != nil {
 			mu.Lock()
-			job.Error = "检测任务异常中断"
+			job.Error = "The test job ended abnormally"
 			mu.Unlock()
 		}
 		close(done)
@@ -295,10 +295,10 @@ func (h *Handler) runQualityTestJob(parent context.Context, job database.Quality
 		switch {
 		case parent.Err() != nil:
 			job.Status = "interrupted"
-			job.Error = "服务关闭，检测已中断"
+			job.Error = "The service shut down; the test was interrupted"
 		case errors.Is(ctx.Err(), context.DeadlineExceeded):
 			job.Status = "error"
-			job.Error = fmt.Sprintf("检测超过 %d 分钟，已停止", int(job.DeadlineAt.Sub(job.CreatedAt).Round(time.Minute).Minutes()))
+			job.Error = fmt.Sprintf("The test exceeded %d minutes and was stopped", int(job.DeadlineAt.Sub(job.CreatedAt).Round(time.Minute).Minutes()))
 		case job.Error != "":
 			job.Status = "error"
 			// A break caused by our own cancellation is not an upstream interruption.
@@ -309,7 +309,7 @@ func (h *Handler) runQualityTestJob(parent context.Context, job database.Quality
 			job.Status = "completed"
 		default:
 			job.Status = "error"
-			job.Error = "流已中断，未收到成功完成事件"
+			job.Error = "The stream was interrupted; no successful completion event was received"
 		}
 		finalCtx, finalCancel := context.WithTimeout(context.Background(), 5*time.Second)
 		defer finalCancel()
@@ -323,7 +323,7 @@ func (h *Handler) runQualityTestJob(parent context.Context, job database.Quality
 		request, err := http.NewRequestWithContext(ctx, http.MethodPost, fmt.Sprintf("/accounts/%d/test", job.AccountID), nil)
 		if err != nil {
 			mu.Lock()
-			job.Error = "创建检测请求失败"
+			job.Error = "Failed to create the test request"
 			mu.Unlock()
 			return
 		}

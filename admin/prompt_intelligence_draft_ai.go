@@ -14,10 +14,10 @@ import (
 	"github.com/gin-gonic/gin"
 )
 
-// 「AI 生成规则草案」：基于候选的上游 CY 证据让模型写出一条窄正则规则草案，
-// 只返回给前端预填表单，不落库；管理员审核后再走原有的保存草案 → 发布流程。
-// 校验沿用 validatePromptIntelligenceAIRule，不通过的草案也照样返回并附上原因，
-// 由人决定是否修改后保存。
+// "AI generate rule draft": based on the candidate's upstream CY evidence, have the model write one narrow regex rule draft,
+// returned only to pre-fill the frontend form and not saved to the database; after the admin reviews it, it goes through the existing save draft → publish flow.
+// Validation reuses validatePromptIntelligenceAIRule; a draft that fails validation is still returned with the reason attached,
+// and the person decides whether to modify it before saving.
 
 type promptIntelligenceDraftSuggestRequest struct {
 	Provider string `json:"provider"`
@@ -33,8 +33,8 @@ type promptIntelligenceDraftSuggestResponse struct {
 	Reason          string                   `json:"reason"`
 	Rule            promptIntelligenceAIRule `json:"rule"`
 	ValidationError string                   `json:"validation_error,omitempty"`
-	// EvidenceMatched / EvidenceTotal：草案正则在本候选可学习证据上的命中数，
-	// 0 命中说明规则没有抓住它所依据的行为，前端提示但不阻止人工修改后保存。
+	// EvidenceMatched / EvidenceTotal: the number of hits the draft regex gets on this candidate's learnable evidence,
+	// 0 hits means the rule did not catch the behavior it was based on; the frontend warns but does not block saving after manual edits.
 	EvidenceMatched int `json:"evidence_matched"`
 	EvidenceTotal   int `json:"evidence_total"`
 }
@@ -43,32 +43,32 @@ type promptIntelligenceDraftSuggestResponse struct {
 func (h *Handler) SuggestPromptIntelligenceCandidateDraft(c *gin.Context) {
 	candidateID, err := parsePositiveInt64Param(c, "id")
 	if err != nil {
-		writeError(c, http.StatusBadRequest, "候选证据 ID 无效")
+		writeError(c, http.StatusBadRequest, "Invalid candidate evidence ID")
 		return
 	}
 	candidate, err := h.db.GetPromptRuleCandidate(c.Request.Context(), candidateID)
 	if err != nil {
 		if errors.Is(err, sql.ErrNoRows) {
-			writeError(c, http.StatusNotFound, "候选证据不存在")
+			writeError(c, http.StatusNotFound, "Candidate evidence not found")
 			return
 		}
 		writeInternalError(c, err)
 		return
 	}
 	if candidate.Kind != database.PromptRuleCandidateKindEvidence {
-		writeError(c, http.StatusConflict, "只有上游风险证据可以生成规则草案")
+		writeError(c, http.StatusConflict, "Only upstream risk evidence can generate a rule draft")
 		return
 	}
 	var request promptIntelligenceDraftSuggestRequest
 	if err := c.ShouldBindJSON(&request); err != nil {
-		writeError(c, http.StatusBadRequest, "AI 生成参数无效")
+		writeError(c, http.StatusBadRequest, "Invalid AI generation parameters")
 		return
 	}
 	if request.Provider == "" {
 		request.Provider = promptIntelligenceAIProviderReview
 	}
 	if request.Provider != promptIntelligenceAIProviderReview && request.Provider != promptIntelligenceAIProviderPool {
-		writeError(c, http.StatusBadRequest, "不支持的 AI 提供方")
+		writeError(c, http.StatusBadRequest, "Unsupported AI provider")
 		return
 	}
 	evidenceRows, err := h.db.ListPromptRuleCandidateEvidence(c.Request.Context(), candidateID, 100)
@@ -84,7 +84,7 @@ func (h *Handler) SuggestPromptIntelligenceCandidateDraft(c *gin.Context) {
 	}
 	learnableEvidence := selectPromptIntelligenceLearnableEvidence(upstreamEvidence, 20)
 	if len(learnableEvidence) == 0 {
-		writeError(c, http.StatusConflict, "该候选没有可学习的 Prompt 或上下文证据，无法生成草案")
+		writeError(c, http.StatusConflict, "This candidate has no learnable Prompt or context evidence, so a draft cannot be generated")
 		return
 	}
 	evidenceBasis := promptIntelligenceEvidenceBasisPrompt
@@ -117,7 +117,7 @@ func (h *Handler) SuggestPromptIntelligenceCandidateDraft(c *gin.Context) {
 		return
 	}
 	if decision.Rule == nil || strings.TrimSpace(decision.Rule.Pattern) == "" {
-		writeError(c, http.StatusBadGateway, "模型没有给出可用的规则草案："+promptfilter.RedactedPreview(decision.Reason, 300))
+		writeError(c, http.StatusBadGateway, "The model did not give a usable rule draft: "+promptfilter.RedactedPreview(decision.Reason, 300))
 		return
 	}
 	rule := *decision.Rule
@@ -131,8 +131,8 @@ func (h *Handler) SuggestPromptIntelligenceCandidateDraft(c *gin.Context) {
 	if rule.Weight <= 0 {
 		rule.Weight = 35
 	}
-	// 校验口径与人工保存草案一致（validateIntelligenceCandidate：权重范围 + 正则安全审计），
-	// 不套用自动入库的"完整匹配内置样句"门槛——那条门槛会拒绝所有针对具体行为的窄正则。
+	// Validation matches the manual draft save (validateIntelligenceCandidate: weight range + regex security audit),
+	// and does not apply the "full match against built-in sample sentences" gate used for automatic intake; that gate would reject every narrow regex aimed at a specific behavior.
 	validationError := ""
 	if err := validateIntelligenceCandidate(promptIntelligenceCandidate{
 		Name: rule.Name, Pattern: rule.Pattern, Weight: rule.Weight, Category: rule.Category, Strict: rule.Strict, Rationale: rule.Rationale,
@@ -141,7 +141,7 @@ func (h *Handler) SuggestPromptIntelligenceCandidateDraft(c *gin.Context) {
 	}
 	matched, total := countPromptIntelligenceDraftEvidenceMatches(rule.Pattern, learnableEvidence)
 	if validationError == "" && matched == 0 {
-		validationError = "草案正则没有命中本候选的任何证据文本，请检查正则是否抓住了实际行为"
+		validationError = "the draft regex does not match any evidence text for this candidate; check whether the regex catches the actual behavior"
 	}
 	response := promptIntelligenceDraftSuggestResponse{
 		Provider: attribution.Provider, Model: attribution.Model, EvidenceBasis: evidenceBasis,
@@ -152,7 +152,7 @@ func (h *Handler) SuggestPromptIntelligenceCandidateDraft(c *gin.Context) {
 	c.JSON(http.StatusOK, response)
 }
 
-// buildPromptIntelligenceAIRuleDraftIdentity 在 Review 身份上叠加"只产出规则草案"的任务扩展。
+// buildPromptIntelligenceAIRuleDraftIdentity layers the task extension "produce only a rule draft" on top of the Review identity.
 func buildPromptIntelligenceAIRuleDraftIdentity(reviewSystemPrompt string) string {
 	return strings.TrimSpace(reviewSystemPrompt) + `
 
@@ -184,8 +184,8 @@ Return exactly one JSON object and nothing else:
 {"decision":"rule","confidence":0.00,"reason":"...","rule":{"name":"...","pattern":"...","weight":35,"category":"...","strict":false,"rationale":"..."}}`
 }
 
-// countPromptIntelligenceDraftEvidenceMatches 用草案正则（按网关的大小写不敏感方式编译）
-// 逐条测试可学习证据的 Prompt 文本或上下文段，返回命中数与总数。
+// countPromptIntelligenceDraftEvidenceMatches uses the draft regex (compiled in the gateway's case-insensitive way)
+// to test each learnable evidence Prompt text or context section one by one, returning the hit count and the total.
 func countPromptIntelligenceDraftEvidenceMatches(pattern string, evidence []*database.PromptRuleCandidateEvidence) (int, int) {
 	pattern = strings.TrimSpace(pattern)
 	if pattern == "" || len(evidence) == 0 {

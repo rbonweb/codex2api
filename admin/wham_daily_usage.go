@@ -17,16 +17,16 @@ import (
 	"github.com/gin-gonic/gin"
 )
 
-// whamDailyUsageDefaultDays 是弹窗默认展示的天数。上游可回溯约 84 天，本地库累积后
-// 可以看更长，所以默认给 30。
+// whamDailyUsageDefaultDays is the number of days the dialog shows by default. Upstream can be queried back about 84 days, and once the local database has accumulated
+// more, so the default is 30.
 const whamDailyUsageDefaultDays = 30
 
-// whamDailyUsageMaxDays 限制单次查询窗口。与快照保留期 whamDailyUsageKeepDays
-// 对齐：留了一年就要查得到一年，否则超出上限的那部分数据永远看不到。
+// whamDailyUsageMaxDays limits the window of a single query. It matches the snapshot retention period whamDailyUsageKeepDays,
+// so if a year is kept, a year can be queried; otherwise the part beyond the limit would never be visible.
 const whamDailyUsageMaxDays = whamDailyUsageKeepDays
 
-// whamDailyBreakdownMinShare 是拆分条目下发的最小份额。上游目录里会出现 1e-7 级
-// 的碎屑（如 gpt-6-astra 0.0004%），显示成 $0 的一行只添乱。
+// whamDailyBreakdownMinShare is the minimum share for breakdown items sent to the frontend. Upstream catalogs can contain 1e-7-level crumbs
+// (such as gpt-6-astra at 0.0004%), and a row that displays as $0 only adds clutter.
 const whamDailyBreakdownMinShare = 1e-6
 
 func (h *Handler) queryWhamDailyUsageUpstream(ctx context.Context, account *auth.Account, proxyURL, startDate, endDate string) (*proxy.WhamDailyUsageResponse, *http.Response, error) {
@@ -43,19 +43,19 @@ func (h *Handler) queryWhamDailyTokenBreakdownUpstream(ctx context.Context, acco
 	return proxy.QueryWhamDailyTokenBreakdown(ctx, account, proxyURL, startDate, endDate)
 }
 
-// GetAccountWhamDailyUsage 返回账号的官方结算用量历史。
+// GetAccountWhamDailyUsage returns the account's official settlement usage history.
 // GET /api/admin/accounts/:id/wham-daily-usage?days=30[&refresh=1]
 //
-// 默认读本地快照（秒开）。refresh=1 时先打一次上游把滚动窗口内的数据回补落库，
-// 再返回合并后的结果，用于弹窗上的「刷新」按钮。
+// By default it reads the local snapshot (opens instantly). With refresh=1 it first makes one upstream call to backfill and store the data in the rolling window,
+// then returns the merged result, for the "Refresh" button in the dialog.
 func (h *Handler) GetAccountWhamDailyUsage(c *gin.Context) {
 	id, err := strconv.ParseInt(c.Param("id"), 10, 64)
 	if err != nil {
-		writeError(c, http.StatusBadRequest, "无效的账号 ID")
+		writeError(c, http.StatusBadRequest, "invalid account ID")
 		return
 	}
 	if h.db == nil {
-		writeError(c, http.StatusServiceUnavailable, "数据库不可用")
+		writeError(c, http.StatusServiceUnavailable, "database unavailable")
 		return
 	}
 
@@ -63,21 +63,21 @@ func (h *Handler) GetAccountWhamDailyUsage(c *gin.Context) {
 	if raw := strings.TrimSpace(c.Query("days")); raw != "" {
 		parsed, parseErr := strconv.Atoi(raw)
 		if parseErr != nil || parsed <= 0 || parsed > whamDailyUsageMaxDays {
-			writeError(c, http.StatusBadRequest, fmt.Sprintf("days 必须是 1~%d 的整数", whamDailyUsageMaxDays))
+			writeError(c, http.StatusBadRequest, fmt.Sprintf("days must be an integer from 1 to %d", whamDailyUsageMaxDays))
 			return
 		}
 		days = parsed
 	}
 
-	// 刷新失败不挡住历史展示：上游 401/429 时仍然返回已落库的数据，
-	// 只把错误原因带回去，让弹窗提示而不是整块变空。
-	// counts 与拆分是两个端点，分别报错：拆分失败时 counts 已经刷新成功了。
+	// A refresh failure does not block the history display: on upstream 401/429 the stored data is still returned,
+	// and only the error reason is sent back, so the dialog shows a hint instead of going entirely blank.
+	// counts and the breakdown are two endpoints that report errors separately: when the breakdown fails, counts have already refreshed successfully.
 	refreshError := ""
 	breakdownRefreshError := ""
 	if c.Query("refresh") == "1" {
 		account := h.findAccountByID(id)
 		if needsPATWorkspaceHydration(account) {
-			// 手动刷新是用户明确要看官方统计：先试着补全工作区，不受退避限制。
+			// A manual refresh is the user explicitly asking for official statistics: first try to fill in the workspace, not limited by backoff.
 			h.hydratePATWorkspace(c.Request.Context(), account, true)
 		}
 		switch {
@@ -87,7 +87,7 @@ func (h *Handler) GetAccountWhamDailyUsage(c *gin.Context) {
 		case isCodexATAccount(account) || !whamDailyUsageChannelSupported(account):
 			refreshError = errWhamDailyUsageUnsupported.Error()
 		case account.GetAccessToken() == "":
-			refreshError = "账号没有可用的 access token，请先刷新账号"
+			refreshError = "account has no usable access token, please refresh the account first"
 		default:
 			ctx, cancel := context.WithTimeout(c.Request.Context(), 25*time.Second)
 			outcome, syncErr := h.syncWhamDailyUsage(ctx, account)
@@ -105,7 +105,7 @@ func (h *Handler) GetAccountWhamDailyUsage(c *gin.Context) {
 	defer cancel()
 	rows, err := h.db.ListAccountDailyUsage(ctx, id, days)
 	if err != nil {
-		writeError(c, http.StatusInternalServerError, "读取官方用量历史失败："+err.Error())
+		writeError(c, http.StatusInternalServerError, "failed to read official usage history: "+err.Error())
 		return
 	}
 
@@ -114,8 +114,8 @@ func (h *Handler) GetAccountWhamDailyUsage(c *gin.Context) {
 	var totalTokens, totalTurns int64
 	var lastSynced time.Time
 	for _, row := range rows {
-		// 拆分先到、counts 还没来的行不展示：没有官方 credits 的一天既没法解读份额，
-		// 也不该把它的 synced_at 当成「刚同步过」。counts 到了自然会出现。
+		// Rows where the breakdown arrives before counts are not shown: a day without official credits cannot be interpreted for shares,
+		// and its synced_at should not be treated as "just synced" either. The row appears naturally once counts arrive.
 		if row == nil || !row.HasCounts() {
 			continue
 		}
@@ -157,13 +157,13 @@ func (h *Handler) GetAccountWhamDailyUsage(c *gin.Context) {
 			"turns":        totalTurns,
 		},
 		"credits_per_usd": proxy.WhamCreditsPerUSD,
-		// 上游可回溯的深度（深回补窗口），前端用它解释「更早的来自本地快照」。
+		// The upstream lookback depth (the deep backfill window), which the frontend uses to explain "earlier data comes from the local snapshot".
 		"retention_days": proxy.WhamDailyUsageBackfillDays,
 	}
 	if !lastSynced.IsZero() {
 		payload["last_synced_at"] = lastSynced
 	}
-	// 本周期成本与额度估算：只对有 wham 链路的账号给，其它渠道没有窗口信息。
+	// This cycle's cost and quota estimate: only given for accounts with a wham path; other channels have no window information.
 	if account := h.findAccountByID(id); account != nil && whamDailyUsageChannelSupported(account) && !isCodexATAccount(account) {
 		if cycle := h.buildWhamDailyCycle(ctx, account, time.Now()); cycle != nil {
 			payload["cycle"] = cycle
@@ -178,13 +178,13 @@ func (h *Handler) GetAccountWhamDailyUsage(c *gin.Context) {
 	c.JSON(http.StatusOK, payload)
 }
 
-// projectWhamDailyBreakdown 把落库的归一化占比换成当天内部的份额与分摊成本。
+// projectWhamDailyBreakdown turns the stored normalized ratios into same-day internal shares and allocated costs.
 //
-// 上游 percent 按请求区间峰值归一化，不同天、不同次同步的数值不可比；但同一天内
-// 各条目除以当天总量就是份额（0~1），份额乘当天官方 credits 就是该模型/入口的绝对
-// 成本。free 号 credits 恒 0，此时只有份额有意义，credits/usd 下发 0。
-// 模型与入口各用自己的总量做分母：实测两者相等，但万一上游哪天不一致，各自仍能
-// 归一到 1。
+// Upstream percent is normalized to the request interval's peak, so values from different days or different syncs are not comparable; but within the same day
+// each item divided by the day's total is its share (0~1), and the share times the day's official credits is the absolute
+// cost of that model/entry. Free account credits are always 0; in that case only the share is meaningful, and credits/usd is sent as 0.
+// Models and entries each use their own total as the denominator: measured as equal, but if upstream ever disagrees one day, each can still
+// normalize to 1.
 func projectWhamDailyBreakdown(row *database.AccountDailyUsage) ([]gin.H, []gin.H) {
 	breakdown := []gin.H{}
 	surfaces := []gin.H{}
@@ -235,8 +235,8 @@ func projectWhamDailyBreakdown(row *database.AccountDailyUsage) ([]gin.H, []gin.
 	return breakdown, surfaces
 }
 
-// rawJSONArray 把落库时原样保存的拆分数组回填成 JSON 值。解析失败时退回空数组，
-// 保证响应结构稳定，前端不用做兼容分支。
+// rawJSONArray turns the breakdown array, saved exactly as stored, back into a JSON value. On a parse failure it falls back to an empty array,
+// keeping the response structure stable so the frontend needs no compatibility branch.
 func rawJSONArray(raw string) []any {
 	trimmed := strings.TrimSpace(raw)
 	if trimmed == "" {
@@ -249,16 +249,16 @@ func rawJSONArray(raw string) []any {
 	return out
 }
 
-// whamDailySyncOutcome 是一次同步的结果。counts 是主链路，失败直接作为 error 返回；
-// 拆分是补充信息，失败只记在 BreakdownErr 里，不影响 counts 落库与「已同步」标记。
+// whamDailySyncOutcome is the result of one sync. counts is the main path, and its failure is returned directly as the error;
+// the breakdown is supplementary, and its failure is only recorded in BreakdownErr and does not affect storing counts or the "synced" marker.
 type whamDailySyncOutcome struct {
 	CountsDays    int
 	BreakdownDays int
 	BreakdownErr  error
 }
 
-// whamDailyDeepState 记录本进程内某账号两个端点是否已各自完成过一次深回补请求。
-// 进程内存即可：重启后最多再深拉一次。
+// whamDailyDeepState records, within this process, whether each of the two endpoints of an account has completed one deep backfill request.
+// Process memory is enough: after a restart, at most one more deep pull happens.
 type whamDailyDeepState struct {
 	Counts    bool
 	Breakdown bool
@@ -288,22 +288,22 @@ func (h *Handler) markWhamDailyDeepSynced(id int64, counts, breakdown bool) {
 	h.whamDailyDeepSynced[id] = state
 }
 
-// whamDailyWindow 是一次上游请求的日期区间；Deep 表示这是深回补（84 天）而不是
-// 7 天滚动窗口。
+// whamDailyWindow is the date range of one upstream request; Deep means this is a deep backfill (84 days) and not
+// the 7-day rolling window.
 type whamDailyWindow struct {
 	Start string
 	End   string
 	Deep  bool
 }
 
-// whamDailySyncWindows 按端点各自决定同步窗口。
+// whamDailySyncWindows decides the sync window for each endpoint separately.
 //
-// 深回补（84 天）的条件：本进程还没为该端点深拉过，且本地该端点的覆盖起点晚于
-// 深回补起点（含完全没有覆盖）。两个端点必须分开判断：拆分先到会以零 counts 建行，
-// 若只看「有没有行」，counts 首轮失败就会被永久锁在 7 天窗口，历史再也拿不到；
-// 反过来拆分同理。老部署升级后本地只有 7 天滚动积累的历史，同样满足条件，会各深拉
-// 一次把上游还留着的 84 天搬进来。账号历史本来就短于 84 天的，每个进程生命周期只
-// 会多拉一次，靠进程内标记兜住。
+// Conditions for a deep backfill (84 days): this process has not yet done a deep pull for the endpoint, and the local coverage start of that endpoint is later than
+// the deep backfill start (including having no coverage at all). The two endpoints must be judged separately: if the breakdown arrives first it creates rows with zero counts,
+// so if only "whether rows exist" is checked, a first-round counts failure would be locked into the 7-day window forever, and the history would never be fetched;
+// the reverse holds for the breakdown. After an upgrade of an old deployment, local history only has 7-day rolling accumulation and also meets the condition, so each endpoint does one deep pull
+// to bring in the 84 days upstream still holds. For accounts whose history is shorter than 84 days, only one extra pull happens per process lifetime,
+// guarded by the in-process marker.
 func (h *Handler) whamDailySyncWindows(ctx context.Context, account *auth.Account, now time.Time) (counts, breakdown whamDailyWindow) {
 	rollingStart, endDate := proxy.WhamDailyUsageWindow(now)
 	deepStart, _ := proxy.WhamDailyUsageBackfillWindow(now)
@@ -314,7 +314,7 @@ func (h *Handler) whamDailySyncWindows(ctx context.Context, account *auth.Accoun
 	}
 	coverage, err := h.db.GetAccountDailyUsageCoverage(ctx, account.DBID)
 	if err != nil {
-		// 查不到覆盖就按滚动窗口走，不因此打断同步。
+		// If coverage cannot be looked up, use the rolling window and do not interrupt the sync because of it.
 		return counts, breakdown
 	}
 	state := h.whamDailyDeepStateFor(account.DBID)
@@ -327,18 +327,18 @@ func (h *Handler) whamDailySyncWindows(ctx context.Context, account *auth.Accoun
 	return counts, breakdown
 }
 
-// syncWhamDailyUsage 并行拉取 counts 与模型×速度拆分并 upsert 落库。
+// syncWhamDailyUsage pulls counts and the model × speed breakdown in parallel and upserts them into storage.
 //
-// 窗口：稳态滚动回补最近 7 天（当天的记录全天在变，隔天才稳定；整窗覆盖顺带修复
-// 漏跑的空洞）；某端点本地没有足够深的覆盖时对该端点深回补 84 天，见
-// whamDailySyncWindows。两个端点用同一个 ctx 并行跑：任何一个慢或失败都不拖累
-// 另一个的落库。
+// Window: in steady state, the last 7 days are rolled back-filled (the records of the current day change throughout the day and only settle the next day; covering the whole window also repairs
+// gaps from missed runs); when an endpoint lacks sufficiently deep local coverage, that endpoint gets a deep backfill of 84 days, see
+// whamDailySyncWindows. The two endpoints run in parallel with the same ctx: a slow or failed one does not drag down
+// the storage of the other.
 func (h *Handler) syncWhamDailyUsage(ctx context.Context, account *auth.Account) (whamDailySyncOutcome, error) {
 	var outcome whamDailySyncOutcome
 	if h == nil || h.db == nil || account == nil {
 		return outcome, errWhamDailyUsageUnavailable
 	}
-	// 手动刷新也会走到这里：非 ChatGPT 渠道的凭据在此兜底拒绝，不只靠探针候选过滤。
+	// Manual refresh also reaches here: credentials from non-ChatGPT channels are rejected here as a fallback, not only filtered by probe candidates.
 	if isCodexATAccount(account) || !whamDailyUsageChannelSupported(account) {
 		return outcome, errWhamDailyUsageUnsupported
 	}
@@ -369,15 +369,15 @@ func (h *Handler) syncWhamDailyUsage(ctx context.Context, account *auth.Account)
 	if countsErr != nil {
 		return outcome, countsErr
 	}
-	// 空数据也算同步成功：上游窗口内确实没有记录（官方统计滞后或无官方
-	// 消耗），必须记住这次成功，否则该账号会被 page-stats 永远当作缺失。
+	// Empty data also counts as a successful sync: upstream really has no records in the window (official statistics lag, or there is no official
+	// consumption), so this success must be remembered, otherwise page-stats would treat the account as missing forever.
 	h.markWhamDailySynced(account.DBID)
 	return outcome, nil
 }
 
-// classifyWhamDailyUpstreamError 把上游非 200 统一映射成可展示的错误。
-// resp 为 nil（请求层面的错误）或 200（读 body / 解析失败，body 已被查询函数读掉）
-// 时原样返回 err，不能把解析错误报成「上游返回 200」。
+// classifyWhamDailyUpstreamError maps a non-200 upstream response to a displayable error.
+// When resp is nil (a request-level error) or 200 (reading the body or parsing failed, the body was already read by the query function),
+// err is returned unchanged; a parse error must not be reported as "upstream returned 200".
 func classifyWhamDailyUpstreamError(resp *http.Response, err error) error {
 	if resp == nil || resp.StatusCode == http.StatusOK {
 		return err
@@ -394,7 +394,7 @@ func classifyWhamDailyUpstreamError(resp *http.Response, err error) error {
 	}
 }
 
-// syncWhamDailyCounts 拉取 counts 端点并按天落库，返回写入的天数。
+// syncWhamDailyCounts pulls the counts endpoint and stores it per day, returning the number of days written.
 func (h *Handler) syncWhamDailyCounts(ctx context.Context, account *auth.Account, proxyURL, startDate, endDate string) (int, error) {
 	result, resp, err := h.queryWhamDailyUsageUpstream(ctx, account, proxyURL, startDate, endDate)
 	if err != nil {
@@ -416,7 +416,7 @@ func (h *Handler) syncWhamDailyCounts(ctx context.Context, account *auth.Account
 			Users:     day.Totals.Users,
 			Threads:   day.Totals.Threads,
 			Turns:     day.Totals.Turns,
-			// endDate 就是今天（UTC）：今天的行全天在变，按日期判定而不是按字段有无。
+			// endDate is today (UTC): today's rows change all day, so judge by date, not by whether fields are present.
 			Settled:     day.SettledOn(endDate),
 			ClientsJSON: string(clients),
 			ModelsJSON:  string(models),
@@ -441,10 +441,10 @@ func (h *Handler) syncWhamDailyCounts(ctx context.Context, account *auth.Account
 	return written, nil
 }
 
-// syncWhamDailyBreakdown 拉取模型×速度拆分并按天落库，返回写入的天数。
+// syncWhamDailyBreakdown pulls the model × speed breakdown and stores it per day, returning the number of days written.
 //
-// 拆分端点是稠密的：区间内每天一行、含未来日期、无消耗的日子全 0。只写有消耗的
-// 历史日与今天；未来行与全 0 行跳过，否则会造出一堆零 counts 的空行。
+// The breakdown endpoint is dense: one row per day in the interval, including future dates, and days with no usage are all zeros. Only days with usage are written:
+// past days and today; future rows and all-zero rows are skipped, otherwise a pile of empty rows with zero counts would be created.
 func (h *Handler) syncWhamDailyBreakdown(ctx context.Context, account *auth.Account, proxyURL, startDate, endDate string) (int, error) {
 	result, resp, err := h.queryWhamDailyTokenBreakdownUpstream(ctx, account, proxyURL, startDate, endDate)
 	if err != nil {

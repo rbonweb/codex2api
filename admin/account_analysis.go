@@ -190,7 +190,7 @@ func (h *Handler) rebuildAccountAnalysis(ctx context.Context, channel string) (*
 	result := buildAccountAnalysis(snapshot, traffic, now)
 	result.StatsState = combineAccountStatsState(snapshot.StatsState, trafficState)
 	if h.accountCachesGen.Load() != gen {
-		// 构建期间发生账号变更:返回结果但不入缓存,下一次读取重建。
+		// An account changed during the build: return the result without caching it; the next read rebuilds.
 		return result, nil
 	}
 	h.accountAnalysisCacheMu.Lock()

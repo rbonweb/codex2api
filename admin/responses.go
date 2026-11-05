@@ -25,8 +25,8 @@ type statsResponse struct {
 	RateLimited   int   `json:"rate_limited"`
 	Error         int   `json:"error"`
 	TodayRequests int64 `json:"today_requests"`
-	// Channels 按上游渠道（codex）拆分的账号与今日请求计数，
-	// 供仪表盘在「全部」视图并列展示、渠道视图切换主数字。
+	// Channels splits the accounts and today's request counts by upstream channel (codex),
+	// for the dashboard to show side by side in the "All" view and to switch the main number in the channel view.
 	Channels map[string]statsChannelCounts `json:"channels,omitempty"`
 }
 
@@ -62,7 +62,7 @@ type apiKeysResponse struct {
 	Keys []*MaskedAPIKeyRow `json:"keys"`
 }
 
-// MaskedAPIKeyRow API Key 响应（含脱敏和完整 key）
+// MaskedAPIKeyRow is the API key response (with masking and the full key)
 type MaskedAPIKeyRow struct {
 	ID              int64                    `json:"id"`
 	Name            string                   `json:"name"`
@@ -83,7 +83,7 @@ type MaskedAPIKeyRow struct {
 	CreatedAt       string                   `json:"created_at"`
 }
 
-// APIKeyWindowUsageDetail 5h/7d/30d 滑动窗口内的累计成本
+// APIKeyWindowUsageDetail is the cumulative cost within the 5h/7d/30d sliding windows
 type APIKeyWindowUsageDetail struct {
 	Cost5h    float64 `json:"cost_5h"`
 	Cost7d    float64 `json:"cost_7d"`
@@ -91,7 +91,7 @@ type APIKeyWindowUsageDetail struct {
 	CostToday float64 `json:"cost_today"`
 }
 
-// NewMaskedAPIKeyRow 创建 API Key 响应
+// NewMaskedAPIKeyRow creates the API key response
 func NewMaskedAPIKeyRow(row *database.APIKeyRow) *MaskedAPIKeyRow {
 	var expiresAt *string
 	if row.ExpiresAt.Valid {
@@ -170,8 +170,8 @@ type opsMemoryResponse struct {
 	Percent    float64 `json:"percent"`
 	UsedBytes  uint64  `json:"used_bytes"`
 	TotalBytes uint64  `json:"total_bytes"`
-	// ProcessBytes 是进程 RSS;Container* 是 cgroup 口径(含少量非堆开销),
-	// limit 为 0 表示容器未设内存上限,百分比按宿主总内存计算。
+	// ProcessBytes is the process RSS; Container* is the cgroup measure (includes a small amount of non-heap overhead),
+	// limit of 0 means the container has no memory cap, and the percentage is computed against total host memory.
 	ProcessBytes        uint64  `json:"process_bytes"`
 	ContainerUsedBytes  uint64  `json:"container_used_bytes"`
 	ContainerLimitBytes uint64  `json:"container_limit_bytes"`

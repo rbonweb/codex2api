@@ -15,15 +15,15 @@ import (
 	"github.com/tidwall/gjson"
 )
 
-// 单模型探测结果分类。
+// Result categories for a single-model probe.
 const (
-	modelProbeAvailable   = "available"   // 200 完成且有输出：账号确认可用该模型
-	modelProbeUnsupported = "unsupported" // 上游明确拒绝：账号套餐不支持该模型
-	modelProbeThrottled   = "throttled"   // 429/用量耗尽：模型可能可用但当前被限流，结果不可靠
-	modelProbeError       = "error"       // 其他错误：超时/传输/鉴权/5xx 等，无法判定
+	modelProbeAvailable   = "available"   // 200 completed with output: the account is confirmed to be able to use this model
+	modelProbeUnsupported = "unsupported" // upstream explicitly rejected it: the account's plan does not support this model
+	modelProbeThrottled   = "throttled"   // 429 or usage exhausted: the model may be available but is currently rate limited, so the result is unreliable
+	modelProbeError       = "error"       // other errors: timeout, transport, auth, 5xx, etc.; cannot be determined
 )
 
-// 单模型探测并发上限，避免一次点击对同一账号打出过多并发请求。
+// Concurrency cap for single-model probes, so one click does not send too many concurrent requests to the same account.
 const modelProbeMaxConcurrency = 6
 
 type modelProbeResult struct {
@@ -32,8 +32,8 @@ type modelProbeResult struct {
 	Detail  string `json:"detail,omitempty"`
 }
 
-// modelProbeEvent 是探测过程推送给前端的 SSE 事件。
-// type: start（下发全部待测模型）| testing（某模型开始探测）| result（某模型出结果）| done（结束，含可用集合）
+// modelProbeEvent is an SSE event pushed to the frontend during probing.
+// type: start (sends all models to test) | testing (a model's probe started) | result (a model produced a result) | done (finished, includes the set of available models)
 type modelProbeEvent struct {
 	Type      string   `json:"type"`
 	Total     int      `json:"total,omitempty"`
@@ -45,23 +45,23 @@ type modelProbeEvent struct {
 	Available []string `json:"available,omitempty"`
 }
 
-// ProbeAccountModels 用账号自身凭据并发探测系统模型列表（已排除 image 模型），
-// 判定每个模型是否可用。全程只读，不回写账号调度状态（冷却/错误/成功）。
-// stream=true 时以 SSE 逐模型推送进度，否则一次性返回 JSON。
+// ProbeAccountModels probes the system model list concurrently using the account's own credentials (image models excluded),
+// deciding whether each model is usable. It is read-only throughout and does not write back account scheduling state (cooldown / error / success).
+// With stream=true, progress is pushed per model over SSE; otherwise the JSON is returned in one response.
 // POST /api/admin/accounts/:id/models/probe
 func (h *Handler) ProbeAccountModels(c *gin.Context) {
 	id, err := strconv.ParseInt(c.Param("id"), 10, 64)
 	if err != nil {
-		writeError(c, http.StatusBadRequest, "无效的账号 ID")
+		writeError(c, http.StatusBadRequest, "Invalid account ID")
 		return
 	}
 	account := h.store.FindByID(id)
 	if account == nil {
-		writeError(c, http.StatusNotFound, "账号不在运行时池中")
+		writeError(c, http.StatusNotFound, "Account is not in the runtime pool")
 		return
 	}
 	if !account.IsCodexAgentIdentity() && account.GetAccessToken() == "" {
-		writeError(c, http.StatusBadRequest, "账号没有可用的 Access Token，请先刷新")
+		writeError(c, http.StatusBadRequest, "Account has no usable access token; refresh it first")
 		return
 	}
 
@@ -101,7 +101,7 @@ func (h *Handler) ProbeAccountModels(c *gin.Context) {
 	})
 }
 
-// streamProbeModels 以 SSE 逐模型推送探测进度。
+// streamProbeModels pushes probe progress per model over SSE.
 func (h *Handler) streamProbeModels(c *gin.Context, account *auth.Account, models []string, concurrency int) {
 	setupSSE(c)
 	sendSSEJSON(c, modelProbeEvent{Type: "start", Total: len(models), Models: models})
@@ -127,7 +127,7 @@ func (h *Handler) streamProbeModels(c *gin.Context, account *auth.Account, model
 	}
 }
 
-// runProbeModels 并发探测所有模型；onEvent 非空时逐模型回调 testing/result 事件（用于 SSE）。
+// runProbeModels probes all models concurrently; when onEvent is non-nil, it is called with testing/result events per model (for SSE).
 func (h *Handler) runProbeModels(ctx context.Context, account *auth.Account, models []string, concurrency int, onEvent func(modelProbeEvent)) []modelProbeResult {
 	var (
 		wg        sync.WaitGroup
@@ -145,12 +145,12 @@ func (h *Handler) runProbeModels(ctx context.Context, account *auth.Account, mod
 			case sem <- struct{}{}:
 			case <-ctx.Done():
 				mu.Lock()
-				results[idx] = modelProbeResult{Model: m, Outcome: modelProbeError, Detail: "探测已取消"}
+				results[idx] = modelProbeResult{Model: m, Outcome: modelProbeError, Detail: "probe cancelled"}
 				completed++
 				current := completed
 				mu.Unlock()
 				if onEvent != nil {
-					onEvent(modelProbeEvent{Type: "result", Model: m, Outcome: modelProbeError, Detail: "探测已取消", Current: current, Total: total})
+					onEvent(modelProbeEvent{Type: "result", Model: m, Outcome: modelProbeError, Detail: "probe cancelled", Current: current, Total: total})
 				}
 				return
 			}
@@ -186,7 +186,7 @@ func collectAvailableModels(results []modelProbeResult) []string {
 	return available
 }
 
-// probeAccountModel 对单个模型发起最小探测请求并分类结果。不回写任何账号状态。
+// probeAccountModel sends a minimal probe request for a single model and classifies the result. It does not write back any account state.
 func (h *Handler) probeAccountModel(ctx context.Context, account *auth.Account, model string) (string, string) {
 	probeCtx, cancel := context.WithTimeout(ctx, batchTestAccountTimeout)
 	defer cancel()
@@ -205,23 +205,23 @@ func (h *Handler) probeAccountModel(ctx context.Context, account *auth.Account, 
 	case http.StatusOK:
 		return readProbeStream(probeCtx, resp)
 	case http.StatusTooManyRequests:
-		return modelProbeThrottled, "上游返回 429 限流"
+		return modelProbeThrottled, "upstream returned 429 (rate limited)"
 	case http.StatusBadRequest:
 		body, _ := readBatchTestErrorBody(probeCtx, resp.Body)
 		if proxy.IsCodexModelUnsupportedError(body) {
-			return modelProbeUnsupported, "账号套餐不支持该模型"
+			return modelProbeUnsupported, "the account's plan does not support this model"
 		}
-		return modelProbeError, fmt.Sprintf("上游返回 400: %s", truncate(string(body), 200))
+		return modelProbeError, fmt.Sprintf("upstream returned 400: %s", truncate(string(body), 200))
 	case http.StatusUnauthorized:
-		return modelProbeError, "账号授权失败（401）"
+		return modelProbeError, "account authorization failed (401)"
 	default:
 		body, _ := readBatchTestErrorBody(probeCtx, resp.Body)
-		return modelProbeError, fmt.Sprintf("上游返回 %d: %s", resp.StatusCode, truncate(string(body), 200))
+		return modelProbeError, fmt.Sprintf("upstream returned %d: %s", resp.StatusCode, truncate(string(body), 200))
 	}
 }
 
-// readProbeStream 读取探测 SSE 流并分类，能从终止事件里识别出"账号不支持该模型"。
-// 不回写任何账号状态。
+// readProbeStream reads the probe SSE stream and classifies it; it can recognize from the terminal event that the account's plan does not support the model.
+// It does not write back any account state.
 func readProbeStream(ctx context.Context, resp *http.Response) (string, string) {
 	hasContent := false
 	gotTerminal := false
@@ -231,10 +231,10 @@ func readProbeStream(ctx context.Context, resp *http.Response) (string, string) 
 
 	classifyFailure := func(data []byte, fallback string) (string, string) {
 		if proxy.IsUsageLimitReachedError(data) {
-			return modelProbeThrottled, formatUpstreamTestError(data, "上游用量耗尽")
+			return modelProbeThrottled, formatUpstreamTestError(data, "upstream usage exhausted")
 		}
 		if proxy.IsCodexModelUnsupportedError(data) {
-			return modelProbeUnsupported, "账号套餐不支持该模型"
+			return modelProbeUnsupported, "the account's plan does not support this model"
 		}
 		return modelProbeError, formatUpstreamTestError(data, fallback)
 	}
@@ -261,7 +261,7 @@ func readProbeStream(ctx context.Context, resp *http.Response) (string, string) 
 		case "response.completed":
 			gotTerminal = true
 			if status := gjson.GetBytes(data, "response.status").String(); status == "failed" || status == "incomplete" {
-				outcome, detail = classifyFailure(data, "上游返回 "+status)
+				outcome, detail = classifyFailure(data, "upstream returned "+status)
 				return false
 			}
 			if !hasContent && extractCompletedOutputText(data) != "" {
@@ -273,15 +273,15 @@ func readProbeStream(ctx context.Context, resp *http.Response) (string, string) 
 				return false
 			}
 			outcome = modelProbeAvailable
-			detail = "探测通过"
+			detail = "probe passed"
 			return false
 		case "response.failed":
 			gotTerminal = true
-			outcome, detail = classifyFailure(data, "上游返回 response.failed")
+			outcome, detail = classifyFailure(data, "upstream returned response.failed")
 			return false
 		case "error":
 			gotTerminal = true
-			outcome, detail = classifyFailure(data, "上游返回 error 事件")
+			outcome, detail = classifyFailure(data, "upstream returned an error event")
 			return false
 		}
 		return true
@@ -299,5 +299,5 @@ func readProbeStream(ctx context.Context, resp *http.Response) (string, string) 
 	if !gotTerminal {
 		return modelProbeError, formatMissingTerminalUpstreamError(lastUpstreamEvent)
 	}
-	return modelProbeError, "上游探测未返回明确结果"
+	return modelProbeError, "upstream probe returned no clear result"
 }

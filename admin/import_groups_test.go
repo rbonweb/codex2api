@@ -16,7 +16,7 @@ import (
 	"github.com/gin-gonic/gin"
 )
 
-// itoa 让测试里的 JSON 片段拼接短一些。
+// itoa keeps the JSON fragments in the tests short to build.
 func itoa(v int64) string { return strconv.FormatInt(v, 10) }
 
 func newImportGroupsTestHandler(t *testing.T) (*Handler, *database.DB, *auth.Store, int64) {
@@ -46,7 +46,7 @@ func TestResolveImportGroupIDsRejectsUnknownGroup(t *testing.T) {
 	if _, err := handler.resolveImportGroupIDsJSON(ctx, json.RawMessage(`[0]`)); err == nil {
 		t.Fatal("non-positive group id must be rejected")
 	}
-	// 未传 / 空数组表示"不绑分组"，不是错误，也不是"清空"。
+	// A missing or empty array means "no group binding": not an error, and not "clear the groups".
 	if ids, err := handler.resolveImportGroupIDsJSON(ctx, nil); err != nil || ids != nil {
 		t.Fatalf("absent group_ids = %v, %v; want nil, nil", ids, err)
 	}
@@ -67,7 +67,7 @@ func TestResolveImportGroupIDsFormAcceptsBothSyntaxes(t *testing.T) {
 	if err != nil || len(jsonForm) != 2 {
 		t.Fatalf("json array form = %v, %v; want two ids", jsonForm, err)
 	}
-	// 逗号分隔便于 curl 手测。
+	// The comma-separated form is handy for manual curl tests.
 	csvForm, err := handler.resolveImportGroupIDsForm(ctx, itoa(groupID)+", "+itoa(second))
 	if err != nil || len(csvForm) != 2 {
 		t.Fatalf("csv form = %v, %v; want two ids", csvForm, err)
@@ -97,12 +97,12 @@ func TestBindImportedAccountGroupsSyncsRuntimePool(t *testing.T) {
 	if len(persisted) != 1 || persisted[0] != groupID {
 		t.Fatalf("persisted groups = %v, want [%d]", persisted, groupID)
 	}
-	// 运行时同步是关键：分组影响并发上限/自动暂停/Key 白名单，漏了要等下次全量加载才生效。
+	// Runtime sync is critical: groups affect the concurrency limit, auto-pause and the key allowlist; without it the change only applies after the next full load.
 	if runtime := account.GroupIDSnapshot(); len(runtime) != 1 || runtime[0] != groupID {
 		t.Fatalf("runtime groups = %v, want [%d]", runtime, groupID)
 	}
 
-	// 空分组表示不绑，不该把已有归属清掉。
+	// An empty group list means no binding and must not clear existing ownership.
 	if err := handler.bindImportedAccountGroups(ctx, []int64{77}, nil); err != nil {
 		t.Fatalf("bind with empty groups: %v", err)
 	}
@@ -149,7 +149,7 @@ func TestAddATAccountBindsGroupsOnlyForNewAccounts(t *testing.T) {
 		t.Fatalf("groups = %v, want [%d]", groups, groupID)
 	}
 
-	// 同一个 AT 再导一次：命中重复跳过，且不该动已有账号的分组（此处改成另一个分组来验证）。
+	// Import the same AT again: it is skipped as a duplicate and must not touch the existing account's groups (a different group is used here to verify this).
 	other, err := db.CreateAccountGroup(ctx, "other", "", "", 0, 0, sql.NullInt64{})
 	if err != nil {
 		t.Fatalf("CreateAccountGroup: %v", err)
@@ -176,7 +176,7 @@ func TestAddATAccountRejectsUnknownGroupBeforeCreatingAccounts(t *testing.T) {
 	if recorder.Code != http.StatusBadRequest {
 		t.Fatalf("status = %d, want 400: %s", recorder.Code, recorder.Body.String())
 	}
-	// 关键：校验在插账号之前，所以不该有任何账号被创建。
+	// Key point: validation runs before the account is inserted, so no account should be created.
 	accounts, err := db.ListActive(context.Background())
 	if err != nil {
 		t.Fatalf("ListAccounts: %v", err)

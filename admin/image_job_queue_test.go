@@ -211,7 +211,7 @@ func TestImageQueueFailsJobsThatNeverStarted(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if job.Status != database.ImageJobFailed || !strings.Contains(job.ErrorMessage, "排队") {
+	if job.Status != database.ImageJobFailed || !strings.Contains(job.ErrorMessage, "queuing") {
 		t.Fatalf("stale job not failed: %+v", job)
 	}
 	if _, err = os.Stat(path); !os.IsNotExist(err) {

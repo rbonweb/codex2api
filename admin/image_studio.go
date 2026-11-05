@@ -39,7 +39,7 @@ const maxImageJobOutputCount = 4
 
 var errInvalidUpscaledImage = errors.New("invalid upscaled image")
 
-// thumbCache 跨请求复用缩略图。S3 后端读源图代价高，这里用 LRU 兜一下。
+// thumbCache reuses thumbnails across requests. Reading source images from the S3 backend is expensive, so an LRU cache sits in front of it.
 var thumbCache = imagestore.NewThumbnailCache(0)
 
 type imagePromptTemplatePayload struct {
@@ -122,7 +122,7 @@ func (h *Handler) ListImagePromptTemplates(c *gin.Context) {
 func (h *Handler) CreateImagePromptTemplate(c *gin.Context) {
 	var req imagePromptTemplatePayload
 	if err := c.ShouldBindJSON(&req); err != nil {
-		writeError(c, http.StatusBadRequest, "请求体无效")
+		writeError(c, http.StatusBadRequest, "invalid request body")
 		return
 	}
 	input, err := templateInputFromPayload(req, nil)
@@ -149,12 +149,12 @@ func (h *Handler) CreateImagePromptTemplate(c *gin.Context) {
 func (h *Handler) UpdateImagePromptTemplate(c *gin.Context) {
 	id, err := parsePositiveIDParam(c, "id")
 	if err != nil {
-		writeError(c, http.StatusBadRequest, "无效 ID")
+		writeError(c, http.StatusBadRequest, "invalid ID")
 		return
 	}
 	var req imagePromptTemplatePayload
 	if err := c.ShouldBindJSON(&req); err != nil {
-		writeError(c, http.StatusBadRequest, "请求体无效")
+		writeError(c, http.StatusBadRequest, "invalid request body")
 		return
 	}
 
@@ -162,7 +162,7 @@ func (h *Handler) UpdateImagePromptTemplate(c *gin.Context) {
 	defer cancel()
 	existing, err := h.db.GetImagePromptTemplate(ctx, id)
 	if errors.Is(err, sql.ErrNoRows) {
-		writeError(c, http.StatusNotFound, "模板不存在")
+		writeError(c, http.StatusNotFound, "template does not exist")
 		return
 	}
 	if err != nil {
@@ -189,7 +189,7 @@ func (h *Handler) UpdateImagePromptTemplate(c *gin.Context) {
 func (h *Handler) DeleteImagePromptTemplate(c *gin.Context) {
 	id, err := parsePositiveIDParam(c, "id")
 	if err != nil {
-		writeError(c, http.StatusBadRequest, "无效 ID")
+		writeError(c, http.StatusBadRequest, "invalid ID")
 		return
 	}
 	ctx, cancel := context.WithTimeout(c.Request.Context(), 10*time.Second)
@@ -248,16 +248,16 @@ func templateInputFromPayload(req imagePromptTemplatePayload, existing *database
 		input.Favorite = *req.Favorite
 	}
 	if strings.TrimSpace(input.Name) == "" {
-		input.Name = "未命名模板"
+		input.Name = "untitled template"
 	}
 	if len([]rune(input.Name)) > 100 {
-		return input, fmt.Errorf("模板名称不能超过 100 个字符")
+		return input, fmt.Errorf("template name must not exceed 100 characters")
 	}
 	if strings.TrimSpace(input.Prompt) == "" {
-		return input, fmt.Errorf("提示词不能为空")
+		return input, fmt.Errorf("prompt must not be empty")
 	}
 	if len([]rune(input.Prompt)) > 8000 {
-		return input, fmt.Errorf("提示词不能超过 8000 个字符")
+		return input, fmt.Errorf("prompt must not exceed 8000 characters")
 	}
 	if input.Model == "" {
 		input.Model = "gpt-image-2"
@@ -276,7 +276,7 @@ func (h *Handler) CreateImageGenerationJob(c *gin.Context) {
 	defer releaseIntake()
 	var req imageGenerationJobPayload
 	if err := c.ShouldBindJSON(&req); err != nil {
-		writeError(c, http.StatusBadRequest, "请求体无效")
+		writeError(c, http.StatusBadRequest, "invalid request body")
 		return
 	}
 	if err := normalizeImageStoragePolicy(&req); err != nil {
@@ -285,11 +285,11 @@ func (h *Handler) CreateImageGenerationJob(c *gin.Context) {
 	}
 	req.Prompt = strings.TrimSpace(req.Prompt)
 	if req.Prompt == "" {
-		writeError(c, http.StatusBadRequest, "提示词不能为空")
+		writeError(c, http.StatusBadRequest, "prompt must not be empty")
 		return
 	}
 	if len([]rune(req.Prompt)) > 8000 {
-		writeError(c, http.StatusBadRequest, "提示词不能超过 8000 个字符")
+		writeError(c, http.StatusBadRequest, "prompt must not exceed 8000 characters")
 		return
 	}
 	req.Model = normalizeImageStudioModel(req.Model)
@@ -377,7 +377,7 @@ func (h *Handler) CreateImageEditJob(c *gin.Context) {
 	defer releaseIntake()
 	var req imageGenerationJobPayload
 	if err := c.ShouldBindJSON(&req); err != nil {
-		writeError(c, http.StatusBadRequest, "请求体无效")
+		writeError(c, http.StatusBadRequest, "invalid request body")
 		return
 	}
 	if err := normalizeImageStoragePolicy(&req); err != nil {
@@ -386,19 +386,19 @@ func (h *Handler) CreateImageEditJob(c *gin.Context) {
 	}
 	req.Prompt = strings.TrimSpace(req.Prompt)
 	if req.Prompt == "" {
-		writeError(c, http.StatusBadRequest, "提示词不能为空")
+		writeError(c, http.StatusBadRequest, "prompt must not be empty")
 		return
 	}
 	if len(req.InputImages) == 0 {
-		writeError(c, http.StatusBadRequest, "图生图需要上传参考图片")
+		writeError(c, http.StatusBadRequest, "image-to-image requires uploading reference images")
 		return
 	}
 	if len(req.InputImages) > proxy.MaxImageEditInputCount {
-		writeError(c, http.StatusBadRequest, fmt.Sprintf("参考图片数量超过限制 (%d, 最多 %d)", len(req.InputImages), proxy.MaxImageEditInputCount))
+		writeError(c, http.StatusBadRequest, fmt.Sprintf("too many reference images (%d, maximum %d)", len(req.InputImages), proxy.MaxImageEditInputCount))
 		return
 	}
 	if len([]rune(req.Prompt)) > 8000 {
-		writeError(c, http.StatusBadRequest, "提示词不能超过 8000 个字符")
+		writeError(c, http.StatusBadRequest, "prompt must not exceed 8000 characters")
 		return
 	}
 	req.Model = normalizeImageStudioModel(req.Model)
@@ -498,7 +498,7 @@ func (h *Handler) ListImageGenerationJobs(c *gin.Context) {
 func (h *Handler) GetImageGenerationJob(c *gin.Context) {
 	id, err := parsePositiveIDParam(c, "id")
 	if err != nil {
-		writeError(c, http.StatusBadRequest, "无效 ID")
+		writeError(c, http.StatusBadRequest, "invalid ID")
 		return
 	}
 	ctx, cancel := context.WithTimeout(c.Request.Context(), 10*time.Second)
@@ -510,7 +510,7 @@ func (h *Handler) GetImageGenerationJob(c *gin.Context) {
 		job, err = h.db.GetImageGenerationJob(ctx, id)
 	}
 	if errors.Is(err, sql.ErrNoRows) {
-		writeError(c, http.StatusNotFound, "任务不存在")
+		writeError(c, http.StatusNotFound, "job does not exist")
 		return
 	}
 	if err != nil {
@@ -527,14 +527,14 @@ func (h *Handler) GetImageGenerationJob(c *gin.Context) {
 func (h *Handler) DeleteImageGenerationJob(c *gin.Context) {
 	id, err := parsePositiveIDParam(c, "id")
 	if err != nil {
-		writeError(c, http.StatusBadRequest, "无效 ID")
+		writeError(c, http.StatusBadRequest, "invalid ID")
 		return
 	}
 	ctx, cancel := context.WithTimeout(c.Request.Context(), 10*time.Second)
 	defer cancel()
 	job, err := h.db.GetImageGenerationJob(ctx, id)
 	if errors.Is(err, sql.ErrNoRows) {
-		writeError(c, http.StatusNotFound, "任务不存在")
+		writeError(c, http.StatusNotFound, "job does not exist")
 		return
 	}
 	if err != nil {
@@ -542,12 +542,12 @@ func (h *Handler) DeleteImageGenerationJob(c *gin.Context) {
 		return
 	}
 	if job.Status == database.ImageJobQueued || job.Status == database.ImageJobRunning {
-		writeError(c, http.StatusConflict, "任务仍在处理中，完成或失败后才能删除")
+		writeError(c, http.StatusConflict, "job is still being processed; it can only be deleted after it completes or fails")
 		return
 	}
 	if err := h.db.DeleteImageGenerationJob(ctx, id); err != nil {
 		if errors.Is(err, sql.ErrNoRows) {
-			writeError(c, http.StatusNotFound, "任务不存在")
+			writeError(c, http.StatusNotFound, "job does not exist")
 			return
 		}
 		writeInternalError(c, err)
@@ -581,7 +581,7 @@ func (h *Handler) attachImageJobAssetCachePayload(job *database.ImageGenerationJ
 		if err != nil {
 			continue
 		}
-		// 本地后端走 Stat 快速判断尺寸；S3 后端没有便宜的 Stat，直接尝试 Read 并按字节数过滤。
+		// The local backend checks the size quickly with Stat; the S3 backend has no cheap Stat, so it tries Read directly and filters by byte count.
 		if storedBytes := job.Assets[idx].Bytes; storedBytes > 0 && storedBytes > maxInlineImageAssetCacheBytes {
 			continue
 		}
@@ -619,14 +619,14 @@ func (h *Handler) ListImageAssets(c *gin.Context) {
 func (h *Handler) GetImageAssetFile(c *gin.Context) {
 	id, err := parsePositiveIDParam(c, "id")
 	if err != nil {
-		writeError(c, http.StatusBadRequest, "无效 ID")
+		writeError(c, http.StatusBadRequest, "invalid ID")
 		return
 	}
 	ctx, cancel := context.WithTimeout(c.Request.Context(), 10*time.Second)
 	defer cancel()
 	asset, err := h.db.GetImageAsset(ctx, id)
 	if errors.Is(err, sql.ErrNoRows) {
-		writeError(c, http.StatusNotFound, "图片不存在")
+		writeError(c, http.StatusNotFound, "image does not exist")
 		return
 	}
 	if err != nil {
@@ -643,24 +643,24 @@ func (h *Handler) GetImageAssetFile(c *gin.Context) {
 func (h *Handler) GetSignedImageAssetFile(c *gin.Context) {
 	id, err := parsePositiveIDParam(c, "id")
 	if err != nil {
-		writeError(c, http.StatusBadRequest, "无效 ID")
+		writeError(c, http.StatusBadRequest, "invalid ID")
 		return
 	}
 	exp, err := strconv.ParseInt(strings.TrimSpace(c.Query("exp")), 10, 64)
 	if err != nil || exp <= 0 {
-		writeError(c, http.StatusBadRequest, "签名参数无效")
+		writeError(c, http.StatusBadRequest, "signature parameters are invalid")
 		return
 	}
 	thumbKB := imageproc.ClampThumbKB(queryInt(c, "thumb_kb"))
 	if !signedasset.VerifyImageAssetURL(id, exp, thumbKB, strings.TrimSpace(c.Query("sig")), time.Now()) {
-		writeError(c, http.StatusForbidden, "图片链接已失效")
+		writeError(c, http.StatusForbidden, "image link has expired")
 		return
 	}
 	ctx, cancel := context.WithTimeout(c.Request.Context(), 10*time.Second)
 	defer cancel()
 	asset, err := h.db.GetImageAsset(ctx, id)
 	if errors.Is(err, sql.ErrNoRows) {
-		writeError(c, http.StatusNotFound, "图片不存在")
+		writeError(c, http.StatusNotFound, "image does not exist")
 		return
 	}
 	if err != nil {
@@ -675,21 +675,21 @@ func (h *Handler) GetSignedImageAssetFile(c *gin.Context) {
 
 func (h *Handler) serveImageAssetFile(c *gin.Context, asset *database.ImageAsset, opts imageAssetFileOptions) {
 	if asset == nil || strings.TrimSpace(asset.StoragePath) == "" {
-		writeError(c, http.StatusNotFound, "图片文件不存在")
+		writeError(c, http.StatusNotFound, "image file does not exist")
 		return
 	}
 	if imageAssetExpired(asset, time.Now()) {
 		c.Header("Cache-Control", "no-store")
-		writeError(c, http.StatusGone, "图片已过期")
+		writeError(c, http.StatusGone, "image has expired")
 		return
 	}
 	if opts.requireAssetDir && !imageAssetPathAllowed(asset.StoragePath) {
-		writeError(c, http.StatusNotFound, "图片文件不存在")
+		writeError(c, http.StatusNotFound, "image file does not exist")
 		return
 	}
 	backend, err := imagestore.Resolve(asset.StoragePath)
 	if err != nil {
-		writeError(c, http.StatusNotFound, "图片文件不存在")
+		writeError(c, http.StatusNotFound, "image file does not exist")
 		return
 	}
 
@@ -709,8 +709,8 @@ func (h *Handler) serveImageAssetFile(c *gin.Context, asset *database.ImageAsset
 	}
 	contentType, inlineSafe := safeInlineImageMimeType(asset.MimeType)
 	if !inlineSafe {
-		// 上游或客户端回显的 MIME 不可信；非白名单类型强制下载，避免 text/html、
-		// SVG 等在同源页面里执行脚本。
+		// The MIME type echoed back by the upstream or the client is not trusted; types outside the allowlist are forced to download, so that text/html,
+		// SVG and similar types cannot run scripts on the same-origin page.
 		disposition = "attachment"
 	}
 	filename := sanitizeDownloadFilename(asset.Filename)
@@ -738,12 +738,12 @@ func (h *Handler) serveImageAssetFile(c *gin.Context, asset *database.ImageAsset
 
 	rc, size, err := backend.Open(c.Request.Context(), asset.StoragePath)
 	if err != nil {
-		writeError(c, http.StatusNotFound, "图片文件不存在")
+		writeError(c, http.StatusNotFound, "image file does not exist")
 		return
 	}
 	defer rc.Close()
 	if size < 0 {
-		// S3 偶尔不带 Content-Length，退化为 chunked。
+		// S3 sometimes omits Content-Length, so the response falls back to chunked.
 		c.Status(http.StatusOK)
 		_, _ = c.Writer.Write(nil)
 		_, _ = io.Copy(c.Writer, rc)
@@ -752,8 +752,8 @@ func (h *Handler) serveImageAssetFile(c *gin.Context, asset *database.ImageAsset
 	c.DataFromReader(http.StatusOK, size, contentType, rc, nil)
 }
 
-// safeInlineImageMimeType 只放行浏览器按图片渲染的常见类型。
-// 其他值（包括 text/html、image/svg+xml 和空值）返回 application/octet-stream。
+// safeInlineImageMimeType only allows the common types that browsers render as images.
+// Any other value (including text/html, image/svg+xml and an empty value) returns application/octet-stream.
 func safeInlineImageMimeType(value string) (string, bool) {
 	mediaType := strings.ToLower(strings.TrimSpace(strings.SplitN(value, ";", 2)[0]))
 	switch mediaType {
@@ -766,7 +766,7 @@ func safeInlineImageMimeType(value string) (string, bool) {
 func imageAssetPathAllowed(storagePath string) bool {
 	storagePath = strings.TrimSpace(storagePath)
 	if imagestore.IsS3Ref(storagePath) {
-		// S3 ref 不在本地目录约束内，由后端自身保证作用域。
+		// An S3 ref is not bound by the local directory constraint; the backend keeps its own scope.
 		return true
 	}
 	assetPath, err := filepath.Abs(storagePath)
@@ -825,14 +825,14 @@ func decorateImageAsset(asset *database.ImageAsset) {
 func (h *Handler) DeleteImageAsset(c *gin.Context) {
 	id, err := parsePositiveIDParam(c, "id")
 	if err != nil {
-		writeError(c, http.StatusBadRequest, "无效 ID")
+		writeError(c, http.StatusBadRequest, "invalid ID")
 		return
 	}
 	ctx, cancel := context.WithTimeout(c.Request.Context(), 10*time.Second)
 	defer cancel()
 	asset, err := h.db.GetImageAsset(ctx, id)
 	if errors.Is(err, sql.ErrNoRows) {
-		writeError(c, http.StatusNotFound, "图片不存在")
+		writeError(c, http.StatusNotFound, "image does not exist")
 		return
 	}
 	if err != nil {
@@ -1014,7 +1014,7 @@ func (h *Handler) runImageGenerationJob(jobID int64, req imageGenerationJobPaylo
 				len(rawBody),
 			)
 		} else {
-			err = fmt.Errorf("PNG 生成失败: %s；自动改用 JPEG 重试仍失败: %w", pngErr.Error(), err)
+			err = fmt.Errorf("PNG generation failed: %s; automatic retry as JPEG also failed: %w", pngErr.Error(), err)
 		}
 	}
 	durationMs := int(time.Since(start).Milliseconds())
@@ -1051,8 +1051,8 @@ func (h *Handler) runImageGenerationJob(jobID int64, req imageGenerationJobPaylo
 		log.Printf("[image-studio] job=%d partial_save_assets duration=%s saved=%d error=%s", jobID, imageLogDuration(durationMs), len(assets), security.SanitizeLog(err.Error()))
 	}
 	if len(assets) == 0 {
-		log.Printf("[image-studio] job=%d failed duration=%s stage=save_assets error=%s", jobID, imageLogDuration(durationMs), "上游未返回图片")
-		h.markImageJobFailedDetached(jobID, "上游未返回图片", durationMs, opts.queueOwner)
+		log.Printf("[image-studio] job=%d failed duration=%s stage=save_assets error=%s", jobID, imageLogDuration(durationMs), "upstream returned no image")
+		h.markImageJobFailedDetached(jobID, "upstream returned no image", durationMs, opts.queueOwner)
 		return
 	}
 	if len(partialErrors) > 0 {
@@ -1181,7 +1181,7 @@ func (h *Handler) runImageEditJob(jobID int64, req imageGenerationJobPayload, ap
 				len(rawBody),
 			)
 		} else {
-			err = fmt.Errorf("PNG 生成失败: %s；自动改用 JPEG 重试仍失败: %w", pngErr.Error(), err)
+			err = fmt.Errorf("PNG generation failed: %s; automatic retry as JPEG also failed: %w", pngErr.Error(), err)
 		}
 	}
 	durationMs := int(time.Since(start).Milliseconds())
@@ -1215,8 +1215,8 @@ func (h *Handler) runImageEditJob(jobID int64, req imageGenerationJobPayload, ap
 		log.Printf("[image-studio] job=%d partial_save_assets mode=edit duration=%s saved=%d error=%s", jobID, imageLogDuration(durationMs), len(assets), security.SanitizeLog(err.Error()))
 	}
 	if len(assets) == 0 {
-		log.Printf("[image-studio] job=%d failed mode=edit duration=%s stage=save_assets error=%s", jobID, imageLogDuration(durationMs), "上游未返回图片")
-		h.markImageJobFailedDetached(jobID, "上游未返回图片", durationMs, opts.queueOwner)
+		log.Printf("[image-studio] job=%d failed mode=edit duration=%s stage=save_assets error=%s", jobID, imageLogDuration(durationMs), "upstream returned no image")
+		h.markImageJobFailedDetached(jobID, "upstream returned no image", durationMs, opts.queueOwner)
 		return
 	}
 	if len(partialErrors) > 0 {
@@ -1391,17 +1391,17 @@ func jpegFallbackImageJobRequest(req imageGenerationJobPayload) imageGenerationJ
 func (h *Handler) saveImageJobAssets(ctx context.Context, jobID int64, req imageGenerationJobPayload, responseJSON []byte) ([]database.ImageAsset, []string, error) {
 	backend, err := imagestore.Primary()
 	if err != nil {
-		return nil, nil, fmt.Errorf("图片存储未初始化: %w", err)
+		return nil, nil, fmt.Errorf("image storage is not initialized: %w", err)
 	}
 	if backend.Name() == imagestore.BackendLocal {
-		// LocalBackend 已在 Configure 时 mkdir，这里再保险一次以兼容 dir 在运行期被外部清理的情况。
+		// LocalBackend already runs mkdir in Configure; this runs it once more in case the directory was removed externally while the service was running.
 		if err := os.MkdirAll(imageAssetDir(), 0o755); err != nil {
-			return nil, nil, fmt.Errorf("创建图库目录失败: %w", err)
+			return nil, nil, fmt.Errorf("failed to create the gallery directory: %w", err)
 		}
 	}
 	data := gjson.GetBytes(responseJSON, "data")
 	if !data.IsArray() {
-		return nil, nil, fmt.Errorf("生图响应缺少 data")
+		return nil, nil, fmt.Errorf("image generation response is missing data")
 	}
 	responseModel := firstNonEmpty(gjson.GetBytes(responseJSON, "model").String(), req.Model)
 	responseSize := firstNonEmpty(gjson.GetBytes(responseJSON, "size").String(), req.Size)
@@ -1448,7 +1448,7 @@ func (h *Handler) saveImageJobAssets(ctx context.Context, jobID int64, req image
 		}
 		width, height := imageDimensions(imageBytes)
 		if width <= 0 || height <= 0 {
-			return saved, warnings, fmt.Errorf("output %d: 上游返回的图片无法解码", idx+1)
+			return saved, warnings, fmt.Errorf("output %d: the image returned by the upstream cannot be decoded", idx+1)
 		}
 		actualSize := ""
 		if width > 0 && height > 0 {
@@ -1466,7 +1466,7 @@ func (h *Handler) saveImageJobAssets(ctx context.Context, jobID int64, req image
 		filename := fmt.Sprintf("%d-%02d-%s.%s", jobID, idx+1, uuid.NewString()[:8], safeImageExtension(format, mimeType))
 		storagePath, err := backend.Save(ctx, filename, imageBytes, mimeType)
 		if err != nil {
-			return saved, warnings, fmt.Errorf("保存图片失败: %w", err)
+			return saved, warnings, fmt.Errorf("failed to save image: %w", err)
 		}
 		input := database.ImageAssetInput{
 			JobID:         jobID,
@@ -1611,7 +1611,7 @@ func decodeImageDataItem(item gjson.Result) ([]byte, string, string, error) {
 		}
 	}
 	if raw == "" {
-		return nil, "", "", fmt.Errorf("生图响应缺少图片数据")
+		return nil, "", "", fmt.Errorf("image generation response is missing image data")
 	}
 	if strings.ContainsAny(raw, " \t\r\n") {
 		raw = strings.NewReplacer(" ", "", "\t", "", "\r", "", "\n", "").Replace(raw)
@@ -1625,7 +1625,7 @@ func decodeImageDataItem(item gjson.Result) ([]byte, string, string, error) {
 		}
 	}
 	if err != nil {
-		return nil, "", "", fmt.Errorf("图片 Base64 解码失败: %w", err)
+		return nil, "", "", fmt.Errorf("failed to decode image Base64: %w", err)
 	}
 	if mimeType == "" {
 		mimeType = http.DetectContentType(data)
@@ -1648,9 +1648,9 @@ func imageAssetDir() string {
 	return defaultImageAssetDir
 }
 
-// normalizeImageStudioModel 生图台只接受 Codex 生图模型族(gpt-image-2 及 -2k/-4k 档位
-// 别名、带日期快照名);其他名字回落到 gpt-image-2。
-// Flare/Sunburst、日期快照和尺寸别名均按 gpt-image-* 前缀准入。
+// normalizeImageStudioModel only accepts the Codex image model family in the image studio (gpt-image-2 and its -2k/-4k tier
+// aliases, and dated snapshot names); any other name falls back to gpt-image-2.
+// Flare/Sunburst, dated snapshots and size aliases are all admitted by the gpt-image-* prefix.
 func normalizeImageStudioModel(model string) string {
 	model = strings.TrimSpace(model)
 	if model == "" || proxy.IsGPTImageModel(model) {

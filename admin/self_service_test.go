@@ -44,19 +44,19 @@ func TestSelfServiceRateLimiter(t *testing.T) {
 	base := time.Unix(1_700_000_000, 0)
 	for i := 0; i < selfServiceRateLimit; i++ {
 		if !l.allow("1.2.3.4", base) {
-			t.Fatalf("请求 %d 应放行", i)
+			t.Fatalf("request %d should be allowed", i)
 		}
 	}
 	if l.allow("1.2.3.4", base) {
-		t.Fatal("超过上限应被限流")
+		t.Fatal("requests over the limit should be rate limited")
 	}
-	// 另一 IP 不受影响
+	// Another IP is not affected
 	if !l.allow("9.9.9.9", base) {
-		t.Fatal("其他 IP 应放行")
+		t.Fatal("other IPs should be allowed")
 	}
-	// 窗口外恢复
+	// Allowed again outside the window
 	if !l.allow("1.2.3.4", base.Add(selfServiceRateWin+time.Second)) {
-		t.Fatal("窗口过后应恢复放行")
+		t.Fatal("requests should be allowed again after the window passes")
 	}
 }
 
@@ -95,7 +95,7 @@ func TestAccountPortalDisabledReturns404(t *testing.T) {
 	req.Header.Set("Content-Type", "application/json")
 	router.ServeHTTP(rec, req)
 	if rec.Code != http.StatusNotFound {
-		t.Fatalf("门户关闭时应 404, got %d body=%s", rec.Code, rec.Body.String())
+		t.Fatalf("portal disabled should return 404, got %d body=%s", rec.Code, rec.Body.String())
 	}
 }
 
@@ -105,31 +105,31 @@ func TestAccountPortalGenerateAuthURL(t *testing.T) {
 	router := gin.New()
 	handler.RegisterRoutes(router)
 
-	// 无效邮箱 → 400
+	// Invalid email → 400
 	badRec := httptest.NewRecorder()
 	badReq := httptest.NewRequest(http.MethodPost, "/api/account-portal/generate-auth-url",
 		strings.NewReader(`{"contact_email":"nope"}`))
 	badReq.Header.Set("Content-Type", "application/json")
 	router.ServeHTTP(badRec, badReq)
 	if badRec.Code != http.StatusBadRequest {
-		t.Fatalf("无效邮箱应 400, got %d", badRec.Code)
+		t.Fatalf("invalid email should return 400, got %d", badRec.Code)
 	}
 
-	// 有效邮箱 → 200 且返回 auth_url + session_id
+	// Valid email → 200 and returns auth_url + session_id
 	rec := httptest.NewRecorder()
 	req := httptest.NewRequest(http.MethodPost, "/api/account-portal/generate-auth-url",
 		strings.NewReader(`{"contact_email":"user@example.com"}`))
 	req.Header.Set("Content-Type", "application/json")
 	router.ServeHTTP(rec, req)
 	if rec.Code != http.StatusOK {
-		t.Fatalf("有效邮箱应 200, got %d body=%s", rec.Code, rec.Body.String())
+		t.Fatalf("valid email should return 200, got %d body=%s", rec.Code, rec.Body.String())
 	}
 	body := rec.Body.String()
 	if !strings.Contains(body, "auth_url") || !strings.Contains(body, "session_id") {
-		t.Fatalf("响应应含 auth_url 与 session_id: %s", body)
+		t.Fatalf("response should contain auth_url and session_id: %s", body)
 	}
 	if !strings.Contains(body, "auth.openai.com/oauth/authorize") {
-		t.Fatalf("auth_url 应指向 OpenAI 授权端点: %s", body)
+		t.Fatalf("auth_url should point to the OpenAI authorization endpoint: %s", body)
 	}
 }
 
@@ -157,10 +157,10 @@ func TestUpsertSelfServiceAccountPendingAndNotScheduled(t *testing.T) {
 		t.Fatalf("GetAccountByID: %v", err)
 	}
 	if row.Enabled {
-		t.Fatal("自助账号应为禁用（待审核）")
+		t.Fatal("self-service account should be disabled (pending review)")
 	}
 	if !strings.Contains(row.Note, "contact@x.com") {
-		t.Fatalf("note 应含联系人邮箱, got %q", row.Note)
+		t.Fatalf("note should contain the contact email, got %q", row.Note)
 	}
 	hasTag := false
 	for _, tag := range row.Tags {
@@ -169,16 +169,16 @@ func TestUpsertSelfServiceAccountPendingAndNotScheduled(t *testing.T) {
 		}
 	}
 	if !hasTag {
-		t.Fatalf("应打 self-service 标签, tags=%v", row.Tags)
+		t.Fatalf("should carry the self-service tag, tags=%v", row.Tags)
 	}
-	// 未进调度池
+	// Not in the scheduling pool
 	if handler.store.FindByID(id) != nil {
-		t.Fatal("待审核账号不应进入运行时调度池")
+		t.Fatal("pending review accounts should not enter the runtime scheduling pool")
 	}
 
-	// 重复提交 → errDuplicateOAuthIdentity
+	// Duplicate submission → errDuplicateOAuthIdentity
 	if _, err := handler.upsertSelfServiceAccount(ctx, "provider@example.com", "", seed, "contact2@x.com"); err != errDuplicateOAuthIdentity {
-		t.Fatalf("重复提交应返回 errDuplicateOAuthIdentity, got %v", err)
+		t.Fatalf("duplicate submission should return errDuplicateOAuthIdentity, got %v", err)
 	}
 }
 
@@ -203,7 +203,7 @@ func TestSelfServiceFailedInsertAllowsRetry(t *testing.T) {
 	}
 
 	if _, err := handler.upsertSelfServiceAccount(ctx, "rollback@example.com", "", seed, "c@x.com"); err != nil {
-		t.Fatalf("回滚后同一身份应可重新提交, got %v", err)
+		t.Fatalf("after rollback the same identity should be submittable again, got %v", err)
 	}
 }
 
@@ -220,10 +220,10 @@ func TestApproveSelfServiceAccountLoadsIntoPool(t *testing.T) {
 		t.Fatalf("upsertSelfServiceAccount: %v", err)
 	}
 	if handler.store.FindByID(id) != nil {
-		t.Fatal("批准前不应在池中")
+		t.Fatal("account should not be in the pool before approval")
 	}
 
-	// 管理员批准（enable=true）应把账号加载进调度池
+	// Admin approval (enable=true) should load the account into the scheduling pool
 	rec := httptest.NewRecorder()
 	req := httptest.NewRequest(http.MethodPost, "/api/admin/accounts/"+strconv.FormatInt(id, 10)+"/enable",
 		strings.NewReader(`{"enabled":true}`))
@@ -231,14 +231,14 @@ func TestApproveSelfServiceAccountLoadsIntoPool(t *testing.T) {
 	req.Header.Set("X-Admin-Key", "admin-secret")
 	router.ServeHTTP(rec, req)
 	if rec.Code != http.StatusOK {
-		t.Fatalf("批准应 200, got %d body=%s", rec.Code, rec.Body.String())
+		t.Fatalf("approval should return 200, got %d body=%s", rec.Code, rec.Body.String())
 	}
 	if handler.store.FindByID(id) == nil {
-		t.Fatal("批准后账号应进入运行时调度池")
+		t.Fatal("account should enter the runtime scheduling pool after approval")
 	}
 	row, _ := db.GetAccountByID(ctx, id)
 	if !row.Enabled {
-		t.Fatal("批准后 enabled 应为 true")
+		t.Fatal("enabled should be true after approval")
 	}
 }
 
@@ -270,16 +270,16 @@ func TestUpsertSelfServiceInvalidatesAccountListSnapshot(t *testing.T) {
 		if item.ID == id {
 			found = true
 			if item.Enabled {
-				t.Fatal("待审核账号在快照里应为禁用")
+				t.Fatal("pending review account should be disabled in the snapshot")
 			}
 			if !containsString(item.Tags, selfServiceTag) {
-				t.Fatalf("快照 tags=%v, want self-service", item.Tags)
+				t.Fatalf("snapshot tags=%v, want self-service", item.Tags)
 			}
 			break
 		}
 	}
 	if !found {
-		t.Fatal("提交后列表快照应立刻包含待审核账号")
+		t.Fatal("the list snapshot should include the pending review account right after submission")
 	}
 	if snapshot.Summary.SelfServicePending != 1 {
 		t.Fatalf("SelfServicePending=%d, want 1", snapshot.Summary.SelfServicePending)

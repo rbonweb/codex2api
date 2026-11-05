@@ -84,13 +84,13 @@ func (h *Handler) QualityTest(c *gin.Context) {
 	c.Request.Body = http.MaxBytesReader(c.Writer, c.Request.Body, 128*1024)
 	var req qualityTestRequest
 	if err := c.ShouldBindJSON(&req); err != nil {
-		c.JSON(http.StatusBadRequest, gin.H{"error": "无效的测试请求"})
+		c.JSON(http.StatusBadRequest, gin.H{"error": "Invalid test request"})
 		return
 	}
 	req.Model = strings.TrimSpace(req.Model)
 	req.ReasoningEffort = strings.ToLower(strings.TrimSpace(req.ReasoningEffort))
 	if req.Model == "" || len(req.Model) > 200 || strings.TrimSpace(req.Prompt) == "" || len(req.Prompt) > qualityTestPromptLimit {
-		c.JSON(http.StatusBadRequest, gin.H{"error": "请选择模型，测试提示词不能为空且不能超过 16000 字节"})
+		c.JSON(http.StatusBadRequest, gin.H{"error": "Select a model; the test prompt cannot be empty and cannot exceed 16000 bytes"})
 		return
 	}
 	ctx, cancel := context.WithTimeout(c.Request.Context(), 10*time.Minute)
@@ -102,12 +102,12 @@ func (h *Handler) QualityTest(c *gin.Context) {
 func (h *Handler) QualityTestOptions(c *gin.Context) {
 	id, err := strconv.ParseInt(c.Param("id"), 10, 64)
 	if err != nil || id <= 0 {
-		c.JSON(http.StatusBadRequest, gin.H{"error": "无效的账号 ID"})
+		c.JSON(http.StatusBadRequest, gin.H{"error": "Invalid account ID"})
 		return
 	}
 	account := h.store.FindByID(id)
 	if account == nil {
-		c.JSON(http.StatusNotFound, gin.H{"error": "账号不在运行时池中"})
+		c.JSON(http.StatusNotFound, gin.H{"error": "Account is not in the runtime pool"})
 		return
 	}
 	c.JSON(http.StatusOK, h.qualityTestOptionsForAccount(c.Request.Context(), account))
@@ -134,10 +134,10 @@ func (h *Handler) qualityTestOptionsForAccount(ctx context.Context, account *aut
 func (h *Handler) validateQualityTestForAccount(ctx context.Context, account *auth.Account, req qualityTestRequest) error {
 	options := h.qualityTestOptionsForAccount(ctx, account)
 	if !slices.Contains(options.Models, req.Model) {
-		return fmt.Errorf("该账号不支持测试模型: %s", req.Model)
+		return fmt.Errorf("this account does not support the test model: %s", req.Model)
 	}
 	if !slices.Contains(options.ReasoningEfforts, req.ReasoningEffort) {
-		return fmt.Errorf("该渠道不支持所选思考强度")
+		return fmt.Errorf("this channel does not support the selected reasoning effort")
 	}
 	return nil
 }

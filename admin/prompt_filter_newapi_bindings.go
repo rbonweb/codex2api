@@ -79,7 +79,7 @@ func (h *Handler) GetPromptFilterNewAPIBinding(c *gin.Context) {
 	}
 	binding, err := h.db.GetPromptFilterNewAPIBinding(c.Request.Context(), apiKeyID)
 	if errors.Is(err, sql.ErrNoRows) {
-		writeError(c, http.StatusNotFound, "平台绑定不存在")
+		writeError(c, http.StatusNotFound, "Platform binding not found")
 		return
 	}
 	if err != nil {
@@ -92,7 +92,7 @@ func (h *Handler) GetPromptFilterNewAPIBinding(c *gin.Context) {
 func (h *Handler) CreatePromptFilterNewAPIBinding(c *gin.Context) {
 	var req promptFilterNewAPIBindingCreateRequest
 	if err := c.ShouldBindJSON(&req); err != nil {
-		writeError(c, http.StatusBadRequest, "请求格式无效")
+		writeError(c, http.StatusBadRequest, "Invalid request format")
 		return
 	}
 	if _, err := h.db.GetAPIKeyByID(c.Request.Context(), req.APIKeyID); errors.Is(err, sql.ErrNoRows) {
@@ -108,7 +108,7 @@ func (h *Handler) CreatePromptFilterNewAPIBinding(c *gin.Context) {
 	}
 	secret, err := generatePromptFilterBindingSecret()
 	if err != nil {
-		writeError(c, http.StatusInternalServerError, "生成随机密钥失败")
+		writeError(c, http.StatusInternalServerError, "Failed to generate random key")
 		return
 	}
 	enabled, requireSigned := true, false
@@ -120,7 +120,7 @@ func (h *Handler) CreatePromptFilterNewAPIBinding(c *gin.Context) {
 	}
 	scope, validScope := database.NormalizePromptFilterScope(req.PromptFilterScope)
 	if !validScope {
-		writeError(c, http.StatusBadRequest, "Prompt 检查范围仅支持 inherit、local_only 或 off")
+		writeError(c, http.StatusBadRequest, "Prompt inspection scope only supports inherit, local_only or off")
 		return
 	}
 	binding := &database.PromptFilterNewAPIBinding{
@@ -137,7 +137,7 @@ func (h *Handler) CreatePromptFilterNewAPIBinding(c *gin.Context) {
 	}
 	h.settingsUpdateMu.Unlock()
 	if errors.Is(err, database.ErrPromptFilterNewAPIBindingConflict) {
-		writeError(c, http.StatusConflict, "API Key 或平台代码已存在绑定")
+		writeError(c, http.StatusConflict, "A binding already exists for this API key or platform code")
 		return
 	}
 	if err != nil {
@@ -154,7 +154,7 @@ func (h *Handler) UpdatePromptFilterNewAPIBinding(c *gin.Context) {
 	}
 	var req promptFilterNewAPIBindingUpdateRequest
 	if err := c.ShouldBindJSON(&req); err != nil {
-		writeError(c, http.StatusBadRequest, "请求格式无效")
+		writeError(c, http.StatusBadRequest, "Invalid request format")
 		return
 	}
 	mutationCtx, cancelMutation := promptFilterBindingMutationContext(c)
@@ -163,7 +163,7 @@ func (h *Handler) UpdatePromptFilterNewAPIBinding(c *gin.Context) {
 	binding, err := h.db.GetPromptFilterNewAPIBinding(mutationCtx, apiKeyID)
 	if errors.Is(err, sql.ErrNoRows) {
 		h.settingsUpdateMu.Unlock()
-		writeError(c, http.StatusNotFound, "平台绑定不存在")
+		writeError(c, http.StatusNotFound, "Platform binding not found")
 		return
 	}
 	if err != nil {
@@ -187,7 +187,7 @@ func (h *Handler) UpdatePromptFilterNewAPIBinding(c *gin.Context) {
 		scope, validScope := database.NormalizePromptFilterScope(*req.PromptFilterScope)
 		if !validScope {
 			h.settingsUpdateMu.Unlock()
-			writeError(c, http.StatusBadRequest, "Prompt 检查范围仅支持 inherit、local_only 或 off")
+			writeError(c, http.StatusBadRequest, "Prompt inspection scope only supports inherit, local_only or off")
 			return
 		}
 		binding.PromptFilterScope = scope
@@ -204,7 +204,7 @@ func (h *Handler) UpdatePromptFilterNewAPIBinding(c *gin.Context) {
 	}
 	h.settingsUpdateMu.Unlock()
 	if errors.Is(err, database.ErrPromptFilterNewAPIBindingConflict) {
-		writeError(c, http.StatusConflict, "平台代码已被其他 API Key 使用")
+		writeError(c, http.StatusConflict, "Platform code is already used by another API key")
 		return
 	}
 	if err != nil {
@@ -218,7 +218,7 @@ func (h *Handler) GeneratePromptFilterNewAPIBindingSecret(c *gin.Context) {
 	req := promptFilterNewAPIBindingSecretRequest{}
 	if c.Request.ContentLength > 0 {
 		if err := c.ShouldBindJSON(&req); err != nil {
-			writeError(c, http.StatusBadRequest, "请求格式无效")
+			writeError(c, http.StatusBadRequest, "Invalid request format")
 			return
 		}
 	}
@@ -227,12 +227,12 @@ func (h *Handler) GeneratePromptFilterNewAPIBindingSecret(c *gin.Context) {
 		grace = *req.GraceSeconds
 	}
 	if grace < minGeneratedBindingSecretGraceSeconds || grace > maxPromptFilterBindingSecretGraceSeconds {
-		writeError(c, http.StatusBadRequest, "随机生成密钥时 grace_seconds 必须在 60 到 86400 之间，避免响应中断后旧密钥立即失效")
+		writeError(c, http.StatusBadRequest, "grace_seconds must be between 60 and 86400 when generating a random key, so the old key is not invalidated immediately after a response is interrupted")
 		return
 	}
 	secret, err := generatePromptFilterBindingSecret()
 	if err != nil {
-		writeError(c, http.StatusInternalServerError, "生成随机密钥失败")
+		writeError(c, http.StatusInternalServerError, "Failed to generate random key")
 		return
 	}
 	h.replacePromptFilterNewAPIBindingSecret(c, secret, &grace)
@@ -241,12 +241,12 @@ func (h *Handler) GeneratePromptFilterNewAPIBindingSecret(c *gin.Context) {
 func (h *Handler) ReplacePromptFilterNewAPIBindingSecret(c *gin.Context) {
 	var req promptFilterNewAPIBindingSecretRequest
 	if err := c.ShouldBindJSON(&req); err != nil {
-		writeError(c, http.StatusBadRequest, "请求格式无效")
+		writeError(c, http.StatusBadRequest, "Invalid request format")
 		return
 	}
 	secret := strings.TrimSpace(req.Secret)
 	if len(secret) < 32 {
-		writeError(c, http.StatusBadRequest, "审计绑定密钥至少需要 32 个字符")
+		writeError(c, http.StatusBadRequest, "The audit binding secret must be at least 32 characters")
 		return
 	}
 	h.replacePromptFilterNewAPIBindingSecret(c, secret, req.GraceSeconds)
@@ -262,7 +262,7 @@ func (h *Handler) replacePromptFilterNewAPIBindingSecret(c *gin.Context, secret 
 		grace = *graceSeconds
 	}
 	if grace < 0 || grace > maxPromptFilterBindingSecretGraceSeconds {
-		writeError(c, http.StatusBadRequest, "grace_seconds 必须在 0 到 86400 之间")
+		writeError(c, http.StatusBadRequest, "grace_seconds must be between 0 and 86400")
 		return
 	}
 	mutationCtx, cancelMutation := promptFilterBindingMutationContext(c)
@@ -271,7 +271,7 @@ func (h *Handler) replacePromptFilterNewAPIBindingSecret(c *gin.Context, secret 
 	binding, err := h.db.GetPromptFilterNewAPIBinding(mutationCtx, apiKeyID)
 	if errors.Is(err, sql.ErrNoRows) {
 		h.settingsUpdateMu.Unlock()
-		writeError(c, http.StatusNotFound, "平台绑定不存在")
+		writeError(c, http.StatusNotFound, "Platform binding not found")
 		return
 	}
 	if err != nil {
@@ -300,7 +300,7 @@ func (h *Handler) replacePromptFilterNewAPIBindingSecret(c *gin.Context, secret 
 	}
 	h.settingsUpdateMu.Unlock()
 	if errors.Is(err, sql.ErrNoRows) {
-		writeError(c, http.StatusNotFound, "平台绑定不存在")
+		writeError(c, http.StatusNotFound, "Platform binding not found")
 		return
 	}
 	if err != nil {
@@ -324,14 +324,14 @@ func (h *Handler) DeletePromptFilterNewAPIBinding(c *gin.Context) {
 	}
 	h.settingsUpdateMu.Unlock()
 	if errors.Is(err, sql.ErrNoRows) {
-		writeError(c, http.StatusNotFound, "平台绑定不存在")
+		writeError(c, http.StatusNotFound, "Platform binding not found")
 		return
 	}
 	if err != nil {
 		writeInternalError(c, err)
 		return
 	}
-	c.JSON(http.StatusOK, gin.H{"message": "平台绑定已删除"})
+	c.JSON(http.StatusOK, gin.H{"message": "Platform binding deleted"})
 }
 
 func promptFilterBindingMutationContext(c *gin.Context) (context.Context, context.CancelFunc) {
@@ -345,7 +345,7 @@ func promptFilterBindingMutationContext(c *gin.Context) (context.Context, contex
 func promptFilterBindingAPIKeyID(c *gin.Context) (int64, bool) {
 	apiKeyID, err := strconv.ParseInt(strings.TrimSpace(c.Param("api_key_id")), 10, 64)
 	if err != nil || apiKeyID <= 0 {
-		writeError(c, http.StatusBadRequest, "无效的 API Key ID")
+		writeError(c, http.StatusBadRequest, "Invalid API key ID")
 		return 0, false
 	}
 	return apiKeyID, true
@@ -355,7 +355,7 @@ func validatePromptFilterBindingFields(c *gin.Context, code, name string) (strin
 	var codeOK bool
 	code, codeOK = database.NormalizePromptFilterPlatformCode(code)
 	if !codeOK {
-		writeError(c, http.StatusBadRequest, "platform_code 只能包含小写字母、数字、下划线或短横线，且最长 32 字符")
+		writeError(c, http.StatusBadRequest, "platform_code may only contain lowercase letters, digits, underscores or hyphens, and must be at most 32 characters")
 		return "", "", false
 	}
 	name = strings.TrimSpace(name)
@@ -363,7 +363,7 @@ func validatePromptFilterBindingFields(c *gin.Context, code, name string) (strin
 		name = code
 	}
 	if len([]rune(name)) > 255 {
-		writeError(c, http.StatusBadRequest, "platform_name 最长 255 字符")
+		writeError(c, http.StatusBadRequest, "platform_name must be at most 255 characters")
 		return "", "", false
 	}
 	return code, name, true

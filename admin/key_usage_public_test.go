@@ -40,7 +40,7 @@ func TestParsePublicAPIKeyUsageLogFilter(t *testing.T) {
 	}
 }
 
-// 停用的 Key 与代理链路一致被拒绝；过期 Key 仍可读并如实标注 expired。
+// A disabled key is rejected, consistent with the proxy path; an expired key can still be read and is honestly labelled expired.
 func TestPublicAPIKeyUsageSummaryKeyStatusGate(t *testing.T) {
 	gin.SetMode(gin.TestMode)
 	db := newTestAdminDB(t)

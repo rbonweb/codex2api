@@ -24,21 +24,21 @@ import (
 	"github.com/gin-gonic/gin"
 )
 
-// bootstrapState 跟踪初始化端点的运行状态，主要用于：
-//  1. 防止并发条件下重复写入；
-//  2. 简单的全局限频，只统计令牌错误的请求，避免被扫描器穷举。
+// bootstrapState tracks the runtime state of the bootstrap endpoint, mainly for:
+//  1. Preventing duplicate writes under concurrency;
+//  2. A simple global rate limit that only counts requests with a wrong token, so scanners cannot brute-force it.
 var bootstrapState struct {
 	mu sync.Mutex
 
-	// rateBucket: 简单的固定窗口限频，单位 = 每 windowSec 内最多 maxPerWindow 次
+	// rateBucket: a simple fixed-window rate limit, measured as at most maxPerWindow times per windowSec
 	windowStart atomic.Int64 // unix seconds
 	count       atomic.Int64
 }
 
-// bootstrapTokenState 持有页面初始化所需的一次性令牌。令牌只存在于进程内存，
-// 生成时打印到服务日志：能完成初始化的必须是能读到服务端日志的部署者，而不是
-// "来源 IP 看起来像内网"的任何人——Docker Desktop / rootless 容器的端口转发和
-// 私网反代都会把公网请求的来源变成私网地址。
+// bootstrapTokenState holds the one-time token needed to initialize the page. The token exists only in process memory,
+// and is printed to the service log when generated: only the deployer who can read the server log can complete initialization, not
+// anyone whose source IP merely looks like an internal network. Docker Desktop / rootless container port forwarding and
+// private-network reverse proxies both turn the source of public requests into a private address.
 var bootstrapTokenState struct {
 	mu    sync.Mutex
 	token string
@@ -52,8 +52,8 @@ const (
 	bootstrapTokenBytes = 16
 )
 
-// EnsureBootstrapToken 返回当前的一次性初始化令牌，尚未生成时生成并打印到日志。
-// 令牌在初始化成功后作废；之后若管理密钥被清空、再次进入待初始化状态，会重新生成。
+// EnsureBootstrapToken returns the current one-time bootstrap token, generating it and printing it to the log if it has not been generated yet.
+// The token is revoked after initialization succeeds; if the admin key is later cleared and the system returns to the pending-initialization state, a new token is generated.
 func EnsureBootstrapToken() (string, error) {
 	bootstrapTokenState.mu.Lock()
 	defer bootstrapTokenState.mu.Unlock()
@@ -65,12 +65,12 @@ func EnsureBootstrapToken() (string, error) {
 		return "", err
 	}
 	bootstrapTokenState.token = hex.EncodeToString(buf)
-	log.Printf("[bootstrap] 初始化令牌 (bootstrap token): %s", bootstrapTokenState.token)
-	log.Println("[bootstrap] 首次初始化页面需要填写该令牌；仅当前进程有效，重启后重新生成，初始化成功后立即作废。")
+	log.Printf("[bootstrap] initialization token (bootstrap token): %s", bootstrapTokenState.token)
+	log.Println("[bootstrap] The first-run setup page needs this token; it is valid only for the current process, is regenerated after a restart, and is revoked immediately once initialization succeeds.")
 	return bootstrapTokenState.token, nil
 }
 
-// bootstrapTokenMatches 以常量时间比较提交的令牌。令牌尚未生成时一律不匹配。
+// bootstrapTokenMatches compares the submitted token in constant time. It never matches while no token has been generated.
 func bootstrapTokenMatches(submitted string) bool {
 	submitted = strings.ToLower(strings.TrimSpace(submitted))
 	bootstrapTokenState.mu.Lock()
@@ -81,15 +81,15 @@ func bootstrapTokenMatches(submitted string) bool {
 	return security.SecureCompare(submitted, bootstrapTokenState.token)
 }
 
-// revokeBootstrapToken 在初始化成功后作废令牌。
+// revokeBootstrapToken revokes the token after initialization succeeds.
 func revokeBootstrapToken() {
 	bootstrapTokenState.mu.Lock()
 	bootstrapTokenState.token = ""
 	bootstrapTokenState.mu.Unlock()
 }
 
-// bootstrapAuditIP 生成审计日志里的来源字段：ip 是直连对端，与按可信代理解析出的
-// 客户端 IP 不同时额外记 forwarded，便于事后区分真实对端与转发头声称的地址。
+// bootstrapAuditIP builds the source field for the audit log: ip is the direct peer, which differs from the client IP resolved through a trusted proxy,
+// so forwarded is recorded as well, to tell the real peer apart from the address claimed by the forwarding header.
 func bootstrapAuditIP(c *gin.Context) string {
 	peer := c.RemoteIP()
 	forwarded := c.ClientIP()
@@ -99,10 +99,10 @@ func bootstrapAuditIP(c *gin.Context) string {
 	return "ip=" + peer + " forwarded=" + forwarded
 }
 
-// bootstrapAllowRate 使用 CAS 实现固定窗口限频：
-//   - 任意时刻只有一个 goroutine 能成功翻新窗口起点，其它失败者读到的就是
-//     翻新后的最新值，避免多个 goroutine 同时把 count 重置为 0。
-//   - 先递增计数再判断，确保高并发下不会超过限制。
+// bootstrapAllowRate implements the fixed-window rate limit with CAS:
+//   - At any moment only one goroutine can successfully renew the window start; the other losers read
+//     the latest renewed value, which prevents several goroutines from resetting count to 0 at the same time.
+//   - Increment the count before checking, so the limit is never exceeded under high concurrency.
 func bootstrapAllowRate() bool {
 	now := time.Now().Unix()
 	for {
@@ -110,8 +110,8 @@ func bootstrapAllowRate() bool {
 		if now-winStart < bootstrapWindowSec {
 			break
 		}
-		// 仅当 windowStart 仍是我们读到的旧值时才推进；其它 goroutine 已经
-		// 推进过的话直接退出循环，复用最新窗口。
+		// Advance only if windowStart is still the old value we read; if another goroutine has already
+		// advanced it, exit the loop and reuse the latest window.
 		if bootstrapState.windowStart.CompareAndSwap(winStart, now) {
 			bootstrapState.count.Store(0)
 			break
@@ -121,17 +121,17 @@ func bootstrapAllowRate() bool {
 	return newCount <= bootstrapMaxPerWin
 }
 
-// bootstrapAllowClientIP 判断该来源 IP 是否允许执行页面初始化。调用方必须传入
-// 直连 TCP 对端地址(c.RemoteIP())而不是 c.ClientIP()：后者在对端属于可信代理时
-// 取自 X-Forwarded-For，而私网网段默认可信，请求方可以随意声称自己是内网地址。
-// 这道门只是纵深防御，真正的授权凭据是一次性初始化令牌。
+// bootstrapAllowClientIP reports whether this source IP may run page initialization. The caller must pass
+// the direct TCP peer address (c.RemoteIP()) rather than c.ClientIP(): the latter, when the peer is a trusted proxy,
+// is taken from X-Forwarded-For, and private subnets are trusted by default, so a requester can claim any internal address it likes.
+// This gate is only defense in depth; the real authorization credential is the one-time initialization token.
 //
-// 规则：
-//   - loopback 永远允许；
-//   - BOOTSTRAP_ALLOWED_CIDR 已设置时以其为准（逗号分隔 CIDR；设为 none 表示仅 loopback）；
-//   - 未设置时默认放行私有/链路本地地址——Docker 端口映射后宿主机访问的源 IP 是
-//     网桥地址(如 172.17.0.1)而非 loopback，若只认 loopback 会把最常见的本地
-//     Docker 部署挡在初始化页面外(issue #199)。公网 IP 默认仍拒绝。
+// Rules:
+//   - loopback is always allowed;
+//   - when BOOTSTRAP_ALLOWED_CIDR is set, it takes precedence (comma-separated CIDRs; set to none to allow loopback only);
+//   - when unset, private and link-local addresses are allowed by default: after Docker port mapping, the source IP of host access is
+//     the bridge address (such as 172.17.0.1) rather than loopback; if only loopback were allowed, the most common local
+//     Docker deployments would be kept off the initialization page (issue #199). Public IPs are still rejected by default.
 func bootstrapAllowClientIP(clientIP string) bool {
 	ip := net.ParseIP(strings.TrimSpace(clientIP))
 	if ip == nil {
@@ -286,12 +286,12 @@ func (h *Handler) bootstrapSetupHints(r *http.Request) gin.H {
 	}
 }
 
-// GetBootstrapStatus 返回当前是否需要执行初始化（GET /api/admin/bootstrap-status）。
+// GetBootstrapStatus returns whether initialization is currently needed (GET /api/admin/bootstrap-status).
 //
-// 该端点不要求鉴权，前端 AuthGate 在拿到登录界面前会先轮询此端点：
-//   - 已通过 .env 设置 ADMIN_SECRET => needs_bootstrap=false, source="env"
-//   - 已写入数据库                  => needs_bootstrap=false, source="database"
-//   - 两端均空                       => needs_bootstrap=true,  source="empty"
+// This endpoint does not require auth; before showing the login screen, the frontend AuthGate polls this endpoint:
+//   - ADMIN_SECRET is set via .env => needs_bootstrap=false, source="env"
+//   - written to the database               => needs_bootstrap=false, source="database"
+//   - both are empty                        => needs_bootstrap=true,  source="empty"
 func (h *Handler) GetBootstrapStatus(c *gin.Context) {
 	envSecret := strings.TrimSpace(h.adminSecretEnv)
 	if envSecret != "" {
@@ -306,11 +306,11 @@ func (h *Handler) GetBootstrapStatus(c *gin.Context) {
 	defer cancel()
 	settings, err := h.db.GetSystemSettings(ctx)
 	if err != nil {
-		// 数据库异常时倾向 fail-closed：不允许 bootstrap，让运维先排查 DB
+		// On database errors, prefer fail-closed: do not allow bootstrap, and let operators check the DB first
 		c.JSON(http.StatusServiceUnavailable, gin.H{
 			"needs_bootstrap": false,
 			"source":          "error",
-			"error":           "读取系统设置失败，请检查数据库连接",
+			"error":           "Failed to read system settings; check the database connection",
 		})
 		return
 	}
@@ -321,9 +321,9 @@ func (h *Handler) GetBootstrapStatus(c *gin.Context) {
 		})
 		return
 	}
-	// 运行时清空管理密钥后重新进入待初始化状态时，这里负责补发令牌到日志。
+	// When the admin key is cleared at runtime and the system re-enters the pending-initialization state, this part re-issues the token to the log.
 	if _, err := EnsureBootstrapToken(); err != nil {
-		log.Printf("[bootstrap] 生成初始化令牌失败: %v", err)
+		log.Printf("[bootstrap] failed to generate initialization token: %v", err)
 	}
 	c.JSON(http.StatusOK, gin.H{
 		"needs_bootstrap": true,
@@ -332,29 +332,29 @@ func (h *Handler) GetBootstrapStatus(c *gin.Context) {
 	})
 }
 
-// GetSetupHints 返回登录后的部署检查信息。
+// GetSetupHints returns the deployment check information shown after login.
 //
-// 与公开的 bootstrap-status 不同，该接口注册在 /api/admin 下，需要管理密钥，
-// 因此可以安全返回数据库位置、图片目录等部署诊断信息。
+// Unlike the public bootstrap-status, this endpoint is registered under /api/admin and requires the admin key,
+// so it is safe to return deployment diagnostics such as the database location and image directory.
 func (h *Handler) GetSetupHints(c *gin.Context) {
 	c.JSON(http.StatusOK, h.bootstrapSetupHints(c.Request))
 }
 
-// PostBootstrap 接收用户在浏览器中输入的初始管理密钥并写入数据库。
+// PostBootstrap receives the initial admin key the user enters in the browser and writes it to the database.
 //
-// 安全约束：
-//  1. 仅在系统未配置 ADMIN_SECRET 时可用，否则一律 409；
-//  2. 必须携带启动日志里的一次性初始化令牌；来源 IP 门按直连对端判断，只作纵深防御；
-//  3. 通过互斥锁 + 双重检查避免并发写入；
-//  4. 令牌错误的请求计入全局限频，令牌正确的请求不受限频影响，扫描器打满限频也挡不住部署者；
-//  5. 校验最小长度（8 个 rune），避免过弱密钥；
-//  6. 全程审计日志。
+// Security constraints:
+//  1. Available only when ADMIN_SECRET is not configured; otherwise always 409;
+//  2. Must carry the one-time initialization token from the startup log; the source IP gate judges by the direct peer and is only defense in depth;
+//  3. Use a mutex plus a double check to prevent concurrent writes;
+//  4. Requests with a wrong token count toward the global rate limit; requests with the correct token are not affected by it, so a scanner that fills the limit cannot block the deployer;
+//  5. Validate the minimum length (8 runes) to avoid weak keys;
+//  6. Audit log throughout.
 func (h *Handler) PostBootstrap(c *gin.Context) {
 	auditIP := bootstrapAuditIP(c)
 	if peer := c.RemoteIP(); !bootstrapAllowClientIP(peer) {
 		security.SecurityAuditLog("BOOTSTRAP_REJECTED_IP", auditIP)
 		c.JSON(http.StatusForbidden, gin.H{
-			"error": "当前来源 IP (" + peer + ") 不允许执行页面初始化。可任选其一：1) 在 .env 中设置 ADMIN_SECRET 后重建容器，跳过页面初始化直接登录；2) 设置 BOOTSTRAP_ALLOWED_CIDR 环境变量放行该来源网段（如 BOOTSTRAP_ALLOWED_CIDR=203.0.113.0/24）。该判断只看与服务直连的 TCP 对端，不读取 X-Forwarded-For；经反向代理访问时请放行反代所在网段。",
+			"error": "The current source IP (" + peer + ") is not allowed to run page initialization. Choose one: 1) set ADMIN_SECRET in .env and rebuild the container, then skip page initialization and sign in directly; 2) set the BOOTSTRAP_ALLOWED_CIDR environment variable to allow this source subnet (for example BOOTSTRAP_ALLOWED_CIDR=203.0.113.0/24). This check only looks at the TCP peer connected directly to the service and does not read X-Forwarded-For; when accessing through a reverse proxy, allow the subnet the proxy is in.",
 			"code":  "bootstrap_ip_forbidden",
 		})
 		return
@@ -364,31 +364,31 @@ func (h *Handler) PostBootstrap(c *gin.Context) {
 	if envSecret != "" {
 		security.SecurityAuditLog("BOOTSTRAP_REJECTED_ENV", auditIP)
 		c.JSON(http.StatusConflict, gin.H{
-			"error": "ADMIN_SECRET 已通过环境变量配置，无需在页面初始化",
+			"error": "ADMIN_SECRET is configured through an environment variable; no page initialization is needed",
 		})
 		return
 	}
 
-	// 先确认确实处于待初始化状态再校验令牌：已初始化时令牌早已作废，直接回 409
-	// 比回"令牌无效"更准确；这一信息 bootstrap-status 本来就公开。
+	// Confirm the system is really pending initialization before checking the token: once initialized, the token is long revoked, so return 409 directly
+	// which is more accurate than "invalid token"; bootstrap-status already exposes this information publicly.
 	preCtx, preCancel := context.WithTimeout(c.Request.Context(), 3*time.Second)
 	current, err := h.db.GetSystemSettings(preCtx)
 	preCancel()
 	if err != nil {
 		security.SecurityAuditLog("BOOTSTRAP_DB_READ_ERROR", auditIP+" err="+err.Error())
-		c.JSON(http.StatusInternalServerError, gin.H{"error": "读取系统设置失败"})
+		c.JSON(http.StatusInternalServerError, gin.H{"error": "Failed to read system settings"})
 		return
 	}
 	if current != nil && strings.TrimSpace(current.AdminSecret) != "" {
 		security.SecurityAuditLog("BOOTSTRAP_REJECTED_ALREADY_INITIALIZED", auditIP)
 		c.JSON(http.StatusConflict, gin.H{
-			"error": "ADMIN_SECRET 已配置，无法重复初始化。如需重置，请进入「设置」页面使用现有密钥登录后修改。",
+			"error": "ADMIN_SECRET is already configured, so initialization cannot run again. To reset it, sign in with the existing key and change it on the 'Settings' page.",
 		})
 		return
 	}
 	if _, err := EnsureBootstrapToken(); err != nil {
 		security.SecurityAuditLog("BOOTSTRAP_TOKEN_ERROR", auditIP+" err="+err.Error())
-		c.JSON(http.StatusInternalServerError, gin.H{"error": "生成初始化令牌失败"})
+		c.JSON(http.StatusInternalServerError, gin.H{"error": "Failed to generate initialization token"})
 		return
 	}
 
@@ -397,35 +397,35 @@ func (h *Handler) PostBootstrap(c *gin.Context) {
 		BootstrapToken string `json:"bootstrap_token"`
 	}
 	if err := c.ShouldBindJSON(&body); err != nil {
-		c.JSON(http.StatusBadRequest, gin.H{"error": "请求体格式错误"})
+		c.JSON(http.StatusBadRequest, gin.H{"error": "Invalid request body format"})
 		return
 	}
 	if !bootstrapTokenMatches(body.BootstrapToken) {
 		if !bootstrapAllowRate() {
 			security.SecurityAuditLog("BOOTSTRAP_RATE_LIMITED", auditIP)
-			c.JSON(http.StatusTooManyRequests, gin.H{"error": "请求过于频繁，请稍后再试"})
+			c.JSON(http.StatusTooManyRequests, gin.H{"error": "Too many requests, please try again later"})
 			return
 		}
 		security.SecurityAuditLog("BOOTSTRAP_REJECTED_TOKEN", auditIP)
 		c.JSON(http.StatusUnauthorized, gin.H{
-			"error": "初始化令牌无效。请在服务日志中搜索 bootstrap token 获取令牌（例如 docker compose logs codex2api | grep \"bootstrap token\"）；重启服务会生成新令牌。",
+			"error": "Invalid initialization token. Search the service log for bootstrap token to get the token (for example docker compose logs codex2api | grep \"bootstrap token\"); restarting the service generates a new token.",
 			"code":  "bootstrap_token_invalid",
 		})
 		return
 	}
 	secret := strings.TrimSpace(body.AdminSecret)
 	if secret == "" {
-		c.JSON(http.StatusBadRequest, gin.H{"error": "管理密钥不能为空"})
+		c.JSON(http.StatusBadRequest, gin.H{"error": "Admin key cannot be empty"})
 		return
 	}
 	if utf8.RuneCountInString(secret) < bootstrapMinSecret {
 		c.JSON(http.StatusBadRequest, gin.H{
-			"error": "管理密钥至少 8 位",
+			"error": "Admin key must be at least 8 characters",
 		})
 		return
 	}
 	if len(secret) > bootstrapMaxSecret {
-		c.JSON(http.StatusBadRequest, gin.H{"error": "管理密钥过长"})
+		c.JSON(http.StatusBadRequest, gin.H{"error": "Admin key is too long"})
 		return
 	}
 
@@ -435,17 +435,17 @@ func (h *Handler) PostBootstrap(c *gin.Context) {
 	ctx, cancel := context.WithTimeout(c.Request.Context(), 5*time.Second)
 	defer cancel()
 
-	// 双重检查：进入临界区后再读一次，避免并发写入
+	// Double check: read again after entering the critical section, to avoid concurrent writes
 	settings, err := h.db.GetSystemSettings(ctx)
 	if err != nil {
 		security.SecurityAuditLog("BOOTSTRAP_DB_READ_ERROR", auditIP+" err="+err.Error())
-		c.JSON(http.StatusInternalServerError, gin.H{"error": "读取系统设置失败"})
+		c.JSON(http.StatusInternalServerError, gin.H{"error": "Failed to read system settings"})
 		return
 	}
 	if settings != nil && strings.TrimSpace(settings.AdminSecret) != "" {
 		security.SecurityAuditLog("BOOTSTRAP_REJECTED_ALREADY_INITIALIZED", auditIP)
 		c.JSON(http.StatusConflict, gin.H{
-			"error": "ADMIN_SECRET 已配置，无法重复初始化。如需重置，请进入「设置」页面使用现有密钥登录后修改。",
+			"error": "ADMIN_SECRET is already configured, so initialization cannot run again. To reset it, sign in with the existing key and change it on the 'Settings' page.",
 		})
 		return
 	}
@@ -456,7 +456,7 @@ func (h *Handler) PostBootstrap(c *gin.Context) {
 
 	if err := h.db.UpdateSystemSettings(ctx, settings); err != nil {
 		security.SecurityAuditLog("BOOTSTRAP_DB_WRITE_ERROR", auditIP+" err="+err.Error())
-		c.JSON(http.StatusInternalServerError, gin.H{"error": "写入系统设置失败"})
+		c.JSON(http.StatusInternalServerError, gin.H{"error": "Failed to write system settings"})
 		return
 	}
 
@@ -465,15 +465,15 @@ func (h *Handler) PostBootstrap(c *gin.Context) {
 	c.JSON(http.StatusOK, gin.H{"ok": true})
 }
 
-// defaultBootstrapSettings 返回 settings 表初次记录的安全默认值。
-// 与 main.go 中 step 3 保持一致，避免 PostBootstrap 在数据库尚无任何记录时
-// 写入空值导致后续业务设置缺失。
+// defaultBootstrapSettings returns the safe default values first recorded in the settings table.
+// Keep these consistent with step 3 in main.go, so that PostBootstrap, while the database has no records yet,
+// does not write empty values that leave later business settings missing.
 func defaultBootstrapSettings() *database.SystemSettings {
 	promptFilterCfg := promptfilter.RecommendedConfig()
 	return &database.SystemSettings{
 		SiteName:                          database.DefaultSiteName,
 		MaxConcurrency:                    2,
-		CodexTelemetryEnabled:             false, // 实验性:模拟遥测默认不外发,由部署者显式开启
+		CodexTelemetryEnabled:             false, // experimental: simulated telemetry is not sent out by default; the deployer must turn it on explicitly
 		GlobalRPM:                         0,
 		TestModel:                         auth.DefaultTestModel,
 		TestContent:                       auth.DefaultTestContent,

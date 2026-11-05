@@ -168,8 +168,8 @@ func (h *Handler) CreateExternalImageJob(c *gin.Context) {
 		}
 		h.runImageGenerationJob(jobID, req, apiKey, opts)
 	}()
-	// 202 只返回小回执；params_json 可能包含全部输入图（数十 MB），
-	// 不能随响应回显给客户端，否则单请求即可放大内存/带宽。
+	// 202 only returns a small receipt; params_json may contain all the input images (tens of MB),
+	// so it must not be echoed back to the client, or a single request could amplify memory and bandwidth use.
 	responseJob := *job
 	responseJob.ParamsJSON = ""
 	c.JSON(http.StatusAccepted, externalImageJobResponse{Job: &responseJob})

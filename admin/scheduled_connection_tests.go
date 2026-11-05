@@ -50,13 +50,13 @@ type scheduledTestRecord struct {
 func normalizeScheduledTestConfig(raw accountScheduledTest) (accountScheduledTest, error) {
 	raw.Model = strings.TrimSpace(raw.Model)
 	if len(raw.Model) > 256 {
-		return raw, errors.New("测试模型名称过长")
+		return raw, errors.New("the test model name is too long")
 	}
 	if strings.TrimSpace(raw.Content) == "" || len([]rune(raw.Content)) > auth.MaxTestContentRunes {
-		return raw, errors.New("测试内容不能为空且不能超过 8192 个字符")
+		return raw, errors.New("the test content cannot be empty and cannot exceed 8192 characters")
 	}
 	if raw.Enabled && raw.Model == "" {
-		return raw, errors.New("请选择测试模型")
+		return raw, errors.New("select a test model")
 	}
 	normalize := func(values []string) ([]string, error) {
 		result := make([]string, 0, len(values))
@@ -64,7 +64,7 @@ func normalizeScheduledTestConfig(raw accountScheduledTest) (accountScheduledTes
 		for _, value := range values {
 			value = strings.TrimSpace(value)
 			if !scheduledTestTimePattern.MatchString(value) {
-				return nil, errors.New("测试时间格式必须为 HH:mm")
+				return nil, errors.New("the test time format must be HH:mm")
 			}
 			if !seen[value] {
 				result = append(result, value)
@@ -84,7 +84,7 @@ func normalizeScheduledTestConfig(raw accountScheduledTest) (accountScheduledTes
 		return raw, err
 	}
 	if raw.Enabled && len(raw.WeekdayTimes)+len(raw.WeekendTimes) == 0 {
-		return raw, errors.New("启用前请至少添加一个测试时间点")
+		return raw, errors.New("add at least one test time point before enabling")
 	}
 	return raw, nil
 }
@@ -95,7 +95,7 @@ func decodeScheduledTestConfig(raw string) (accountScheduledTest, error) {
 	}
 	var config accountScheduledTest
 	if err := json.Unmarshal([]byte(raw), &config); err != nil {
-		return config, errors.New("定时激活配置无效")
+		return config, errors.New("the scheduled activation config is invalid")
 	}
 	return normalizeScheduledTestConfig(config)
 }
@@ -124,7 +124,7 @@ func scheduledTestDue(config accountScheduledTest, now time.Time) bool {
 func (h *Handler) scheduledTestAccount(c *gin.Context) (*database.AccountRow, bool) {
 	id, err := strconv.ParseInt(c.Param("id"), 10, 64)
 	if err != nil || id <= 0 {
-		c.JSON(400, gin.H{"error": "账号 ID 无效"})
+		c.JSON(400, gin.H{"error": "Invalid account ID"})
 		return nil, false
 	}
 	row, err := h.db.GetAccountByID(c.Request.Context(), id)
@@ -133,12 +133,12 @@ func (h *Handler) scheduledTestAccount(c *gin.Context) (*database.AccountRow, bo
 		return nil, false
 	}
 	if err != nil {
-		c.JSON(500, gin.H{"error": "读取账号失败"})
+		c.JSON(500, gin.H{"error": "Failed to read the account"})
 		return nil, false
 	}
 	upstream := strings.ToLower(strings.TrimSpace(row.GetCredential("upstream_type")))
 	if upstream != "" && upstream != "codex" {
-		c.JSON(400, gin.H{"error": "定时激活仅支持 Codex 账号"})
+		c.JSON(400, gin.H{"error": "Scheduled activation only supports Codex accounts"})
 		return nil, false
 	}
 	return row, true
@@ -156,7 +156,7 @@ func (h *Handler) GetScheduledConnectionTests(c *gin.Context) {
 	}
 	jobs, err := h.db.ListOneShotMaintenanceJobs(c.Request.Context(), row.ID, scheduledTestJobPrefix, 10)
 	if err != nil {
-		c.JSON(500, gin.H{"error": "读取执行记录失败"})
+		c.JSON(500, gin.H{"error": "Failed to read execution records"})
 		return
 	}
 	records := make([]scheduledTestRecord, 0, len(jobs))
@@ -178,7 +178,7 @@ func (h *Handler) UpdateScheduledConnectionTests(c *gin.Context) {
 	c.Request.Body = http.MaxBytesReader(c.Writer, c.Request.Body, 64<<10)
 	var config accountScheduledTest
 	if err := c.ShouldBindJSON(&config); err != nil {
-		c.JSON(400, gin.H{"error": "测试计划 JSON 无效"})
+		c.JSON(400, gin.H{"error": "Invalid test plan JSON"})
 		return
 	}
 	config, err := normalizeScheduledTestConfig(config)
@@ -189,7 +189,7 @@ func (h *Handler) UpdateScheduledConnectionTests(c *gin.Context) {
 	if config.Enabled && config.Model != "" {
 		account := h.store.FindByID(row.ID)
 		if account == nil {
-			c.JSON(409, gin.H{"error": "账号未加载，无法校验测试模型"})
+			c.JSON(409, gin.H{"error": "The account is not loaded, so the test model cannot be validated"})
 			return
 		}
 		model, modelErr := h.connectionTestModelForAccount(c.Request.Context(), account, config.Model)
@@ -201,7 +201,7 @@ func (h *Handler) UpdateScheduledConnectionTests(c *gin.Context) {
 	}
 	encoded, _ := json.Marshal(config)
 	if err := h.db.UpdateCredentials(c.Request.Context(), row.ID, map[string]interface{}{scheduledTestCredentialKey: string(encoded)}); err != nil {
-		c.JSON(500, gin.H{"error": "保存定时激活失败"})
+		c.JSON(500, gin.H{"error": "Failed to save the scheduled activation"})
 		return
 	}
 	c.JSON(200, config)
@@ -255,13 +255,13 @@ func (h *Handler) WaitScheduledConnectionTests() {
 func (h *Handler) runScheduledConnectionTests(ctx context.Context, now time.Time) {
 	loc, err := time.LoadLocation(scheduledTestTimezone)
 	if err != nil {
-		log.Printf("[scheduled-test] 时区不可用")
+		log.Printf("[scheduled-test] time zone is unavailable")
 		return
 	}
 	now = now.In(loc)
 	plans, err := h.db.ListScheduledConnectionTestConfigs(ctx)
 	if err != nil {
-		log.Printf("[scheduled-test] 读取计划失败: %v", err)
+		log.Printf("[scheduled-test] failed to read the plan: %v", err)
 		return
 	}
 	// Bound concurrency across overlapping minute batches, not just within one.
@@ -271,7 +271,7 @@ func (h *Handler) runScheduledConnectionTests(ctx context.Context, now time.Time
 	for _, plan := range plans {
 		config, decodeErr := decodeScheduledTestConfig(plan.Config)
 		if decodeErr != nil {
-			log.Printf("[scheduled-test] 账号 %d 配置无效", plan.AccountID)
+			log.Printf("[scheduled-test] account %d config is invalid", plan.AccountID)
 			continue
 		}
 		if !scheduledTestDue(config, now) {
@@ -280,7 +280,7 @@ func (h *Handler) runScheduledConnectionTests(ctx context.Context, now time.Time
 		key := scheduledTestJobPrefix + now.Format("2006-01-02T15:04")
 		claimed, claimErr := h.db.TryClaimMaintenanceJob(ctx, plan.AccountID, key, now)
 		if claimErr != nil {
-			log.Printf("[scheduled-test] 账号 %d 槽位声明失败", plan.AccountID)
+			log.Printf("[scheduled-test] account %d failed to declare its slot", plan.AccountID)
 			continue
 		}
 		if !claimed {
@@ -291,7 +291,7 @@ func (h *Handler) runScheduledConnectionTests(ctx context.Context, now time.Time
 		case <-ctx.Done():
 			h.finishScheduledConnectionTestSlot(key, scheduledTestRecord{
 				AccountID: plan.AccountID, ScheduledAt: now.Format(time.RFC3339),
-				Model: config.Model, Status: "failed", Error: "测试在执行前被取消",
+				Model: config.Model, Status: "failed", Error: "The test was canceled before it ran",
 			})
 			return
 		}
@@ -309,7 +309,7 @@ func (h *Handler) runScheduledConnectionTestSlot(parent context.Context, id int6
 	// Persist the outcome even if shutdown cancels the single upstream attempt.
 	defer func() {
 		if recover() != nil {
-			result.Error = "测试异常中断"
+			result.Error = "The test ended abnormally"
 			result.Success = false
 			result.Status = "failed"
 		}
@@ -324,13 +324,13 @@ func (h *Handler) runScheduledConnectionTestSlot(parent context.Context, id int6
 	row, err := h.db.GetAccountByID(parent, id)
 	if err != nil || !row.Enabled {
 		result.Status = "skipped"
-		result.Error = "账号已停用或删除"
+		result.Error = "The account is disabled or deleted"
 		return
 	}
 	current, err := decodeScheduledTestConfig(row.GetCredential(scheduledTestCredentialKey))
 	if err != nil || !scheduledTestDue(current, now) {
 		result.Status = "skipped"
-		result.Error = "计划已变更或停用"
+		result.Error = "The plan was changed or disabled"
 		return
 	}
 	config = current
@@ -343,7 +343,7 @@ func (h *Handler) runScheduledConnectionTestSlot(parent context.Context, id int6
 	params := url.Values{"model": {config.Model}, "prompt": {config.Content}}
 	request, err := http.NewRequestWithContext(ctx, http.MethodGet, fmt.Sprintf("/accounts/%d/test?%s", id, params.Encode()), nil)
 	if err != nil {
-		result.Error = "创建测试请求失败"
+		result.Error = "Failed to create the test request"
 		return
 	}
 	// Reuse exactly one connection-test execution; consume SSE events in process.
@@ -357,10 +357,10 @@ func (h *Handler) runScheduledConnectionTestSlot(parent context.Context, id int6
 		}
 	}}, request)
 	if ctx.Err() != nil {
-		result.Error = "测试被取消或超时"
+		result.Error = "The test was canceled or timed out"
 	}
 	if result.Error == "" && !complete {
-		result.Error = "未收到测试成功事件"
+		result.Error = "No successful test event was received"
 	}
 	result.Success = result.Error == "" && complete
 	if result.Success {
@@ -376,7 +376,7 @@ func (h *Handler) finishScheduledConnectionTestSlot(key string, result scheduled
 	finalCtx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
 	defer cancel()
 	if err := h.db.FinishMaintenanceJob(finalCtx, result.AccountID, key, string(encoded)); err != nil {
-		log.Printf("[scheduled-test] 账号 %d 写记录失败", result.AccountID)
+		log.Printf("[scheduled-test] account %d failed to write the record", result.AccountID)
 	}
 	log.Printf("[scheduled-test] %s", encoded)
 }

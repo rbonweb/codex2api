@@ -96,7 +96,7 @@ func TestOAuthCallbackConcurrentClaimAndPoll(t *testing.T) {
 		}
 	}()
 	unblock()
-	if rec := <-first; rec.Code != 200 || !strings.Contains(rec.Body.String(), "授权成功") {
+	if rec := <-first; rec.Code != 200 || !strings.Contains(rec.Body.String(), "Authorization succeeded") {
 		t.Errorf("callback = %d %s", rec.Code, rec.Body.String())
 	}
 	polling.Wait()
@@ -145,7 +145,7 @@ func TestOAuthCallbackFailureIsTerminalAndRedacted(t *testing.T) {
 			t.Cleanup(func() { globalOAuthStore.delete(id) })
 			path := "/auth/callback?code=test&state=" + id
 			rec := runOAuthCallbackTestRequest(h, path, false)
-			if rec.Code != 200 || !strings.Contains(rec.Body.String(), "授权失败") {
+			if rec.Code != 200 || !strings.Contains(rec.Body.String(), "Authorization failed") {
 				t.Fatalf("failure page = %d %s", rec.Code, rec.Body.String())
 			}
 			if replay := runOAuthCallbackTestRequest(h, path, false); replay.Code != 400 {

@@ -358,8 +358,8 @@ func TestLargePoolEnablesUsageSortAfterBatchedCache(t *testing.T) {
 		t.Fatalf("disabled sorts after batched cache = %v, want nil", got)
 	}
 
-	// 缓存过期只代表后台该重聚合了,旧计数仍可排序。若过期就重新禁用,
-	// 大池排序会每个 TTL 周期抖动一次并打断用户的排序选择。
+	// Cache expiry only means the background should re-aggregate; old counts can still be sorted. If expiry re-disabled sorting,
+	// large-pool sorting would flicker once every TTL period and interrupt the user's sort selection.
 	handler.reqCountMu.Lock()
 	handler.reqCountCache[database.UpstreamChannelCodex].expiresAt = time.Now().Add(-time.Minute)
 	handler.reqCountMu.Unlock()
@@ -423,7 +423,7 @@ func TestBatchedStatsErrorPreservesStagingProgress(t *testing.T) {
 		t.Fatal("staging progress must survive an aborted round")
 	}
 
-	// 换天的半成品口径已变,必须整体重来而不是续跑。
+	// The partial run's basis changed after a day change, so it must start over in full instead of resuming.
 	staging.todayStart = staging.todayStart.Add(-24 * time.Hour)
 	staging.done[1] = struct{}{}
 	fresh := handler.takeRequestCountStaging(database.UpstreamChannelCodex, database.StartOfDay(time.Now()))
@@ -474,7 +474,7 @@ func TestAccountStatsCachesNeverBlockColdOrStaleReads(t *testing.T) {
 	if state != "warming" || time.Since(started) > 100*time.Millisecond {
 		t.Fatalf("cold request stats state=%q elapsed=%s", state, time.Since(started))
 	}
-	// 刷新在后台 goroutine 里完成,轮询等它把本渠道缓存转为 ready。
+	// The refresh completes in a background goroutine; poll until it turns this channel's cache to ready.
 	warmDeadline := time.Now().Add(2 * time.Second)
 	for {
 		if _, _, state = handler.getCachedRequestCountsNonBlocking(database.UpstreamChannelCodex, nil); state == "ready" {
@@ -651,18 +651,18 @@ func TestBatchOperationsRejectIDsTogetherWithSelector(t *testing.T) {
 			ginContext.Request = httptest.NewRequest(http.MethodPost, "/api/admin/accounts/batch-"+test.name, strings.NewReader(payload))
 			ginContext.Request.Header.Set("Content-Type", "application/json")
 			test.handle(ginContext)
-			if recorder.Code != http.StatusBadRequest || !strings.Contains(recorder.Body.String(), "ids 与 selector") {
+			if recorder.Code != http.StatusBadRequest || !strings.Contains(recorder.Body.String(), "ids and selector") {
 				t.Fatalf("status=%d body=%s", recorder.Code, recorder.Body.String())
 			}
 		})
 	}
 }
 
-// 删除/封禁后统计卡曾因快照缓存(5s TTL + stale-while-revalidate)不失效而
-// 显示变更前数字;失效后同一 TTL 窗口内必须立刻拿到重建的新 summary。
-// warmRequestCountCache 预热渠道的请求统计缓存,让首次投影不再起后台统计刷新。
-// 该刷新完成时会推进快照代数;若抢在同步重建安装快照之前落地,快照根本不会
-// 入缓存,后续"命中热快照"的断言就成了对全量投影的断言(CI 上偶发失败)。
+// After a delete or ban, the stats cards once showed the pre-change numbers because the snapshot cache (5s TTL + stale-while-revalidate) was not invalidated,
+// so after invalidation the rebuilt summary must be returned immediately within the same TTL window.
+// warmRequestCountCache warms the channel's request stats cache, so the first projection no longer starts a background stats refresh.
+// That refresh advances the snapshot generation when it completes; if it lands before the synchronous rebuild installs the snapshot, the snapshot will never
+// be cached, and later "hits the hot snapshot" assertions turn into assertions about the full projection (flaky failures on CI).
 func warmRequestCountCache(handler *Handler, channel string) {
 	handler.storeRequestCountCache(channel, map[int64]*database.AccountRequestCount{}, map[int64]*database.AccountTimeRangeUsage{}, time.Time{})
 }
@@ -684,8 +684,8 @@ func TestAccountMutationInvalidationServesFreshSummary(t *testing.T) {
 	if err := handler.db.SoftDeleteAccount(ctx, codexIDs[0]); err != nil {
 		t.Fatalf("soft delete: %v", err)
 	}
-	// 未失效时,新鲜窗口内仍返回变更前快照 —— 这是 bug 曾经的表现,
-	// 也证明修复必须依赖显式失效而非 TTL。
+	// Without invalidation, the pre-change snapshot is still returned within the fresh window: this is the bug's earlier behavior,
+	// and it also shows the fix must rely on explicit invalidation, not the TTL.
 	stale, err := handler.getAccountListSnapshot(ctx, database.UpstreamChannelCodex)
 	if err != nil {
 		t.Fatalf("stale read: %v", err)
@@ -704,8 +704,8 @@ func TestAccountMutationInvalidationServesFreshSummary(t *testing.T) {
 	}
 }
 
-// 删除走增量剔除:数据库即使还没改,热快照也必须立刻丢掉该 ID,且不能
-// 因为缓存被清空而回头全量投影(全量投影会把库里仍在的账号读回来)。
+// Deletes use incremental removal: even if the database has not changed yet, the hot snapshot must drop that ID immediately, and must not
+// fall back to a full projection because the cache was cleared (a full projection would read back the accounts still in the database).
 func TestPruneAccountsFromSnapshotCachesKeepsWarmSnapshot(t *testing.T) {
 	gin.SetMode(gin.TestMode)
 	handler, codexIDs := newPagedAccountsHandler(t)
@@ -754,12 +754,12 @@ func TestPruneAccountsFromSnapshotCachesKeepsWarmSnapshot(t *testing.T) {
 	}
 }
 
-// 在途重建若跨越了失效点(读库早于账号变更),不得把旧快照写回缓存。
+// If an in-flight rebuild crosses an invalidation point (it read the DB before the account change), it must not write the old snapshot back into the cache.
 func TestInstallSkipsCacheWhenGenerationMoved(t *testing.T) {
 	gin.SetMode(gin.TestMode)
 	handler, _ := newPagedAccountsHandler(t)
 	staleGen := handler.accountCachesGen.Load()
-	handler.invalidateAccountSnapshotCaches() // 模拟重建读库之后才提交的账号变更
+	handler.invalidateAccountSnapshotCaches() // Simulate an account change committed after the rebuild read the DB
 	snapshot := &accountListSnapshot{Channel: database.UpstreamChannelCodex}
 	handler.installAccountListSnapshot(database.UpstreamChannelCodex, snapshot, staleGen)
 	handler.accountListCacheMu.RLock()
@@ -806,13 +806,13 @@ func TestShouldInvalidateAccountSnapshotCaches(t *testing.T) {
 	}
 }
 
-// 回归:调度优先级排序依赖列表投影带出 scheduler_priority;投影缺字段时
-// 快照全员按 0 打平,排序退化成 ID 序(账号页"排序不生效"反馈)。
+// Regression: scheduling priority sorting depends on the list projection carrying scheduler_priority; when the projection lacks the field,
+// every snapshot row ties at 0 and sorting degrades to ID order (the account page "sorting has no effect" report).
 func TestListAccountsPageSortsBySchedulerPriority(t *testing.T) {
 	gin.SetMode(gin.TestMode)
 	handler, codexIDs := newPagedAccountsHandler(t)
 	ctx := context.Background()
-	// codexIDs[0] 不设置(视同 0),其余两个分别 50 / 40。
+	// codexIDs[0] is not set (treated as 0); the other two are 50 / 40 respectively.
 	if err := handler.db.UpdateCredentials(ctx, codexIDs[1], map[string]interface{}{"scheduler_priority": int64(50)}); err != nil {
 		t.Fatalf("set priority 50: %v", err)
 	}

@@ -20,9 +20,9 @@ type tokenCredentialSeed struct {
 	idToken         string
 	accountID       string
 	workspaceID     string
-	// userID 是 OpenAI 用户 ID（user-...），仅作为账号元数据保存。
+	// userID is the OpenAI user ID (user-...), stored only as account metadata.
 	userID string
-	// allowDuplicate 仅允许有效工作区（Token workspace 或请求头覆盖）为空的账号重复。
+	// allowDuplicate allows duplicates only for accounts whose effective workspace (token workspace or request header override) is empty.
 	allowDuplicate        bool
 	email                 string
 	planType              string
@@ -97,7 +97,7 @@ func normalizeTokenCredentialSeed(seed tokenCredentialSeed) tokenCredentialSeed 
 			seed.subscriptionExpiresAt = info.SubscriptionExpiresAt
 		}
 	}
-	// 付费套餐下已过去的到期时间是续费前的陈旧 JWT claim，导入时不落库。(issue #360)
+	// An expiry time already in the past on a paid plan is a stale JWT claim from before renewal, so it is not stored on import. (issue #360)
 	if auth.StaleSubscriptionExpiry(seed.planType, seed.subscriptionExpiresAt, time.Now()) {
 		seed.subscriptionExpiresAt = time.Time{}
 	}
@@ -125,13 +125,13 @@ func effectiveWorkspaceIDFromSeed(seed tokenCredentialSeed) string {
 	return openaiidentity.EffectiveWorkspaceID(seed.workspaceID, seed.customHeaders)
 }
 
-// patWhoAmIHydrateTimeout 是单枚 PAT 的 whoami 预算。它不从批量导入的 30s 上下文里扣：
-// 一批一百枚 token 串行补全，几枚慢请求就能把整批的落库预算烧光。
+// patWhoAmIHydrateTimeout is the whoami budget for a single PAT. It is not deducted from the 30s context of the batch import:
+// a batch of one hundred tokens is hydrated serially, so a few slow requests could burn the whole batch's storage budget.
 const patWhoAmIHydrateTimeout = 6 * time.Second
 
-// patWhoAmIHydrator 在一次批量导入内为 PAT 补全工作区身份。网络层失败（超时 / 代理不通）
-// 对同批其余 token 大概率同样失败，命中一次就熔断，剩余 token 直接按纯 AT 入库；
-// 端点按 token 返回 4xx 只说明这枚 token 没权限，不影响其它 token。
+// patWhoAmIHydrator fills in workspace identity for PATs within one batch import. A network-level failure (timeout / proxy unreachable)
+// is very likely to fail the same way for the rest of the batch, so one hit trips the circuit breaker and the remaining tokens are stored directly as plain AT;
+// a 4xx returned by the endpoint for a token only means that token lacks permission and does not affect other tokens.
 type patWhoAmIHydrator struct {
 	proxyURL string
 	tripped  bool
@@ -147,16 +147,16 @@ func (w *patWhoAmIHydrator) hydrate(ctx context.Context, seed tokenCredentialSee
 	}
 	var statusErr *patWhoAmIStatusError
 	if errors.As(err, &statusErr) {
-		log.Printf("PAT whoami 身份获取失败（该 token 按纯 AT 入库）: %v", err)
+		log.Printf("PAT whoami identity lookup failed (this token is stored as plain AT): %v", err)
 		return seed
 	}
 	w.tripped = true
-	log.Printf("PAT whoami 网络失败，本批剩余 token 跳过身份补全: %v", err)
+	log.Printf("PAT whoami network failure, the remaining tokens in this batch skip identity hydration: %v", err)
 	return seed
 }
 
-// hydrateSeedWithWhoAmI 用 /whoami 补全 PAT 的工作区 / 用户 / 邮箱 / 套餐。
-// 返回的 error 仅供调用方决定是否熔断；seed 总是可用的（失败时原样返回）。
+// hydrateSeedWithWhoAmI uses /whoami to fill in the PAT's workspace / user / email / plan.
+// The returned error is only for the caller to decide whether to trip the breaker; the seed is always usable (returned unchanged on failure).
 func hydrateSeedWithWhoAmI(ctx context.Context, seed tokenCredentialSeed, proxyURL string) (tokenCredentialSeed, error) {
 	if seed.accessTokenType != accessTokenTypeCodexAT || strings.TrimSpace(seed.accessToken) == "" {
 		return seed, nil
@@ -291,8 +291,8 @@ func tokenCredentialMap(seed tokenCredentialSeed) map[string]interface{} {
 	return credentials
 }
 
-// defaultCodexFingerprintModeForNewAccount 返回系统设置里配置的「新导入账号默认
-// 指纹收敛档位」（off/device/session/full，缺省 off）。
+// defaultCodexFingerprintModeForNewAccount returns the default fingerprint convergence level for newly imported accounts, as configured in system settings
+// (off/device/session/full, default off).
 func (h *Handler) defaultCodexFingerprintModeForNewAccount() string {
 	if h == nil || h.store == nil {
 		return auth.CodexFingerprintModeOff
@@ -300,9 +300,9 @@ func (h *Handler) defaultCodexFingerprintModeForNewAccount() string {
 	return auth.NormalizeCodexFingerprintMode(h.store.GetCodexFingerprintDefaultMode())
 }
 
-// newCodexAccountCredentials 为新建/新导入的 Codex 账号生成 credentials，并盖上
-// 系统默认指纹收敛档位。仅用于插入新账号；更新已有账号凭证仍走 tokenCredentialMap，
-// 避免重新导入时覆盖用户在账号上手动调整过的档位。
+// newCodexAccountCredentials generates credentials for newly created or imported Codex accounts and stamps them with
+// the system default fingerprint convergence level. It is only used when inserting new accounts; updating existing account credentials still goes through tokenCredentialMap,
+// so that re-importing does not overwrite a level the user adjusted manually on the account.
 func (h *Handler) newCodexAccountCredentials(seed tokenCredentialSeed) map[string]interface{} {
 	credentials := tokenCredentialMap(seed)
 	if mode := h.defaultCodexFingerprintModeForNewAccount(); mode != auth.CodexFingerprintModeOff {
@@ -311,8 +311,8 @@ func (h *Handler) newCodexAccountCredentials(seed tokenCredentialSeed) map[strin
 	return credentials
 }
 
-// newCodexAccountFromSeed 构造刚插入账号的内存态，指纹档位与
-// newCodexAccountCredentials 落库内容保持一致（默认档位无需重载即生效）。
+// newCodexAccountFromSeed builds the in-memory state of a just-inserted account; its fingerprint level matches
+// what newCodexAccountCredentials stores (the default level takes effect without a reload).
 func (h *Handler) newCodexAccountFromSeed(id int64, proxyURL string, seed tokenCredentialSeed) *auth.Account {
 	account := accountFromCredentialSeed(id, proxyURL, seed)
 	account.CodexFingerprintMode = h.defaultCodexFingerprintModeForNewAccount()

@@ -12,8 +12,8 @@ const (
 	adminAuthMaxEntries    = 4096
 )
 
-// adminAuthThrottle 记录按 IP 的管理端鉴权失败次数。
-// 只在失败时计数；达到阈值后在密钥比较前阻断该 IP 的所有认证尝试。
+// adminAuthThrottle records admin auth failure counts per IP.
+// It only counts failures; once the threshold is reached, it blocks all authentication attempts from that IP before the key comparison.
 type adminAuthThrottle struct {
 	mu      sync.Mutex
 	entries map[string]*adminAuthThrottleEntry
@@ -29,7 +29,7 @@ func newAdminAuthThrottle() *adminAuthThrottle {
 	return &adminAuthThrottle{entries: make(map[string]*adminAuthThrottleEntry)}
 }
 
-// retryAfter 返回该 IP 剩余的阻断时间；未阻断时返回 0。
+// retryAfter returns the remaining block time for this IP; returns 0 when not blocked.
 func (t *adminAuthThrottle) retryAfter(ip string, now time.Time) time.Duration {
 	if t == nil {
 		return 0
@@ -47,7 +47,7 @@ func (t *adminAuthThrottle) retryAfter(ip string, now time.Time) time.Duration {
 	return entry.blockedUntil.Sub(now)
 }
 
-// recordFailure 记录一次失败；达到阈值时开始阻断并返回阻断时长。
+// recordFailure records one failure; when the threshold is reached it starts blocking and returns the block duration.
 func (t *adminAuthThrottle) recordFailure(ip string, now time.Time) time.Duration {
 	if t == nil {
 		return 0
