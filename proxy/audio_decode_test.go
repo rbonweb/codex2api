@@ -196,10 +196,10 @@ func TestAudioDecodeWAVAcceptsEdgeRates(t *testing.T) {
 func TestAudioDecodeWAVMalformedIsRejected(t *testing.T) {
 	full := testWAV(1, 24000, pcm16LEBytes([]int16{1, 2, 3, 4}))
 	cases := map[string][]byte{
-		"RIFF header cut short":           full[:6],
-		"fmt chunk cut mid-body":          full[:20],
-		"data chunk shorter than claimed": full[:len(full)-4],
-		"zero channels":                   testWAVWithFmt(testWAVFmt(wavFormatPCM, 0, 24000, 16), pcm16LEBytes([]int16{1, 2})),
+		"RIFF header cut short":              full[:6],
+		"fmt chunk cut mid-body":             full[:20],
+		"fmt chunk claims more than remains": append(append([]byte(nil), full[:16]...), 0xff, 0xff, 0x00, 0x00),
+		"zero channels":                      testWAVWithFmt(testWAVFmt(wavFormatPCM, 0, 24000, 16), pcm16LEBytes([]int16{1, 2})),
 	}
 	for name, wav := range cases {
 		_, err := decodeAudioUpload("broken.wav", "", wav)
@@ -300,4 +300,24 @@ func TestAudioDecodeEmptyIsRejected(t *testing.T) {
 	if err == nil || err.Error() != "audio file is empty" {
 		t.Fatalf("wav with an empty data chunk: err = %v, want audio file is empty", err)
 	}
+}
+
+func TestAudioDecodeWAVDataSizeZeroOrOversizedTakesTheRest(t *testing.T) {
+	payload := pcm16LEBytes([]int16{1, 2, 3, 4})
+	for name, declared := range map[string]uint32{"zero": 0, "streaming max": 0xFFFFFFFF, "larger than the file": 1 << 20} {
+		wav := testWAV(1, 24000, payload)
+		dataSizeOffset := len(wav) - len(payload) - 4
+		binary.LittleEndian.PutUint32(wav[dataSizeOffset:], declared)
+		got, err := decodeAudioUpload("stream.wav", "", wav)
+		if err != nil {
+			t.Fatalf("%s: %v", name, err)
+		}
+		assertAudioSamples(t, got, []int16{1, 2, 3, 4})
+	}
+	truncated := testWAV(1, 24000, payload)
+	got, err := decodeAudioUpload("cut.wav", "", truncated[:len(truncated)-2])
+	if err != nil {
+		t.Fatalf("truncated: %v", err)
+	}
+	assertAudioSamples(t, got, []int16{1, 2, 3})
 }

@@ -6,6 +6,7 @@ import (
 	"errors"
 	"io"
 	"net/http"
+	"strconv"
 	"strings"
 
 	"github.com/codex2api/api"
@@ -36,6 +37,9 @@ type realtimeCallsJSONBody struct {
 // It accepts the three request shapes OpenAI clients send: multipart/form-data, application/json and a raw SDP body.
 // The session is rebuilt for the Live upstream, then the request is handed to LiveCreate, so the response and the sideband path match POST /v1/live.
 func (h *Handler) RealtimeCalls(c *gin.Context) {
+	if !liveRequireAllowLive(c) {
+		return
+	}
 	raw, err := io.ReadAll(io.LimitReader(c.Request.Body, liveUpstreamBodyLimit+1))
 	if err != nil {
 		realtimeCallsBadRequest(c, "failed to read request body")
@@ -78,7 +82,11 @@ func (h *Handler) RealtimeCalls(c *gin.Context) {
 		return
 	}
 	c.Request.Body = io.NopCloser(bytes.NewReader(body))
+	c.Request.GetBody = func() (io.ReadCloser, error) {
+		return io.NopCloser(bytes.NewReader(body)), nil
+	}
 	c.Request.Header.Set("Content-Type", "application/json")
+	c.Request.Header.Set("Content-Length", strconv.Itoa(len(body)))
 	c.Request.ContentLength = int64(len(body))
 	h.LiveCreate(c)
 }
@@ -120,8 +128,12 @@ func parseRealtimeCallSession(raw []byte) (realtimeCallSession, error) {
 	if !json.Valid(trimmed) {
 		return session, errors.New("session must be valid JSON")
 	}
-	if err := json.Unmarshal(trimmed, &session); err != nil {
+	var fields map[string]json.RawMessage
+	if err := json.Unmarshal(trimmed, &fields); err != nil || fields == nil {
 		return session, errors.New("session must be a JSON object")
+	}
+	if err := json.Unmarshal(trimmed, &session); err != nil {
+		return session, errors.New("session fields model, voice, instructions must be strings")
 	}
 	return session, nil
 }

@@ -169,6 +169,7 @@ func TestRealtimeCallsRejectsBadRequests(t *testing.T) {
 		{name: "session is not an object", path: "/v1/realtime/calls", contentType: "application/json", body: `{"sdp":"v=0","session":"nope"}`, wantMessage: "session must be a JSON object"},
 		{name: "multipart session is not JSON", path: "/v1/realtime/calls", contentType: "multipart/form-data; boundary=x", body: "--x\r\nContent-Disposition: form-data; name=\"sdp\"\r\n\r\nv=0\r\n--x\r\nContent-Disposition: form-data; name=\"session\"\r\n\r\n{bad\r\n--x--\r\n", wantMessage: "session must be valid JSON"},
 		{name: "body is not JSON", path: "/v1/realtime/calls", contentType: "application/json", body: `{"sdp":`, wantMessage: "request body must be valid JSON"},
+		{name: "session field has the wrong type", path: "/v1/realtime/calls", contentType: "application/json", body: `{"sdp":"v=0","session":{"voice":5}}`, wantMessage: "session fields model, voice, instructions must be strings"},
 		{name: "body too large", path: "/v1/realtime/calls", contentType: "application/sdp", body: strings.Repeat("a", liveUpstreamBodyLimit+1), wantMessage: "request body is too large"},
 	}
 	for _, tc := range cases {
@@ -191,7 +192,8 @@ func TestRealtimeCallsRejectsBadRequests(t *testing.T) {
 
 func TestRealtimeCallsRequiresAllowLive(t *testing.T) {
 	handler := NewHandler(auth.NewStore(nil, nil, &database.SystemSettings{MaxConcurrency: 1}), nil, nil, nil)
-	c, rec := liveTestContext(t, http.MethodPost, "/v1/realtime/calls", []byte(`{"sdp":"v=0","session":{}}`), &database.APIKeyRow{ID: 9})
+	// The body is deliberately invalid: the allow_live check must answer 403 before the body is parsed.
+	c, rec := liveTestContext(t, http.MethodPost, "/v1/realtime/calls", []byte(`{"sdp":`), &database.APIKeyRow{ID: 9})
 	handler.RealtimeCalls(c)
 	if rec.Code != http.StatusForbidden {
 		t.Fatalf("status=%d body=%s", rec.Code, rec.Body.String())
@@ -219,17 +221,5 @@ func TestRealtimeCallsRoutesRegistered(t *testing.T) {
 		if !postRoutes[path] {
 			t.Fatalf("expected POST route %s to be registered; routes=%v", path, postRoutes)
 		}
-	}
-}
-
-func TestAudioTranscriptionsNotImplemented(t *testing.T) {
-	handler := &Handler{}
-	c, rec := liveTestContext(t, http.MethodPost, "/v1/audio/transcriptions", []byte(`{}`), nil)
-	handler.AudioTranscriptions(c)
-	if rec.Code != http.StatusNotImplemented {
-		t.Fatalf("status=%d body=%s", rec.Code, rec.Body.String())
-	}
-	if !strings.Contains(rec.Body.String(), "not_implemented") {
-		t.Fatalf("body=%s", rec.Body.String())
 	}
 }
