@@ -4,7 +4,7 @@ Codex2API 的 Responses 入口同时服务 Codex 客户端、OpenAI SDK 和不�
 
 ## 请求字段与严格模式
 
-Responses 中转保留原生 `reasoning.effort`、`text.format`、JSON Schema 约束及大整数，原生 JSON 模式不会自动改写用户提示。`reasoning_effort`、`response_format` 等兼容别名仍有显式转换；原生字段优先。HTTP 出站会删除仅属于 WebSocket 信封的顶层 `type`、`stream_id`。网关内部使用命名流标识进行分流，最终发往 OAuth / Responses relay 的 WS 帧也不携带网关 `stream_id`；嵌套输入或 schema 里的同名字段仍保留。内置 `tool_search` 不会被自动补入其上游协议不接受的 `description`，用户显式字段由上游验证。
+Responses 请求保留原生 `reasoning.effort`、`text.format`、JSON Schema 约束及大整数，原生 JSON 模式不会自动改写用户提示。`reasoning_effort`、`response_format` 等兼容别名仍有显式转换；原生字段优先。HTTP 出站会删除仅属于 WebSocket 信封的顶层 `type`、`stream_id`。网关内部使用命名流标识进行分流，最终发往上游的 WS 帧也不携带网关 `stream_id`；嵌套输入或 schema 里的同名字段仍保留。内置 `tool_search` 不会被自动补入其上游协议不接受的 `description`，用户显式字段由上游验证。
 
 ChatGPT/Codex 上游需要额外规范化，部分 Responses 字段或 schema 约束无法原样保留。客户端可发送：
 
@@ -12,7 +12,7 @@ ChatGPT/Codex 上游需要额外规范化，部分 Responses 字段或 schema �
 X-Codex2API-Strict-Compatibility: true
 ```
 
-也可设置服务端环境变量 `CODEX_STRICT_RESPONSES_COMPAT=true`。严格模式按**实际选中的原生 Codex 账号**检查，`auto` 或 Codex 渠道内的 Responses 中转账号不会被这套规则误拦。默认模式继续沿用原有兼容转换。
+也可设置服务端环境变量 `CODEX_STRICT_RESPONSES_COMPAT=true`。严格模式按**实际选中的 Codex 账号**检查。默认模式继续沿用原有兼容转换。
 
 严格模式在 HTTP 尚未提交时返回 `400 unsupported_feature`；若重试保活已提交 SSE，则发送 `response.failed` 事件；WebSocket 返回 `status:400` 的错误帧。`error.details.fields` 列出有损字段，包括输出长度、采样参数、元数据、上下文管理、存储和缓存控制等。另有以下语义检查：
 
@@ -24,11 +24,11 @@ X-Codex2API-Strict-Compatibility: true
 
 ## HTTP 续链的恢复要求
 
-HTTP Responses/Compact 在处理原始 JSON 时拒绝重复的顶层 `input` 或 `previous_response_id`，返回 `400 invalid_request`，避免不同解析器选取不同值；JSON 转义后的同名键也算重复。嵌套字段和正常原生 Responses relay 的数值、父引用不受此检查改写。
+HTTP Responses/Compact 在处理原始 JSON 时拒绝重复的顶层 `input` 或 `previous_response_id`，返回 `400 invalid_request`，避免不同解析器选取不同值；JSON 转义后的同名键也算重复。嵌套字段的数值、父引用不受此检查改写。
 
 原生 Codex HTTP 出站需要展开并删除 `previous_response_id`。每个非空父响应引用都必须在当前请求归属的缓存中得到证明；缓存缺失或过期返回 409，后端故障返回 503，不会丢弃引用后继续返回一轮没有历史的成功响应。新工具调用对仍需拼接父快照，不能据此推断客户端重传了所有祖先。只有重叠 `call_id` 且完整父前缀一致时才跳过重复拼接；比较仅忽略已定义的顶层 item ID 和内部元数据。部分重放、调用内容冲突或重复定义父调用返回 `409 previous_response_not_found`，客户端可重发完整历史并省略父 ID。相同消息文本本身不会触发去重。
 
-当前 HTTP 缓存主要保存工具上下文，不为普通消息新增会话存储。普通文本父轮的后续 HTTP 请求应发送完整历史并省略 `previous_response_id`；需要增量续链时使用经过验证的 WS 路径。原生 Responses relay 可把父 ID 交给自己的上游恢复，不套用 Codex 的本地缓存缺失限制；其他仅做协议翻译的渠道不能因此自动获得服务端父响应存储能力。
+当前 HTTP 缓存主要保存工具上下文，不为普通消息新增会话存储。普通文本父轮的后续 HTTP 请求应发送完整历史并省略 `previous_response_id`；需要增量续链时使用经过验证的 WS 路径。
 
 ## WebSocket 流与续链
 
@@ -50,7 +50,7 @@ Codex 的中断控制事件与 `response.steer` 不同：
 {"type":"response.interrupt","response_id":"resp_current","mode":"discard_partial_items"}
 ```
 
-中断绕过生成队列，按当前下游连接内的 `response_id` 定位上游租约；可选 `stream_id` 进一步限制目标流，发往上游时剥离该网关路由字段。Codex OAuth 与启用 WebSocket 出站的 Responses 中转账号会把控制帧发往当前连接，不重连、不重放、不另开生成请求。上游的 `response.interrupt.accepted` / `response.interrupt.failed`、`response.output_item.interrupted` 和 `response.incomplete` 原样保留，命名流仍带回 `stream_id`。完成帧可以早于中断确认；网关保留事件及 `sequence_number` 的原始顺序，直到终态与对应确认都消费完才归还租约。
+中断绕过生成队列，按当前下游连接内的 `response_id` 定位上游租约；可选 `stream_id` 进一步限制目标流，发往上游时剥离该网关路由字段。Codex 账号会把控制帧发往当前连接，不重连、不重放、不另开生成请求。上游的 `response.interrupt.accepted` / `response.interrupt.failed`、`response.output_item.interrupted` 和 `response.incomplete` 原样保留，命名流仍带回 `stream_id`。完成帧可以早于中断确认；网关保留事件及 `sequence_number` 的原始顺序，直到终态与对应确认都消费完才归还租约。
 
 已结束轮次的迟到中断会本地确认，重复中断不重复转发；连接内最多记住最近 256 个已结束轮次，不能用旧 ID 取消下一轮或其他连接的请求。中断确认等待上限为 30 秒，超时销毁对应上游连接，避免残留确认进入后续租约。未知目标返回带相同 `response_id` 的 `response.interrupt.failed`；无 WebSocket 控制通道的上游返回 `interrupt_not_supported`。缺少或类型错误的 `response_id`、不支持的 `mode`、非法 JSON、非对象载荷及重复的路由/控制字段返回请求错误。
 
@@ -66,7 +66,7 @@ Codex 的中断控制事件与 `response.steer` 不同：
 | strict / parallel 工具 | 保留可传递字段，严格模式拒绝已知有损 schema；不同 WS 流可独立进行工具回合 | 目录中的并行工具声明不代表支持 steering |
 | compact / previous_response_id | 按实际上游保留或转换，默认完整快照恢复失败时明确报错；显式启用 `CODEX_WS_CONTINUATION_FAIL_OPEN=true` 会开启有损降级 | 不伪造官方 Conversations 或存储查询生命周期 |
 | hosted tools / MCP / 文件 / 图像 / 音频 | 支持的原生请求交给相应上游执行和校验 | 授权、资源归属、模型及协议限制仍由上游决定；不会从本地工具声明合成官方托管能力 |
-| background / conversation | Responses 中转保留请求，由上游验证；原生 Codex 严格模式拒绝不支持的语义 | 没有新增完整的查询、取消、Conversations 或后台任务端点 |
+| background / conversation | 由上游验证；Codex 严格模式拒绝不支持的语义 | 没有新增完整的查询、取消、Conversations 或后台任务端点 |
 
 ## 本地验证与真实验收
 

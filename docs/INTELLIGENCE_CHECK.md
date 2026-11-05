@@ -2,7 +2,7 @@
 
 在 `/admin/intelligence-check` 管理固定账号的自动或手动检测。每次按题库顺序选取
 一道启用题目，将最终可见答案和耗时与管理员配置比较，保存结果及配置快照。
-支持 GPT/Codex、Responses 中转和 Claude 账号；Grok、Antigravity 暂不支持。
+支持 GPT/Codex 账号。
 检测结果表示当前题目和判定规则下的表现，不用于证明上游实际模型身份。
 
 ## 目录
@@ -23,8 +23,8 @@
 | 字段 | 默认值 | 说明 |
 | --- | --- | --- |
 | `enabled` | `false` | 自动检测总开关 |
-| `gpt_model` / `claude_model` | `gpt-6-astra` / `claude-sonnet-4-6` | 各渠道检测模型，发送前验证账号能力 |
-| `reasoning_effort` | `high` | GPT 推理强度；Claude 不发送此字段 |
+| `gpt_model` | `gpt-6-astra` | 检测模型，发送前验证账号能力 |
+| `reasoning_effort` | `high` | GPT 推理强度 |
 | `judge_mode` | `answer` | `answer`、`latency` 或 `both` |
 | `interval_seconds` / `retry_seconds` | 300 / 60 | 正常检测间隔及异常后重试间隔，范围 1–86400 |
 | `timeout_seconds` | 180 | 请求超时，范围 1–3600 秒 |
@@ -78,7 +78,7 @@
 
 ## 请求与代理
 
-检测固定账号，复用现有 Codex/Responses/Claude 请求执行器和账号身份配置；
+检测固定账号，复用现有 Codex/Responses 请求执行器和账号身份配置；
 不换号兜底、不注入质量测试的 HTML 指令、不将管理员浏览器身份转发给上游。
 成功判定要求协议成功终态，仅使用最终可见答案，不从思考内容或工具参数取答案。
 

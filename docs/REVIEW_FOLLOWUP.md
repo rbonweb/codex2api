@@ -5,21 +5,11 @@
 | 审查组 | 处理结果 |
 | --- | --- |
 | astra-pricing F1 | 归一化后再校验价格；仅含 Astra 长档字段的编辑返回 400，保留已有有效覆盖；存储层移除归一化后的空条目。 |
-| claude-api-key-base-url F1 | 模型发现过滤非 `claude-*` ID；混合网关模型清单的导入、导出、再解析有回归覆盖。 |
-| claude-api-key-base-url F2 | 仅当规范化改变提示词内容时再次审查，同一规范化体重试不重复审核；保留对原始体和改变后内容的必要校验。 |
-| claude-api-key-base-url F3 | 规范化错误使用已提交 SSE 的错误帧保护。 |
-| claude-api-key-base-url F4 | 保留 API Key 原样转发行为；添加导入页说明与 API 文档，明确 Claude Code/OAuth 策略的适用范围，通用提示词过滤仍生效。 |
-| claude-auth-kinds-backend F1 | 裸 RT 刷新前查重，导入复用后台刷新租约，租约覆盖交换与落库；重复现有凭据的测试断言零刷新调用。 |
-| claude-auth-kinds-backend F2 | 有 `credits_required` 拒绝记录的模型可显式复探，成功后恢复持久化白名单并清冷却；其他白名单限制继续生效。拒绝记录已被清除时应先刷新模型清单。 |
-| claude-auth-kinds-backend F3 | OAuth 已知套餐（含 Max 倍率）不被模型调用推断覆盖；Setup Token 仍可修正推断套餐。 |
-| claude-auth-kinds-backend F4 | 刷新省略 `scope`，继承原授权范围；桩上游验证请求不扩权。未使用真实 sessionKey/Token 调用上游。 |
-| claude-auth-kinds-frontend-and-lists F1–F3 | C=U 分支补回行内请求 ID，无 UA 审计时不显示绿色徽章，Claude 重置时间统一使用设置中的显示时区。时区差异并非本次发布首次引入，仍修正其表现。 |
 | codex-test-diagnostics F1 | WS 不采用旧握手头；首帧单列 `first_frame_ms`，请求 ID/CF Ray 取 metadata，响应头按名称更新。 |
 | codex-test-diagnostics F2 | 短凭据按完整词边界脱敏，避免破坏 ID、时间戳中的子串；独立凭据仍遮盖，未采用“短凭据一律不脱敏”的建议。 |
 | continuation-ultrafast-encrypted F1 | 记忆使用下游稳定会话身份，不再使用随机出站 UUID；各种受支持的鉴权形式共用身份提取。移除“凭据完全不参与通用哈希”的错误注释。 |
 | continuation-ultrafast-encrypted F2 | 保留被拒请求内整批密文的恢复策略并明确记录限制。上游通常未指出具体坏条目，无法安全承诺只删除那一项；不根据未知密文格式猜测归属。 |
-| custom-tool-calls F1–F2 | 空终态 input 沿用已收到的 custom 流式内容，仍拒绝真正分歧；Grok 接受 custom tool_choice。 |
-| custom-tool-calls F3 | 补充工具选择恢复、无效历史拒绝、大小上限及 Messages handler 流式错误终止的覆盖。 |
+| custom-tool-calls F1–F2 | 空终态 input 沿用已收到的 custom 流式内容，仍拒绝真正分歧。 |
 | model-capability-snapshots F1 | 未知能力继续保守处理，input_modalities 保底 text；不把其他账号的数值限制当成未知账号的安全上限。 |
 | model-capability-snapshots F2 | 同代快照按模型与字段合并，旧客户端的部分清单不抹掉新模型；合并后仍受模型数量和字节上限约束。 |
 | model-capability-snapshots F3 | 单账号和批量彻底删除均显式清理快照，SQLite 不再依赖未启用的外键级联。 |
