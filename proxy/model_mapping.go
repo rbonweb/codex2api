@@ -208,23 +208,12 @@ func (h *Handler) applyBaseModelMappingToBody(rawBody []byte, supportedModels []
 }
 
 // accountModelMappingTargetModels returns the concrete upstream models that an
-// account-level mapping may target. Grok accounts with a model list can only
-// target names on that list. An empty list uses the visible catalog, or
-// conservative defaults before the first catalog sync. This keeps aliases from
-// reviving hidden or catalog-absent models while allowing undeclared Grok
-// accounts to expose GPT compatibility aliases.
+// account-level mapping may target.
 func accountModelMappingTargetModels(account *auth.Account) []string {
 	if account == nil {
 		return nil
 	}
-	if !account.IsGrokAPI() {
-		return account.OpenAIResponsesModels()
-	}
-	targets := GrokVisibleModelIDsForAccount(account)
-	if declared := account.GrokModels(); len(declared) > 0 {
-		targets = intersectModelIDs(targets, declared)
-	}
-	return targets
+	return account.OpenAIResponsesModels()
 }
 
 func resolveAccountModelMapping(account *auth.Account, model string) (string, bool) {
@@ -298,7 +287,7 @@ func (h *Handler) applyAccountModelMappingToBody(rawBody []byte, account *auth.A
 
 func (h *Handler) applyAccountModelMappingToBodyForModels(rawBody []byte, account *auth.Account, modelCandidates ...string) ([]byte, string, bool) {
 	model := strings.TrimSpace(gjson.GetBytes(rawBody, "model").String())
-	if model == "" || !gjson.ValidBytes(rawBody) || account == nil || !account.IsRelayStyle() {
+	if model == "" || !gjson.ValidBytes(rawBody) || account == nil {
 		return rawBody, model, false
 	}
 	modelCandidates = append(modelCandidates, model)
@@ -472,9 +461,6 @@ func resolveAccountCompactModelMappingForCandidates(account *auth.Account, candi
 			continue
 		}
 		mappedModel = normalizeCompactMappingTarget(mappedModel)
-		if account.IsGrokAPI() && !modelIDInList(mappedModel, accountModels) {
-			continue
-		}
 		return mappedModel, true
 	}
 	return "", false
@@ -485,7 +471,7 @@ func resolveAccountCompactModelMappingForCandidates(account *auth.Account, candi
 // 标记且映射目标不允许携带 -openai-compact 后缀进入上游请求体。
 func (h *Handler) applyAccountCompactModelMappingToBody(rawBody []byte, account *auth.Account, modelCandidates ...string) ([]byte, string, bool) {
 	model := strings.TrimSpace(gjson.GetBytes(rawBody, "model").String())
-	if model == "" || !gjson.ValidBytes(rawBody) || account == nil || !account.IsRelayStyle() {
+	if model == "" || !gjson.ValidBytes(rawBody) || account == nil {
 		return rawBody, model, false
 	}
 	candidates := compactMappingCandidates(append(modelCandidates, model)...)

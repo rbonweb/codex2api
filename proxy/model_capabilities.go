@@ -161,7 +161,7 @@ func (h *Handler) learnModelCapabilitiesAsync(account *auth.Account, body []byte
 }
 
 func (h *Handler) learnModelCapabilitiesAsyncAtGeneration(account *auth.Account, generation int64, body []byte) {
-	if h == nil || h.db == nil || account == nil || account.IsRelayStyle() {
+	if h == nil || h.db == nil || account == nil {
 		return
 	}
 	models := parseCodexModelCapabilities(body)
@@ -405,8 +405,7 @@ func (h *Handler) applyModelCapabilities(ctx context.Context, row *database.APIK
 				fields, observed = snapshot.Models[strings.ToLower(strings.TrimSpace(target))]
 			}
 			// Against a live descriptor, an account without a current observation
-			// of this model (relay-style upstreams never learn; new or rotated
-			// credentials have not been seen yet) is unknown rather than a
+			// of this model (new or rotated credentials have not been seen yet) is unknown rather than a
 			// downgrade. Request-side gates still handle such accounts per call.
 			if upstream && snapshotsLoaded && !observed {
 				continue
@@ -437,7 +436,7 @@ func (h *Handler) applyModelCapabilities(ctx context.Context, row *database.APIK
 		}
 		effective := intersectCodexCapabilities(candidates)
 		// Unknown observations cannot widen the transports actually available
-		// to this key. HTTP-only relays never learn a capability snapshot.
+		// to this key.
 		if !allWebsocketEligible {
 			effective["prefer_websockets"] = json.RawMessage("false")
 		}
@@ -471,27 +470,7 @@ func (h *Handler) applyModelCapabilities(ctx context.Context, row *database.APIK
 }
 
 func codexManifestCapabilityAccountFilter(row *database.APIKeyRow, model string) auth.AccountFilter {
-	filter := excludeClaudeAccountsFilter(accountFilterForResponsesModel(model, true))
-	if row == nil {
-		return filter
-	}
-	return func(account *auth.Account) bool {
-		if !filter(account) {
-			return false
-		}
-		switch row.Limits.ResolveUpstreamChannel() {
-		case database.UpstreamChannelCodex:
-			return !account.IsGrokAPI() && !account.IsAntigravityAPI() && !account.IsClaudeOAuth()
-		case database.UpstreamChannelGrok:
-			return grokChannelAccountFilter(model)(account)
-		case database.UpstreamChannelAntigravity:
-			return antigravityChannelAccountFilter(model)(account)
-		case database.UpstreamChannelClaude:
-			return false // This provider serves native Messages, not Responses.
-		default:
-			return true
-		}
-	}
+	return accountFilterForResponsesModel(model, true)
 }
 
 func restoreModelCapabilities(store *auth.Store, db *database.DB) {
@@ -501,7 +480,7 @@ func restoreModelCapabilities(store *auth.Store, db *database.DB) {
 	accounts := store.Accounts()
 	ids := make([]int64, 0, len(accounts))
 	for _, account := range accounts {
-		if account != nil && !account.IsRelayStyle() {
+		if account != nil {
 			ids = append(ids, account.ID())
 		}
 	}
