@@ -1,180 +1,172 @@
-# Codex2API 部署文档
+# Codex2API Deployment Guide
 
-本文档详细说明 Codex2API 的各种部署方式。
+This document describes the ways to deploy Codex2API in detail.
 
-## 目录
+## Table of contents
 
-- [部署模式概览](#部署模式概览)
-- [快速开始](#快速开始)
-- [Docker 部署](#docker-部署)
-- [Render 镜像部署](#render-镜像部署)
-- [本地开发](#本地开发)
-- [生产环境配置](#生产环境配置)
-- [升级指南](#升级指南)
-- [备份与恢复](#备份与恢复)
+- [Deployment modes overview](#deployment-modes-overview)
+- [Quick start](#quick-start)
+- [Docker deployment](#docker-deployment)
+- [Render image deployment](#render-image-deployment)
+- [Local development](#local-development)
+- [Production configuration](#production-configuration)
+- [Upgrade guide](#upgrade-guide)
+- [Backup and restore](#backup-and-restore)
 
 ---
 
-## 部署模式概览
+## Deployment modes overview
 
-| 模式 | 适用场景 | 数据库 | 缓存 |
+| Mode | Use case | Database | Cache |
 |------|----------|--------|------|
-| **标准 Docker** | 生产环境推荐 | PostgreSQL | Redis |
-| **SQLite 轻量** | 单机/测试环境 | SQLite | 内存 |
-| **本地源码** | 开发调试 | 可选 | 可选 |
+| **Gateway only** (`docker-compose.yml`) | Recommended: external PostgreSQL such as Neon, or a single machine | PostgreSQL via `DATABASE_URL`, or SQLite at `/data` | In-memory |
+| **Full stack** (`docker-compose.full.yml`) | Self-contained host | Bundled PostgreSQL | Bundled Redis |
+| **Local source** | Development and debugging | Optional | Optional |
 
 ---
 
-## 快速开始
+## Quick start
 
-### 1. 标准模式（推荐）
+### 1. Gateway only (recommended)
+
+`docker-compose.yml` runs the gateway alone. Point it at an external PostgreSQL such as Neon with `DATABASE_URL`, or use SQLite on the `/data` volume.
 
 ```bash
-# 克隆仓库
-git clone https://github.com/james-6-23/codex2api.git
+# Clone the repository
+git clone https://github.com/rbonweb/codex2api.git
 cd codex2api
 
-# 配置环境
+# Configure the environment
 cp .env.example .env
-# 编辑 .env 文件，配置必要参数
+# Edit the .env file and set the required parameters:
+#   PostgreSQL such as Neon: DATABASE_URL=postgresql://USER:PASSWORD@HOST/DBNAME?sslmode=require and CACHE_DRIVER=memory
+#   SQLite: DATABASE_DRIVER=sqlite, DATABASE_PATH=/data/codex2api.db and CACHE_DRIVER=memory
 
-# 启动服务
+# Start the service
 docker compose pull
 docker compose up -d
 
-# 查看日志
+# View logs
 docker compose logs -f codex2api
 ```
 
-### 2. SQLite 轻量模式
+### 2. Full stack with bundled PostgreSQL and Redis
 
 ```bash
-cp .env.sqlite.example .env
-docker compose -f docker-compose.sqlite.yml pull
-docker compose -f docker-compose.sqlite.yml up -d
+git clone https://github.com/rbonweb/codex2api.git
+cd codex2api
+cp .env.example .env
+docker compose -f docker-compose.full.yml pull
+docker compose -f docker-compose.full.yml up -d
 ```
 
 ---
 
-## Docker 部署
+## Docker deployment
 
-### 标准模式（PostgreSQL + Redis）
+### Gateway only
 
-**docker-compose.yml 服务组成:**
+**docker-compose.yml services:**
 
 ```yaml
 services:
-  codex2api:    # 主应用服务
-  postgres:     # PostgreSQL 数据库
-  redis:        # Redis 缓存
+  codex2api:    # main application service (single container)
 ```
 
-**数据持久化:**
+**Data persistence:**
 
-| 卷名 | 用途 |
+| Volume | Purpose |
 |------|------|
-| codex2api_pgdata | PostgreSQL 数据 |
-| codex2api_redisdata | Redis 数据 |
+| codex2api_data | `/data` in the container: the SQLite database file and image assets |
 
-**完整部署流程:**
+**Deployment procedure:**
 
 ```bash
-# 1. 准备环境文件
+# 1. Prepare the environment file
 cp .env.example .env
 
-# 2. 修改 .env 配置
-# - CODEX_PORT: 服务端口
-# - ADMIN_SECRET: 管理后台密码
-# - DATABASE_*: 数据库配置
-# - REDIS_*: Redis 配置
+# 2. Edit the .env configuration
+# - CODEX_PORT: service port
+# - ADMIN_SECRET: admin panel password
+# - PostgreSQL such as Neon: DATABASE_URL=postgresql://USER:PASSWORD@HOST/DBNAME?sslmode=require
+#   (use the direct host, not the pooled host with -pooler)
+# - SQLite instead: DATABASE_DRIVER=sqlite and DATABASE_PATH=/data/codex2api.db
+# - CACHE_DRIVER=memory (the gateway-only compose file has no Redis)
 
-# 3. 启动服务
+# 3. Start the service
 docker compose pull
 docker compose up -d
 
-# 4. 验证状态
+# 4. Verify the status
 docker compose ps
 docker compose logs -f codex2api
 
-# 5. 访问服务
-# 管理后台: http://localhost:8080/admin/
-# API 地址: http://localhost:8080/v1/
+# 5. Access the service
+# Admin panel: http://localhost:8080/admin/
+# API address: http://localhost:8080/v1/
 ```
 
-### SQLite 轻量模式
+### Full stack (PostgreSQL + Redis)
 
-**docker-compose.sqlite.yml 服务组成:**
+**docker-compose.full.yml services:**
 
 ```yaml
 services:
-  codex2api:    # 主应用服务（单容器）
+  codex2api:    # main application service
+  postgres:     # PostgreSQL database
+  redis:        # Redis cache
 ```
 
-**数据持久化:**
+**Data persistence:**
 
-| 卷名 | 用途 |
+| Volume | Purpose |
 |------|------|
-| codex2api-sqlite_sqlite-data | SQLite 数据库文件 |
+| codex2api_pgdata | PostgreSQL data |
+| codex2api_redisdata | Redis data |
+| codex2api_image-assets | Image assets mounted at `/data` |
 
-**部署流程:**
-
-```bash
-# 1. 准备环境文件
-cp .env.sqlite.example .env
-
-# 2. 修改 .env 配置
-# - CODEX_PORT: 服务端口
-# - DATABASE_PATH: /data/codex2api.db
-
-# 3. 启动服务
-docker compose -f docker-compose.sqlite.yml pull
-docker compose -f docker-compose.sqlite.yml up -d
-```
-
-### 本地源码构建模式
-
-用于本地修改代码后验证:
+**Full deployment procedure:**
 
 ```bash
-# 标准模式本地构建
-docker compose -f docker-compose.local.yml up -d --build
+# 1. Prepare the environment file
+cp .env.example .env
 
-# SQLite 模式本地构建
-docker compose -f docker-compose.sqlite.local.yml up -d --build
+# 2. Edit the .env configuration
+# - CODEX_PORT: service port
+# - ADMIN_SECRET: admin panel password
+# - DATABASE_*: database settings
+# - REDIS_*: Redis settings
+
+# 3. Start the service
+docker compose -f docker-compose.full.yml pull
+docker compose -f docker-compose.full.yml up -d
+
+# 4. Verify the status
+docker compose -f docker-compose.full.yml ps
+docker compose -f docker-compose.full.yml logs -f codex2api
 ```
-
-**注意:** 本地构建模式使用 `build: .` 而非预构建镜像。
 
 ---
 
-## Render 镜像部署
+## Render image deployment
 
-Render 可以直接运行 GHCR 中已经构建好的镜像，适合放一个公开 Demo 或轻量测试环境。
+Render can run the image already built in GHCR directly, which suits a lightweight test environment or a small deployment.
 
-当前公开 Demo：
+### 1. Create an image-backed Web Service
 
-| 项目 | 地址 |
-|------|------|
-| Demo 首页 | [https://codex2api-latest-vu8j.onrender.com](https://codex2api-latest-vu8j.onrender.com) |
-| Demo 密码 | `codex2api` |
-
-> Demo 环境仅用于体验管理后台界面和基础功能，请勿上传真实 Refresh Token、Access Token、API Key 或其他敏感信息。
-
-### 1. 创建 Image-backed Web Service
-
-在 Render Dashboard 中创建 `Web Service`，选择 `Existing Image`，镜像地址填写：
+In the Render Dashboard, create a `Web Service`, choose `Existing Image`, and enter this image address:
 
 ```text
-ghcr.io/james-6-23/codex2api:latest
+ghcr.io/rbonweb/codex2api:latest
 ```
 
-如果 GHCR Package 不是公开访问，需要先在 Render 的 Registry Credentials 中配置 GitHub Container Registry 凭据。
+If the GHCR package is not public, first configure GitHub Container Registry credentials under Registry Credentials in Render.
 
-**Fork 发布（rbonweb/codex2api）:** 每次推送到 `main`，`.github/workflows/fork-release.yml` 会打下一个补丁版本标签（取 fork 最新 `vX.Y.Z` 标签与 `CHANGELOG.md` 最新版本中较大者加一），并基于该标签构建公开多架构镜像 `ghcr.io/rbonweb/codex2api`（标签 `X.Y.Z`、`X.Y`、`vX.Y.Z`、`latest`）和带二进制的 GitHub Release。Render 镜像地址填 `ghcr.io/rbonweb/codex2api:latest` 跟随最新版本，或填 `ghcr.io/rbonweb/codex2api:X.Y.Z` 固定版本；只改 `docs/` 或 Markdown 不会触发发布。
+**Fork releases (rbonweb/codex2api):** On every push to `main`, `.github/workflows/fork-release.yml` creates the next patch version tag (the larger of the fork's latest `vX.Y.Z` tag and the latest version in `CHANGELOG.md`, plus one) and, based on that tag, builds the public multi-architecture image `ghcr.io/rbonweb/codex2api` (tags `X.Y.Z`, `X.Y`, `vX.Y.Z`, `latest`) and a GitHub Release with binaries. Use `ghcr.io/rbonweb/codex2api:latest` as the Render image address to follow the latest version, or `ghcr.io/rbonweb/codex2api:X.Y.Z` to pin a version; changes that only touch `docs/` or Markdown do not trigger a release.
 
-### 2. 配置环境变量
+### 2. Configure environment variables
 
-免费实例没有持久化磁盘，推荐 Demo 使用 SQLite + 内存缓存，并把可写目录放到 `/tmp`：
+Free instances have no persistent disk, so for a test deployment we recommend SQLite plus in-memory cache, with the writable directories under `/tmp`:
 
 ```env
 CODEX_PORT=10000
@@ -188,98 +180,98 @@ LOG_DISABLED=true
 ADMIN_SECRET=replace-with-a-strong-secret
 CODEX_ALLOW_ANONYMOUS=false
 GIN_MODE=release
-TZ=Asia/Shanghai
+TZ=UTC
 ```
 
-需要数据在重新部署后保留时，改用外部 PostgreSQL（如 Neon）：删除 `DATABASE_DRIVER=sqlite` 与 `DATABASE_PATH`，设置 `DATABASE_URL=postgresql://USER:PASSWORD@HOST/DBNAME?sslmode=require`。Neon 请使用直连主机，不要用带 `-pooler` 的连接池主机：网关使用会话级 advisory lock，`DATABASE_SCHEMA` 也依赖启动参数设置 `search_path`，事务级连接池都不支持。
+To keep data across redeploys, use an external PostgreSQL such as Neon instead: remove `DATABASE_DRIVER=sqlite` and `DATABASE_PATH`, and set `DATABASE_URL=postgresql://USER:PASSWORD@HOST/DBNAME?sslmode=require`. For Neon, use the direct host, not the pooled host with `-pooler`: the gateway uses session-level advisory locks, and `DATABASE_SCHEMA` also relies on setting `search_path` through startup parameters, and transaction-level connection pools support neither.
 
-Render Web Service 默认会通过 `PORT=10000` 暴露服务；本项目也会读取 `PORT`，但显式设置 `CODEX_PORT=10000` 更直观。
+A Render Web Service exposes the service through `PORT=10000` by default; this project also reads `PORT`, but setting `CODEX_PORT=10000` explicitly is clearer.
 
-### 3. 配置自动部署最新镜像
+### 3. Configure automatic deployment of the latest image
 
-Render 的 image-backed 服务不会在 `latest` 标签更新后自动重新部署。需要使用服务 Settings 中的 Deploy Hook：
+Render image-backed services do not redeploy automatically when the `latest` tag is updated. Use the Deploy Hook in the service Settings:
 
-1. 打开 Render 服务的 `Settings`。
-2. 找到 `Deploy Hook` 并复制 URL。
-3. 到 GitHub 仓库 `Settings` → `Secrets and variables` → `Actions`。
-4. 新增仓库 Secret：
+1. Open the Render service `Settings`.
+2. Find `Deploy Hook` and copy the URL.
+3. In the GitHub repository, go to `Settings` → `Secrets and variables` → `Actions`.
+4. Add a repository secret:
 
 ```text
 RENDER_DEPLOY_HOOK_URL=<Render Deploy Hook URL>
 ```
 
-之后 `Build Docker Image` 工作流推送镜像成功后，最后一步会自动请求该 Hook，让 Render 重新拉取服务所配置的镜像标签（如 `latest`）并部署；`.github/workflows/render-deploy.yml` 用于手动重新部署。
+After that, once the `Build Docker Image` workflow has pushed the image successfully, its last step calls the hook automatically so Render pulls the image tag the service is configured with (such as `latest`) and deploys it; `.github/workflows/render-deploy.yml` is for manual redeploys.
 
-也可以手动触发镜像构建工作流，镜像推送成功后会自动进入 Render 部署工作流：
+You can also trigger the image build workflow manually; after the image is pushed successfully its last step triggers the Render deploy hook automatically:
 
 ```bash
 gh workflow run docker-image.yml
 ```
 
-如果只想让 Render 重新拉取当前 `latest` 镜像，也可以单独触发 Render 部署工作流：
+To make Render pull the current `latest` image again without a new build, trigger the Render deploy workflow on its own:
 
 ```bash
 gh workflow run render-deploy.yml
 ```
 
-### 4. 验证
+### 4. Verify
 
-部署完成后访问：
+After the deployment completes, visit:
 
 ```text
 https://<your-service>.onrender.com/admin/
 https://<your-service>.onrender.com/health
 ```
 
-注意：Render 免费实例适合 Demo，不建议承载真实 Token 或生产流量；实例休眠、重启或重新部署后，`/tmp` 中的 SQLite 数据和图库可能丢失。
+Note: Render free instances suit testing and are not recommended for real tokens or production traffic; after the instance sleeps, restarts or is redeployed, the SQLite data and the image gallery in `/tmp` may be lost.
 
 ---
 
-## 本地开发
+## Local development
 
-### 环境要求
+### Requirements
 
 - Go 1.26.10+
 - Node.js 22.12+
-- PostgreSQL 14+ (可选，可用 SQLite)
-- Redis 7+ (可选，可用内存缓存)
+- PostgreSQL 14+ (optional, SQLite can be used)
+- Redis 7+ (optional, in-memory cache can be used)
 
-### 后端开发
+### Backend development
 
 ```bash
-# 1. 安装依赖
+# 1. Install dependencies
 go mod download
 
-# 2. 配置环境
+# 2. Configure the environment
 cp .env.example .env
-# 编辑 .env 配置本地数据库
+# Edit .env to configure the local database
 
-# 3. 构建前端（必须，因为 Go 使用 go:embed 嵌入）
+# 3. Build the frontend (required, because Go embeds it with go:embed)
 cd frontend && npm ci && npm run build && cd ..
 
-# 4. 启动后端
+# 4. Start the backend
 go run .
 ```
 
-### 前端开发
+### Frontend development
 
 ```bash
 cd frontend
 
-# 安装依赖
+# Install dependencies
 npm ci
 
-# 修改前端后运行验证
+# Run validation after changing the frontend
 npm test
 npm run typecheck
 
-# 启动开发服务器
+# Start the development server
 npm run dev
 ```
 
-Vite 配置已包含代理规则，开发时访问 `http://localhost:5173/admin/`，API 请求会自动代理到后端。
+The Vite configuration already includes proxy rules; during development, visit `http://localhost:5173/admin/` and API requests are proxied to the backend automatically.
 
-**vite.config.js 代理配置:**
+**vite.config.js proxy configuration:**
 
 ```javascript
 server: {
@@ -293,20 +285,20 @@ server: {
 
 ---
 
-## 生产环境配置
+## Production configuration
 
-### 1. 环境变量配置
+### 1. Environment variables
 
-**必需配置:**
+**Required settings:**
 
 ```bash
-# 服务端口
+# Service port
 CODEX_PORT=8080
 
-# 管理后台密码（强密码推荐）
+# Admin panel password (a strong password is recommended)
 ADMIN_SECRET=your-strong-password-here
 
-# 数据库配置（PostgreSQL 模式）
+# Database settings (PostgreSQL mode)
 DATABASE_DRIVER=postgres
 DATABASE_HOST=postgres
 DATABASE_PORT=5432
@@ -314,7 +306,7 @@ DATABASE_USER=codex2api
 DATABASE_PASSWORD=your-db-password
 DATABASE_NAME=codex2api
 
-# Redis 配置
+# Redis settings
 CACHE_DRIVER=redis
 REDIS_ADDR=redis:6379
 REDIS_USERNAME=
@@ -323,51 +315,51 @@ REDIS_DB=0
 REDIS_TLS=false
 REDIS_INSECURE_SKIP_VERIFY=false
 
-# 时区
-TZ=Asia/Shanghai
+# Time zone
+TZ=UTC
 ```
 
-云 Redis（如 Aiven、Upstash）通常需要 TLS，可直接使用平台提供的 `rediss://` 连接串：
+Cloud Redis (such as Aiven or Upstash) usually requires TLS; you can use the `rediss://` connection string provided by the platform directly:
 
 ```env
 CACHE_DRIVER=redis
 REDIS_ADDR=rediss://default:your-redis-password@your-redis-host:6379/0
 ```
 
-**可选配置:**
+**Optional settings:**
 
 ```bash
-# 快速调度器
+# Fast scheduler
 FAST_SCHEDULER_ENABLED=true
 
-# 实验性：Codex Multi-Agent v2 第三方子 Agent 明文兼容（默认关闭）
+# Experimental: plaintext compatibility for Codex Multi-Agent v2 third-party sub-agents (off by default)
 # CODEX_MULTI_AGENT_V2_COMPAT=false
-# 说明与灰度步骤见 docs/CODEX_MULTI_AGENT_V2_COMPAT.md
+# For details and the gradual rollout steps, see docs/CODEX_MULTI_AGENT_V2_COMPAT.md
 ```
 
-### 2. 系统设置（通过管理后台）
+### 2. System settings (through the admin panel)
 
-首次启动后访问 `/admin/settings` 配置:
+After the first start, visit `/admin/settings` to configure:
 
-| 参数 | 建议值 | 说明 |
+| Setting | Recommended value | Description |
 |------|--------|------|
-| Max Concurrency | 2-4 | 单账号最大并发 |
-| Global RPM | 0 或 1000+ | 0 表示不限流 |
-| Test Model | gpt-5.4 | 测试连接用模型 |
-| Test Concurrency | 50 | 批量测试并发数 |
-| PgMax Conns | 50 | PostgreSQL 连接池 |
-| Redis Pool Size | 30 | Redis 连接池 |
+| Max Concurrency | 2-4 | Maximum concurrency per account |
+| Global RPM | 0 or 1000+ | 0 means no rate limit |
+| Test Model | gpt-5.4 | Model used for test connection |
+| Test Concurrency | 50 | Batch test concurrency |
+| PgMax Conns | 50 | PostgreSQL connection pool |
+| Redis Pool Size | 30 | Redis connection pool |
 
-### 3. 反向代理配置
+### 3. Reverse proxy
 
-**Nginx 配置示例:**
+**Nginx configuration example:**
 
 ```nginx
 server {
     listen 80;
     server_name codex.example.com;
 
-    # 强制 HTTPS（生产环境推荐）
+    # Force HTTPS (recommended for production)
     return 301 https://$server_name$request_uri;
 }
 
@@ -378,157 +370,101 @@ server {
     ssl_certificate /path/to/cert.pem;
     ssl_certificate_key /path/to/key.pem;
 
-    # 管理后台（可添加额外认证）
+    # Admin panel (extra authentication can be added)
     location /admin/ {
         proxy_pass http://localhost:8080;
         proxy_set_header Host $host;
         proxy_set_header X-Real-IP $remote_addr;
     }
 
-    # API 端点
+    # API endpoints
     location /v1/ {
         proxy_pass http://localhost:8080;
         proxy_set_header Host $host;
         proxy_set_header X-Real-IP $remote_addr;
 
-        # 流式响应优化
+        # Streaming response optimization
         proxy_buffering off;
         proxy_cache off;
     }
 
-    # 健康检查
+    # Health check
     location /health {
         proxy_pass http://localhost:8080;
     }
 }
 ```
 
-### 4. Docker Compose 生产配置
+### 4. Docker Compose production configuration
+
+Use `docker-compose.full.yml` as the base for production. To listen on localhost only and expose the service through nginx, add a compose override file next to it, `docker-compose.override.yml`:
 
 ```yaml
-version: '3.8'
-
 services:
   codex2api:
-    image: ghcr.io/james-6-23/codex2api:latest
-    container_name: codex2api
-    restart: unless-stopped
-    env_file:
-      - .env
-    ports:
-      - "127.0.0.1:8080:8080"  # 仅本地监听，通过 nginx 暴露
-    depends_on:
-      postgres:
-        condition: service_healthy
-      redis:
-        condition: service_healthy
-    networks:
-      - codex2api
-    logging:
-      driver: "json-file"
-      options:
-        max-size: "100m"
-        max-file: "3"
-
-  postgres:
-    image: postgres:15-alpine
-    container_name: codex2api-postgres
-    restart: unless-stopped
-    environment:
-      POSTGRES_USER: ${DATABASE_USER}
-      POSTGRES_PASSWORD: ${DATABASE_PASSWORD}
-      POSTGRES_DB: ${DATABASE_NAME}
-    volumes:
-      - pgdata:/var/lib/postgresql/data
-    networks:
-      - codex2api
-    healthcheck:
-      test: ["CMD-SHELL", "pg_isready -U ${DATABASE_USER} -d ${DATABASE_NAME}"]
-      interval: 5s
-      timeout: 5s
-      retries: 5
-
-  redis:
-    image: redis:7-alpine
-    container_name: codex2api-redis
-    restart: unless-stopped
-    command: redis-server --requirepass ${REDIS_PASSWORD}
-    volumes:
-      - redisdata:/data
-    networks:
-      - codex2api
-    healthcheck:
-      test: ["CMD", "redis-cli", "ping"]
-      interval: 5s
-      timeout: 5s
-      retries: 5
-
-volumes:
-  pgdata:
-  redisdata:
-
-networks:
-  codex2api:
-    driver: bridge
+    ports: !override
+      - "127.0.0.1:8080:8080"  # listen on localhost only, expose through nginx
 ```
+
+Then run `docker compose -f docker-compose.full.yml -f docker-compose.override.yml up -d`.
 
 ---
 
-## 升级指南
+## Upgrade guide
 
-### 标准升级流程
+### Standard upgrade procedure
 
 ```bash
-# 1. 备份数据库（重要！）
+# 1. Back up the database (important!)
 docker exec codex2api-postgres pg_dump -U codex2api codex2api > backup_$(date +%Y%m%d_%H%M%S).sql
 
-# 2. 拉取新版本
+# 2. Pull the new version
 git pull
-docker compose pull
+docker compose -f docker-compose.full.yml pull
 
-# 3. 滚动更新（零停机）
-docker compose up -d
+# 3. Rolling update (zero downtime)
+docker compose -f docker-compose.full.yml up -d
 
-# 4. 验证状态
-docker compose ps
-docker compose logs -f codex2api
+# 4. Verify the status
+docker compose -f docker-compose.full.yml ps
+docker compose -f docker-compose.full.yml logs -f codex2api
 
-# 5. 健康检查
+# 5. Health check
 curl http://localhost:8080/health
 ```
 
-### 版本降级
+### Downgrading
 
 ```bash
-# 1. 停止服务
-docker compose down
+# 1. Stop the service
+docker compose -f docker-compose.full.yml down
 
-# 2. 恢复数据库
+# 2. Restore the database
 docker exec -i codex2api-postgres psql -U codex2api codex2api < backup_xxx.sql
 
-# 3. 指定旧版本启动
-# 编辑 docker-compose.yml，指定 image:tag
-docker compose up -d
+# 3. Start with the old version
+# Edit docker-compose.full.yml and set image:tag (for example ghcr.io/rbonweb/codex2api:X.Y.Z)
+docker compose -f docker-compose.full.yml up -d
 ```
 
-### SQLite 模式升级
+### Gateway-only upgrade
 
 ```bash
-# 备份 SQLite 数据库
+# Back up the SQLite database (skip when using an external PostgreSQL such as Neon)
 cp /path/to/codex2api.db /path/to/codex2api.db.backup_$(date +%Y%m%d_%H%M%S)
 
-# 升级
-docker compose -f docker-compose.sqlite.yml pull
-docker compose -f docker-compose.sqlite.yml up -d
+# Upgrade
+docker compose pull
+docker compose up -d
 ```
 
 ---
 
-## 备份与恢复
+## Backup and restore
 
-### PostgreSQL 备份
+### PostgreSQL backup
 
-**自动备份脚本:**
+**Automatic backup script:**
 
 ```bash
 #!/bin/bash
@@ -540,77 +476,74 @@ CONTAINER="codex2api-postgres"
 DB_NAME="codex2api"
 DB_USER="codex2api"
 
-# 创建备份目录
+# Create the backup directory
 mkdir -p $BACKUP_DIR
 
-# 执行备份
+# Run the backup
 docker exec $CONTAINER pg_dump -U $DB_USER $DB_NAME > $BACKUP_DIR/codex2api_$DATE.sql
 
-# 保留最近 30 天备份
+# Keep the last 30 days of backups
 find $BACKUP_DIR -name "*.sql" -mtime +30 -delete
 
 echo "Backup completed: $BACKUP_DIR/codex2api_$DATE.sql"
 ```
 
-**添加到定时任务:**
+**Add to a scheduled job:**
 
 ```bash
-# 每天凌晨 2 点执行备份
+# Run the backup every day at 2 AM
 0 2 * * * /path/to/backup.sh >> /var/log/codex2api-backup.log 2>&1
 ```
 
-### PostgreSQL 恢复
+### PostgreSQL restore
 
 ```bash
-# 1. 停止应用
-docker compose stop codex2api
+# 1. Stop the application
+docker compose -f docker-compose.full.yml stop codex2api
 
-# 2. 恢复数据库
+# 2. Restore the database
 docker exec -i codex2api-postgres psql -U codex2api -d codex2api < backup_xxx.sql
 
-# 3. 重启服务
-docker compose start codex2api
+# 3. Restart the service
+docker compose -f docker-compose.full.yml start codex2api
 ```
 
-### SQLite 备份
+### SQLite backup
+
+The SQLite database lives in the `codex2api_data` volume mounted at `/data`. Stop the service first for a consistent copy:
 
 ```bash
-# 备份
-sqlite3 /data/codex2api.db ".backup '/backup/codex2api_$(date +%Y%m%d_%H%M%S).db'"
-
-# 或简单复制
-cp /data/codex2api.db /backup/codex2api_$(date +%Y%m%d_%H%M%S).db
+docker compose stop
+docker run --rm -v codex2api_data:/data -v /backup:/backup alpine cp /data/codex2api.db /backup/codex2api_backup.db
+docker compose start
 ```
 
-### SQLite 恢复
+### SQLite restore
 
 ```bash
-# 停止服务
-docker compose -f docker-compose.sqlite.yml stop
+# Stop the service
+docker compose stop
 
-# 恢复数据
-cp /backup/codex2api_xxx.db /data/codex2api.db
+# Restore the data
+docker run --rm -v codex2api_data:/data -v /backup:/backup alpine cp /backup/codex2api_xxx.db /data/codex2api.db
 
-# 启动服务
-docker compose -f docker-compose.sqlite.yml start
+# Start the service
+docker compose start
 ```
 
 ---
 
-## 容器名与卷名对照
+## Container and volume names
 
-| 部署模式 | 容器名 | 数据卷 |
+| Deployment mode | Container name | Data volumes |
 |----------|--------|--------|
-| 标准镜像 | codex2api | codex2api_pgdata, codex2api_redisdata |
-| 标准本地 | codex2api-local | codex2api-local_pgdata, codex2api-local_redisdata |
-| SQLite 镜像 | codex2api-sqlite | codex2api-sqlite_sqlite-data |
-| SQLite 本地 | codex2api-sqlite-local | codex2api-sqlite-local_sqlite-data-local |
+| Gateway only (`docker-compose.yml`) | codex2api | codex2api_data |
+| Full stack (`docker-compose.full.yml`) | codex2api, codex2api-postgres, codex2api-redis | codex2api_pgdata, codex2api_redisdata, codex2api_image-assets |
 
-**注意:** 不同模式的数据卷相互隔离，切换 compose 文件后看到空数据是正常现象。
+**Note:** Data volumes of different modes are isolated from each other, so seeing empty data after switching compose files is normal.
 
-### 大型用量表的索引升级
+### Index upgrade for large usage tables
 
-PostgreSQL 的网关/上游请求 ID 索引与账号代际索引在启动后的后台使用
-`CREATE INDEX CONCURRENTLY` 构建，避免在启动迁移事务中扫描大表并阻塞写入。
-多实例通过数据库 advisory lock 协调构建；中断遗留的 INVALID 索引会在线清理后重建。
-构建失败只影响相关查询性能，服务继续运行并在下次启动重试；日志可查看构建结果。
+The PostgreSQL gateway/upstream request ID indexes and the account generation index are built in the background after startup using `CREATE INDEX CONCURRENTLY`, which avoids scanning large tables and blocking writes inside the startup migration transaction.
+Multiple instances coordinate the build through a database advisory lock; INVALID indexes left behind by an interrupted build are cleaned up online and rebuilt.
+A failed build only affects the performance of the related queries; the service keeps running and retries on the next start, and the log shows the build result.

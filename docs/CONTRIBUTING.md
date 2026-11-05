@@ -1,45 +1,48 @@
-# Codex2API 贡献指南
+# Codex2API Contributing Guide
 
-感谢您对 Codex2API 项目的关注！本指南将帮助您了解如何参与项目贡献。
+Thank you for your interest in the Codex2API project! This guide explains how to contribute.
 
-## 目录
+## Table of contents
 
-- [开发环境设置](#开发环境设置)
-- [代码规范](#代码规范)
-- [提交规范](#提交规范)
-- [Pull Request 流程](#pull-request-流程)
-- [测试要求](#测试要求)
-- [文档更新](#文档更新)
+- [Development environment setup](#development-environment-setup)
+- [Code style](#code-style)
+- [Commit conventions](#commit-conventions)
+- [Pull request process](#pull-request-process)
+- [Testing requirements](#testing-requirements)
+- [Documentation updates](#documentation-updates)
+- [Release process](#release-process)
+- [Getting help](#getting-help)
+- [Code of conduct](#code-of-conduct)
 
 ---
 
-## 开发环境设置
+## Development environment setup
 
-### 前置要求
+### Prerequisites
 
-- Go 1.26.10 或更高版本
-- Node.js 22.12 或更高版本
-- Docker 和 Docker Compose
+- Go 1.26.10 or later
+- Node.js 22.12 or later
+- Docker and Docker Compose
 - Git
 
-### 本地开发环境搭建
+### Local development setup
 
-1. **Fork 并克隆仓库**
+1. **Fork and clone the repository**
 
 ```bash
 git clone https://github.com/YOUR_USERNAME/codex2api.git
 cd codex2api
-git remote add upstream https://github.com/james-6-23/codex2api.git
+git remote add upstream https://github.com/rbonweb/codex2api.git
 ```
 
-2. **安装后端依赖**
+2. **Install backend dependencies**
 
 ```bash
 go mod download
 go mod verify
 ```
 
-3. **安装前端依赖**
+3. **Install frontend dependencies**
 
 ```bash
 cd frontend
@@ -47,66 +50,66 @@ npm ci
 cd ..
 ```
 
-4. **配置环境**
+4. **Configure the environment**
 
 ```bash
 cp .env.example .env
-# 编辑 .env 配置本地数据库（或使用 SQLite 模式）
+# Edit .env to configure a local database (or use SQLite mode)
 ```
 
-5. **构建前端**
+5. **Build the frontend**
 
 ```bash
 cd frontend && npm run build && cd ..
 ```
 
-6. **启动服务**
+6. **Start the service**
 
 ```bash
-# 方式1: 本地运行
+# Option 1: run locally
 go run .
 
-# 方式2: Docker 模式
-docker compose -f docker-compose.local.yml up -d --build
+# Option 2: Docker (published image with bundled PostgreSQL and Redis)
+docker compose -f docker-compose.full.yml up -d
 ```
 
 ---
 
-## 代码规范
+## Code style
 
-### Go 代码规范
+### Go code style
 
-我们遵循标准的 Go 代码规范：
+We follow standard Go conventions:
 
-1. **使用 gofmt 格式化代码**
+1. **Format code with gofmt**
 
 ```bash
 gofmt -w .
 ```
 
-2. **使用 golint 检查**
+2. **Lint with golint**
 
 ```bash
 go install golang.org/x/lint/golint@latest
 golint ./...
 ```
 
-3. **使用 go vet 静态分析**
+3. **Run static analysis with go vet**
 
 ```bash
 go vet ./...
 ```
 
-4. **代码风格要求**
+4. **Code style requirements**
 
-- 使用驼峰命名法（CamelCase）
-- 导出的函数和类型必须添加注释
-- 错误处理优先，避免忽略错误
-- 使用有意义的变量名
+- Use CamelCase naming
+- Exported functions and types must have comments
+- Handle errors first and do not ignore them
+- Use meaningful variable names
 
 ```go
-// 好的示例
-// GetAccountByID 根据 ID 获取账号信息
+// Good example
+// GetAccountByID gets account information by ID
 func GetAccountByID(ctx context.Context, id int64) (*Account, error) {
     if id <= 0 {
         return nil, fmt.Errorf("invalid account id: %d", id)
@@ -114,17 +117,17 @@ func GetAccountByID(ctx context.Context, id int64) (*Account, error) {
     // ...
 }
 
-// 不好的示例
+// Bad example
 func getaccount(id int64) *Account {
-    // 忽略错误
+    // ignoring the error
     db.Query("SELECT * FROM accounts WHERE id = ?", id)
     // ...
 }
 ```
 
-### 前端代码规范
+### Frontend code style
 
-1. **运行前端验证**
+1. **Run frontend validation**
 
 ```bash
 cd frontend
@@ -133,52 +136,51 @@ npm run typecheck
 npm run build
 ```
 
-修改降智检测的 SVG 导出时，还需运行真实浏览器回归（首次运行先安装 Chromium）：
+When changing the SVG export of the intelligence check, also run the real-browser regression (install Chromium on the first run):
 
 ```bash
 npx playwright install chromium
 npm run test:svg
 ```
 
-可通过 `QUALITY_TEST_SVG_SAMPLE=/absolute/path/pelican.html npm run test:svg` 额外验证本地鹈鹕样例；样例文件不会写入仓库。
+You can additionally verify a local pelican sample with `QUALITY_TEST_SVG_SAMPLE=/absolute/path/pelican.html npm run test:svg`; the sample file is not written to the repository.
 
-修改降智检测页面、账号检测状态条或历史弹窗时，运行 `npm run test:intelligence`。
-该浏览器回归使用本地模拟接口，不请求真实模型；截图默认保存在系统临时目录，
-可通过 `INTELLIGENCE_TEST_ARTIFACT_DIR` 指定输出目录。
+When changing the intelligence check page, the account check status bar or the history dialog, run `npm run test:intelligence`.
+This browser regression uses a local mock API and does not call real models. Screenshots are saved to the system temp directory by default; set `INTELLIGENCE_TEST_ARTIFACT_DIR` to choose another output directory.
 
-2. **代码风格**
+2. **Code style**
 
-- 使用 2 空格缩进
-- 使用单引号
-- 末尾分号可选
-- 最大行长度 100 字符
+- Use 2-space indentation
+- Use single quotes
+- Trailing semicolons are optional
+- Maximum line length is 100 characters
 
-### 项目结构规范
+### Project structure
 
 ```
 codex2api/
-├── admin/          # 管理后台 API 处理器
-├── auth/           # 账号池和调度逻辑
-├── cache/          # 缓存抽象层
-├── config/         # 配置加载
-├── database/       # 数据库访问层
-├── proxy/          # 代理转发和翻译
-├── frontend/       # React 前端
+├── admin/          # Admin panel API handlers
+├── auth/           # Account pool and scheduling logic
+├── cache/          # Cache abstraction layer
+├── config/         # Configuration loading
+├── database/       # Database access layer
+├── proxy/          # Proxy forwarding and translation
+├── frontend/       # React frontend
 │   ├── src/
-│   │   ├── components/  # UI 组件
-│   │   ├── pages/       # 页面组件
-│   │   └── locales/     # 国际化
-├── docs/           # 文档
-└── main.go         # 入口文件
+│   │   ├── components/  # UI components
+│   │   ├── pages/       # Page components
+│   │   └── locales/     # Internationalization
+├── docs/           # Documentation
+└── main.go         # Entry point
 ```
 
 ---
 
-## 提交规范
+## Commit conventions
 
-我们使用 [Conventional Commits](https://www.conventionalcommits.org/) 规范：
+We use the [Conventional Commits](https://www.conventionalcommits.org/) convention:
 
-### 提交格式
+### Commit format
 
 ```
 <type>(<scope>): <subject>
@@ -188,122 +190,122 @@ codex2api/
 <footer>
 ```
 
-### 类型说明
+### Types
 
-| 类型 | 说明 | 示例 |
+| Type | Description | Example |
 |------|------|------|
-| `feat` | 新功能 | `feat(scheduler): 添加快速调度器` |
-| `fix` | 修复 Bug | `fix(auth): 修复账号冷却时间计算错误` |
-| `docs` | 文档更新 | `docs(api): 更新 API 文档` |
-| `style` | 代码格式 | `style: 格式化代码` |
-| `refactor` | 重构 | `refactor(proxy): 优化请求执行器` |
-| `test` | 测试相关 | `test(auth): 添加调度器单元测试` |
-| `chore` | 构建/工具 | `chore: 更新依赖` |
+| `feat` | New feature | `feat(scheduler): add fast scheduler` |
+| `fix` | Bug fix | `fix(auth): fix account cooldown calculation error` |
+| `docs` | Documentation update | `docs(api): update API documentation` |
+| `style` | Code formatting | `style: format code` |
+| `refactor` | Refactoring | `refactor(proxy): optimize request executor` |
+| `test` | Test-related | `test(auth): add scheduler unit tests` |
+| `chore` | Build/tooling | `chore: update dependencies` |
 
-### 示例
+### Example
 
 ```
-feat(api): 添加账号批量导入功能
+feat(api): add batch account import
 
-- 支持 TXT 和 JSON 格式导入
-- 添加 SSE 进度推送
-- 自动去重和验证
+- Support TXT and JSON import formats
+- Add SSE progress push
+- Deduplicate and validate automatically
 
 Fixes #123
 ```
 
 ---
 
-## Pull Request 流程
+## Pull request process
 
-### 1. 创建分支
+### 1. Create a branch
 
 ```bash
-# 从 main 分支创建特性分支
+# Create a feature branch from main
 git checkout main
 git pull upstream main
 git checkout -b feature/your-feature-name
 ```
 
-分支命名规范：
-- `feature/` - 新功能
-- `fix/` - Bug 修复
-- `docs/` - 文档更新
-- `refactor/` - 代码重构
+Branch naming:
+- `feature/` - new feature
+- `fix/` - bug fix
+- `docs/` - documentation update
+- `refactor/` - code refactoring
 
-### 2. 开发提交
+### 2. Develop and commit
 
 ```bash
-# 提交代码
+# Commit your code
 git add .
-git commit -m "feat: 添加某某功能"
+git commit -m "feat: add some feature"
 
-# 推送到你的 Fork
+# Push to your fork
 git push origin feature/your-feature-name
 ```
 
-### 3. 创建 PR
+### 3. Create a PR
 
-1. 访问你的 Fork 页面
-2. 点击 "Compare & pull request"
-3. 填写 PR 描述：
+1. Go to your fork's page
+2. Click "Compare & pull request"
+3. Fill in the PR description:
 
 ```markdown
-## 描述
-简要描述这个 PR 的目的
+## Description
+Briefly describe the purpose of this PR
 
-## 变更类型
-- [ ] Bug 修复
-- [ ] 新功能
-- [ ] 文档更新
-- [ ] 代码重构
+## Change type
+- [ ] Bug fix
+- [ ] New feature
+- [ ] Documentation update
+- [ ] Code refactoring
 
-## 测试
-- [ ] 添加了单元测试
-- [ ] 手动测试通过
-- [ ] 所有现有测试通过
+## Testing
+- [ ] Added unit tests
+- [ ] Manual testing passed
+- [ ] All existing tests pass
 
-## 相关 Issue
+## Related issues
 Fixes #123
 ```
 
-### 4. 代码审查
+### 4. Code review
 
-- 维护者会进行代码审查
-- 根据反馈进行修改
-- 确保 CI 检查通过
+- Maintainers will review the code
+- Make changes based on the feedback
+- Make sure the CI checks pass
 
-### 5. 合并
+### 5. Merge
 
-- PR 被批准后会被合并
-- 可选择 Squash 合并保持提交历史整洁
+- The PR is merged once it is approved
+- You can choose squash merge to keep the commit history clean
 
 ---
 
-## 测试要求
+## Testing requirements
 
-### 单元测试
+### Unit tests
 
 ```bash
-# 运行所有测试
+# Run all tests
 go test ./...
 
-# 运行特定包测试
+# Run tests for a specific package
 go test ./auth/...
 
-# 带覆盖率
+# With coverage
 go test -cover ./...
 
-# 生成覆盖率报告
+# Generate a coverage report
 go test -coverprofile=coverage.out ./...
 go tool cover -html=coverage.out
 ```
 
-### 测试规范
+### Testing conventions
 
-1. **测试文件命名**: `xxx_test.go`
-2. **测试函数命名**: `TestFunctionName`
-3. **使用表格驱动测试**
+1. **Test file naming**: `xxx_test.go`
+2. **Test function naming**: `TestFunctionName`
+3. **Use table-driven tests**
 
 ```go
 func TestCalculateScore(t *testing.T) {
@@ -335,91 +337,75 @@ func TestCalculateScore(t *testing.T) {
 }
 ```
 
-### 集成测试
+### Integration tests
 
-```bash
-# 启动测试环境
-docker compose -f docker-compose.test.yml up -d
-
-# 运行集成测试
-go test -tags=integration ./...
-
-# 清理
-docker compose -f docker-compose.test.yml down
-```
+The repository has no separate integration suite. To exercise the whole gateway, start it with `docker compose -f docker-compose.full.yml up -d` (bundled PostgreSQL and Redis) and call it as described in [API.md](API.md).
 
 ---
 
-## 文档更新
+## Documentation updates
 
-### 文档位置
+### Documentation locations
 
-| 文档 | 路径 | 说明 |
+| Document | Path | Description |
 |------|------|------|
-| API 文档 | `docs/API.md` | API 端点说明 |
-| 部署文档 | `docs/DEPLOYMENT.md` | 部署指南 |
-| 配置文档 | `docs/CONFIGURATION.md` | 配置说明 |
-| 架构文档 | `docs/ARCHITECTURE.md` | 架构设计 |
-| 故障排查 | `docs/TROUBLESHOOTING.md` | 问题排查 |
-| 贡献指南 | `docs/CONTRIBUTING.md` | 本文件 |
+| API documentation | `docs/API.md` | API endpoint reference |
+| Deployment documentation | `docs/DEPLOYMENT.md` | Deployment guide |
+| Configuration documentation | `docs/CONFIGURATION.md` | Configuration reference |
+| Architecture documentation | `docs/ARCHITECTURE.md` | Architecture design |
+| Troubleshooting | `docs/TROUBLESHOOTING.md` | Problem diagnosis |
+| Contributing guide | `docs/CONTRIBUTING.md` | This file |
 
-### 文档规范
+### Documentation conventions
 
-1. 使用 Markdown 格式
-2. 添加目录便于导航
-3. 代码块标明语言类型
-4. 使用表格展示参数
+1. Use Markdown format
+2. Add a table of contents for navigation
+3. Specify the language of code blocks
+4. Use tables to present parameters
 
-### API 文档更新
+### API documentation updates
 
-添加新 API 时，需要更新：
+When adding a new API, update:
 
-1. `docs/API.md` - 端点说明
-2. `admin/handler.go` 或 `proxy/handler.go` - 代码注释
-3. 如有必要，更新 README.md
+1. `docs/API.md` - endpoint reference
+2. `admin/handler.go` or `proxy/handler.go` - code comments
+3. README.md, if necessary
 
 ---
 
-## 发布流程
+## Release process
 
-### 版本号规范
+### Versioning
 
-使用 [Semantic Versioning](https://semver.org/):
+Use [Semantic Versioning](https://semver.org/):
 
 - `MAJOR.MINOR.PATCH`
-- MAJOR: 不兼容的 API 变更
-- MINOR: 向下兼容的功能添加
-- PATCH: 向下兼容的问题修复
+- MAJOR: incompatible API changes
+- MINOR: backward-compatible feature additions
+- PATCH: backward-compatible bug fixes
 
-### 发布步骤
+### Release steps
 
-1. 更新版本号
-2. 更新 CHANGELOG.md
-3. 创建 Git Tag
-4. 构建并推送镜像
+Releases are automatic: every push to `main` that changes more than `docs/` or Markdown runs `.github/workflows/fork-release.yml`, which tags the next patch version, publishes the public image `ghcr.io/rbonweb/codex2api` (tags `X.Y.Z`, `X.Y`, `vX.Y.Z`, `latest`) and creates a GitHub release with the binaries.
 
-```bash
-# 创建发布
-git tag -a v1.0.0 -m "Release version 1.0.0"
-git push origin v1.0.0
-
-# CI 会自动构建并推送镜像
-```
+1. Add the release notes to `CHANGELOG.md`
+2. For a minor or major bump, add a higher `## vX.Y.Z` heading to `CHANGELOG.md`: the next patch is counted from the higher of the newest tag and the newest changelog version
+3. Merge to `main`
 
 ---
 
-## 获取帮助
+## Getting help
 
-- **GitHub Issues**: [提交问题](https://github.com/james-6-23/codex2api/issues)
-- **Discussions**: [参与讨论](https://github.com/james-6-23/codex2api/discussions)
+- **GitHub Issues**: [Report an issue](https://github.com/rbonweb/codex2api/issues)
+- **Discussions**: [Join the discussion](https://github.com/rbonweb/codex2api/discussions)
 
 ---
 
-## 行为准则
+## Code of conduct
 
-- 尊重所有参与者
-- 欢迎新手，耐心解答问题
-- 专注于建设性的技术讨论
-- 遵守开源社区规范
+- Respect all participants
+- Welcome newcomers and answer questions patiently
+- Focus on constructive technical discussion
+- Follow open-source community norms
 
-感谢您的贡献！
+Thank you for your contribution!
