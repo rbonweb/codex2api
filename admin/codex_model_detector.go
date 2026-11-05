@@ -45,9 +45,7 @@ type codexDetectorEvent struct {
 	Report         *proxy.ModelTraceReport `json:"report,omitempty"`
 }
 
-// DetectCodexModel runs ModelTrace against one concrete account. Official
-// Codex and Claude accounts use their native upstream lifecycle, while API
-// accounts use their configured base URL, credentials and proxy.
+// DetectCodexModel runs ModelTrace against one concrete account using the native Codex upstream lifecycle.
 //
 // GET /api/admin/accounts/:id/model-detector?model=gpt-5.6-sol&samples=1
 func (h *Handler) DetectCodexModel(c *gin.Context) {
@@ -61,16 +59,7 @@ func (h *Handler) DetectCodexModel(c *gin.Context) {
 		c.JSON(http.StatusNotFound, gin.H{"error": "账号不存在或不在运行时池中"})
 		return
 	}
-	if (account.IsRelayStyle() && !account.IsOpenAIResponsesAPI() && !account.IsClaudeOAuth()) || account.IsAntigravityAPI() {
-		c.JSON(http.StatusBadRequest, gin.H{"error": "模型指纹检测仅支持 Codex、Claude 和 OpenAI Responses API 账号"})
-		return
-	}
-	if account.IsOpenAIResponsesAPI() {
-		if baseURL, apiKey := account.OpenAIResponsesCredentials(); baseURL == "" || apiKey == "" {
-			c.JSON(http.StatusBadRequest, gin.H{"error": "API 渠道账号缺少 Base URL 或 API Key"})
-			return
-		}
-	} else if !account.IsCodexAgentIdentity() && account.GetAccessToken() == "" {
+	if !account.IsCodexAgentIdentity() && account.GetAccessToken() == "" {
 		c.JSON(http.StatusBadRequest, gin.H{"error": "账号没有可用的 Access Token，请先刷新"})
 		return
 	}
@@ -214,9 +203,6 @@ func parseCodexDetectorConcurrency(raw string) (int, error) {
 }
 
 func (h *Handler) executeModelDetectorProbe(ctx context.Context, account *auth.Account, model string, challenge proxy.ModelTraceChallenge) (string, error) {
-	if account != nil && account.IsClaudeOAuth() {
-		return h.executeClaudeDetectorProbe(ctx, account, model, challenge)
-	}
 	payload, err := json.Marshal(map[string]any{
 		"model": model,
 		"input": []any{
@@ -234,16 +220,12 @@ func (h *Handler) executeModelDetectorProbe(ctx context.Context, account *auth.A
 	var response *http.Response
 	var requestErr error
 	proxyURL := h.store.ResolveProxyForAccount(account)
-	if account.IsOpenAIResponsesAPI() {
-		response, requestErr = proxy.ExecuteOpenAIResponsesRequest(ctx, account, payload, proxyURL, nil)
-	} else {
-		// Repeated probes stay on HTTP because pooled WebSockets may be closed by
-		// an intermediary before response.completed arrives. Each challenge still
-		// gets a native Codex session identity so the HTTP request carries the same
-		// session/thread/request-id and prompt-cache shape as a real client without
-		// linking independent fingerprint challenges into one conversation.
-		response, requestErr = proxy.ExecuteRequest(ctx, account, payload, proxy.NewUpstreamSessionUUID(), proxyURL, "", nil, nil, false)
-	}
+	// Repeated probes stay on HTTP because pooled WebSockets may be closed by
+	// an intermediary before response.completed arrives. Each challenge still
+	// gets a native Codex session identity so the HTTP request carries the same
+	// session/thread/request-id and prompt-cache shape as a real client without
+	// linking independent fingerprint challenges into one conversation.
+	response, requestErr = proxy.ExecuteRequest(ctx, account, payload, proxy.NewUpstreamSessionUUID(), proxyURL, "", nil, nil, false)
 	if requestErr != nil {
 		return "", requestErr
 	}
@@ -318,76 +300,6 @@ func (h *Handler) executeModelDetectorProbe(ctx context.Context, account *auth.A
 		return "", fmt.Errorf("上游响应未完成")
 	}
 	if !terminal || strings.TrimSpace(answer.String()) == "" {
-		return "", fmt.Errorf("上游未返回有效文本")
-	}
-	return answer.String(), nil
-}
-
-func (h *Handler) executeClaudeDetectorProbe(ctx context.Context, account *auth.Account, model string, challenge proxy.ModelTraceChallenge) (string, error) {
-	securityConfig := auth.DefaultClaudeSecurityConfig()
-	fingerprintMode := ""
-	proxyURL := ""
-	if h != nil && h.store != nil {
-		securityConfig = h.store.ClaudeSecurityConfig()
-		fingerprintMode = account.EffectiveClaudeFingerprintMode(h.store.ClaudeFingerprintModeDefault())
-		proxyURL = h.store.ResolveProxyForAccount(account)
-	}
-	payload, err := json.Marshal(map[string]any{
-		"model":      model,
-		"max_tokens": claudeProbeTokenBudget(securityConfig),
-		"stream":     true,
-		"messages": []any{map[string]any{
-			"role": "user", "content": challenge.Prompt,
-		}},
-	})
-	if err != nil {
-		return "", err
-	}
-	response, err := proxy.ExecuteClaudeMessagesRequest(ctx, account, payload, proxyURL, nil, fingerprintMode, securityConfig)
-	if err != nil {
-		return "", err
-	}
-	if response == nil {
-		return "", fmt.Errorf("上游未返回响应")
-	}
-	if response.Body == nil {
-		return "", fmt.Errorf("上游响应没有正文")
-	}
-	defer response.Body.Close()
-	if response.StatusCode < 200 || response.StatusCode >= 300 {
-		body, _ := io.ReadAll(io.LimitReader(response.Body, 16*1024))
-		detail := sanitizeDetectorError(string(body))
-		if detail == "" {
-			return "", fmt.Errorf("上游返回 HTTP %d", response.StatusCode)
-		}
-		return "", fmt.Errorf("上游返回 HTTP %d: %s", response.StatusCode, detail)
-	}
-	return readClaudeDetectorAnswer(ctx, response)
-}
-
-func readClaudeDetectorAnswer(ctx context.Context, response *http.Response) (string, error) {
-	limited := &io.LimitedReader{R: response.Body, N: codexDetectorMaxResponseBytes + 1}
-	view := *response
-	view.Body = io.NopCloser(limited)
-	var answer strings.Builder
-	overflow := false
-	status, detail := readClaudeMessagesStreamObserved(ctx, &view, func(text string) {
-		if overflow || text == "" {
-			return
-		}
-		if answer.Len()+len(text) > codexDetectorMaxAnswerBytes {
-			overflow = true
-			return
-		}
-		answer.WriteString(text)
-	}, nil, true)
-	if limited.N <= 0 || overflow {
-		return "", fmt.Errorf("上游响应文本超过限制")
-	}
-	if status != "success" {
-		return "", fmt.Errorf("上游响应未完成: %s", sanitizeDetectorError(detail))
-	}
-	if strings.TrimSpace(answer.String()) == "" {
 		return "", fmt.Errorf("上游未返回有效文本")
 	}
 	return answer.String(), nil

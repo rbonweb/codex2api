@@ -38,43 +38,24 @@ type intelligenceExecution struct {
 // or application-level retry. The detector context freezes the measurement prompt
 // and model against user payload rules; identity/fingerprint/timezone still apply.
 func (h *Handler) executeIntelligenceCheck(ctx context.Context, account *auth.Account, model, effort, prompt string) (result intelligenceExecution) {
-	if account == nil || account.IsGrokAPI() || account.IsAntigravityAPI() {
+	if account == nil {
 		return intelligenceExecution{Interrupted: true, Error: "配置错误：该账号渠道不支持降智检测"}
-	}
-	claude := account.IsClaudeOAuth()
-	if claude {
-		effort = ""
 	}
 	if err := h.validateQualityTestForAccount(ctx, account, qualityTestRequest{Model: model, ReasoningEffort: effort}); err != nil {
 		return intelligenceExecution{Interrupted: true, Error: "配置错误：" + err.Error()}
 	}
 	payload := map[string]any{"model": model, "stream": true}
-	security := h.store.ClaudeSecurityConfig()
-	if claude {
-		maxTokens := int64(32768)
-		if security.MaxOutputTokens > 0 && security.MaxOutputTokens < maxTokens {
-			maxTokens = security.MaxOutputTokens
-		}
-		payload["messages"] = []map[string]any{{"role": "user", "content": prompt}}
-		payload["max_tokens"] = maxTokens
-	} else {
-		payload["store"] = false
-		payload["instructions"] = ""
-		payload["input"] = []map[string]any{{"role": "user", "content": []map[string]string{{"type": "input_text", "text": prompt}}}}
-		if effort != "" {
-			payload["reasoning"] = map[string]string{"effort": effort}
-		}
+	payload["store"] = false
+	payload["instructions"] = ""
+	payload["input"] = []map[string]any{{"role": "user", "content": []map[string]string{{"type": "input_text", "text": prompt}}}}
+	if effort != "" {
+		payload["reasoning"] = map[string]string{"effort": effort}
 	}
 	body, _ := json.Marshal(payload)
 	proxyURL := strings.TrimSpace(account.GetProxyURL())
 	ctx, cancel := context.WithCancel(proxy.WithAccountBoundEgress(proxy.WithUpstreamIdentityAudit(proxy.WithCodexDetectorRequest(ctx)), proxyURL))
 	defer cancel()
-	fingerprint := ""
-	if claude {
-		fingerprint = account.EffectiveClaudeFingerprintMode(h.store.ClaudeFingerprintModeDefault())
-	} else if !account.IsRelayStyle() {
-		fingerprint = account.EffectiveCodexFingerprintMode()
-	}
+	fingerprint := account.EffectiveCodexFingerprintMode()
 	account.Mu().RLock()
 	timezone := account.Timezone
 	account.Mu().RUnlock()
@@ -107,14 +88,7 @@ func (h *Handler) executeIntelligenceCheck(ctx context.Context, account *auth.Ac
 		}
 		h.logConnectionTestUsage(nil, account, connectionTestUsageInput{Reason: "intelligence_check", Endpoint: connectionTestEndpoint(account), Model: model, EffectiveModel: result.ResponseModel, ReasoningEffort: effort, StatusCode: statusCode, DurationMs: int(result.DurationMS), InputTokens: result.InputTokens, OutputTokens: result.OutputTokens, ReasoningTokens: result.ReasoningTokens, CachedTokens: result.CachedTokens, ErrorMessage: result.Error, ViaWebsocket: result.EffectiveContext["transport"] == "websocket"})
 	}()
-	switch {
-	case claude:
-		resp, err = proxy.ExecuteClaudeMessagesRequest(ctx, account, body, proxyURL, make(http.Header), fingerprint, security)
-	case account.IsRelayStyle():
-		resp, err = proxy.ExecuteRelayStyleRequest(ctx, account, body, proxyURL, nil)
-	default:
-		resp, err = proxy.ExecuteRequest(ctx, account, body, "", proxyURL, "", h.intelligenceDeviceConfig, nil)
-	}
+	resp, err = proxy.ExecuteRequest(ctx, account, body, "", proxyURL, "", h.intelligenceDeviceConfig, nil)
 	if err != nil {
 		result.Error = err.Error()
 		return
@@ -128,41 +102,23 @@ func (h *Handler) executeIntelligenceCheck(ctx context.Context, account *auth.Ac
 		h.applyIntelligenceUpstreamFailure(account, resp, model, raw)
 		return
 	}
-	if claude {
-		proxy.SyncClaudeUsageState(h.store, account, resp)
-	} else if !account.IsRelayStyle() {
-		proxy.SyncCodexUsageState(h.store, account, resp)
-	}
-	result = readIntelligenceStream(resp.Body, claude)
+	proxy.SyncCodexUsageState(h.store, account, resp)
+	result = readIntelligenceStream(resp.Body)
 	result.CredentialRejected = intelligenceCredentialRejected(result.terminalPayload)
 	if ctx.Err() != nil {
 		result.Complete = false
 		result.Error = ctx.Err().Error()
 	}
-	if !claude && result.Error != "" && len(result.terminalPayload) > 0 {
+	if result.Error != "" && len(result.terminalPayload) > 0 {
 		h.applyResponsesUsageLimitFailure(account, resp, model, result.terminalPayload)
 	}
 	// Never mark an account successful/reset its authentication or quota state here.
-	if result.Error != "" {
-		if claude {
-			applyClaudeConnectionStreamFailure(h, account, model, "failed", result.Error, resp)
-		}
-	}
 	return
 }
 
 func (h *Handler) applyIntelligenceUpstreamFailure(account *auth.Account, resp *http.Response, model string, raw []byte) {
 	detail := truncate(sanitizeCodexTestText(string(raw), codexTestSecrets(account)), 500)
-	if account.IsClaudeOAuth() {
-		syncClaudeTestUsageState(h.store, account, model, resp, raw)
-		if resp.StatusCode == http.StatusUnauthorized {
-			h.store.MarkCooldownWithError(account, 5*time.Minute, "unauthorized", detail)
-		}
-		return
-	}
-	if !account.IsRelayStyle() {
-		proxy.SyncCodexUsageState(h.store, account, resp)
-	}
+	proxy.SyncCodexUsageState(h.store, account, resp)
 	switch resp.StatusCode {
 	case http.StatusUnauthorized:
 		h.store.MarkCooldownWithError(account, 24*time.Hour, "unauthorized", detail)
@@ -179,17 +135,12 @@ func (h *Handler) applyIntelligenceUpstreamFailure(account *auth.Account, resp *
 			h.store.MarkDeactivatedWorkspace(account, detail)
 		}
 	case http.StatusTooManyRequests:
-		if account.IsRelayStyle() {
-			h.store.MarkCooldown(account, time.Minute, "rate_limited")
-		} else {
-			proxy.Apply429Cooldown(h.store, account, raw, resp, model)
-		}
+		proxy.Apply429Cooldown(h.store, account, raw, resp, model)
 	}
 }
 
-func readIntelligenceStream(body io.Reader, claude bool) (result intelligenceExecution) {
+func readIntelligenceStream(body io.Reader) (result intelligenceExecution) {
 	var output strings.Builder
-	claudeStop := ""
 	// Responses may contain commentary and final_answer messages. Track individual
 	// output/content indices so a terminal without output can still select only the
 	// final message, and output_text.done replaces rather than duplicates deltas.
@@ -249,11 +200,6 @@ func readIntelligenceStream(body io.Reader, claude bool) (result intelligenceExe
 				*entry.value = int(value.Int())
 			}
 		}
-		if claude {
-			if value := usage.Get("cache_read_input_tokens"); value.Exists() {
-				result.CachedTokens = int(value.Int())
-			}
-		}
 	}
 	err := proxy.ReadSSEStreamWithEvent(io.LimitReader(body, 16*1024*1024), func(event string, data []byte) bool {
 		if !gjson.ValidBytes(data) {
@@ -264,35 +210,6 @@ func readIntelligenceStream(body io.Reader, claude bool) (result intelligenceExe
 		kind := root.Get("type").String()
 		if kind == "" {
 			kind = event
-		}
-		if claude {
-			switch kind {
-			case "message_start":
-				result.ResponseModel = root.Get("message.model").String()
-				readUsage(root.Get("message.usage"))
-			case "content_block_start":
-				if root.Get("content_block.type").String() == "text" {
-					return appendText(root.Get("content_block.text").String())
-				}
-			case "content_block_delta":
-				if root.Get("delta.type").String() == "text_delta" {
-					return appendText(root.Get("delta.text").String())
-				}
-			case "message_delta":
-				claudeStop = root.Get("delta.stop_reason").String()
-				readUsage(root.Get("usage"))
-			case "message_stop":
-				if claudeStop != "end_turn" && claudeStop != "stop_sequence" {
-					result.Error = "Claude 未完整完成答案: " + claudeStop
-				} else {
-					result.Complete = true
-				}
-				return false
-			case "error":
-				result.Error = formatUpstreamTestError(data, "Claude 上游错误")
-				return false
-			}
-			return true
 		}
 		if model := root.Get("response.model").String(); model != "" {
 			result.ResponseModel = model
@@ -331,28 +248,26 @@ func readIntelligenceStream(body io.Reader, claude bool) (result intelligenceExe
 		}
 		return true
 	})
-	if !claude {
-		hasFinal := false
-		indices := make([]int, 0, len(messages))
-		for index, m := range messages {
-			indices = append(indices, index)
-			hasFinal = hasFinal || m.phase == "final_answer"
+	hasFinal := false
+	indices := make([]int, 0, len(messages))
+	for index, m := range messages {
+		indices = append(indices, index)
+		hasFinal = hasFinal || m.phase == "final_answer"
+	}
+	sort.Ints(indices)
+	for _, index := range indices {
+		m := messages[index]
+		if m.phase != "" && m.phase != "final_answer" || hasFinal && m.phase != "final_answer" {
+			continue
 		}
-		sort.Ints(indices)
-		for _, index := range indices {
-			m := messages[index]
-			if m.phase != "" && m.phase != "final_answer" || hasFinal && m.phase != "final_answer" {
-				continue
-			}
-			parts := make([]int, 0, len(m.parts))
-			for part := range m.parts {
-				parts = append(parts, part)
-			}
-			sort.Ints(parts)
-			for _, part := range parts {
-				if !appendText(m.parts[part]) {
-					break
-				}
+		parts := make([]int, 0, len(m.parts))
+		for part := range m.parts {
+			parts = append(parts, part)
+		}
+		sort.Ints(parts)
+		for _, part := range parts {
+			if !appendText(m.parts[part]) {
+				break
 			}
 		}
 	}

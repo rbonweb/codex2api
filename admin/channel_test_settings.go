@@ -9,7 +9,6 @@ import (
 
 	"github.com/codex2api/auth"
 	"github.com/codex2api/database"
-	"github.com/codex2api/proxy"
 
 	"github.com/gin-gonic/gin"
 )
@@ -31,52 +30,6 @@ type channelTestSettingsResponse struct {
 	DefaultTestContent string `json:"default_test_content"`
 	// 渠道并发为 0 时实际生效的全局批量测试并发。
 	DefaultTestConcurrency int `json:"default_test_concurrency"`
-	// 设置页下拉可选的模型：取自当前号池里该渠道账号目录的并集（Claude 常是带日期的
-	// 具体 ID，Antigravity 是对外发布的固定档位），没有账号时回落到默认集。
-	ModelChoices map[string][]string `json:"model_choices"`
-}
-
-// channelTestModelChoices 汇总各渠道账号目录里可作为测试模型的候选。
-func (h *Handler) channelTestModelChoices() map[string][]string {
-	antigravity := make([]string, 0, 16)
-	claude := make([]string, 0, 16)
-	seenAG := map[string]struct{}{}
-	seenClaude := map[string]struct{}{}
-	appendUnique := func(dst []string, seen map[string]struct{}, models []string) []string {
-		for _, model := range models {
-			model = strings.TrimSpace(model)
-			key := strings.ToLower(model)
-			if model == "" {
-				continue
-			}
-			if _, ok := seen[key]; ok {
-				continue
-			}
-			seen[key] = struct{}{}
-			dst = append(dst, model)
-		}
-		return dst
-	}
-	if h != nil && h.store != nil {
-		for _, account := range h.store.Accounts() {
-			switch {
-			case account.IsAntigravityAPI():
-				antigravity = appendUnique(antigravity, seenAG, antigravityConnectionTestModels(account))
-			case account.IsClaudeOAuth():
-				claude = appendUnique(claude, seenClaude, claudeProbeModelIDs(account))
-			}
-		}
-	}
-	if len(antigravity) == 0 {
-		antigravity = appendUnique(antigravity, seenAG, proxy.AntigravityPublishedModelIDs(auth.AntigravityDefaultModelIDs()))
-	}
-	if len(claude) == 0 {
-		claude = appendUnique(claude, seenClaude, []string{"claude-opus-4-6", "claude-sonnet-4-6", "claude-haiku-4-5"})
-	}
-	return map[string][]string{
-		channelTestChannelAntigravity: antigravity,
-		channelTestChannelClaude:      claude,
-	}
 }
 
 // channelTestConfig 返回当前生效的渠道测试配置。首次访问从数据库加载并缓存，
@@ -100,32 +53,12 @@ func (h *Handler) channelTestConfig(ctx context.Context) database.ChannelTestCon
 	return cfg
 }
 
-// channelTestSettingsForAccount 取账号所属渠道的测试配置；Codex/Grok 等渠道返回零值。
-func (h *Handler) channelTestSettingsForAccount(ctx context.Context, account *auth.Account) database.ChannelTestSettings {
-	if account == nil {
-		return database.ChannelTestSettings{}
-	}
-	cfg := h.channelTestConfig(ctx)
-	switch {
-	case account.IsAntigravityAPI():
-		return cfg.Antigravity
-	case account.IsClaudeOAuth():
-		return cfg.Claude
-	}
-	return database.ChannelTestSettings{}
-}
-
 // connectionTestContentForAccount 返回该账号测连应发送的用户输入（已做多行抽取与
 // 变量展开）：渠道自定义内容优先，留空沿用全局测活内容。
 func (h *Handler) connectionTestContentForAccount(ctx context.Context, account *auth.Account) string {
-	content := ""
-	if settings := h.channelTestSettingsForAccount(ctx, account); settings.TestContent != "" {
-		content = settings.TestContent
-	} else {
-		content = auth.DefaultTestContent
-		if h != nil && h.store != nil {
-			content = h.store.GetTestContent()
-		}
+	content := auth.DefaultTestContent
+	if h != nil && h.store != nil {
+		content = h.store.GetTestContent()
 	}
 	return auth.RenderTestContent(content)
 }
@@ -144,7 +77,6 @@ func (h *Handler) buildChannelTestSettingsResponse(cfg database.ChannelTestConfi
 		Claude:                 cfg.Claude,
 		DefaultTestContent:     defaultContent,
 		DefaultTestConcurrency: defaultConcurrency,
-		ModelChoices:           h.channelTestModelChoices(),
 	}
 }
 
@@ -213,9 +145,6 @@ func normalizeChannelTestSettings(channel string, settings database.ChannelTestS
 		if !isTextConnectionModel(model) {
 			return database.ChannelTestSettings{}, &channelTestSettingsError{channel: channel, message: "测试模型不能是生图模型: " + model}
 		}
-		if channel == channelTestChannelClaude && !strings.HasPrefix(strings.ToLower(model), "claude-") {
-			return database.ChannelTestSettings{}, &channelTestSettingsError{channel: channel, message: "Claude 测试模型必须以 claude- 开头: " + model}
-		}
 	}
 	content := strings.TrimSpace(settings.TestContent)
 	if content != "" {
@@ -229,52 +158,6 @@ func normalizeChannelTestSettings(channel string, settings database.ChannelTestS
 		return database.ChannelTestSettings{}, &channelTestSettingsError{channel: channel, message: fmt.Sprintf("test_concurrency 须在 0~%d 之间（0 = 沿用全局）", database.MaxChannelTestConcurrency)}
 	}
 	return database.ChannelTestSettings{TestModel: model, TestContent: content, TestConcurrency: settings.TestConcurrency}, nil
-}
-
-// batchTestConcurrency 决定一次批量测试的并发：整批账号同属 Claude 或 Antigravity
-// 且该渠道配置了并发时用渠道值，否则（混合批次、Codex/Grok、未配置）沿用全局。
-func (h *Handler) batchTestConcurrency(ctx context.Context, accounts []*auth.Account) int {
-	global := 0
-	if h != nil && h.store != nil {
-		global = h.store.GetTestConcurrency()
-	}
-	if global <= 0 {
-		global = 1
-	}
-	if len(accounts) == 0 {
-		return global
-	}
-	channel := ""
-	for _, account := range accounts {
-		var current string
-		switch {
-		case account == nil:
-			return global
-		case account.IsAntigravityAPI():
-			current = channelTestChannelAntigravity
-		case account.IsClaudeOAuth():
-			current = channelTestChannelClaude
-		default:
-			return global
-		}
-		if channel == "" {
-			channel = current
-		} else if channel != current {
-			return global
-		}
-	}
-	configured := 0
-	cfg := h.channelTestConfig(ctx)
-	switch channel {
-	case channelTestChannelAntigravity:
-		configured = cfg.Antigravity.TestConcurrency
-	case channelTestChannelClaude:
-		configured = cfg.Claude.TestConcurrency
-	}
-	if configured > 0 {
-		return configured
-	}
-	return global
 }
 
 type channelTestSettingsError struct {
