@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"math"
 	"strings"
+	"sync"
 	"time"
 	"unicode"
 	"unicode/utf8"
@@ -25,6 +26,8 @@ const (
 	liveSessionMaxInputTokens = 8192
 	// liveContextAppendMaxBytes is the largest text chunk the internal sideband accepts in one context append.
 	liveContextAppendMaxBytes = 500
+	// liveMaxQueuedEvents bounds the sideband events held back before upstream session.started.
+	liveMaxQueuedEvents = 256
 	// liveLanguageWindow is the most recent transcript text, in bytes, the language detector looks at.
 	liveLanguageWindow = 200
 	// liveUsageSilence is how long upstream may stay silent before the gateway clock reports usage itself.
@@ -490,10 +493,20 @@ type liveAck struct {
 	event         string // public ack event type
 	clientEventID string
 	remaining     int // internal chunks still to be acknowledged
+	seq           int // order in which the appends were made, across all queues
+	failed        bool
+}
+
+// liveTiming is the latest known start and end of a turn, in milliseconds.
+type liveTiming struct {
+	start, end int64
+	ok         bool
 }
 
 // liveSessionTranslator keeps the state of one public GPT-Live session: the config, whether upstream has started, the sideband events queued before that, the FIFO acknowledgement queues, usage and the gateway-clock start.
+// It is safe for concurrent use: Client, Upstream, Tick, Closed, SessionID, Started, expectAck and ackFor take its mutex, so a transport may run the client and upstream directions on different goroutines.
 type liveSessionTranslator struct {
+	mu        sync.Mutex
 	cfg       *liveSessionConfig
 	now       func() time.Time
 	started   bool
@@ -504,10 +517,13 @@ type liveSessionTranslator struct {
 	usageAt   time.Time // when a usage update was last reported
 	seconds   int       // last reported usage seconds, never decreases
 	heard     [2]string // recent transcript text of the current turn: 0 user, 1 assistant
+	timing    [2]liveTiming
+	turnDir   map[string]int // turn id -> 0 user, 1 assistant, for the role-less turn.delta
+	ackSeq    int
 }
 
 func newLiveSessionTranslator(cfg *liveSessionConfig) *liveSessionTranslator {
-	return &liveSessionTranslator{cfg: cfg, now: time.Now, acks: map[string][]*liveAck{}}
+	return &liveSessionTranslator{cfg: cfg, now: time.Now, acks: map[string][]*liveAck{}, turnDir: map[string]int{}}
 }
 
 // liveClientResult is what one public client event asks the transport to do.
@@ -520,6 +536,8 @@ type liveClientResult struct {
 
 // Client translates one public client event. Sideband events are queued until upstream session.started, errors come back at once.
 func (t *liveSessionTranslator) Client(raw []byte) liveClientResult {
+	t.mu.Lock()
+	defer t.mu.Unlock()
 	var res liveClientResult
 	fail := func(code, param, msg, clientEventID string) liveClientResult {
 		res.Client = append(res.Client, newLiveSessionError(code, param, msg, clientEventID).Event())
@@ -542,6 +560,11 @@ func (t *liveSessionTranslator) Client(raw []byte) liveClientResult {
 			t.queued = append(t.queued, events...)
 		}
 	}
+	// full reports whether n more events would overflow the queue held back before session.started.
+	full := func(n int) bool { return !t.started && len(t.queued)+n > liveMaxQueuedEvents }
+	tooMany := func() liveClientResult {
+		return fail("invalid_value", "", "too many events before session.started", id)
+	}
 	appendEvent := func(ackEvent, channel string) liveClientResult {
 		delegationID := ""
 		if d := root.Get("delegation_id"); !liveAbsent(d) {
@@ -556,7 +579,10 @@ func (t *liveSessionTranslator) Client(raw []byte) liveClientResult {
 			res.Client = append(res.Client, e.Event())
 			return res
 		}
-		t.acks[delegationID] = append(t.acks[delegationID], &liveAck{event: ackEvent, clientEventID: id, remaining: len(events)})
+		if full(len(events)) {
+			return tooMany()
+		}
+		t.pushAck(delegationID, ackEvent, id, len(events))
 		send(events...)
 		return res
 	}
@@ -584,9 +610,15 @@ func (t *liveSessionTranslator) Client(raw []byte) liveClientResult {
 		return res
 
 	case "session.input_audio.mute":
+		if full(1) {
+			return tooMany()
+		}
 		send([]byte(`{"type":"input_audio.pause"}`))
 		return res
 	case "session.input_audio.unmute":
+		if full(1) {
+			return tooMany()
+		}
 		send([]byte(`{"type":"input_audio.resume"}`))
 		return res
 
@@ -602,7 +634,10 @@ func (t *liveSessionTranslator) Client(raw []byte) liveClientResult {
 			res.Client = append(res.Client, e.Event())
 			return res
 		}
-		t.acks[""] = append(t.acks[""], &liveAck{event: "session.instructions.appended", clientEventID: id, remaining: len(events)})
+		if full(len(events)) {
+			return tooMany()
+		}
+		t.pushAck("", "session.instructions.appended", id, len(events))
 		send(events...)
 		return res
 
@@ -741,6 +776,8 @@ type liveUpstreamResult struct {
 //
 // Transcripts: the sideband reports every word twice, as input_transcript.added / output_transcript.added (with item.text) and as a role-less turn.delta (same text and timings, only a turn_id). The added events carry the role in their type, so they are the single source and turn.delta is ignored; turn.created and turn.done carry no incremental text and are ignored too.
 func (t *liveSessionTranslator) Upstream(raw []byte) liveUpstreamResult {
+	t.mu.Lock()
+	defer t.mu.Unlock()
 	var res liveUpstreamResult
 	if !gjson.ValidBytes(raw) || !gjson.ParseBytes(raw).IsObject() {
 		return res
@@ -777,11 +814,15 @@ func (t *liveSessionTranslator) Upstream(raw []byte) liveUpstreamResult {
 		if root.Get("type").String() == "output_transcript.added" {
 			dir, typ = 1, "session.output_transcript.delta"
 		}
-		event := map[string]any{
-			"type":     typ,
-			"delta":    delta,
-			"start_ms": root.Get("start_ms").Int(),
-			"end_ms":   root.Get("end_ms").Int(),
+		event := map[string]any{"type": typ, "delta": delta, "start_ms": root.Get("start_ms").Int(), "end_ms": root.Get("end_ms").Int()}
+		// An added event without timings takes the latest ones reported for the same role by turn.created or turn.delta.
+		if latest := t.timing[dir]; latest.ok {
+			if !root.Get("start_ms").Exists() {
+				event["start_ms"] = latest.start
+			}
+			if !root.Get("end_ms").Exists() {
+				event["end_ms"] = latest.end
+			}
 		}
 		// Deltas are word fragments, too short to identify a language, so the detector reads the accumulated text of the current turn (the last 200 bytes of it, for this direction only).
 		// The language is put on every delta from the moment the detector is reliable; the accumulator is reset when the turn of that role ends.
@@ -791,12 +832,24 @@ func (t *liveSessionTranslator) Upstream(raw []byte) liveUpstreamResult {
 		}
 		emit(event)
 
+	case "turn.created":
+		if dir, ok := liveTurnDir(realtimeAudioTurnRole(root)); ok {
+			if id := root.Get("turn.id").String(); id != "" {
+				t.turnDir[id] = dir
+			}
+			t.noteTiming(dir, root.Get("turn.start_ms"), root.Get("turn.end_ms"))
+		}
+
+	case "turn.delta":
+		// Text comes from the added events (see above); turn.delta only refreshes the timings of its turn's role.
+		if dir, ok := t.turnDir[root.Get("turn_id").String()]; ok {
+			t.noteTiming(dir, root.Get("start_ms"), root.Get("end_ms"))
+		}
+
 	case "turn.done":
-		switch realtimeAudioTurnRole(root) {
-		case "user":
-			t.heard[0] = ""
-		case "assistant":
-			t.heard[1] = ""
+		if dir, ok := liveTurnDir(realtimeAudioTurnRole(root)); ok {
+			t.heard[dir], t.timing[dir] = "", liveTiming{}
+			delete(t.turnDir, root.Get("turn.id").String())
 		}
 
 	case "delegation.created":
@@ -828,7 +881,13 @@ func (t *liveSessionTranslator) Upstream(raw []byte) liveUpstreamResult {
 		if message == "" {
 			message = "Upstream error."
 		}
-		res.Client = append(res.Client, liveErrorEvent(liveFirstString(e, "type"), liveFirstString(e, "code"), message, liveFirstString(e, "param"), ""))
+		code, param := liveFirstString(e, "code"), liveFirstString(e, "param")
+		// Internal errors do not name the event they answer. An error that is about a context append (param content* or delegation_item_id*, or an unknown delegation) means that append will never be acknowledged, so the oldest pending acknowledgement is failed to keep the FIFO aligned and its client_event_id goes on the error. Any other error leaves the acks alone.
+		clientEventID := ""
+		if strings.HasPrefix(param, "content") || strings.HasPrefix(param, "delegation_item_id") || strings.Contains(code, "delegation") || strings.Contains(strings.ToLower(message), "unknown delegation") {
+			clientEventID = t.failOldestAck()
+		}
+		res.Client = append(res.Client, liveErrorEvent(liveFirstString(e, "type"), code, message, param, clientEventID))
 	}
 	return res
 }
@@ -842,7 +901,81 @@ func liveFirstString(root gjson.Result, paths ...string) string {
 	return ""
 }
 
-// ack pops the oldest outstanding append for key and renders its public ack once its last chunk is acknowledged.
+// liveTurnDir maps a turn role to its direction index: 0 user, 1 assistant.
+func liveTurnDir(role string) (int, bool) {
+	switch role {
+	case "user":
+		return 0, true
+	case "assistant":
+		return 1, true
+	}
+	return 0, false
+}
+
+func (t *liveSessionTranslator) noteTiming(dir int, start, end gjson.Result) {
+	if !start.Exists() && !end.Exists() {
+		return
+	}
+	t.timing[dir] = liveTiming{start: start.Int(), end: end.Int(), ok: true}
+}
+
+// pushAck records an outstanding append; the caller holds the mutex.
+func (t *liveSessionTranslator) pushAck(key, event, clientEventID string, chunks int) {
+	t.ackSeq++
+	t.acks[key] = append(t.acks[key], &liveAck{event: event, clientEventID: clientEventID, remaining: chunks, seq: t.ackSeq})
+}
+
+// expectAck records an outstanding append made outside the translator (the Realtime bridge sends its own appends), taking the mutex. An empty event produces no public event when acknowledged.
+func (t *liveSessionTranslator) expectAck(key, event, clientEventID string, chunks int) {
+	t.mu.Lock()
+	defer t.mu.Unlock()
+	t.pushAck(key, event, clientEventID, chunks)
+}
+
+// ackFor pops the oldest outstanding append for key, taking the mutex; see ack.
+func (t *liveSessionTranslator) ackFor(key string) []byte {
+	t.mu.Lock()
+	defer t.mu.Unlock()
+	return t.ack(key)
+}
+
+// Started reports whether upstream session.started has arrived.
+func (t *liveSessionTranslator) Started() bool {
+	t.mu.Lock()
+	defer t.mu.Unlock()
+	return t.started
+}
+
+// failOldestAck marks the oldest pending append across all queues as failed and returns its client event id. The entry stays queued until its remaining chunks are resolved, so later acks still match later appends, and it never produces an ack event.
+func (t *liveSessionTranslator) failOldestAck() string {
+	var oldest *liveAck
+	var key string
+	for k, queue := range t.acks {
+		if len(queue) > 0 && (oldest == nil || queue[0].seq < oldest.seq) {
+			oldest, key = queue[0], k
+		}
+	}
+	if oldest == nil {
+		return ""
+	}
+	clientEventID := oldest.clientEventID
+	oldest.failed = true
+	// Every error of a chunked append resolves one chunk; a failed entry whose chunks are all resolved is dropped.
+	if oldest.remaining--; oldest.remaining <= 0 {
+		t.popAck(key)
+	}
+	return clientEventID
+}
+
+func (t *liveSessionTranslator) popAck(key string) {
+	if queue := t.acks[key]; len(queue) <= 1 {
+		delete(t.acks, key)
+	} else {
+		t.acks[key] = queue[1:]
+	}
+}
+
+// ack pops the oldest outstanding append for key and renders its public ack once its last chunk is acknowledged; the caller holds the mutex. A failed append resolves silently.
 func (t *liveSessionTranslator) ack(key string) []byte {
 	queue := t.acks[key]
 	if len(queue) == 0 {
@@ -853,10 +986,9 @@ func (t *liveSessionTranslator) ack(key string) []byte {
 	if head.remaining > 0 {
 		return nil
 	}
-	if len(queue) == 1 {
-		delete(t.acks, key)
-	} else {
-		t.acks[key] = queue[1:]
+	t.popAck(key)
+	if head.failed {
+		return nil
 	}
 	var clientValue any
 	if head.clientEventID != "" {
@@ -883,6 +1015,8 @@ func (t *liveSessionTranslator) usage(now time.Time, upstreamSeconds int) int {
 
 // Tick is called by the transport about once a second; it returns a gateway-clock session.usage.updated when upstream has sent none for 60 s.
 func (t *liveSessionTranslator) Tick(now time.Time) [][]byte {
+	t.mu.Lock()
+	defer t.mu.Unlock()
 	if !t.started || now.Sub(t.usageAt) < liveUsageSilence {
 		return nil
 	}
@@ -892,6 +1026,8 @@ func (t *liveSessionTranslator) Tick(now time.Time) [][]byte {
 
 // Closed renders session.closed {reason, usage:{seconds}}; reason is close_requested, expired, remote_hangup or connection_lost.
 func (t *liveSessionTranslator) Closed(reason string) []byte {
+	t.mu.Lock()
+	defer t.mu.Unlock()
 	seconds := t.seconds
 	if t.started {
 		seconds = t.usage(t.now(), 0)
@@ -901,7 +1037,11 @@ func (t *liveSessionTranslator) Closed(reason string) []byte {
 }
 
 // SessionID returns the id from upstream session.started ("" before).
-func (t *liveSessionTranslator) SessionID() string { return t.sessionID }
+func (t *liveSessionTranslator) SessionID() string {
+	t.mu.Lock()
+	defer t.mu.Unlock()
+	return t.sessionID
+}
 
 // liveDelegationCreatedEvent converts an internal delegation.created into the public session.delegation.created, with the task text in the documented gateway extension delegation.content (the input_text parts joined).
 func liveDelegationCreatedEvent(raw []byte) ([]byte, bool) {

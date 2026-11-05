@@ -4,6 +4,7 @@ import (
 	"encoding/base64"
 	"encoding/json"
 	"strings"
+	"sync"
 	"testing"
 	"time"
 
@@ -676,4 +677,119 @@ func TestLiveSessionTranscriptLanguageAccumulates(t *testing.T) {
 	if d := delta("output_transcript.added", " है"); d.Get("language").Exists() {
 		t.Fatalf("assistant accumulator not reset: %s", d.Raw)
 	}
+}
+
+func TestLiveSessionQueueBound(t *testing.T) {
+	tr := newLiveSessionTranslator(liveTestConfig(t, `{}`))
+	for i := 0; i < liveMaxQueuedEvents; i++ {
+		if r := tr.Client([]byte(`{"type":"session.input_audio.mute"}`)); len(r.Client) != 0 {
+			t.Fatalf("event %d rejected: %v", i, liveTestStr(r.Client))
+		}
+	}
+	over := tr.Client([]byte(`{"type":"session.thinking.append","event_id":"x","content":"late"}`))
+	e := gjson.ParseBytes(over.Client[0]).Get("error")
+	if len(over.Client) != 1 || e.Get("code").String() != "invalid_value" || e.Get("message").String() != "too many events before session.started" || e.Get("client_event_id").String() != "x" {
+		t.Fatalf("overflow = %v", liveTestStr(over.Client))
+	}
+	if len(tr.acks) != 0 {
+		t.Fatalf("rejected append left an ack: %v", tr.acks)
+	}
+	if res := tr.Upstream([]byte(`{"type":"session.started","session":{"id":"s"}}`)); len(res.Upstream) != liveMaxQueuedEvents {
+		t.Fatalf("flushed %d events", len(res.Upstream))
+	}
+}
+
+func TestLiveSessionErrorFailsOldestAck(t *testing.T) {
+	tr, _ := liveTestStarted(t, `{}`)
+	tr.Client([]byte(`{"type":"session.commentary.append","event_id":"bad","delegation_id":"item_gone","content":"x"}`))
+	tr.Client([]byte(`{"type":"session.thinking.append","event_id":"good","delegation_id":"item_A","content":"y"}`))
+	r := tr.Upstream([]byte(`{"type":"error","error":{"code":"invalid_request_error","message":"Unknown delegation item.","param":"delegation_item_id","type":"invalid_request_error"}}`))
+	if got := gjson.ParseBytes(r.Client[0]).Get("error.client_event_id").String(); got != "bad" {
+		t.Fatalf("error = %s", r.Client[0])
+	}
+	if ack := tr.Upstream([]byte(`{"type":"delegation.context.appended","delegation_item_id":"item_A"}`)); len(ack.Client) != 1 || gjson.ParseBytes(ack.Client[0]).Get("client_event_id").String() != "good" {
+		t.Fatalf("later ack = %v", liveTestStr(ack.Client))
+	}
+	// An error about something else leaves the acks alone.
+	tr.Client([]byte(`{"type":"session.instructions.append","event_id":"keep","content":"z"}`))
+	r = tr.Upstream([]byte(`{"type":"error","error":{"code":"invalid_request_error","message":"Bad thing.","param":null,"type":"invalid_request_error"}}`))
+	if gjson.ParseBytes(r.Client[0]).Get("error.client_event_id").Type != gjson.Null {
+		t.Fatalf("unrelated error = %s", r.Client[0])
+	}
+	if ack := tr.Upstream([]byte(`{"type":"session.context.appended"}`)); len(ack.Client) != 1 || gjson.ParseBytes(ack.Client[0]).Get("client_event_id").String() != "keep" {
+		t.Fatalf("ack after unrelated error = %v", liveTestStr(ack.Client))
+	}
+	// A failed chunked append resolves its remaining chunks silently.
+	long := strings.Repeat("a", 1100)
+	tr.Client([]byte(`{"type":"session.commentary.append","event_id":"long","content":"` + long + `"}`))
+	tr.Client([]byte(`{"type":"session.thinking.append","event_id":"next","content":"n"}`))
+	tr.Upstream([]byte(`{"type":"error","error":{"code":"x","message":"m","param":"content.0.text"}}`))
+	for i := 0; i < 2; i++ {
+		if r := tr.Upstream([]byte(`{"type":"session.context.appended"}`)); len(r.Client) != 0 {
+			t.Fatalf("failed append acked: %v", liveTestStr(r.Client))
+		}
+	}
+	if r := tr.Upstream([]byte(`{"type":"session.context.appended"}`)); len(r.Client) != 1 || gjson.ParseBytes(r.Client[0]).Get("client_event_id").String() != "next" {
+		t.Fatalf("next ack = %v", liveTestStr(r.Client))
+	}
+}
+
+func TestLiveSessionTranscriptTimingFallback(t *testing.T) {
+	tr, _ := liveTestStarted(t, `{}`)
+	tr.Upstream([]byte(`{"turn":{"end_ms":4600,"id":"turn_a","role":"assistant","start_ms":4400,"transcript":" On"},"type":"turn.created"}`))
+	r := tr.Upstream([]byte(`{"item":{"text":" On"},"type":"output_transcript.added"}`))
+	if got := gjson.ParseBytes(r.Client[0]); got.Get("start_ms").Int() != 4400 || got.Get("end_ms").Int() != 4600 {
+		t.Fatalf("created timing = %s", r.Client[0])
+	}
+	tr.Upstream([]byte(`{"delta":" it","end_ms":4800,"start_ms":4600,"turn_id":"turn_a","type":"turn.delta"}`))
+	r = tr.Upstream([]byte(`{"item":{"text":" it"},"type":"output_transcript.added"}`))
+	if got := gjson.ParseBytes(r.Client[0]); got.Get("start_ms").Int() != 4600 || got.Get("end_ms").Int() != 4800 {
+		t.Fatalf("delta timing = %s", r.Client[0])
+	}
+	// Own timings win, and the user role has its own.
+	r = tr.Upstream([]byte(`{"item":{"text":"hi"},"start_ms":1,"end_ms":2,"type":"output_transcript.added"}`))
+	if got := gjson.ParseBytes(r.Client[0]); got.Get("start_ms").Int() != 1 || got.Get("end_ms").Int() != 2 {
+		t.Fatalf("own timing = %s", r.Client[0])
+	}
+	r = tr.Upstream([]byte(`{"item":{"text":"yo"},"type":"input_transcript.added"}`))
+	if got := gjson.ParseBytes(r.Client[0]); got.Get("start_ms").Int() != 0 || got.Get("end_ms").Int() != 0 {
+		t.Fatalf("user timing = %s", r.Client[0])
+	}
+}
+
+func TestLiveSessionConcurrentUse(t *testing.T) {
+	tr := newLiveSessionTranslator(liveTestConfig(t, `{}`))
+	var wg sync.WaitGroup
+	wg.Add(3)
+	go func() {
+		defer wg.Done()
+		for i := 0; i < 300; i++ {
+			tr.Client([]byte(`{"type":"session.thinking.append","event_id":"e","delegation_id":"item_A","content":"x"}`))
+			tr.Client([]byte(`{"type":"session.input_audio.append","audio":"AAAA"}`))
+			tr.Client([]byte(`{"type":"session.instructions.append","content":"y"}`))
+		}
+	}()
+	go func() {
+		defer wg.Done()
+		tr.Upstream([]byte(`{"type":"session.started","session":{"id":"s"}}`))
+		for i := 0; i < 300; i++ {
+			tr.Upstream([]byte(`{"type":"delegation.context.appended","delegation_item_id":"item_A"}`))
+			tr.Upstream([]byte(`{"type":"session.context.appended"}`))
+			tr.Upstream([]byte(`{"type":"input_transcript.added","item":{"text":"hello there my friend"}}`))
+			tr.Upstream([]byte(`{"type":"session.usage.updated","usage":{"audio_duration_ms":1000}}`))
+			tr.Upstream([]byte(`{"type":"error","error":{"code":"x","message":"m","param":"content"}}`))
+		}
+	}()
+	go func() {
+		defer wg.Done()
+		for i := 0; i < 300; i++ {
+			tr.Tick(time.Now())
+			tr.SessionID()
+			tr.Started()
+			tr.Closed("connection_lost")
+			tr.expectAck("", "", "", 1)
+			tr.ackFor("")
+		}
+	}()
+	wg.Wait()
 }

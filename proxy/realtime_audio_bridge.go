@@ -167,7 +167,7 @@ type realtimeAudioBridge struct {
 	mu     sync.Mutex
 	mapper *realtimeAudioMapper
 	cfg    realtimeAudioConfig
-	// acks holds the FIFO acknowledgement queues of context appends, keyed by delegation item id ("" for session-level appends). It reuses the GPT-Live translator's bookkeeping; only its acks and ack are used. Guarded by mu.
+	// acks holds the FIFO acknowledgement queues of context appends, keyed by delegation item id ("" for session-level appends). It reuses the GPT-Live translator's bookkeeping; only expectAck and ackFor are used, and they take the translator's own mutex.
 	acks *liveSessionTranslator
 
 	// startMu serializes call creation (it is held for the whole upstream open); stateMu guards the fields below and is never held across I/O.
@@ -392,7 +392,7 @@ func (b *realtimeAudioBridge) extensionEvents(raw []byte) [][]byte {
 
 // appendAck pops the oldest outstanding append for key. Appends made on behalf of conversation.item.create queue an entry without an event type so the FIFO stays aligned; those produce no public event.
 func (b *realtimeAudioBridge) appendAck(key string) [][]byte {
-	ack := b.acks.ack(key)
+	ack := b.acks.ackFor(key)
 	if ack == nil || gjson.GetBytes(ack, "type").String() == "" {
 		return nil
 	}
@@ -651,9 +651,7 @@ func (b *realtimeAudioBridge) handleClientEvent(raw []byte) {
 				return
 			}
 			// Live acknowledges this append like any other; the placeholder keeps the FIFO aligned and produces no public event.
-			b.mu.Lock()
-			b.acks.acks[""] = append(b.acks.acks[""], &liveAck{remaining: 1})
-			b.mu.Unlock()
+			b.acks.expectAck("", "", "", 1)
 			if !b.sendUpstream(sideband) {
 				return
 			}
@@ -752,9 +750,7 @@ func (b *realtimeAudioBridge) handleContextAppend(raw []byte, ackEvent, channel 
 	if !b.ensureCall() {
 		return
 	}
-	b.mu.Lock()
-	b.acks.acks[delegationID] = append(b.acks.acks[delegationID], &liveAck{event: ackEvent, clientEventID: b.eventID, remaining: len(events)})
-	b.mu.Unlock()
+	b.acks.expectAck(delegationID, ackEvent, b.eventID, len(events))
 	for _, event := range events {
 		if !b.sendUpstream(event) {
 			return
