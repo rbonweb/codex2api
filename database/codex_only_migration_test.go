@@ -398,3 +398,112 @@ func TestRetiredProviderMigrationsOnlyRecordTheirKey(t *testing.T) {
 		t.Fatalf("stub returned %v", err)
 	}
 }
+
+// Token refresh uses the credentials CAS for every account; it must keep working once the migration has dropped the Grok tables.
+func TestCodexCredentialsCASSucceedsAfterGrokTablesDropped(t *testing.T) {
+	db, err := New("sqlite", filepath.Join(t.TempDir(), "codex-cas.db"))
+	if err != nil {
+		t.Fatalf("database.New: %v", err)
+	}
+	defer db.Close()
+	ctx := context.Background()
+
+	for _, table := range codexOnlyGrokTables {
+		if _, err := db.conn.ExecContext(ctx, `CREATE TABLE IF NOT EXISTS `+table+` (account_id BIGINT NOT NULL DEFAULT 0)`); err != nil {
+			t.Fatalf("create legacy table %s: %v", table, err)
+		}
+	}
+	id, err := db.InsertAccountWithUpstream(ctx, "codex", "openai", "oauth", map[string]interface{}{"upstream_type": "codex", "access_token": "at-old", "refresh_token": "rt-old", "account_id": "ws-1"}, "")
+	if err != nil {
+		t.Fatalf("insert account: %v", err)
+	}
+	if _, err := db.conn.ExecContext(ctx, `DELETE FROM data_migrations WHERE version = $1`, dataMigrationCodexOnlyV1); err != nil {
+		t.Fatalf("reset key: %v", err)
+	}
+	if err := db.runDataMigrations(ctx); err != nil {
+		t.Fatalf("runDataMigrations: %v", err)
+	}
+	for _, table := range codexOnlyGrokTables {
+		if _, err := db.conn.ExecContext(ctx, `SELECT 1 FROM `+table); err == nil {
+			t.Fatalf("table %s should be dropped", table)
+		}
+	}
+
+	generation, family, err := db.GetAccountCredentialState(ctx, id)
+	if err != nil {
+		t.Fatalf("GetAccountCredentialState: %v", err)
+	}
+	newGeneration, applied, err := db.UpdateAccountCredentialsCAS(ctx, id, generation, map[string]any{"access_token": "at-new", "refresh_token": "rt-new"})
+	if err != nil || !applied || newGeneration != generation+1 {
+		t.Fatalf("UpdateAccountCredentialsCAS = generation %d applied %v err %v", newGeneration, applied, err)
+	}
+	row, err := db.GetAccountByID(ctx, id)
+	if err != nil {
+		t.Fatalf("GetAccountByID: %v", err)
+	}
+	if got := row.GetCredential("access_token"); got != "at-new" {
+		t.Errorf("access_token = %q, want at-new", got)
+	}
+	if got := row.GetCredential("upstream_type"); got != "codex" {
+		t.Errorf("upstream_type = %q, want codex", got)
+	}
+	_, afterFamily, err := db.GetAccountCredentialState(ctx, id)
+	if err != nil || strings.TrimSpace(afterFamily) == "" {
+		t.Errorf("credential family after CAS = %q err %v (before %q)", afterFamily, err, family)
+	}
+	// A stale generation is rejected without touching anything.
+	if _, applied, err := db.UpdateAccountCredentialsCAS(ctx, id, generation, map[string]any{"access_token": "stale"}); err != nil || applied {
+		t.Errorf("stale CAS applied=%v err=%v", applied, err)
+	}
+	if _, applied, err := db.ReplaceAccountCredentialsCAS(ctx, id, newGeneration, "", map[string]any{"access_token": "at-replaced"}); err != nil || !applied {
+		t.Errorf("ReplaceAccountCredentialsCAS applied=%v err=%v", applied, err)
+	}
+}
+
+// Startup fills empty credential family ids (Codex and Agent-Identity rows included) and leaves existing ones alone.
+func TestEnsureCredentialFamilyBackfill(t *testing.T) {
+	db, err := New("sqlite", filepath.Join(t.TempDir(), "family.db"))
+	if err != nil {
+		t.Fatalf("database.New: %v", err)
+	}
+	defer db.Close()
+	ctx := context.Background()
+
+	codexID, err := db.InsertAccountWithUpstream(ctx, "codex", "openai", "oauth", map[string]interface{}{"upstream_type": "codex", "refresh_token": "rt", "account_id": "ws-1"}, "")
+	if err != nil {
+		t.Fatal(err)
+	}
+	agentID, err := db.InsertAccountWithUpstream(ctx, "agent", "openai", "oauth", map[string]interface{}{"auth_mode": "agentIdentity", "agent_runtime_id": "rt-1", "agent_private_key": "pk"}, "")
+	if err != nil {
+		t.Fatal(err)
+	}
+	keptID, err := db.InsertAccountWithUpstream(ctx, "kept", "openai", "oauth", map[string]interface{}{"upstream_type": "codex", "refresh_token": "rt2"}, "")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := db.conn.ExecContext(ctx, `UPDATE accounts SET credential_family_id = '' WHERE id IN ($1, $2)`, codexID, agentID); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := db.conn.ExecContext(ctx, `UPDATE accounts SET credential_family_id = 'cf_keep' WHERE id = $1`, keptID); err != nil {
+		t.Fatal(err)
+	}
+	if err := db.ensureCredentialFamilyBackfill(ctx); err != nil {
+		t.Fatalf("ensureCredentialFamilyBackfill: %v", err)
+	}
+	for _, id := range []int64{codexID, agentID} {
+		if _, family, err := db.GetAccountCredentialState(ctx, id); err != nil || strings.TrimSpace(family) == "" {
+			t.Errorf("account %d family = %q err %v, want filled", id, family, err)
+		}
+	}
+	if _, family, _ := db.GetAccountCredentialState(ctx, keptID); family != "cf_keep" {
+		t.Errorf("existing family changed to %q", family)
+	}
+	// Idempotent: a second pass changes nothing.
+	_, before, _ := db.GetAccountCredentialState(ctx, codexID)
+	if err := db.ensureCredentialFamilyBackfill(ctx); err != nil {
+		t.Fatal(err)
+	}
+	if _, after, _ := db.GetAccountCredentialState(ctx, codexID); after != before {
+		t.Errorf("family changed on second pass: %q -> %q", before, after)
+	}
+}

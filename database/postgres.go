@@ -474,6 +474,13 @@ func New(driver string, dsn string, schema ...string) (*DB, error) {
 		if err := db.ensureQualityTestSchema(ctx); err != nil {
 			return nil, fmt.Errorf("初始化检测记录表失败: %w", err)
 		}
+		// Fill empty credential family ids (the family phase of the retired Grok backfill); Codex reads and token refresh rely on it.
+		familyCtx, familyCancel := context.WithTimeout(context.WithoutCancel(ctx), dataMigrationTimeout)
+		familyErr := db.ensureCredentialFamilyBackfill(familyCtx)
+		familyCancel()
+		if familyErr != nil {
+			return nil, fmt.Errorf("补全账号凭据家族 ID 失败: %w", familyErr)
+		}
 		// Data migrations may legitimately consume minutes. Do not reuse the original
 		// ten-second startup context for the remaining small schemas.
 		postMigrateCtx, postMigrateCancel := context.WithTimeout(context.Background(), 10*time.Second)
