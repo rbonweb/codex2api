@@ -153,16 +153,22 @@ func TestLiveCapabilitiesCodexAccountsPreferWebsocketsAndHonourVisibility(t *tes
 			store.AddAccount(restricted)
 			source := []byte(`{"models":[{"slug":"gpt-6-astra","prefer_websockets":true,"context_window":1000,"use_responses_lite":true}]}`)
 			if observed {
-				if err := db.SaveModelCapabilities(ctx, database.ModelCapabilitySnapshot{AccountID: id, CredentialGeneration: row.CredentialGeneration, ObservedAt: 1, Models: parseCodexModelCapabilities(source)}); err != nil {
+				// The restricted account was observed with a narrower window, so only key 2 (which may use it) sees the smaller value.
+				narrower := []byte(`{"models":[{"slug":"gpt-6-astra","prefer_websockets":true,"context_window":500,"use_responses_lite":true}]}`)
+				if err := db.SaveModelCapabilities(ctx, database.ModelCapabilitySnapshot{AccountID: id, CredentialGeneration: row.CredentialGeneration, ObservedAt: 1, Models: parseCodexModelCapabilities(narrower)}); err != nil {
 					t.Fatal(err)
 				}
 			}
 			h := NewHandler(store, db, nil, nil)
+			wantWindow := map[int64]int64{1: 1000, 2: 1000}
+			if observed {
+				wantWindow[2] = 500
+			}
 			for _, key := range []int64{1, 2} {
 				result := h.applyUpstreamModelCapabilities(ctx, &database.APIKeyRow{ID: key}, source)
-				if !gjson.GetBytes(result, "models.0.prefer_websockets").Bool() ||
-					gjson.GetBytes(result, "models.0.context_window").Int() != 1000 || !gjson.GetBytes(result, "models.0.use_responses_lite").Bool() {
-					t.Fatalf("key=%d want websocket preference kept; descriptor=%s", key, result)
+				if !gjson.GetBytes(result, "models.0.prefer_websockets").Bool() || !gjson.GetBytes(result, "models.0.use_responses_lite").Bool() ||
+					gjson.GetBytes(result, "models.0.context_window").Int() != wantWindow[key] {
+					t.Fatalf("key=%d want context_window=%d with websocket preference kept; descriptor=%s", key, wantWindow[key], result)
 				}
 			}
 		})

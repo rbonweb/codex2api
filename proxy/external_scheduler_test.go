@@ -222,7 +222,6 @@ func TestPinnedResponsesForwardsRateLimitWithoutRetry(t *testing.T) {
 	}
 }
 
-
 // An account restricted to other API keys must be indistinguishable from a
 // missing one, so a key cannot probe the pool outside its scope.
 func TestPinnedChatTreatsAccountOutsideKeyScopeAsMissing(t *testing.T) {

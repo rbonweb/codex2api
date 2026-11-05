@@ -82,7 +82,6 @@ func TestResolveConfiguredModelMappingIgnoresInvalidJSON(t *testing.T) {
 	}
 }
 
-
 func TestApplyConfiguredModelMappingToBodyRewritesBeforeValidation(t *testing.T) {
 	store := auth.NewStore(nil, nil, nil)
 	store.SetCodexModelMapping(`{"gpt-legacy-*":"gpt-5.5"}`)
@@ -128,7 +127,6 @@ func TestApplyReasoningEffortModelAliasToBody(t *testing.T) {
 		t.Fatalf("reasoning.effort = %q, want xhigh; body=%s", got, body)
 	}
 }
-
 
 // ultra 是预埋的思考强度档位（未来新模型可能支持），必须在 alias 配置与
 // 请求级 effort 归一化中原样透传，而不是被钳位回 high。
