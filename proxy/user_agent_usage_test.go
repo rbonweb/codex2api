@@ -55,10 +55,11 @@ func TestUsageLogCapturesClientAndActualUpstreamUserAgent(t *testing.T) {
 	upstreamUserAgent := make(chan string, 1)
 	upstream := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		upstreamUserAgent <- r.Header.Get("User-Agent")
-		w.Header().Set("Content-Type", "application/json")
-		_, _ = w.Write([]byte(`{"id":"resp_ua_audit","object":"response","status":"completed","model":"gpt-5.4","output":[],"usage":{"input_tokens":3,"output_tokens":2,"total_tokens":5}}`))
+		w.Header().Set("Content-Type", "text/event-stream")
+		_, _ = w.Write([]byte(`data: {"type":"response.completed","response":{"id":"resp_ua_audit","object":"response","status":"completed","model":"gpt-5.5","output":[],"usage":{"input_tokens":3,"output_tokens":2,"total_tokens":5}}}` + "\n\n"))
 	}))
 	defer upstream.Close()
+	codexRestoredUseResin(t, upstream.URL)
 
 	db, err := database.New("sqlite", filepath.Join(t.TempDir(), "codex2api.db"))
 	if err != nil {
@@ -69,18 +70,17 @@ func TestUsageLogCapturesClientAndActualUpstreamUserAgent(t *testing.T) {
 
 	store := auth.NewStore(nil, nil, &database.SystemSettings{MaxConcurrency: 1, MaxRetries: 0, MaxRateLimitRetries: 0})
 	store.AddAccount(&auth.Account{
-		DBID:         1,
-		UpstreamType: auth.UpstreamOpenAIResponses,
-		BaseURL:      upstream.URL,
-		APIKey:       "sk-upstream",
-		Models:       []string{"gpt-5.4"},
-		PlanType:     "api",
+		DBID:        1,
+		AccessToken: "at-upstream",
+		AccountID:   "acct-1",
+		Models:      []string{"gpt-5.5"},
+		PlanType:    "pro",
 	})
 	handler := NewHandler(store, db, &config.Config{AllowAnonymousV1: true}, nil)
 	router := gin.New()
 	handler.RegisterRoutes(router)
 
-	req := httptest.NewRequest(http.MethodPost, "/v1/responses", bytes.NewBufferString(`{"model":"gpt-5.4","input":"hello"}`))
+	req := httptest.NewRequest(http.MethodPost, "/v1/responses", bytes.NewBufferString(`{"model":"gpt-5.5","input":"hello"}`))
 	req.Header.Set("Content-Type", "application/json")
 	req.Header.Set("User-Agent", "curl/8.7.1")
 	recorder := httptest.NewRecorder()
