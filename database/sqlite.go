@@ -24,8 +24,8 @@ func sqliteConnectDSN(dsn string) string {
 	}
 
 	q := url.Values{}
-	// deferred 事务（BeginTx 默认）从读锁升级写锁遇忙会立刻 SQLITE_BUSY，
-	// busy_timeout 拦不住；immediate 让写事务在 BEGIN 就拿写锁、正常走等待。
+	// A deferred transaction (the BeginTx default) that upgrades from a read lock to a write lock gets SQLITE_BUSY immediately when busy,
+	// busy_timeout cannot stop this; immediate makes the write transaction take the write lock at BEGIN and wait normally.
 	q.Add("_txlock", "immediate")
 	q.Add("_pragma", fmt.Sprintf("busy_timeout(%d)", sqliteBusyTimeoutMillis))
 	q.Add("_pragma", "journal_mode(WAL)")
@@ -843,8 +843,8 @@ func (db *DB) migrateSQLite(ctx context.Context) error {
 		return err
 	}
 
-	// 审查服务从未配置过(无 key、未启用)且仍是旧出厂默认时,迁移到新的
-	// DeepSeek 默认供应商;真在用 OpenAI 审核的部署不受影响。
+	// When the review service has never been configured (no key, not enabled) and still has the old factory default, migrate it to the new
+	// DeepSeek default provider; deployments that really use OpenAI review are not affected.
 	if _, err := db.conn.ExecContext(ctx, `
 		UPDATE system_settings
 		SET prompt_filter_review_base_url = 'https://api.deepseek.com',
@@ -857,8 +857,8 @@ func (db *DB) migrateSQLite(ctx context.Context) error {
 		return err
 	}
 
-	// gpt-5.4 全系已下线(2026-09 上游 ChatGPT 账号 manifest 不再包含):仍指向它的
-	// 连通性测试模型改回出厂默认,否则测连必 400。
+	// The whole gpt-5.4 family has been retired (as of 2026-09 the upstream ChatGPT account manifest no longer includes it): the
+	// connectivity test model that still points to it reverts to the factory default, otherwise the connection test always gets a 400.
 	if _, err := db.conn.ExecContext(ctx, `
 		UPDATE system_settings
 		SET test_model = 'gpt-5.5'
@@ -1099,7 +1099,7 @@ func (db *DB) getChartAggregationSQLite(ctx context.Context, start, end time.Tim
 	return result, modelRows.Err()
 }
 
-// getAccountEventTrendSQLite SQLite 版账号事件趋势聚合（内存分桶）
+// getAccountEventTrendSQLite is the SQLite version of the account event trend aggregation (in-memory bucketing)
 func (db *DB) getAccountEventTrendSQLite(ctx context.Context, start, end time.Time, bucketMinutes int) ([]AccountEventPoint, error) {
 	if bucketMinutes < 1 {
 		bucketMinutes = 60
@@ -1132,12 +1132,12 @@ func (db *DB) getAccountEventTrendSQLite(ctx context.Context, start, end time.Ti
 			continue
 		}
 
-		// 只统计用户操作：added 全部计入，deleted 只计 manual
+		// Count only user actions: all added are counted, and only manual deleted are counted
 		if eventType == "deleted" && source != "manual" {
 			continue
 		}
 
-		// 对齐到桶
+		// Align to the bucket
 		minute := createdAt.Minute()
 		aligned := minute - (minute % bucketMinutes)
 		bucketTime := time.Date(createdAt.Year(), createdAt.Month(), createdAt.Day(),
@@ -1160,7 +1160,7 @@ func (db *DB) getAccountEventTrendSQLite(ctx context.Context, start, end time.Ti
 		return nil, err
 	}
 
-	// 排序输出
+	// Sort the output
 	keys := make([]string, 0, len(bucketMap))
 	for k := range bucketMap {
 		keys = append(keys, k)

@@ -222,11 +222,11 @@ func TestPromptFilterAuditQueueCloseRejectsConcurrentEnqueue(t *testing.T) {
 	if queue.enqueue(PromptFilterLogInput{Source: "closed"}, PromptFilterLogPriorityHigh) {
 		t.Fatal("closed queue accepted an audit record")
 	}
-	// close() 的排空预算是有界的(timeout + cancel + 250ms 收尾),按设计允许先于
-	// worker 排空完成返回(见 close 的注释)。-race 的 2 核 CI runner 上 8 个
-	// goroutine 压出的积压在预算内排不完,close 先行返回,此时 pending 还没归零
-	// 属于正常中间态。清空断言只在 worker 全部退出后才成立,这里显式等 done,
-	// 避免把"CI 慢"误判成"队列泄漏"(2026-08-26 main CI 曾因此假红)。
+	// The drain budget of close() is bounded (timeout + cancel + 250ms wrap-up), so by design it may return before
+	// the worker finishes draining (see the comment on close). On a 2-core CI runner with -race, the backlog built up by 8
+	// goroutines cannot be drained within the budget, so close returns first, and pending has not reached zero yet.
+	// This is a normal intermediate state. The empty-queue assertion only holds after all workers have exited, so here we explicitly wait for done,
+	// to avoid mistaking "slow CI" for "queue leak" (the main CI was once falsely red because of this on 2026-08-26).
 	select {
 	case <-queue.done:
 	case <-time.After(30 * time.Second):

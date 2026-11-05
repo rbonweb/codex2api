@@ -437,14 +437,14 @@ func (db *DB) transitionPromptRiskTrustPolicy(ctx context.Context, subjectType, 
 
 func (db *DB) RevokePromptRiskTrustPolicy(ctx context.Context, subjectType, subjectKey, reason string) (*PromptRiskTrustPolicy, error) {
 	if strings.TrimSpace(reason) == "" {
-		reason = "管理员撤销自适应可信策略"
+		reason = "adaptive trust policy revoked by administrator"
 	}
 	return db.transitionPromptRiskTrustPolicy(ctx, subjectType, subjectKey, PromptRiskTrustStatusRevoked, PromptRiskTrustEventRevoked, reason, 0, "")
 }
 
 func (db *DB) SuspendPromptRiskTrustPolicy(ctx context.Context, subjectType, subjectKey, reason string, riskScore int, riskLevel string) (*PromptRiskTrustPolicy, error) {
 	if strings.TrimSpace(reason) == "" {
-		reason = "风险画像达到重新审核阈值"
+		reason = "risk profile reached the re-review threshold"
 	}
 	return db.transitionPromptRiskTrustPolicy(ctx, subjectType, subjectKey, PromptRiskTrustStatusSuspended, PromptRiskTrustEventAutoSuspended, reason, riskScore, riskLevel)
 }
@@ -457,7 +457,7 @@ func (db *DB) ReconcilePromptRiskTrustPolicies(ctx context.Context) ([]*PromptRi
 	now := time.Now().UTC()
 	for _, item := range items {
 		if !item.ValidUntil.After(now) {
-			_, _ = db.transitionPromptRiskTrustPolicy(ctx, item.SubjectType, item.SubjectKey, PromptRiskTrustStatusExpired, PromptRiskTrustEventExpired, "自适应可信期限已到", item.LastRiskScore, item.LastRiskLevel)
+			_, _ = db.transitionPromptRiskTrustPolicy(ctx, item.SubjectType, item.SubjectKey, PromptRiskTrustStatusExpired, PromptRiskTrustEventExpired, "adaptive trust period expired", item.LastRiskScore, item.LastRiskLevel)
 			continue
 		}
 		profile, profileErr := db.GetPromptRiskProfile(ctx, item.SubjectType, item.SubjectKey)
@@ -469,7 +469,7 @@ func (db *DB) ReconcilePromptRiskTrustPolicies(ctx context.Context) ([]*PromptRi
 			score, level = profile.RiskScore, profile.RiskLevel
 		}
 		if score >= item.RiskThreshold || level == PromptRiskLevelHigh || level == PromptRiskLevelCritical {
-			_, _ = db.SuspendPromptRiskTrustPolicy(ctx, item.SubjectType, item.SubjectKey, "风险画像达到重新审核阈值", score, level)
+			_, _ = db.SuspendPromptRiskTrustPolicy(ctx, item.SubjectType, item.SubjectKey, "risk profile reached the re-review threshold", score, level)
 			continue
 		}
 		_, err = db.conn.ExecContext(ctx, `UPDATE prompt_risk_trust_policies SET last_evaluated_at=CURRENT_TIMESTAMP, last_risk_score=$1, last_risk_level=$2 WHERE id=$3`, score, level, item.ID)
@@ -680,7 +680,7 @@ func (db *DB) ReconcileAdaptivePromptRiskTrustPolicies(ctx context.Context, raw 
 		if !eligible {
 			continue
 		}
-		reason := "稳定低风险画像自动降低同步模型复核频率"
+		reason := "stable low-risk profile automatically lowered the synchronous model review frequency"
 		_, err = db.UpsertPromptRiskTrustPolicy(ctx, PromptRiskTrustPolicyInput{
 			SubjectType: evidence.SubjectType, SubjectKey: evidence.SubjectKey, Source: PromptRiskTrustSourceAutomatic,
 			Reason: reason, RiskThreshold: options.RiskThreshold,
@@ -713,7 +713,7 @@ func (db *DB) RecordPromptRiskTrustBypass(ctx context.Context, policyID int64, s
 	if updated == 0 {
 		return tx.Commit()
 	}
-	if err := insertPromptRiskTrustEvent(ctx, tx, policyID, subjectType, subjectKey, PromptRiskTrustEventBypassUsed, "跳过同步模型复核，本地高危规则仍生效", 0, PromptRiskLevelLow, requestIDHash); err != nil {
+	if err := insertPromptRiskTrustEvent(ctx, tx, policyID, subjectType, subjectKey, PromptRiskTrustEventBypassUsed, "synchronous model review skipped; local high-risk rules still apply", 0, PromptRiskLevelLow, requestIDHash); err != nil {
 		return err
 	}
 	return tx.Commit()
@@ -739,7 +739,7 @@ func (db *DB) RecordPromptRiskTrustModelReview(ctx context.Context, policyID int
 	if updated == 0 {
 		return tx.Commit()
 	}
-	if err := insertPromptRiskTrustEvent(ctx, tx, policyID, subjectType, subjectKey, PromptRiskTrustEventModelReviewed, "周期抽检模型复核通过", 0, PromptRiskLevelLow, requestIDHash); err != nil {
+	if err := insertPromptRiskTrustEvent(ctx, tx, policyID, subjectType, subjectKey, PromptRiskTrustEventModelReviewed, "periodic sampled model review passed", 0, PromptRiskLevelLow, requestIDHash); err != nil {
 		return err
 	}
 	return tx.Commit()

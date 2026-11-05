@@ -20,88 +20,88 @@ func TestCredentialCrypto_RoundTrip(t *testing.T) {
 		"plan_type":     "claude",
 	}
 	enc := encryptSensitiveCredentials(m)
-	// 敏感字段应被加密(带前缀),非敏感字段原样。
+	// Sensitive fields should be encrypted (with the prefix); non-sensitive fields stay as they are.
 	if !strings.HasPrefix(enc["access_token"].(string), credEncPrefix) {
-		t.Fatalf("access_token 未加密: %v", enc["access_token"])
+		t.Fatalf("access_token is not encrypted: %v", enc["access_token"])
 	}
 	if !strings.HasPrefix(enc["refresh_token"].(string), credEncPrefix) {
-		t.Fatalf("refresh_token 未加密")
+		t.Fatalf("refresh_token is not encrypted")
 	}
 	if enc["email"] != "user@example.com" || enc["upstream_type"] != "claude" {
-		t.Fatal("非敏感字段不应改动")
+		t.Fatal("non-sensitive fields must not change")
 	}
-	// 原 map 不应被 mutate(返回副本)。
+	// The original map must not be mutated (a copy is returned).
 	if strings.HasPrefix(m["access_token"].(string), credEncPrefix) {
-		t.Fatal("encryptSensitiveCredentials 不应 mutate 入参")
+		t.Fatal("encryptSensitiveCredentials must not mutate its input")
 	}
 
-	// 模拟落库→读出:marshal(enc) 再 decodeCredentials 应还原明文。
+	// Simulate write then read: marshal(enc) followed by decodeCredentials should restore the plaintext.
 	raw, _ := json.Marshal(enc)
 	decoded := decodeCredentials(raw)
 	if decoded["access_token"] != "sk-at-secret" || decoded["refresh_token"] != "rt-secret" {
-		t.Fatalf("解密还原失败: at=%v rt=%v", decoded["access_token"], decoded["refresh_token"])
+		t.Fatalf("decryption failed to restore: at=%v rt=%v", decoded["access_token"], decoded["refresh_token"])
 	}
 }
 
 func TestCredentialCrypto_Deterministic(t *testing.T) {
 	setCredEncryptionKeyForTest("k")
 	defer setCredEncryptionKeyForTest("")
-	// 同明文两次加密应得同密文(保 outbox 变更检测语义)。
+	// Encrypting the same plaintext twice should give the same ciphertext (keeps the outbox change detection semantics).
 	a := encryptCredentialValue("access_token", "same-token")
 	b := encryptCredentialValue("access_token", "same-token")
 	if a != b {
-		t.Fatalf("确定性加密应产生相同密文: %s vs %s", a, b)
+		t.Fatalf("deterministic encryption should produce the same ciphertext: %s vs %s", a, b)
 	}
-	// 不同明文应得不同密文。
+	// Different plaintexts should give different ciphertexts.
 	c := encryptCredentialValue("access_token", "other-token")
 	if a == c {
-		t.Fatal("不同明文不应同密文")
+		t.Fatal("different plaintexts must not produce the same ciphertext")
 	}
-	// 不同字段(AAD)同明文应得不同密文。
+	// The same plaintext under different fields (AAD) should give different ciphertexts.
 	d := encryptCredentialValue("refresh_token", "same-token")
 	if a == d {
-		t.Fatal("不同字段应绑定不同密文")
+		t.Fatal("different fields must bind to different ciphertexts")
 	}
 }
 
 func TestCredentialCrypto_Disabled_NoOp(t *testing.T) {
-	setCredEncryptionKeyForTest("") // 未启用
+	setCredEncryptionKeyForTest("") // disabled
 	defer setCredEncryptionKeyForTest("")
 	m := map[string]interface{}{"access_token": "plain", "refresh_token": "plain2"}
 	enc := encryptSensitiveCredentials(m)
 	if enc["access_token"] != "plain" {
-		t.Fatal("未启用时应原样返回(no-op)")
+		t.Fatal("when disabled it should return the input as-is (no-op)")
 	}
 	raw, _ := json.Marshal(enc)
 	decoded := decodeCredentials(raw)
 	if decoded["access_token"] != "plain" {
-		t.Fatal("未启用时解密应原样")
+		t.Fatal("when disabled, decryption should return the input as-is")
 	}
 }
 
 func TestCredentialCrypto_BackwardCompat_PlaintextRows(t *testing.T) {
-	// 存量明文行:即使启用密钥,无 enc: 前缀的值应原样读出(渐进迁移)。
+	// Existing plaintext rows: even with a key enabled, values without the enc: prefix should be read back as-is (gradual migration).
 	setCredEncryptionKeyForTest("k")
 	defer setCredEncryptionKeyForTest("")
 	raw := []byte(`{"access_token":"legacy-plain","refresh_token":"legacy-rt","upstream_type":"codex"}`)
 	decoded := decodeCredentials(raw)
 	if decoded["access_token"] != "legacy-plain" || decoded["refresh_token"] != "legacy-rt" {
-		t.Fatalf("存量明文应原样读出: %v", decoded)
+		t.Fatalf("existing plaintext should be read back as-is: %v", decoded)
 	}
 }
 
 func TestCredentialCrypto_WrongKey_FailsClosed(t *testing.T) {
 	setCredEncryptionKeyForTest("key-A")
 	enc := encryptCredentialValue("access_token", "secret")
-	// 换密钥后解密失败,返回原密文(而非明文),账号需重导——不误当明文用。
+	// After switching keys, decryption fails and returns the original ciphertext (not plaintext); the account must be re-imported, so it is not mistakenly used as plaintext.
 	setCredEncryptionKeyForTest("key-B")
 	defer setCredEncryptionKeyForTest("")
 	got := decryptCredentialValue("access_token", enc)
 	if got == "secret" {
-		t.Fatal("错误密钥不应解出明文")
+		t.Fatal("a wrong key must not decrypt to plaintext")
 	}
 	if !strings.HasPrefix(got, credEncPrefix) {
-		t.Fatal("解密失败应返回原密文")
+		t.Fatal("a failed decryption should return the original ciphertext")
 	}
 }
 
@@ -126,37 +126,37 @@ func TestCredentialCrypto_DBRoundTrip_AtRestEncrypted(t *testing.T) {
 		t.Fatalf("insert: %v", err)
 	}
 
-	// 读回:GetCredential 应见明文。
+	// Read back: GetCredential should see plaintext.
 	row, err := db.GetAccountByID(ctx, id)
 	if err != nil {
 		t.Fatalf("get: %v", err)
 	}
 	if row.GetCredential("access_token") != "at-plain-secret" || row.GetCredential("refresh_token") != "rt-plain-secret" {
-		t.Fatalf("读回应为明文: at=%q rt=%q", row.GetCredential("access_token"), row.GetCredential("refresh_token"))
+		t.Fatalf("read-back should be plaintext: at=%q rt=%q", row.GetCredential("access_token"), row.GetCredential("refresh_token"))
 	}
 
-	// 底层存储应为密文(enc: 前缀)。
+	// The underlying storage should be ciphertext (enc: prefix).
 	var rawCred string
 	if err := db.conn.QueryRowContext(ctx, "SELECT credentials FROM accounts WHERE id = ?", id).Scan(&rawCred); err != nil {
 		t.Fatalf("raw select: %v", err)
 	}
 	if strings.Contains(rawCred, "at-plain-secret") || strings.Contains(rawCred, "rt-plain-secret") {
-		t.Fatalf("底层不应含明文 token: %s", rawCred)
+		t.Fatalf("underlying storage must not contain plaintext tokens: %s", rawCred)
 	}
 	if !strings.Contains(rawCred, credEncPrefix) {
-		t.Fatalf("底层应为密文(含 %s 前缀): %s", credEncPrefix, rawCred)
+		t.Fatalf("underlying storage should be ciphertext (containing the %s prefix): %s", credEncPrefix, rawCred)
 	}
-	// email(非敏感)应仍是明文,供 SQL 过滤。
+	// email (non-sensitive) should still be plaintext, for SQL filtering.
 	if !strings.Contains(rawCred, "u@example.com") {
-		t.Fatalf("非敏感字段应保持明文: %s", rawCred)
+		t.Fatalf("non-sensitive fields should stay plaintext: %s", rawCred)
 	}
 
-	// UpdateCredentials 往返:刷新 token 后读回仍明文。
+	// UpdateCredentials round trip: after refreshing the token, reading back is still plaintext.
 	if err := db.UpdateCredentials(ctx, id, map[string]interface{}{"access_token": "at-refreshed"}); err != nil {
 		t.Fatalf("update: %v", err)
 	}
 	row2, _ := db.GetAccountByID(ctx, id)
 	if row2.GetCredential("access_token") != "at-refreshed" {
-		t.Fatalf("更新后读回应为新明文, got %q", row2.GetCredential("access_token"))
+		t.Fatalf("after update, read-back should be the new plaintext, got %q", row2.GetCredential("access_token"))
 	}
 }

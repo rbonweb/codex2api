@@ -12,7 +12,7 @@ import (
 	"testing"
 )
 
-// 场景 21: 迁移默认关闭（显式开启/关闭持久化），并发无关保存不丢字段，generation 溢出回滚
+// Scenario 21: migration is off by default (persistence is explicitly enabled or disabled), concurrent unrelated saves lose no fields, and generation overflow rolls back
 func TestAcceptanceScenario21_DBCurrencyAndRestoreDefaults(t *testing.T) {
 	drivers := []string{"sqlite", "postgres"}
 	pgDSN := os.Getenv("CODEX2API_TEST_POSTGRES_DSN")
@@ -24,7 +24,7 @@ func TestAcceptanceScenario21_DBCurrencyAndRestoreDefaults(t *testing.T) {
 			if driver == "sqlite" {
 				db, err = New("sqlite", filepath.Join(t.TempDir(), "acceptance_outputguard.db"))
 			} else {
-				// PostgreSQL 真实驱动构造，无 DSN 时跳过，如实报告不宣称已测
+				// Build with the real PostgreSQL driver. Skip when there is no DSN and report that honestly rather than claiming it was tested
 				if pgDSN == "" {
 					t.Skip("PostgreSQL DSN not configured; skipped")
 				}
@@ -37,7 +37,7 @@ func TestAcceptanceScenario21_DBCurrencyAndRestoreDefaults(t *testing.T) {
 
 			ctx := context.Background()
 
-			// 1. 全新数据库默认值检查（三态指针默认关闭 false，5 项预算与 ConfigGeneration 默认值精确校验）
+			// 1. Fresh database default check (tri-state pointers default to off/false; the 5 budget values and the ConfigGeneration default are checked exactly)
 			settings, err := db.GetOutputGuardSettings(ctx)
 			if err != nil {
 				t.Fatalf("GetOutputGuardSettings error = %v", err)
@@ -51,7 +51,7 @@ func TestAcceptanceScenario21_DBCurrencyAndRestoreDefaults(t *testing.T) {
 				t.Fatalf("unexpected defaults: %+v", settings)
 			}
 
-			// 2. 显式写入 false，断言持久化且重启后不被零值覆盖；NULL fallback 保持
+			// 2. Write an explicit false, assert it persists and is not overwritten by a zero value after restart; NULL fallback is preserved
 			falseVal := false
 			updated, err := db.UpdateOutputGuardSettings(ctx, OutputGuardSettingsUpdate{
 				Enabled: &falseVal,
@@ -63,7 +63,7 @@ func TestAcceptanceScenario21_DBCurrencyAndRestoreDefaults(t *testing.T) {
 				t.Fatalf("expected Enabled=false after update, got %v", updated.Enabled)
 			}
 
-			// 重启 DB 连接验证显式 false 得到正确持久化恢复
+			// Reopen the DB connection and verify the explicit false is correctly restored from persistence
 			if driver == "sqlite" {
 				dbPath := filepath.Join(t.TempDir(), "acceptance_restart.db")
 				initDB, ierr := New("sqlite", dbPath)
@@ -87,7 +87,7 @@ func TestAcceptanceScenario21_DBCurrencyAndRestoreDefaults(t *testing.T) {
 				}
 			}
 
-			// 验证 NULL fallback: 将 output_guard_enabled 更新为 NULL，Get 必须补齐为默认 false
+			// Verify NULL fallback: set output_guard_enabled to NULL, Get must fill in the default false
 			if _, err := db.conn.ExecContext(ctx, `UPDATE system_settings SET output_guard_enabled = NULL WHERE id = 1`); err != nil {
 				t.Fatalf("seed NULL enabled failed: %v", err)
 			}
@@ -96,7 +96,7 @@ func TestAcceptanceScenario21_DBCurrencyAndRestoreDefaults(t *testing.T) {
 				t.Fatalf("expected NULL fallback to false, got: %+v", nullFallbackSettings)
 			}
 
-			// 恢复为显式 true
+			// Restore to explicit true
 			trueVal := true
 			restoredTrue, err := db.UpdateOutputGuardSettings(ctx, OutputGuardSettingsUpdate{
 				Enabled: &trueVal,
@@ -105,7 +105,7 @@ func TestAcceptanceScenario21_DBCurrencyAndRestoreDefaults(t *testing.T) {
 				t.Fatalf("restore to true error = %v", err)
 			}
 
-			// 3. 场景 21 缺口 1: 非法配置（0/负/超范围/tool>channel/channel>request）全被拒绝，且读取前后完整 settings + generation 严格不变
+			// 3. Scenario 21 gap 1: invalid config (0 / negative / out of range / tool>channel / channel>request) is all rejected, and the full settings + generation read before and after is strictly unchanged
 			beforeInvalid, err := db.GetOutputGuardSettings(ctx)
 			if err != nil {
 				t.Fatalf("get settings before invalid: %v", err)
@@ -145,8 +145,8 @@ func TestAcceptanceScenario21_DBCurrencyAndRestoreDefaults(t *testing.T) {
 				t.Fatalf("settings changed after rejected invalid updates! before=%+v, after=%+v", beforeInvalid, afterInvalid)
 			}
 
-			// 4. 场景 21 缺口 2: 并发窄更新终值精确核验：构造两个 disjoint guard fields 并发 + response cache settings 独立组并发
-			// 收集每 goroutine error 严禁忽略；核验每字段提交值与 revision 真实自增量
+			// 4. Scenario 21 gap 2: exact check of final values for concurrent narrow updates: two disjoint guard field updates run concurrently, plus the response cache settings group updated concurrently on its own
+			// Collect each goroutine's error and never ignore it; verify each field's committed value and the real revision increment
 			genBeforeConcurrent := afterInvalid.ConfigGeneration
 			const guardGoroutines = 4
 			const rcGoroutines = 4
@@ -154,9 +154,9 @@ func TestAcceptanceScenario21_DBCurrencyAndRestoreDefaults(t *testing.T) {
 			guardErrCh := make(chan error, guardGoroutines)
 			rcErrCh := make(chan error, rcGoroutines)
 
-			// 分别构建两个不相交字段集合的更新：
-			// G1, G2 仅修改 MaxToolArgumentBytes（保证 tool <= 2097152）
-			// G3, G4 仅修改 MaxToolArgumentDeltas
+			// Build the two updates over disjoint field sets separately:
+			// G1, G2 only modify MaxToolArgumentBytes (keeps tool <= 2097152)
+			// G3, G4 only modify MaxToolArgumentDeltas
 			toolVals := []int64{140000, 150000}
 			toolCandidates := make(map[int64]bool, len(toolVals))
 			for _, v := range toolVals {
@@ -169,7 +169,7 @@ func TestAcceptanceScenario21_DBCurrencyAndRestoreDefaults(t *testing.T) {
 				deltaCandidates[v] = true
 			}
 
-			// 启动修改 tool bytes 的并发任务
+			// Start the concurrent task that modifies tool bytes
 			for i := 0; i < len(toolVals); i++ {
 				wg.Add(1)
 				val := toolVals[i]
@@ -184,7 +184,7 @@ func TestAcceptanceScenario21_DBCurrencyAndRestoreDefaults(t *testing.T) {
 				}(val)
 			}
 
-			// 启动修改 tool deltas 的并发任务
+			// Start the concurrent task that modifies tool deltas
 			for i := 0; i < len(deltaVals); i++ {
 				wg.Add(1)
 				val := deltaVals[i]
@@ -199,7 +199,7 @@ func TestAcceptanceScenario21_DBCurrencyAndRestoreDefaults(t *testing.T) {
 				}(val)
 			}
 
-			// 并发更新完全独立的 response_cache_settings 组
+			// Concurrently update the fully independent response_cache_settings group
 			rcVals := []int64{10485760, 12582912, 14680064, 16777216}
 			rcCandidates := make(map[int64]bool, len(rcVals))
 			for _, v := range rcVals {
@@ -235,28 +235,28 @@ func TestAcceptanceScenario21_DBCurrencyAndRestoreDefaults(t *testing.T) {
 				t.Fatalf("GetOutputGuardSettings after concurrent updates: %v", err)
 			}
 
-			// 核验 1: Enabled 保持不变 (true)
+			// Check 1: Enabled stays unchanged (true)
 			if finalSettings.Enabled == nil || *finalSettings.Enabled != true {
 				t.Fatalf("expected Enabled=true preserved, got %+v", finalSettings)
 			}
-			// 核验 2: 并发写同一字段的终值必须落在候选值集合内
+			// Check 2: the final value of concurrent writes to the same field must fall within the candidate value set
 			if !toolCandidates[finalSettings.MaxToolArgumentBytes] {
 				t.Fatalf("final MaxToolArgumentBytes %d not in candidate set %v", finalSettings.MaxToolArgumentBytes, toolCandidates)
 			}
 			if !deltaCandidates[finalSettings.MaxToolArgumentDeltas] {
 				t.Fatalf("final MaxToolArgumentDeltas %d not in candidate set %v", finalSettings.MaxToolArgumentDeltas, deltaCandidates)
 			}
-			// 核验 3: 未被并发修改的独立字段保持原有值
+			// Check 3: independent fields not modified concurrently keep their original values
 			if finalSettings.MaxChannelBytes != afterInvalid.MaxChannelBytes || finalSettings.MaxRequestBytes != afterInvalid.MaxRequestBytes {
 				t.Fatalf("independent fields corrupted! channel=%d request=%d", finalSettings.MaxChannelBytes, finalSettings.MaxRequestBytes)
 			}
-			// 核验 4: revision (ConfigGeneration) 真实自增量：每个 guard update 均导致实际值变化，因此 revision 自增量精确等于 guardGoroutines
+			// Check 4: revision (ConfigGeneration) real increment: every guard update changes the actual value, so the revision increment equals guardGoroutines exactly
 			if finalSettings.ConfigGeneration != genBeforeConcurrent+int64(guardGoroutines) {
 				t.Fatalf("expected generation increment of exactly %d (from %d to %d), got %d",
 					guardGoroutines, genBeforeConcurrent, genBeforeConcurrent+int64(guardGoroutines), finalSettings.ConfigGeneration)
 			}
 
-			// 核验 5: 独立 response_cache_settings 并发写终值核验
+			// Check 5: verify the final value of concurrent writes to the independent response_cache_settings
 			finalRCSettings, err := db.GetResponseCacheSettings(ctx)
 			if err != nil {
 				t.Fatalf("GetResponseCacheSettings after concurrent updates: %v", err)
@@ -265,7 +265,7 @@ func TestAcceptanceScenario21_DBCurrencyAndRestoreDefaults(t *testing.T) {
 				t.Fatalf("final ResponseCache LocalMaxEntryBytes %d not in candidate set %v", finalRCSettings.LocalMaxEntryBytes, rcCandidates)
 			}
 
-			// 5. 场景 21 缺口 3: ConfigGeneration MaxInt64 overflow 回滚后再次 Get 与 before 严格 DeepEqual，事务正常退出无死锁
+			// 5. Scenario 21 gap 3: after ConfigGeneration MaxInt64 overflow rolls back, a second Get is strictly DeepEqual to before; the transaction exits normally with no deadlock
 			if _, err := db.conn.ExecContext(ctx, `
 				UPDATE system_settings SET output_guard_config_generation = $1 WHERE id = 1
 			`, int64(math.MaxInt64)); err != nil {
@@ -288,8 +288,8 @@ func TestAcceptanceScenario21_DBCurrencyAndRestoreDefaults(t *testing.T) {
 				t.Fatalf("settings mutated after overflow error! before=%+v, after=%+v", beforeOverflow, afterOverflow)
 			}
 
-			// 6. 恢复全部 5 项默认字段并核验
-			// 将 generation 重置为有效值 100
+			// 6. Restore all 5 default fields and verify
+			// Reset generation to the valid value 100
 			if _, err := db.conn.ExecContext(ctx, `UPDATE system_settings SET output_guard_config_generation = 100 WHERE id = 1`); err != nil {
 				t.Fatalf("reset generation failed: %v", err)
 			}

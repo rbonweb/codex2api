@@ -15,8 +15,8 @@ import (
 )
 
 var (
-	ErrCodexRefreshUncertain   = errors.New("上一次 Token 刷新结果未确认，已停止重复使用旧 RT，请重新授权并导入最新凭据")
-	ErrCodexCredentialsChanged = errors.New("Codex 凭据已变更")
+	ErrCodexRefreshUncertain   = errors.New("the previous token refresh result is unconfirmed; reuse of the old RT has been stopped, please re-authorize and import the latest credentials")
+	ErrCodexCredentialsChanged = errors.New("Codex credentials have changed")
 )
 
 // Codex rotations and administrative identity edits use the same generation
@@ -89,7 +89,7 @@ func (db *DB) codexRefreshRows(ctx context.Context, tx *sql.Tx, rt string) ([]Ac
 func (db *DB) BeginCodexRefresh(ctx context.Context, accountID, generation int64, rt string) (*CodexRefreshAttempt, error) {
 	rt = strings.TrimSpace(rt)
 	if rt == "" {
-		return nil, errors.New("refresh_token 为空")
+		return nil, errors.New("refresh_token is empty")
 	}
 	hash := sha256.Sum256([]byte(rt))
 	attempt := &CodexRefreshAttempt{ID: uuid.NewString(), Fingerprint: hex.EncodeToString(hash[:]), RefreshToken: rt, Generations: make(map[int64]int64)}

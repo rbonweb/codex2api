@@ -2,6 +2,6 @@
 
 package database
 
-// raceDetectorEnabled 标记本次测试构建启用了 -race。竞争检测会把 CPU/内存
-// 开销放大 5-20 倍,性能界限类断言需要按此放宽时限,而普通构建保持严格。
+// raceDetectorEnabled marks that this test build has -race enabled. Race detection inflates CPU/memory
+// overhead by 5-20x, so performance-bound assertions need their time limit relaxed accordingly, while normal builds stay strict.
 const raceDetectorEnabled = true

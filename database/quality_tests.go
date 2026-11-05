@@ -20,8 +20,8 @@ const (
 	QualityTestMaxTimeout     = 30 * time.Minute
 )
 
-var ErrQualityTestCapacity = errors.New("最多同时运行 3 个检测任务，请等待一个任务完成")
-var ErrQualityTestAccountBusy = errors.New("该账号已有进行中的检测任务")
+var ErrQualityTestCapacity = errors.New("at most 3 quality test jobs can run at once, wait for one to finish")
+var ErrQualityTestAccountBusy = errors.New("this account already has a quality test job in progress")
 
 type QualityTestMetrics struct {
 	ResponseModel   string `json:"response_model,omitempty"`
@@ -219,7 +219,7 @@ func (db *DB) CreateQualityTestJob(ctx context.Context, job QualityTestJob) (*Qu
 // A crashed process cannot leave permanent occupied slots. The grace period is longer
 // than a live worker's hard deadline; records are failed, never replayed automatically.
 func (db *DB) ExpireQualityTests(ctx context.Context, now time.Time) error {
-	_, err := db.conn.ExecContext(ctx, `UPDATE quality_test_jobs SET status='interrupted',slot=NULL,error='检测进程中断或超时，请重新发起检测',completed_at=$1,updated_at=$1 WHERE slot IS NOT NULL AND deadline_at<$2`, db.timeArg(now), db.timeArg(now.Add(-30*time.Second)))
+	_, err := db.conn.ExecContext(ctx, `UPDATE quality_test_jobs SET status='interrupted',slot=NULL,error='test process was interrupted or timed out; please start the test again',completed_at=$1,updated_at=$1 WHERE slot IS NOT NULL AND deadline_at<$2`, db.timeArg(now), db.timeArg(now.Add(-30*time.Second)))
 	return err
 }
 

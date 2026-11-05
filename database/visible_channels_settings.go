@@ -8,31 +8,31 @@ import (
 	"strings"
 )
 
-// 仪表盘与账号管理里显示哪些上游渠道，存放在 system_settings.visible_channels_config。
-// 和 invite_guide_config 一样刻意用独立的小 UPDATE 读写，不进 SaveSettings 的
-// 巨型 UPSERT——那条语句的占位符已经排到 $119，每加一列都要整体顺移。
+// Which upstream channels the dashboard and account management show is stored in system_settings.visible_channels_config.
+// Like invite_guide_config, it deliberately reads and writes with its own small UPDATE, outside the SaveSettings
+// giant UPSERT: that statement's placeholders already run up to $119, so every added column would shift them all.
 
-// AllUpstreamChannels 是管理台可见性开关能控制的全部渠道，顺序即展示顺序。
+// AllUpstreamChannels is every channel the admin visibility switches can control; the order is the display order.
 var AllUpstreamChannels = []string{"codex"}
 
-// FallbackVisibleChannel 是兜底渠道：无论怎么配置都保持显示，避免把管理台关成空白。
+// FallbackVisibleChannel is the fallback channel: it always stays visible however it is configured, so the admin panel cannot be turned into a blank page.
 const FallbackVisibleChannel = "codex"
 
-// VisibleChannelsConfig 记录用户勾选的可见渠道。
+// VisibleChannelsConfig records the visible channels the user has ticked.
 //
-// Channels 为 nil 表示「从未配置」，按全部显示处理；显式空列表则只剩兜底渠道。
-// 这里不能加 omitempty：否则保存空列表会被序列化成 '{}'，再读回来又变成全部显示。
+// A nil Channels means "never configured" and is treated as showing all; an explicit empty list leaves only the fallback channel.
+// Do not add omitempty here: otherwise saving an empty list would be serialized as '{}', and reading it back would turn it into showing all.
 type VisibleChannelsConfig struct {
 	Channels []string `json:"channels"`
 }
 
-// Effective 解析出实际生效的可见渠道列表。
+// Effective resolves the list of visible channels that actually take effect.
 func (c VisibleChannelsConfig) Effective() []string {
 	return NormalizeVisibleChannels(c.Channels)
 }
 
-// NormalizeVisibleChannels 把任意输入收敛成合法列表：nil 视为全部；去掉未知渠道与重复项；
-// 兜底渠道始终在列；输出按 AllUpstreamChannels 的固定顺序排列。
+// NormalizeVisibleChannels reduces any input to a valid list: nil counts as all; unknown channels and duplicates are removed;
+// the fallback channel is always in the list; the output follows the fixed order of AllUpstreamChannels.
 func NormalizeVisibleChannels(channels []string) []string {
 	if channels == nil {
 		return append([]string(nil), AllUpstreamChannels...)
@@ -54,8 +54,8 @@ func NormalizeVisibleChannels(channels []string) []string {
 	return out
 }
 
-// LoadVisibleChannelsConfig 读取配置。未配置、空串或 JSON 损坏都退回「全部显示」——
-// 可见性只是展示偏好，不该因为一行坏数据让管理台缺渠道。
+// LoadVisibleChannelsConfig reads the config. Not configured, an empty string, or corrupt JSON all fall back to "show all" —
+// visibility is only a display preference, and one bad row should not make the admin panel lose channels.
 func (db *DB) LoadVisibleChannelsConfig(ctx context.Context) (VisibleChannelsConfig, error) {
 	var cfg VisibleChannelsConfig
 	var raw string
@@ -79,7 +79,7 @@ func (db *DB) LoadVisibleChannelsConfig(ctx context.Context) (VisibleChannelsCon
 	return cfg, nil
 }
 
-// SaveVisibleChannelsConfig 持久化配置，落库前先规范化，保证兜底渠道永远在列。
+// SaveVisibleChannelsConfig persists the config, normalizing it before the write so the fallback channel is always in the list.
 func (db *DB) SaveVisibleChannelsConfig(ctx context.Context, cfg VisibleChannelsConfig) error {
 	payload, err := json.Marshal(VisibleChannelsConfig{Channels: NormalizeVisibleChannels(cfg.Channels)})
 	if err != nil {

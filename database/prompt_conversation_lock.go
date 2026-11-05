@@ -22,14 +22,14 @@ const (
 	// the configurable prompt-filter setting instead.
 	PromptUserCyberCooldownTTL = 30 * time.Minute
 
-	// 锁定身份来源。NewAPI 透传签名是首选,但它不是唯一可信的会话标识:
-	// Codex 客户端请求自带 session-id / x-codex-* 标识,配合下游 API Key 足以
-	// 稳定标识一个会话。没有 NewAPI 的部署必须也能锁定,否则拦截只能事后止损。
+	// Lock the identity source. The NewAPI pass-through signature is preferred, but it is not the only trusted session identifier:
+	// Codex client requests carry their own session-id / x-codex-* identifiers, which together with the downstream API Key are enough to
+	// identify one session stably. Deployments without NewAPI must be able to lock as well, otherwise blocking can only limit damage after the fact.
 	//
-	// 当 identity_kind 为 codex_session 时,newapi_user_id 列存放降级主体
-	// (形如 apikey:<id>),platform 列存放固定标识 codex-local。
-	// fingerprint_replay 使用同一张锁表,但只绑定 API Key、客户端 IP 哈希
-	// 和精确 Prompt 指纹,不能解释为人员身份。
+	// When identity_kind is codex_session, the newapi_user_id column stores the downgraded subject
+	// (in the form apikey:<id>), and the platform column stores the fixed identifier codex-local.
+	// fingerprint_replay uses the same lock table, but binds only the API Key, the hashed client IP
+	// and the exact prompt fingerprint, and must not be read as a person's identity.
 	PromptConversationLockIdentityNewAPI            = "newapi"
 	PromptConversationLockIdentityCodexSession      = "codex_session"
 	PromptConversationLockIdentityFingerprintReplay = "fingerprint_replay"
@@ -138,8 +138,8 @@ func (db *DB) ensurePromptConversationLocksTable(ctx context.Context) error {
 			return err
 		}
 	}
-	// 滚动升级:已存在的锁表缺少 identity_kind 列。旧数据全部来自 NewAPI 签名
-	// 路径,因此默认值保持 newapi,语义与升级前完全一致。
+	// Rolling upgrade: an existing lock table lacks the identity_kind column. All old data came from the NewAPI signature
+	// path, so the default stays newapi, and the semantics are exactly the same as before the upgrade.
 	if db.isSQLite() {
 		return db.ensureSQLiteColumn(ctx, "prompt_conversation_locks", "identity_kind", "TEXT NOT NULL DEFAULT 'newapi'")
 	}
@@ -200,8 +200,8 @@ func normalizePromptConversationLockInput(input PromptConversationLockInput) (Pr
 	input.Model = truncateCandidateRunes(strings.TrimSpace(input.Model), 128)
 	invalidSessionIdentity := input.SessionFingerprint == "" && input.SessionHash != "" ||
 		input.SessionFingerprint != "" && len(input.SessionFingerprint) != 32
-	// 降级的 Codex 会话身份必须携带 32 位指纹，防止空标识锁住共享 API Key。
-	// 已验证的 NewAPI 用户级冷却锁有意不绑定会话，因此允许指纹与会话哈希同时为空。
+	// A downgraded Codex session identity must carry a 32-digit fingerprint, so that an empty identifier cannot lock a shared API Key.
+	// A verified NewAPI user-level cooldown lock is intentionally not bound to a session, so the fingerprint and the session hash may both be empty.
 	if input.IdentityKind == PromptConversationLockIdentityCodexSession || input.IdentityKind == PromptConversationLockIdentityFingerprintReplay {
 		invalidSessionIdentity = len(input.SessionFingerprint) != 32
 	}
@@ -393,7 +393,7 @@ func (db *DB) UnlockPromptConversation(ctx context.Context, lockKey, reason stri
 	}
 	reason = truncateCandidateRunes(strings.TrimSpace(reason), 1000)
 	if reason == "" {
-		reason = "管理员主动解锁"
+		reason = "unlocked by administrator"
 	}
 	now := time.Now().UTC()
 	result, err := db.conn.ExecContext(ctx, `UPDATE prompt_conversation_locks SET
@@ -428,7 +428,7 @@ func (db *DB) UnlockPromptConversationUserCooldown(ctx context.Context, platform
 		return nil, sql.ErrNoRows
 	}
 	if reason == "" {
-		reason = "管理员解除用户安全冷却"
+		reason = "user safety cooldown lifted by administrator"
 	}
 	now := time.Now().UTC()
 	rows, err := db.conn.QueryContext(ctx, `UPDATE prompt_conversation_locks SET

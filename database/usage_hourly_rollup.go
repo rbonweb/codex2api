@@ -12,38 +12,38 @@ import (
 	"time"
 )
 
-// usage_log_hourly 按小时预聚合 usage_logs(issue #778)。慢盘 SQLite 上,30 天的自助用量页
-// 与长区间的用量页要把区间内每一行明细读出来;汇总表把同一小时、同一组维度的请求压成一行,
-// 长区间统计改读整点小时的汇总,只有首尾不足一小时的零头仍扫明细。
+// usage_log_hourly pre-aggregates usage_logs by hour (issue #778). On a slow disk SQLite, the 30-day self-service usage page
+// and the usage pages for long ranges have to read every detail row in the range; the rollup table collapses requests with the same hour and the same group of dimensions into one row,
+// Long-range stats now read the hourly rollup for whole hours; only the leading and trailing remainders shorter than an hour still scan the details.
 //
-// 维度覆盖自助页与管理端区间卡片、分项排行用到的全部分组与筛选列;499 与内部请求也入表,
-// 由查询方按各自口径排除。汇总是明细的精确镜像:批量写日志时在同一事务里按刚插入的行 id
-// 累加,清空日志时一并清空。升级前的存量历史由后台按 id 分块回填,回填完成前查询照旧扫明细。
-// 绕过写入队列的插入(手工 SQL、滚动升级时仍在跑的旧版本实例)由两道检查兜底:查询前比对
-// MAX(id) 发现没进汇总的新行就改扫明细并通知后台修复;后台再定时核对最近几个整点小时的行数。
+// The dimensions cover all groups and filter columns used by the self-service page, the admin range cards and the breakdown rankings; 499 and internal requests are also written to the table,
+// and the queries exclude them according to their own rules. The rollup is an exact mirror of the details: when logs are batch-written, it accumulates by the ids of the just-inserted rows in the same transaction
+// and clearing the logs clears it too. Existing history from before an upgrade is backfilled in the background in id chunks; until the backfill finishes, queries keep scanning the details.
+// Inserts that bypass the write queue (manual SQL, old-version instances still running during a rolling upgrade) are covered by two checks: before a query, compare
+// MAX(id), and if it finds new rows that are not in the rollup, switch to scanning the details and notify the background repair; the background job also periodically checks the row counts of the most recent whole hours.
 const (
-	// 改动聚合口径、新增聚合列,或数据迁移改写了 usage_logs 里汇总用到的列时提升版本号:
-	// 启动时补齐缺的聚合列,清空汇总并按新口径重新回填。维度(主键)变了要换表名。
+	// Bump the version number when the aggregation rules change, aggregate columns are added, or a data migration rewrites columns used by the rollup in usage_logs:
+	// On startup, add the missing aggregate columns, clear the rollup and backfill again under the new rules. If the dimensions (the primary key) change, the table name must change too.
 	usageHourlyRollupVersion = 1
 
 	usageHourlyMaintainIDChunk       = 500
 	usageHourlyBackfillChunkSQLite   = 2000
 	usageHourlyBackfillChunkPostgres = 20000
-	// 每块之间让出写锁,慢盘上回填期间日志落库不至于长时间排队。
+	// Release the write lock between chunks, so that on a slow disk log writes are not queued for long during backfill.
 	usageHourlyBackfillPause      = 50 * time.Millisecond
 	usageHourlyBackfillRetryDelay = time.Minute
 	usageHourlyVerifyInterval     = 20 * time.Minute
 	usageHourlyVerifyHours        = 3
-	// 修复时涉及的小时数超过这个值就整表重建(后台分块回填),不在一个事务里逐小时重算。
+	// If a repair touches more hours than this value, rebuild the whole table (background chunked backfill) instead of recalculating hour by hour in one transaction.
 	usageHourlyRepairMaxHours = 72
 )
 
 const usageHourlyKeyColumns = `bucket, api_key_id, api_key_name, api_key_masked, channel, model, effective_model,
 	inbound_endpoint, endpoint, status_code, stream, internal`
 
-// usageHourlyAggregates 是汇总列与对应的明细聚合表达式。duration_ms_sum 同时服务两种口径:
-// 管理端 AVG(duration_ms) = duration_ms_sum / duration_rows,自助页 AVG(NULLIF(duration_ms, 0))
-// = duration_ms_sum / duration_samples(耗时与首字都不会是负数,> 0 与 <> 0 等价)。
+// usageHourlyAggregates holds the rollup columns and their matching detail aggregate expressions. duration_ms_sum serves two definitions at once:
+// admin AVG(duration_ms) = duration_ms_sum / duration_rows, self-service page AVG(NULLIF(duration_ms, 0))
+// = duration_ms_sum / duration_samples (durations and first-token times are never negative, so > 0 and <> 0 are equivalent).
 var usageHourlyAggregates = []struct{ column, expr string }{
 	{"requests", "COUNT(*)"},
 	{"total_tokens", "COALESCE(SUM(u.total_tokens), 0)"},
@@ -63,9 +63,9 @@ var usageHourlyAggregates = []struct{ column, expr string }{
 	{"fast_requests", "COALESCE(SUM(CASE WHEN LOWER(COALESCE(NULLIF(u.billing_service_tier, ''), u.service_tier, '')) IN ('fast', 'priority', 'ultrafast') THEN 1 ELSE 0 END), 0)"},
 	{"reasoning_requests", "COALESCE(SUM(CASE WHEN u.reasoning_tokens > 0 OR NULLIF(u.reasoning_effort, '') IS NOT NULL THEN 1 ELSE 0 END), 0)"},
 	{"image_requests", "COALESCE(SUM(CASE WHEN LOWER(COALESCE(NULLIF(u.inbound_endpoint, ''), u.endpoint, '')) LIKE '%/images/%' OR LOWER(COALESCE(u.model, '')) LIKE 'gpt-image-%' OR u.image_count > 0 THEN 1 ELSE 0 END), 0)"},
-	// attempt_index 是 1-based,> 1 才是重试出来的请求(与管理端分项口径一致)。
+	// attempt_index is 1-based, so only > 1 counts as a retried request (consistent with the admin breakdown definition).
 	{"retry_requests", "COALESCE(SUM(CASE WHEN u.attempt_index > 1 THEN 1 ELSE 0 END), 0)"},
-	// 以下只统计错误行(与请求日志"仅错误"筛选同一判定),供错误摘要与错误筛选计数。
+	// The following only count error rows (same rule as the request log "errors only" filter), for the error summary and error filter counts.
 	{"error_rows", "COALESCE(SUM(CASE WHEN " + usageLogErrorPredicate + " THEN 1 ELSE 0 END), 0)"},
 	{"error_duration_ms_sum", "COALESCE(SUM(CASE WHEN " + usageLogErrorPredicate + " THEN u.duration_ms ELSE 0 END), 0)"},
 	{"error_duration_rows", "COALESCE(SUM(CASE WHEN (" + usageLogErrorPredicate + ") AND u.duration_ms IS NOT NULL THEN 1 ELSE 0 END), 0)"},
@@ -128,7 +128,7 @@ func (db *DB) ensureUsageHourlySchema(ctx context.Context) error {
 			return err
 		}
 	}
-	// 后续版本新增的聚合列在这里补上,配合提升版本号重新回填。
+	// Aggregate columns added in later versions go here, together with a version bump to backfill again.
 	if db.isSQLite() {
 		existing, err := db.sqliteTableColumns(ctx, "usage_log_hourly")
 		if err != nil {
@@ -152,13 +152,13 @@ func (db *DB) ensureUsageHourlySchema(ctx context.Context) error {
 	return nil
 }
 
-// initUsageHourlyRollup 在日志写入协程启动前确定回填边界:版本不符(含首次升级)就清空汇总,
-// 把当前 MAX(id) 记为回填上界,此后的新日志由写入事务维护。返回值表示是否还有存量待回填。
+// initUsageHourlyRollup sets the backfill boundary before the log write goroutine starts: if the version does not match (including the first upgrade), the rollup is cleared,
+// and the current MAX(id) is recorded as the backfill upper bound; new logs from then on are maintained by the write transaction. The return value says whether existing rows still need backfilling.
 func (db *DB) initUsageHourlyRollup(ctx context.Context) (bool, error) {
 	needsBackfill := false
 	err := db.withWriteTx(ctx, func(tx *sql.Tx) error {
 		if !db.isSQLite() {
-			// 等在途的写入事务提交,让 MAX(id) 与"由写入事务负责的 id"之间没有缝隙。
+			// Wait for in-flight write transactions to commit, so there is no gap between MAX(id) and the ids handled by the write transactions.
 			if _, err := tx.ExecContext(ctx, `LOCK TABLE usage_log_hourly IN EXCLUSIVE MODE`); err != nil {
 				return err
 			}
@@ -179,7 +179,7 @@ func (db *DB) initUsageHourlyRollup(ctx context.Context) (bool, error) {
 	return needsBackfill, err
 }
 
-// resetUsageHourlyRollupTx 清空汇总并从头登记回填。调用方须已持有汇总表的写锁。
+// resetUsageHourlyRollupTx clears the rollup and registers a backfill from the start. The caller must already hold the write lock on the rollup table.
 func (db *DB) resetUsageHourlyRollupTx(ctx context.Context, tx *sql.Tx) (bool, error) {
 	if _, err := tx.ExecContext(ctx, `DELETE FROM usage_log_hourly`); err != nil {
 		return false, err
@@ -201,7 +201,7 @@ func (db *DB) resetUsageHourlyRollupTx(ctx context.Context, tx *sql.Tx) (bool, e
 	return ready == 0, err
 }
 
-// clearUsageHourlyRollupTx 随清空日志一起清空汇总;没有存量需要回填,直接就绪。
+// clearUsageHourlyRollupTx clears the rollup along with the logs; with no existing rows to backfill, it is ready right away.
 func (db *DB) clearUsageHourlyRollupTx(ctx context.Context, tx *sql.Tx) error {
 	if _, err := tx.ExecContext(ctx, `DELETE FROM usage_log_hourly`); err != nil {
 		return err
@@ -216,13 +216,13 @@ func (db *DB) usageHourlyBucketExpr(column string) string {
 	if db.isSQLite() {
 		return "strftime('%Y-%m-%d %H:00:00', " + column + ")"
 	}
-	// 与会话时区无关:按 UTC 整点截断,和 Go 侧 Truncate(time.Hour) 对齐。
+	// Independent of the session time zone: truncates to UTC whole hours, matching Go-side Truncate(time.Hour).
 	return "(date_trunc('hour', " + column + " AT TIME ZONE 'UTC') AT TIME ZONE 'UTC')"
 }
 
-// usageHourlyUpsertSQL 把满足 where 的明细行按小时与维度聚合后累加进汇总表。
-// 增量维护、存量回填与按小时重算共用这一条聚合定义,保证口径一致。
-// ORDER BY 让并发事务按同一顺序锁汇总行,避免 PostgreSQL 死锁。
+// usageHourlyUpsertSQL aggregates the detail rows matching where by hour and dimensions, then adds them into the rollup table.
+// Incremental maintenance, existing-row backfill and hourly recalculation share this one aggregation definition, so the rules stay consistent.
+// ORDER BY makes concurrent transactions lock the rollup rows in the same order, avoiding PostgreSQL deadlocks.
 func (db *DB) usageHourlyUpsertSQL(where string) string {
 	groupBy := "1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12"
 	columns := []string{usageHourlyKeyColumns}
@@ -270,8 +270,8 @@ func (db *DB) usageHourlyMaxExpr(a, b string) string {
 	return "GREATEST(" + a + ", " + b + ")"
 }
 
-// applyUsageHourlyRollupWithExec 在写日志的事务里把刚插入的行累加进汇总。
-// 只认回填上界之后的 id:更早的行由回填负责,两边不会重复计数。
+// applyUsageHourlyRollupWithExec adds the just-inserted rows into the rollup, inside the log write transaction.
+// Only ids after the backfill upper bound count: earlier rows are handled by the backfill, so the two paths never count the same row twice.
 func (db *DB) applyUsageHourlyRollupWithExec(ctx context.Context, execer sqlExecer, ids []int64) error {
 	if execer == nil || len(ids) == 0 {
 		return nil
@@ -286,14 +286,14 @@ func (db *DB) applyUsageHourlyRollupWithExec(ctx context.Context, execer sqlExec
 			return err
 		}
 	}
-	// 取本批自己的最大 id 而不是表的 MAX(id):后者会把同时混进来、没进汇总的行一并"认领"。
+	// Use the max id of this batch itself, not the table's MAX(id): the latter would also "claim" rows that slipped in at the same time and are not in the rollup.
 	_, err := execer.ExecContext(ctx, `UPDATE usage_log_hourly_state SET last_log_id = `+
 		db.usageHourlyMaxExpr("last_log_id", "$1")+` WHERE id = 1`, maxID)
 	return err
 }
 
-// lockUsageHourlyForRebuildTx 在重算前挡住并发的增量累加。PostgreSQL 锁表等在途写入提交;
-// SQLite 先写一笔拿到写锁(WAL 下先读后写的延迟事务可能升级失败)。
+// lockUsageHourlyForRebuildTx blocks concurrent incremental accumulation before a recalculation. On PostgreSQL it locks the table and waits for in-flight writes to commit;
+// on SQLite it first performs a write to take the write lock (under WAL, a deferred transaction that reads before writing can fail to upgrade).
 func (db *DB) lockUsageHourlyForRebuildTx(ctx context.Context, tx *sql.Tx) error {
 	if db.isSQLite() {
 		_, err := tx.ExecContext(ctx, `UPDATE usage_log_hourly_state SET updated_at = CURRENT_TIMESTAMP WHERE id = 1`)
@@ -303,7 +303,7 @@ func (db *DB) lockUsageHourlyForRebuildTx(ctx context.Context, tx *sql.Tx) error
 	return err
 }
 
-// rebuildUsageHourlyHoursTx 按明细重算给定整点小时的汇总。
+// rebuildUsageHourlyHoursTx recalculates the rollup for the given whole hours from the details.
 func (db *DB) rebuildUsageHourlyHoursTx(ctx context.Context, tx *sql.Tx, hours []time.Time) error {
 	for _, hour := range hours {
 		hour = hour.UTC().Truncate(time.Hour)
@@ -318,8 +318,8 @@ func (db *DB) rebuildUsageHourlyHoursTx(ctx context.Context, tx *sql.Tx, hours [
 	return nil
 }
 
-// RebuildUsageHourlyRollup 按明细同步重建整张汇总表。给直接改写 usage_logs 的测试与诊断用;
-// 正常运行不需要调用。
+// RebuildUsageHourlyRollup synchronously rebuilds the whole rollup table from the details. It is for tests and diagnostics that rewrite usage_logs directly;
+// normal operation does not need to call it.
 func (db *DB) RebuildUsageHourlyRollup(ctx context.Context) error {
 	if _, err := db.initUsageHourlyRollupReset(ctx); err != nil {
 		return err
@@ -350,8 +350,8 @@ func (db *DB) initUsageHourlyRollupReset(ctx context.Context) (bool, error) {
 
 var errUsageHourlyBackfillRaced = errors.New("usage hourly backfill cursor moved concurrently")
 
-// usageHourlyBackfillStep 回填下一块存量 id。先累加汇总、再以游标比较交换推进,
-// 加锁顺序与写日志事务一致(汇总行在前、状态行在后);另一个实例抢先推进时整块回滚重来。
+// usageHourlyBackfillStep backfills the next chunk of existing ids. It accumulates the rollup first, then advances with a cursor compare-and-swap,
+// with the same lock order as the log write transaction (rollup rows first, state row second); if another instance advances first, the whole chunk is rolled back and retried.
 func (db *DB) usageHourlyBackfillStep(ctx context.Context) (bool, error) {
 	chunk := int64(usageHourlyBackfillChunkPostgres)
 	if db.isSQLite() {
@@ -410,7 +410,7 @@ func (db *DB) runUsageHourlyBackfill(ctx context.Context) {
 			return
 		}
 		if err != nil {
-			log.Printf("回填用量小时汇总失败，%s 后重试: %v", usageHourlyBackfillRetryDelay, err)
+			log.Printf("backfilling the usage hourly rollup failed, retrying after %s: %v", usageHourlyBackfillRetryDelay, err)
 			if !sleepContext(ctx, usageHourlyBackfillRetryDelay) {
 				return
 			}
@@ -418,7 +418,7 @@ func (db *DB) runUsageHourlyBackfill(ctx context.Context) {
 		}
 		chunks++
 		if done {
-			log.Printf("用量小时汇总回填完成：%d 块，用时 %s", chunks, time.Since(started).Round(time.Millisecond))
+			log.Printf("usage hourly rollup backfill complete: %d chunks, took %s", chunks, time.Since(started).Round(time.Millisecond))
 			return
 		}
 		if !sleepContext(ctx, usageHourlyBackfillPause) {
@@ -438,8 +438,8 @@ func sleepContext(ctx context.Context, d time.Duration) bool {
 	}
 }
 
-// startUsageHourlyMaintainer 跑回填、按需修复与定时核对。挂在日志写入协程同一组生命周期上,
-// Close 关闭 logStop 时立即取消,不占用后台任务的优雅退出窗口。
+// startUsageHourlyMaintainer runs backfill, on-demand repair and scheduled checks. It is attached to the same lifecycle group as the log write goroutine,
+// Close cancels it immediately when logStop closes, so it does not take up the graceful-shutdown window of background tasks.
 func (db *DB) startUsageHourlyMaintainer(backfill bool) {
 	db.logWg.Add(1)
 	go func() {
@@ -478,8 +478,8 @@ func (db *DB) requestUsageHourlyRepair() {
 	}
 }
 
-// usageHourlyRollupUsable 判断查询能否读汇总:回填已完成,且汇总已覆盖明细里最新的行。
-// 状态与 MAX(id) 在同一条语句里读,PostgreSQL 下是同一个快照。
+// usageHourlyRollupUsable decides whether queries can read the rollup: backfill has finished, and the rollup covers the newest rows in the details.
+// The state and MAX(id) are read in the same statement; on PostgreSQL that is one snapshot.
 func (db *DB) usageHourlyRollupUsable(ctx context.Context) bool {
 	var version, ready int
 	var lastLogID, maxID int64
@@ -496,8 +496,8 @@ func (db *DB) usageHourlyRollupUsable(ctx context.Context) bool {
 	return true
 }
 
-// repairUsageHourly 补齐绕过写入队列插入的行:重算这些行所在的小时。MAX(id) 比记录的
-// 还小说明有行被删掉,汇总无从对账,整表重建。
+// repairUsageHourly fills in rows inserted outside the write queue: it recalculates the hours those rows fall in. If MAX(id) is lower than the recorded
+// value, rows were deleted; the rollup cannot be reconciled, so the whole table is rebuilt.
 func (db *DB) repairUsageHourly(ctx context.Context) {
 	reset := false
 	repaired := 0
@@ -534,15 +534,15 @@ func (db *DB) repairUsageHourly(ctx context.Context) {
 	})
 	if err != nil {
 		if ctx.Err() == nil {
-			log.Printf("修复用量小时汇总失败: %v", err)
+			log.Printf("repairing the usage hourly rollup failed: %v", err)
 		}
 		return
 	}
 	if reset {
-		log.Printf("用量小时汇总与明细对不上，已清空并在后台重新回填")
+		log.Printf("usage hourly rollup does not match the details, cleared and backfilling again in the background")
 		db.runUsageHourlyBackfill(ctx)
 	} else if repaired > 0 {
-		log.Printf("用量小时汇总已补齐写入队列之外插入的明细：重算 %d 个小时", repaired)
+		log.Printf("usage hourly rollup filled in details inserted outside the write queue: recalculated %d hours", repaired)
 	}
 }
 
@@ -570,8 +570,8 @@ func (db *DB) usageHourlyBucketsAfterID(ctx context.Context, tx *sql.Tx, afterID
 	return hours, rows.Err()
 }
 
-// verifyRecentUsageHourly 核对最近几个已结束小时的行数,对不上就重算。覆盖查询前 MAX(id)
-// 比对发现不了的情况:旧版本实例写入的行 id 夹在新实例已登记的 id 之间。
+// verifyRecentUsageHourly checks the row counts of the most recent completed hours and recalculates any that do not match. It covers what the MAX(id) check before a query cannot catch:
+// rows written by old-version instances whose ids fall between ids the new instance has already registered.
 func (db *DB) verifyRecentUsageHourly(ctx context.Context) {
 	var ready int
 	if err := db.conn.QueryRowContext(ctx, `SELECT ready FROM usage_log_hourly_state WHERE id = 1`).Scan(&ready); err != nil || ready != 1 {
@@ -603,30 +603,30 @@ func (db *DB) verifyRecentUsageHourly(ctx context.Context) {
 	})
 	if err != nil {
 		if ctx.Err() == nil {
-			log.Printf("核对用量小时汇总失败: %v", err)
+			log.Printf("verifying the usage hourly rollup failed: %v", err)
 		}
 		return
 	}
-	log.Printf("用量小时汇总核对发现 %d 个小时与明细行数不一致，已按明细重算", len(stale))
+	log.Printf("usage hourly rollup check found %d hours whose row counts differ from the details, recalculated from the details", len(stale))
 }
 
-// usageTimeSpan 是半开区间 [start, end);start 零值表示不设下界,end 零值表示不设上界。
+// usageTimeSpan is a half-open interval [start, end); a zero start means no lower bound, and a zero end means no upper bound.
 type usageTimeSpan struct {
 	start, end time.Time
 }
 
-// usageHourlyPlan 描述一次区间查询如何拆分:汇总表负责 [from, to) 内除 skip 以外的整点小时,
-// raw 里的区间回明细表扫描。useRollup 为 false 时整个区间都扫明细。
+// usageHourlyPlan describes how a range query is split: the rollup table covers the whole hours in [from, to) except skip,
+// and the ranges in raw are scanned from the details table. When useRollup is false, the whole range scans the details.
 type usageHourlyPlan struct {
 	useRollup bool
-	from, to  time.Time // from 零值表示不设下界
+	from, to  time.Time // zero from means no lower bound
 	skip      []time.Time
 	raw       []usageTimeSpan
 }
 
-// planUsageHourly 把 [start, end) 拆成整点小时与零头。cuts 是查询内部的分段边界(窗口起点、
-// "一分钟前"等):落在某个小时中间的边界把那个小时整个交给明细,汇总里的每一行就一定
-// 只属于一个分段。end 为零值时尾部零头从当前小时起不设上界。
+// planUsageHourly splits [start, end) into whole hours and remainders. cuts are the query's internal segment boundaries (window start,
+// "one minute ago" and so on): a boundary that falls inside an hour hands that whole hour to the details, so every row in the rollup is certain to
+// belong to exactly one segment. A zero end means the trailing remainder has no upper bound from the current hour on.
 func planUsageHourly(start, end, now time.Time, cuts ...time.Time) usageHourlyPlan {
 	upper := end
 	if upper.IsZero() {
@@ -695,7 +695,7 @@ func mergeUsageTimeSpans(spans []usageTimeSpan) []usageTimeSpan {
 	return merged
 }
 
-// usageSpanWhere 生成 column 落在 span 内的条件,参数编号接在 args 之后。
+// usageSpanWhere builds the condition that column falls within span; parameter numbering continues after args.
 func (db *DB) usageSpanWhere(column string, span usageTimeSpan, args []interface{}) (string, []interface{}) {
 	parts := make([]string, 0, 2)
 	if !span.start.IsZero() {
@@ -712,7 +712,7 @@ func (db *DB) usageSpanWhere(column string, span usageTimeSpan, args []interface
 	return strings.Join(parts, " AND "), args
 }
 
-// usageHourlyBucketWhere 生成汇总表在 plan 下负责的小时条件。
+// usageHourlyBucketWhere builds the hour condition the rollup table covers under the plan.
 func (db *DB) usageHourlyBucketWhere(column string, plan usageHourlyPlan, args []interface{}) (string, []interface{}) {
 	where, args := db.usageSpanWhere(column, usageTimeSpan{plan.from, plan.to}, args)
 	if len(plan.skip) > 0 {
@@ -726,7 +726,7 @@ func (db *DB) usageHourlyBucketWhere(column string, plan usageHourlyPlan, args [
 	return where, args
 }
 
-// planUsageHourlyQuery 在汇总可用时返回拆分方案,否则整个区间都扫明细。
+// planUsageHourlyQuery returns the split plan when the rollup is usable, otherwise the whole range scans the details.
 func (db *DB) planUsageHourlyQuery(ctx context.Context, start, end, now time.Time, cuts ...time.Time) usageHourlyPlan {
 	plan := planUsageHourly(start, end, now, cuts...)
 	if plan.useRollup && !db.usageHourlyRollupUsable(ctx) {
@@ -735,7 +735,7 @@ func (db *DB) planUsageHourlyQuery(ctx context.Context, start, end, now time.Tim
 	return plan
 }
 
-// sumBigint 包一层 CAST:PostgreSQL 对 BIGINT 求和得到 NUMERIC,直接扫进 int64 不可靠。
+// sumBigint wraps a CAST: PostgreSQL sums BIGINT into NUMERIC, and scanning that directly into int64 is unreliable.
 func sumBigint(expr string) string {
 	return "CAST(COALESCE(SUM(" + expr + "), 0) AS BIGINT)"
 }

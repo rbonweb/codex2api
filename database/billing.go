@@ -28,13 +28,13 @@ type ModelPricing struct {
 	LongCacheReadPricePerMToken         float64
 	LongCacheReadPricePerMTokenPriority float64
 
-	// LongContextThresholdTokens 是该模型进入长上下文档位的输入 token 阈值。
-	// 留空用全局 longContextThreshold（OpenAI 的 272K）；分档线不同的模型需在规则里单独声明。
+	// LongContextThresholdTokens is the input token threshold above which this model enters the long-context tier.
+	// Leave empty to use the global longContextThreshold (272K for OpenAI); models with a different tier boundary must declare it in their own rule.
 	LongContextThresholdTokens int
 
-	// UltrafastMultiplier 是模型自有的 Ultrafast 档倍率(相对 standard 价)。
-	// 大于 0 时 ultrafast 请求按 standard 价乘此倍率计费,不走 Fast 的 2× 与
-	// priority 价;为 0 的模型 ultrafast 继续跟随 Fast 策略。不参与价格覆盖。
+	// UltrafastMultiplier is the model's own Ultrafast tier multiplier (relative to the standard price).
+	// When greater than 0, ultrafast requests are billed at the standard price times this multiplier, and do not go through Fast's 2× and
+	// priority price; models with 0 keep ultrafast following the Fast policy. It does not take part in price overrides.
 	UltrafastMultiplier float64
 }
 
@@ -68,7 +68,7 @@ var (
 	defaultModelPricing = &ModelPricing{InputPricePerMToken: 1.0, OutputPricePerMToken: 2.0}
 
 	modelPricingRules = []modelPricingRule{
-		// GPT-6 Sol/Luna 使用官方标准价和超过 272K 的长上下文价，fast 档沿用 2×。
+		// GPT-6 Sol/Luna use the official standard price and the long-context price above 272K; the fast tier keeps 2×.
 		{model: "gpt-6-sol", pricing: ModelPricing{
 			InputPricePerMToken:         2.0,
 			OutputPricePerMToken:        10.0,
@@ -77,8 +77,8 @@ var (
 			LongOutputPricePerMToken:    15.0,
 			LongCacheReadPricePerMToken: 0.4,
 		}},
-		// gpt-6.1-sol 是独立型号：缓存读取 $0.10、缓存写入 $2.50，
-		// 超过 272K 按输入/缓存 2×、输出 1.5×。不能落入未知 gpt-6 变体的 Astra 兜底。
+		// gpt-6.1-sol is a standalone model: cache read $0.10, cache write $2.50,
+		// above 272K the input/cache is 2× and output is 1.5×. It must not fall into the Astra fallback for unknown gpt-6 variants.
 		{model: "gpt-6.1-sol", pricing: ModelPricing{
 			InputPricePerMToken:         2.0,
 			OutputPricePerMToken:        10.0,
@@ -89,8 +89,8 @@ var (
 			LongOutputPricePerMToken:    15.0,
 			LongCacheReadPricePerMToken: 0.2,
 		}},
-		// gpt-6.1-terra 官方标准价 $1/$5、缓存读取 $0.05、缓存写入 $1.25，
-		// 超过 272K 为 $2/$7.50、缓存 $0.10；fast 档沿用 2×。
+		// gpt-6.1-terra official standard price $1/$5, cache read $0.05, cache write $1.25,
+		// above 272K it is $2/$7.50, cache $0.10; the fast tier keeps 2×.
 		{model: "gpt-6.1-terra", pricing: ModelPricing{
 			InputPricePerMToken:         1.0,
 			OutputPricePerMToken:        5.0,
@@ -109,9 +109,9 @@ var (
 			LongOutputPricePerMToken:    0.75,
 			LongCacheReadPricePerMToken: 0.02,
 		}},
-		// gpt-6-astra：超过 272K 按长上下文价计费（输入/缓存 2×、输出 1.5×），
-		// 即 $20/$75、缓存 $2。fast（priority）2× 倍率由 serviceTierCostMultiplier 兜底；
-		// Ultrafast 档按所处档位 standard 价的 6× 计费。
+		// gpt-6-astra: above 272K it is billed at the long-context price (input/cache 2×, output 1.5×),
+		// i.e. $20/$75, cache $2. The fast (priority) 2× multiplier is provided as a fallback by serviceTierCostMultiplier;
+		// the Ultrafast tier is billed at 6× the standard price of the tier it is in.
 		{model: "gpt-6-astra", pricing: ModelPricing{
 			InputPricePerMToken:         10.0,
 			OutputPricePerMToken:        50.0,
@@ -145,8 +145,8 @@ var (
 			LongOutputPricePerMToken:         270.0,
 			LongOutputPricePerMTokenPriority: 675.0,
 		}},
-		// gpt-5.6-sol: standard 同 gpt-5.5，但 priority 为 2× standard（$10/$60），
-		// 低于 gpt-5.5 的 2.5×，故不复用 gpt-5.5 条目。priority 留空由 fast 档兜底 2×。
+		// gpt-5.6-sol: standard is the same as gpt-5.5, but priority is 2× standard ($10/$60),
+		// lower than gpt-5.5's 2.5×, so it does not reuse the gpt-5.5 entry. Leaving priority empty lets the fast tier fall back to 2×.
 		{model: "gpt-5.6-sol", pricing: ModelPricing{
 			InputPricePerMToken:         5.0,
 			OutputPricePerMToken:        30.0,
@@ -155,8 +155,8 @@ var (
 			LongOutputPricePerMToken:    45.0,
 			LongCacheReadPricePerMToken: 1.0,
 		}},
-		// gpt-5.6-terra: 2026-07-30 官方降价 20%（$2/$12，原 $2.5/$15），priority 2×；
-		// 独立规范键，便于定价页单独覆盖，不与 gpt-5.4 互相污染。
+		// gpt-5.6-terra: official price cut of 20% on 2026-07-30 ($2/$12, previously $2.5/$15), priority 2×;
+		// it has its own canonical key, so the pricing page can override it separately and it does not contaminate gpt-5.4.
 		{model: "gpt-5.6-terra", pricing: ModelPricing{
 			InputPricePerMToken:                 2.0,
 			InputPricePerMTokenPriority:         4.0,
@@ -171,8 +171,8 @@ var (
 			LongCacheReadPricePerMToken:         0.4,
 			LongCacheReadPricePerMTokenPriority: 0.8,
 		}},
-		// gpt-5.6-luna: 2026-07-30 官方降价 80%（$0.20/$1.20，原 $1/$6）。
-		// priority 均为 2× standard，由 fast 档兜底自动得出。
+		// gpt-5.6-luna: official price cut of 80% on 2026-07-30 ($0.20/$1.20, previously $1/$6).
+		// priority is 2× standard for all of them, derived automatically by the fast tier fallback.
 		{model: "gpt-5.6-luna", pricing: ModelPricing{
 			InputPricePerMToken:         0.2,
 			OutputPricePerMToken:        1.2,
@@ -246,7 +246,7 @@ func GetModelPricing(model string) *ModelPricing {
 	}
 	canonical := CanonicalBillingModelKey(model)
 	base := baseModelPricing(normalized, canonical)
-	// 新型号沿用兜底基础价，但覆盖必须独立，不能继承另一个型号的手工价格。
+	// New models keep the fallback base price, but overrides must be independent and must not inherit another model's manually entered price.
 	if key := discoveredGPTPricingKey(normalized); key != "" {
 		canonical = key
 		if override, ok := lookupModelPricingOverride(key); ok && override.Input > 0 && override.Output > 0 {
@@ -254,17 +254,17 @@ func GetModelPricing(model string) *ModelPricing {
 		}
 	}
 
-	// custom / synced 覆盖：以代码默认为底，合并非 0 字段（部分覆盖）。
-	// 覆盖表拷贝到本地副本再改，绝不改动共享的默认 pricing 指针。
+	// custom / synced overrides: start from the code defaults and merge the non-zero fields (partial override).
+	// Copy the override table to a local copy before changing it; never modify the shared default pricing pointer.
 	//
 	// An explicit alias entry is more specific than the canonical model entry.
 	// This matters for internal aliases such as codex-auto-review: it maps to
 	// gpt-5.4 for fallback pricing, but its own price must not be shadowed by a
-	// stale gpt-5.4 override. 两条护栏维持文档化的 custom > synced > 默认次序:
-	//   - synced 别名条目不得压过 custom canonical 条目,否则同步价会在升级后
-	//     静默替换管理员手填价;
-	//   - 别名条目未填的字段回退 canonical 生效价而不是代码默认价,部分覆盖
-	//     不会悄悄丢掉管理员在 canonical 上配好的其余字段。
+	// stale gpt-5.4 override. Two guardrails keep the documented order custom > synced > default:
+	//   - synced alias entries must not override custom canonical entries, otherwise synced prices would silently replace
+	//     admin-entered prices after an upgrade;
+	//   - fields left unset on an alias entry fall back to the canonical effective price rather than the code default, so partial overrides
+	//     do not quietly drop the remaining fields the admin set on the canonical entry.
 	canonicalOv, hasCanonical := lookupModelPricingOverride(canonical)
 	var aliasOv ModelPricingOverride
 	hasAlias := false
@@ -289,8 +289,8 @@ func GetModelPricing(model string) *ModelPricing {
 	return &merged
 }
 
-// baseModelPricing 返回代码内置的模型定价（不含覆盖）。normalized 为归一化后的模型名，
-// canonical 为 codex 归一后的规范名（用于规则表查找）。
+// baseModelPricing returns the built-in model price in code (without overrides). normalized is the normalized model name,
+// canonical is the canonical name normalized by codex (used for rule table lookup).
 func baseModelPricing(normalized, canonical string) *ModelPricing {
 	if pricing := cyberDefaultPricing(canonical); pricing != nil {
 		return pricing
@@ -308,8 +308,8 @@ func CalculateCost(inputTokens, outputTokens, cachedTokens int, model string, se
 	return CalculateCostBreakdown(inputTokens, outputTokens, cachedTokens, model, serviceTier).TotalCost
 }
 
-// usageLogBillingServiceTier 解析一条待写入用量事件的计费 service tier:
-// 显式 BillingServiceTier 优先,其次上游实际 tier,最后请求 tier。
+// usageLogBillingServiceTier resolves the billing service tier of a usage event about to be written:
+// an explicit BillingServiceTier takes precedence, then the upstream's actual tier, and finally the requested tier.
 func usageLogBillingServiceTier(log *UsageLogInput) string {
 	if log == nil {
 		return ""
@@ -339,9 +339,9 @@ func CalculateCostBreakdown(inputTokens, outputTokens, cachedTokens int, model s
 	return CalculateCostBreakdownWithCacheWrites(inputTokens, outputTokens, cachedTokens, 0, 0, model, serviceTier)
 }
 
-// CalculateCostBreakdownWithCacheWrites 在 CalculateCostBreakdown 的基础上计入
-// 提示缓存写入（5 分钟 / 1 小时）。inputTokens 是总输入（未缓存 + 缓存命中 + 缓存写入），
-// 写入价缺省按输入价的 1.25 倍 / 2 倍。
+// CalculateCostBreakdownWithCacheWrites builds on CalculateCostBreakdown and includes
+// prompt cache writes (5 minutes / 1 hour). inputTokens is the total input (uncached + cache hit + cache write),
+// the write price defaults to 1.25× / 2× the input price.
 func CalculateCostBreakdownWithCacheWrites(inputTokens, outputTokens, cachedTokens, cacheWrite5mTokens, cacheWrite1hTokens int, model string, serviceTier string) CostBreakdown {
 	pricing := GetModelPricing(model)
 	if GPTImage25BillingModel(model) != "" {
@@ -456,7 +456,7 @@ func normalizeBillingModelName(model string) string {
 	} else if idx := strings.LastIndex(model, "/"); idx != -1 {
 		model = model[idx+1:]
 	}
-	// Daybreak 的规范计费模型仍是基础模型，专属价格覆盖由别名键处理。
+	// Daybreak's canonical billing model is still the base model; dedicated price overrides are handled by alias keys.
 	model = strings.TrimSuffix(strings.TrimSuffix(model, "-daybreak-blue"), "-daybreak-red")
 	return strings.TrimLeft(model, "/")
 }
@@ -475,8 +475,8 @@ func normalizeCodexBillingModel(model string) (string, bool) {
 		return "gpt-6.1-terra", true
 	case strings.HasPrefix(compact, "gpt-6-luna") || strings.HasPrefix(compact, "gpt6-luna"):
 		return "gpt-6-luna", true
-	// 未知 gpt-6 变体按 astra 兜底，避免掉进 $1/$2 的默认价严重低估。
-	// 只认 gpt-6- / gpt-6. / 裸 gpt-6 前缀，gpt-5.6 不含 "gpt-6" 不会误命中。
+	// Unknown gpt-6 variants fall back to astra, so they do not drop into the $1/$2 default price and badly underestimate.
+	// Only the gpt-6- / gpt-6. / bare gpt-6 prefixes match; gpt-5.6 does not contain "gpt-6", so it cannot match by mistake.
 	case strings.HasPrefix(compact, "gpt-6-") || strings.HasPrefix(compact, "gpt-6.") || compact == "gpt-6" ||
 		strings.HasPrefix(compact, "gpt6-") || strings.HasPrefix(compact, "gpt6.") || compact == "gpt6":
 		return "gpt-6-astra", true
@@ -484,11 +484,11 @@ func normalizeCodexBillingModel(model string) (string, bool) {
 		return "gpt-5.5-pro", true
 	case strings.Contains(compact, "gpt-5.5") || strings.Contains(compact, "gpt5-5") || strings.Contains(compact, "gpt5.5"):
 		return "gpt-5.5", true
-	// GPT-5.6 三个变体官方定价各不相同（developers.openai.com/api/docs/pricing）：
-	//   sol   $5/$30（standard，priority 2× = $10/$60）——同 gpt-5.5 standard 但 priority 更低
-	//   terra $2/$12（2026-07-30 降 20%，原 $2.5/$15）——独立规范键，定价页可单独配置
-	//   luna  $0.20/$1.20（2026-07-30 降 80%，原 $1/$6）
-	// priority 均为 standard 的 2×，由 serviceTierCostMultiplier 兜底自动得出，无需显式配置。
+	// The three GPT-5.6 variants have different official prices (developers.openai.com/api/docs/pricing):
+	//   sol   $5/$30 (standard, priority 2× = $10/$60): same as gpt-5.5 standard, but a lower priority price
+	//   terra $2/$12 (cut 20% on 2026-07-30, previously $2.5/$15): its own canonical key, configurable separately on the pricing page
+	//   luna  $0.20/$1.20 (cut 80% on 2026-07-30, previously $1/$6)
+	// priority is 2× standard for all of them, derived automatically by the serviceTierCostMultiplier fallback, no explicit configuration needed.
 	case strings.Contains(compact, "gpt-5.6-sol") || strings.Contains(compact, "gpt5-6-sol") || strings.Contains(compact, "gpt5.6-sol"):
 		return "gpt-5.6-sol", true
 	case strings.Contains(compact, "gpt-5.6-terra") || strings.Contains(compact, "gpt5-6-terra") || strings.Contains(compact, "gpt5.6-terra"):
@@ -496,10 +496,10 @@ func normalizeCodexBillingModel(model string) (string, bool) {
 	case strings.Contains(compact, "gpt-5.6-luna") || strings.Contains(compact, "gpt5-6-luna") || strings.Contains(compact, "gpt5.6-luna"):
 		return "gpt-5.6-luna", true
 	case strings.Contains(compact, "gpt-5.6") || strings.Contains(compact, "gpt5-6") || strings.Contains(compact, "gpt5.6"):
-		// 未知 gpt-5.6 变体按 sol 兜底；Cyber 已在前面按独立价目处理。
+		// Unknown gpt-5.6 variants fall back to sol; Cyber is already handled above as a separate price list.
 		return "gpt-5.6-sol", true
 	case strings.HasPrefix(compact, "gpt-daybreak-"):
-		// 未知代号别名只保留项目既有 Sol 兜底，不据此生成同步价。
+		// Unknown code-name aliases only keep the project's existing Sol fallback and do not generate synced prices from it.
 		return "gpt-5.6-sol", true
 	case strings.Contains(compact, "gpt-5.4-mini") || strings.Contains(compact, "gpt5-4-mini") || strings.Contains(compact, "gpt5.4-mini"):
 		return "gpt-5.4-mini", true

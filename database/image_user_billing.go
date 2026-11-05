@@ -63,8 +63,8 @@ func ValidateModelUserBilling(model string, o ModelPricingOverride) error {
 // UserBilling records the policy and successful billed units at settlement time.
 // Empty mode identifies legacy rows; an explicit unit-mode zero is never replaced
 // with upstream cost when displaying failed/undelivered outputs.
-// ImageUnitPrice / BilledImageCount 沿用历史列名,语义是"单位价 / 计费单位数":
-// per_image 为张。
+// ImageUnitPrice / BilledImageCount keep their historical column names, but the meaning is "unit price / billable unit count":
+// per_image counts individual images.
 type UserBilling struct {
 	UserBillingMode  string  `json:"user_billing_mode"`
 	ImageUnitPrice   float64 `json:"image_unit_price"`

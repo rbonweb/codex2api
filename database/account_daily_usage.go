@@ -12,15 +12,15 @@ import (
 	"time"
 )
 
-// AccountDailyUsage 是某账号某一天的官方结算用量快照。
+// AccountDailyUsage is the official settled usage snapshot of one account for one day.
 //
-// 上游 daily-workspace-usage-counts 可回溯的深度有限（2026-09 实测 ≥84 天，2026-08
-// 时只有 7 天），因此这里按天落库累积长期历史。同一天的数值在结算前会变（当天的
-// 记录全天持续更新），所以写入是覆盖式 upsert，快照任务每轮回补整个滚动窗口。
+// The upstream daily-workspace-usage-counts endpoint can look back only a limited depth (measured 2026-09 at 84+ days, 2026-08
+// only 7 days), so history is accumulated long-term by storing rows per day. The values for the same day change before settlement (while the day
+// is still running, the record keeps updating), so writes are overwriting upserts, and the snapshot task backfills the whole rolling window each round.
 //
-// 同一行还挂着 daily-token-usage-breakdown 的模型×速度拆分（Breakdown* 三列），
-// 由独立的 UpsertAccountDailyBreakdown 写入：两个上游端点各自成功失败，谁到了谁写
-// 自己的列，互不覆盖。
+// The same row also holds the model x speed breakdown of daily-token-usage-breakdown (the three Breakdown* columns),
+// written by the separate UpsertAccountDailyBreakdown: the two upstream endpoints succeed or fail independently, and whichever arrives writes
+// its own columns without overwriting the other.
 type AccountDailyUsage struct {
 	AccountID int64  `json:"account_id"`
 	Day       string `json:"day"`
@@ -35,25 +35,25 @@ type AccountDailyUsage struct {
 	OutputTokens        int64 `json:"output_tokens"`
 	TotalTokens         int64 `json:"total_tokens"`
 
-	// Settled 为 false 说明抓取时这天还没结算（通常是当天）。
-	// 下一轮快照回补同一天时会翻成 true。
+	// Settled is false when the day was not yet settled at fetch time (usually the current day).
+	// The next snapshot round backfilling the same day flips it to true.
 	Settled bool `json:"settled"`
 
-	// ClientsJSON / ModelsJSON 原样保存上游的拆分数组，前端直接渲染。
+	// ClientsJSON / ModelsJSON store the upstream split arrays as-is; the frontend renders them directly.
 	ClientsJSON string    `json:"clients_json"`
 	ModelsJSON  string    `json:"models_json"`
 	SyncedAt    time.Time `json:"synced_at"`
 
-	// BreakdownPercent / BreakdownJSON / SurfacesJSON 来自 daily-token-usage-breakdown：
-	// 当天各 (model, speed) 与各产品入口的归一化占比。上游按请求区间的峰值归一化，
-	// 数值只在同一天内部有意义（份额 = percent / BreakdownPercent），绝不能跨天累加
-	// 或跨次同步比较。BreakdownPercent 为 0 表示这天还没同步到拆分。
+	// BreakdownPercent / BreakdownJSON / SurfacesJSON come from daily-token-usage-breakdown:
+	// the normalized shares of each (model, speed) and each product surface for the day. The upstream normalizes against the peak of the request range,
+	// so values are only meaningful within a single day (share = percent / BreakdownPercent) and must never be summed across days
+	// or compared across syncs. A BreakdownPercent of 0 means the split for this day has not been synced yet.
 	BreakdownPercent float64 `json:"breakdown_percent"`
 	BreakdownJSON    string  `json:"breakdown_json"`
 	SurfacesJSON     string  `json:"surfaces_json"`
 }
 
-// AccountDailyUsageInput 是一次 counts upsert 的入参。
+// AccountDailyUsageInput is the input of one counts upsert.
 type AccountDailyUsageInput struct {
 	AccountID           int64
 	Day                 string
@@ -70,24 +70,24 @@ type AccountDailyUsageInput struct {
 	ModelsJSON          string
 }
 
-// AccountDailyBreakdownModel 是落库的单个 (model, speed) 占比条目。
+// AccountDailyBreakdownModel is one persisted (model, speed) share entry.
 type AccountDailyBreakdownModel struct {
 	Model   string  `json:"model"`
 	Speed   string  `json:"speed"`
 	Percent float64 `json:"percent"`
 }
 
-// AccountDailyBreakdownInput 是一次拆分 upsert 的入参。
+// AccountDailyBreakdownInput is the input of one breakdown upsert.
 type AccountDailyBreakdownInput struct {
 	AccountID int64
 	Day       string
-	// Percent 是当天全部 (model, speed) 占比之和，作为份额分母。
+	// Percent is the sum of all (model, speed) shares for the day, used as the share denominator.
 	Percent  float64
 	Models   []AccountDailyBreakdownModel
 	Surfaces map[string]float64
 }
 
-// ParseAccountDailyBreakdownModels 解析 BreakdownJSON，坏数据退回空切片。
+// ParseAccountDailyBreakdownModels parses BreakdownJSON; bad data falls back to an empty slice.
 func ParseAccountDailyBreakdownModels(raw string) []AccountDailyBreakdownModel {
 	trimmed := strings.TrimSpace(raw)
 	if trimmed == "" {
@@ -100,7 +100,7 @@ func ParseAccountDailyBreakdownModels(raw string) []AccountDailyBreakdownModel {
 	return out
 }
 
-// ParseAccountDailySurfaces 解析 SurfacesJSON，坏数据退回空表。
+// ParseAccountDailySurfaces parses SurfacesJSON; bad data falls back to an empty table.
 func ParseAccountDailySurfaces(raw string) map[string]float64 {
 	trimmed := strings.TrimSpace(raw)
 	if trimmed == "" {
@@ -164,7 +164,7 @@ func (db *DB) ensureAccountDailyUsageTable(ctx context.Context) error {
 			return err
 		}
 	}
-	// 2026-09 新增的拆分三列：老库靠幂等加列补齐。
+	// The three breakdown columns added in 2026-09: old databases get them through idempotent column additions.
 	breakdownColumns := []struct{ name, def string }{
 		{"breakdown_percent", "DOUBLE PRECISION NOT NULL DEFAULT 0"},
 		{"breakdown_json", "TEXT NOT NULL DEFAULT '[]'"},
@@ -185,9 +185,9 @@ func (db *DB) ensureAccountDailyUsageTable(ctx context.Context) error {
 	return nil
 }
 
-// UpsertAccountDailyUsage 覆盖式写入一天的 counts 快照。上游同一天的数值会随结算
-// 变化，所以固定覆盖而不是累加。不触碰拆分三列：那是 UpsertAccountDailyBreakdown
-// 的地盘，两个端点独立同步。
+// UpsertAccountDailyUsage writes the counts snapshot of one day as an overwrite. The upstream values for the same day change as settlement happens,
+// so it always overwrites instead of accumulating. It does not touch the three breakdown columns: those belong to UpsertAccountDailyBreakdown,
+// and the two endpoints sync independently.
 func (db *DB) UpsertAccountDailyUsage(ctx context.Context, input AccountDailyUsageInput) error {
 	if err := db.ensureAccountDailyUsageTable(ctx); err != nil {
 		return err
@@ -223,9 +223,9 @@ func (db *DB) UpsertAccountDailyUsage(ctx context.Context, input AccountDailyUsa
 	return err
 }
 
-// UpsertAccountDailyBreakdown 覆盖式写入一天的模型×速度拆分。只写拆分三列：
-// 行不存在时以零 counts 建行（synced_at 取当前时间满足非空约束，counts 到了会覆盖），
-// 行已存在时不动 counts 列与 synced_at。
+// UpsertAccountDailyBreakdown writes the model x speed breakdown of one day as an overwrite. It writes only the three breakdown columns:
+// if the row does not exist, it creates the row with zero counts (synced_at takes the current time to satisfy the NOT NULL constraint; counts are overwritten when they arrive),
+// and if the row already exists, the counts columns and synced_at are left alone.
 func (db *DB) UpsertAccountDailyBreakdown(ctx context.Context, input AccountDailyBreakdownInput) error {
 	if err := db.ensureAccountDailyUsageTable(ctx); err != nil {
 		return err
@@ -265,27 +265,27 @@ func (db *DB) UpsertAccountDailyBreakdown(ctx context.Context, input AccountDail
 	return err
 }
 
-// accountDailyUsageCountsEvidence 判断一行是否真的来自 counts 端点。拆分先到时会以零
-// counts 建行（credits/turns/tokens 全 0 且未结算），这种行不能算「有官方结算快照」，
-// 否则 page-stats 会把它当成 $0 的真实快照、深回补也会被跳过。counts 是稀疏端点，
-// 只回有活动的日子，真实 counts 行至少有一项非零。
+// accountDailyUsageCountsEvidence reports whether a row really came from the counts endpoint. When the breakdown arrives first it creates the row with zero
+// counts (credits/turns/tokens all 0 and not settled). Such a row must not count as "has an official settled snapshot",
+// otherwise page-stats would treat it as a real $0 snapshot and deep backfill would be skipped. counts is a sparse endpoint,
+// returning only days with activity, so a real counts row has at least one non-zero value.
 const accountDailyUsageCountsEvidence = "(settled OR turns>0 OR credits>0 OR total_tokens>0)"
 
-// HasCounts 报告这一行是否带有 counts 端点写入的数据，与 accountDailyUsageCountsEvidence 同义。
+// HasCounts reports whether this row carries data written by the counts endpoint; it has the same meaning as accountDailyUsageCountsEvidence.
 func (u *AccountDailyUsage) HasCounts() bool {
 	return u != nil && (u.Settled || u.Turns > 0 || u.Credits > 0 || u.TotalTokens > 0)
 }
 
-// AccountDailyUsageCoverage 是某账号本地快照的覆盖起点，按端点分开。
+// AccountDailyUsageCoverage is the coverage start of one account's local snapshots, per endpoint.
 type AccountDailyUsageCoverage struct {
-	// CountsOldestDay 是最早一条带 counts 数据的日期，空串表示还没有。
+	// CountsOldestDay is the earliest date with a row carrying counts data; an empty string means none yet.
 	CountsOldestDay string
-	// BreakdownOldestDay 是最早一条带拆分的日期，空串表示还没有。
+	// BreakdownOldestDay is the earliest date with a row carrying a breakdown; an empty string means none yet.
 	BreakdownOldestDay string
 }
 
-// GetAccountDailyUsageCoverage 返回两个端点各自的本地覆盖起点。同步据此按端点决定
-// 是否深回补：只看「有没有行」会被拆分先建的零 counts 行骗过。
+// GetAccountDailyUsageCoverage returns each endpoint's local coverage start. Sync uses it to decide per endpoint
+// whether to deep backfill: checking only "does a row exist" would be fooled by the zero-counts rows that the breakdown created first.
 func (db *DB) GetAccountDailyUsageCoverage(ctx context.Context, accountID int64) (AccountDailyUsageCoverage, error) {
 	var out AccountDailyUsageCoverage
 	if err := db.ensureAccountDailyUsageTable(ctx); err != nil {
@@ -312,7 +312,7 @@ const accountDailyUsageSelect = `SELECT account_id, day, credits, users, threads
 	settled, clients_json, models_json, synced_at,
 	breakdown_percent, breakdown_json, surfaces_json FROM account_daily_usage`
 
-// ListAccountDailyUsage 返回某账号最近 days 天的快照，按日期升序。
+// ListAccountDailyUsage returns the snapshots of one account for the most recent days days, in ascending date order.
 func (db *DB) ListAccountDailyUsage(ctx context.Context, accountID int64, days int) ([]*AccountDailyUsage, error) {
 	if err := db.ensureAccountDailyUsageTable(ctx); err != nil {
 		return nil, err
@@ -343,10 +343,10 @@ func (db *DB) ListAccountDailyUsage(ctx context.Context, accountID int64, days i
 	return out, rows.Err()
 }
 
-// SumAccountDailyUsage 汇总某账号最近 days 天的 credits 与 token 总量，
-// 供列表列与统计卡使用（不带客户端/模型拆分，避免解析 JSON）。
-// 只统计带 counts 数据的行：拆分先建的零 counts 行不算快照，否则列表会把
-// 「counts 从没同步成功」的账号显示成 $0 并停止回补。
+// SumAccountDailyUsage totals the credits and token volume of one account over the most recent days days,
+// for the list column and the stats card (without client/model breakdowns, to avoid parsing JSON).
+// It counts only rows that carry counts data: zero-counts rows created by the breakdown are not snapshots, otherwise the list would show
+// accounts whose counts never synced successfully as $0 and stop backfilling.
 func (db *DB) SumAccountDailyUsage(ctx context.Context, accountIDs []int64, days int) (map[int64]AccountDailyUsageTotal, error) {
 	if err := db.ensureAccountDailyUsageTable(ctx); err != nil {
 		return nil, err
@@ -385,8 +385,8 @@ func (db *DB) SumAccountDailyUsage(ctx context.Context, accountIDs []int64, days
 	return out, rows.Err()
 }
 
-// SumAccountDailyUsageSince 汇总某账号自 sinceDay（含）起所有带 counts 数据的快照，
-// 返回 credits 合计与天数。供「本周期已用」卡片按账号的重置周期起点累加。
+// SumAccountDailyUsageSince totals all snapshots carrying counts data from sinceDay (inclusive) onward,
+// returning the credits total and the number of days. It is used by the "used this period" card, which sums from the start of the account's reset period.
 func (db *DB) SumAccountDailyUsageSince(ctx context.Context, accountID int64, sinceDay string) (credits float64, days int, err error) {
 	if err := db.ensureAccountDailyUsageTable(ctx); err != nil {
 		return 0, 0, err
@@ -403,14 +403,14 @@ func (db *DB) SumAccountDailyUsageSince(ctx context.Context, accountID int64, si
 	return credits, days, nil
 }
 
-// AccountDailyUsageTotal 是一个账号在窗口内的汇总。
+// AccountDailyUsageTotal is one account's totals within a window.
 type AccountDailyUsageTotal struct {
 	Credits     float64 `json:"credits"`
 	TotalTokens int64   `json:"total_tokens"`
 	Turns       int64   `json:"turns"`
 }
 
-// PruneAccountDailyUsage 删除早于保留期的快照，避免表无限增长。
+// PruneAccountDailyUsage deletes snapshots older than the retention period, so the table does not grow without bound.
 func (db *DB) PruneAccountDailyUsage(ctx context.Context, keepDays int) error {
 	if err := db.ensureAccountDailyUsageTable(ctx); err != nil {
 		return err
@@ -423,13 +423,13 @@ func (db *DB) PruneAccountDailyUsage(ctx context.Context, keepDays int) error {
 	return err
 }
 
-// AccountDailySurface 是一个产品入口的占比条目。
+// AccountDailySurface is the share entry of one product surface.
 type AccountDailySurface struct {
 	Surface string
 	Percent float64
 }
 
-// SortedAccountDailySurfaces 把入口占比表按占比降序、同占比按名字排成稳定列表。
+// SortedAccountDailySurfaces sorts the surface share table by share, descending, with ties ordered by name, into a stable list.
 func SortedAccountDailySurfaces(surfaces map[string]float64) []AccountDailySurface {
 	out := make([]AccountDailySurface, 0, len(surfaces))
 	for name, value := range surfaces {

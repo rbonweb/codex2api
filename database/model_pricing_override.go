@@ -8,16 +8,16 @@ import (
 	"sync/atomic"
 )
 
-// 模型定价覆盖来源。custom 由管理员手填(最高优先级)，synced 由「从 JSON URL 同步」写入。
+// Source of a model pricing override. custom is entered by hand by an admin (highest priority), synced is written by "Sync from JSON URL".
 const (
 	ModelPricingSourceCustom = "custom"
 	ModelPricingSourceSynced = "synced"
 )
 
-// ModelPricingOverride 是单个模型的定价覆盖（设置存储与同步 URL 载荷共用同一形态）。
-// Token 价格单位：USD / 1M tokens。Token 字段为 0 时回退代码默认价。
-// ImageUnitPrice 则为用户单位价（按张模式下的 USD / 计费单位），该模式要求显式正单价；
-// 优先级：custom > synced > 代码默认。
+// ModelPricingOverride is the override for a single model (shared by the settings storage and the sync URL payload).
+// Token price unit: USD / 1M tokens. When a token field is 0, it falls back to the code default price.
+// ImageUnitPrice is the user unit price (USD per billable unit in per-image mode), which requires an explicit positive unit price in that mode;
+// Priority: custom > synced > code default.
 type ModelPricingOverride struct {
 	UserBillingMode  string  `json:"user_billing_mode,omitempty"`
 	ImageUnitPrice   float64 `json:"image_unit_price,omitempty"` // USD per billed unit (image) in unit billing mode; upstream cost stays independent.
@@ -25,7 +25,7 @@ type ModelPricingOverride struct {
 	CachedImageInput float64 `json:"cached_image_input,omitempty"`
 	Source           string  `json:"source,omitempty"`
 
-	// 标准档（短上下文）
+	// Standard tier (short context)
 	Input       float64 `json:"input,omitempty"`
 	CachedInput float64 `json:"cached_input,omitempty"`
 	// Prompt-cache creation prices are informational today; actual
@@ -34,34 +34,34 @@ type ModelPricingOverride struct {
 	CacheWrite1h float64 `json:"cache_write_1h,omitempty"`
 	Output       float64 `json:"output,omitempty"`
 
-	// priority(fast) 档
+	// priority (fast) tier
 	InputPriority       float64 `json:"input_priority,omitempty"`
 	CachedInputPriority float64 `json:"cached_input_priority,omitempty"`
 	OutputPriority      float64 `json:"output_priority,omitempty"`
 
-	// 长上下文档（input 超过该模型的分档线：OpenAI 272K）
+	// Long-context tier (input above the model's tier threshold: OpenAI 272K)
 	InputLong       float64 `json:"input_long,omitempty"`
 	CachedInputLong float64 `json:"cached_input_long,omitempty"`
 	OutputLong      float64 `json:"output_long,omitempty"`
 
-	// 长上下文 + priority/fast 档。OpenAI 官方价目表会独立发布这组价格，
-	// 不能再用短上下文 priority 或长上下文 standard 的倍率推算。
+	// Long-context + priority/fast tier. OpenAI's official price list publishes this group of prices separately,
+	// so it can no longer be derived from the short-context priority or long-context standard multipliers.
 	InputLongPriority       float64 `json:"input_long_priority,omitempty"`
 	CachedInputLongPriority float64 `json:"cached_input_long_priority,omitempty"`
 	OutputLongPriority      float64 `json:"output_long_priority,omitempty"`
 
-	// 官方长上下文分档线。OpenAI 当前为 272K；同步保存该值，
-	// 避免新模型在只有价格覆盖时错误继承全局默认阈值。
+	// The official long-context threshold. OpenAI's is currently 272K; save this value alongside it,
+	// so a new model with only price overrides does not wrongly inherit the global default threshold.
 	LongContextThresholdTokens int `json:"long_context_threshold_tokens,omitempty"`
 }
 
-// NormalizeModelPricingOverride 保留模型覆盖中的长上下文档位。
-// 长上下文价格由每个模型自己的规则决定，不能对 Astra 做全局清零。
+// NormalizeModelPricingOverride keeps the long-context tiers in the model override.
+// Long-context prices are decided by each model's own rules; they must not be zeroed globally for Astra.
 func NormalizeModelPricingOverride(model string, o ModelPricingOverride) ModelPricingOverride {
 	return o
 }
 
-// IsEmpty 判断覆盖是否不含任何价格（全 0）。
+// IsEmpty reports whether the override contains no prices (all zero).
 func (o ModelPricingOverride) IsEmpty() bool {
 	return o.UserBillingMode == "" && o.ImageUnitPrice == 0 && o.ImageInput == 0 && o.CachedImageInput == 0 && o.Input == 0 && o.CachedInput == 0 && o.CacheWrite5m == 0 && o.CacheWrite1h == 0 && o.Output == 0 &&
 		o.InputPriority == 0 && o.CachedInputPriority == 0 && o.OutputPriority == 0 &&
@@ -70,7 +70,7 @@ func (o ModelPricingOverride) IsEmpty() bool {
 		o.LongContextThresholdTokens == 0
 }
 
-// applyNonZero 把覆盖里非 0 的价格字段写入 p（就地）。0 字段保持 p 原值（代码默认）。
+// applyNonZero writes the non-zero price fields of the override into p (in place). Zero fields keep p's original value (the code default).
 func (o ModelPricingOverride) applyNonZero(p *ModelPricing) {
 	if o.UserBillingMode != "" {
 		p.UserBillingMode = o.UserBillingMode
@@ -131,8 +131,8 @@ func (o ModelPricingOverride) applyNonZero(p *ModelPricing) {
 	}
 }
 
-// ModelPricingOverrideFromPricing 把一份完整 ModelPricing 投影为覆盖 JSON 形态，
-// 供管理端展示"当前生效价"与编辑初值。
+// ModelPricingOverrideFromPricing projects a complete ModelPricing into the override JSON shape,
+// for the admin view of the "currently effective price" and the initial values for editing.
 func ModelPricingOverrideFromPricing(p *ModelPricing, source string) ModelPricingOverride {
 	if p == nil {
 		return ModelPricingOverride{Source: source}
@@ -161,7 +161,7 @@ func ModelPricingOverrideFromPricing(p *ModelPricing, source string) ModelPricin
 	}
 }
 
-// pricingOverrides 存 map[string]ModelPricingOverride（key 为规范化模型名，小写）。
+// pricingOverrides stores map[string]ModelPricingOverride (the key is the normalized model name, lower case).
 var pricingOverrides atomic.Value
 
 // modelPricingMutationSlot serializes the very short read/merge/write phase of
@@ -193,7 +193,7 @@ func (db *DB) MutateModelPricingSettings(ctx context.Context, syncURL *string, m
 	}
 	overrides, err := ParseModelPricingOverridesJSON(settings.ModelPricingOverrides)
 	if err != nil {
-		return nil, fmt.Errorf("解析模型定价覆盖失败，已中止写入以免清空现有价格: %w", err)
+		return nil, fmt.Errorf("failed to parse model pricing overrides, write aborted to avoid clearing existing prices: %w", err)
 	}
 	if mutate != nil {
 		if err := mutate(overrides); err != nil {
@@ -223,7 +223,7 @@ func (db *DB) MutateModelPricingSettings(ctx context.Context, syncURL *string, m
 	return overrides, nil
 }
 
-// SetModelPricingOverrides 刷新运行时定价覆盖表（key 归一为小写去空白）。
+// SetModelPricingOverrides refreshes the runtime pricing override table (keys are normalized to lower case with whitespace removed).
 func SetModelPricingOverrides(m map[string]ModelPricingOverride) {
 	norm := make(map[string]ModelPricingOverride, len(m))
 	for k, v := range m {
@@ -247,7 +247,7 @@ func currentModelPricingOverrides() map[string]ModelPricingOverride {
 	return nil
 }
 
-// lookupModelPricingOverride 按规范化模型名查覆盖。
+// lookupModelPricingOverride looks up the override by normalized model name.
 func lookupModelPricingOverride(canonical string) (ModelPricingOverride, bool) {
 	m := currentModelPricingOverrides()
 	if m == nil {
@@ -257,7 +257,7 @@ func lookupModelPricingOverride(canonical string) (ModelPricingOverride, bool) {
 	return ov, ok
 }
 
-// CanonicalBillingModelKey 返回某模型用于定价查找/覆盖的规范键（小写）。
+// CanonicalBillingModelKey returns the canonical key (lower case) that a model uses for pricing lookup and overrides.
 func CanonicalBillingModelKey(model string) string {
 	normalized := normalizeBillingModelName(model)
 	if imageModel := GPTImage25BillingModel(normalized); imageModel != "" {
@@ -319,7 +319,7 @@ func PricingAliasTarget(model string) string {
 	return ""
 }
 
-// ModelPricingSourceFor 返回某规范键当前定价来源：custom / synced / default。
+// ModelPricingSourceFor returns the current pricing source for a canonical key: custom / synced / default.
 func ModelPricingSourceFor(canonical string) string {
 	if ov, ok := lookupModelPricingOverride(canonical); ok {
 		if ov.Source == ModelPricingSourceCustom {
@@ -338,8 +338,8 @@ func ModelPricingSourceFor(canonical string) string {
 	return "default"
 }
 
-// ParseModelPricingOverridesJSON 解析存储的 JSON blob（model → override）。
-// 空串返回空 map、nil error。
+// ParseModelPricingOverridesJSON parses the stored JSON blob (model → override).
+// An empty string returns an empty map and a nil error.
 func ParseModelPricingOverridesJSON(s string) (map[string]ModelPricingOverride, error) {
 	s = strings.TrimSpace(s)
 	if s == "" || s == "{}" {
@@ -368,7 +368,7 @@ func ParseModelPricingOverridesJSON(s string) (map[string]ModelPricingOverride, 
 	return out, nil
 }
 
-// MarshalModelPricingOverridesJSON 序列化覆盖表为存储用 JSON。
+// MarshalModelPricingOverridesJSON serializes the override table into the JSON form used for storage.
 func MarshalModelPricingOverridesJSON(m map[string]ModelPricingOverride) (string, error) {
 	if len(m) == 0 {
 		return "{}", nil

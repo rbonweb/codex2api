@@ -7,8 +7,8 @@ import (
 	"time"
 )
 
-// TestUsageLogViaWebsocketRoundTrip 验证 via_websocket 字段从写入到读回完整保留
-// （覆盖 InsertUsageLog 的批量 INSERT 与 ListRecentUsageLogs 的 SELECT/Scan）。
+// TestUsageLogViaWebsocketRoundTrip verifies that the via_websocket field is fully preserved from write to read-back
+// (covers the batch INSERT in InsertUsageLog and the SELECT/Scan in ListRecentUsageLogs).
 func TestUsageLogViaWebsocketRoundTrip(t *testing.T) {
 	db, err := New("sqlite", filepath.Join(t.TempDir(), "codex2api.db"))
 	if err != nil {
@@ -17,7 +17,7 @@ func TestUsageLogViaWebsocketRoundTrip(t *testing.T) {
 	defer db.Close()
 	ctx := context.Background()
 
-	// 一条走 WS、一条不走 WS
+	// one goes through WS, one does not
 	if err := db.InsertUsageLog(ctx, &UsageLogInput{
 		Endpoint: "/v1/responses", Model: "gpt-5.5", StatusCode: 200, ViaWebsocket: true,
 	}); err != nil {
@@ -47,7 +47,7 @@ func TestUsageLogViaWebsocketRoundTrip(t *testing.T) {
 		}
 	}
 	if !sawWS {
-		t.Error("expected at least one log with ViaWebsocket=true (字段未正确写入/读回)")
+		t.Error("expected at least one log with ViaWebsocket=true (field was not written or read back correctly)")
 	}
 	if !sawHTTP {
 		t.Error("expected at least one log with ViaWebsocket=false")

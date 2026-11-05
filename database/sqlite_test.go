@@ -17,7 +17,7 @@ func TestNewSQLiteInitializesFreshDatabase(t *testing.T) {
 
 	db, err := New("sqlite", dbPath)
 	if err != nil {
-		t.Fatalf("New(sqlite) 返回错误: %v", err)
+		t.Fatalf("New(sqlite) returned error: %v", err)
 	}
 	defer db.Close()
 
@@ -167,7 +167,7 @@ func TestSQLiteAPIKeyLookupAndCount(t *testing.T) {
 
 	db, err := New("sqlite", dbPath)
 	if err != nil {
-		t.Fatalf("New(sqlite) 返回错误: %v", err)
+		t.Fatalf("New(sqlite) returned error: %v", err)
 	}
 	defer db.Close()
 
@@ -175,18 +175,18 @@ func TestSQLiteAPIKeyLookupAndCount(t *testing.T) {
 	key := "sk-test-lookup-1234567890"
 	id, err := db.InsertAPIKey(ctx, "lookup", key)
 	if err != nil {
-		t.Fatalf("InsertAPIKey 返回错误: %v", err)
+		t.Fatalf("InsertAPIKey returned error: %v", err)
 	}
 	count, err := db.CountAPIKeys(ctx)
 	if err != nil {
-		t.Fatalf("CountAPIKeys 返回错误: %v", err)
+		t.Fatalf("CountAPIKeys returned error: %v", err)
 	}
 	if count != 1 {
 		t.Fatalf("CountAPIKeys = %d, want 1", count)
 	}
 	row, err := db.GetAPIKeyByValue(ctx, key)
 	if err != nil {
-		t.Fatalf("GetAPIKeyByValue 返回错误: %v", err)
+		t.Fatalf("GetAPIKeyByValue returned error: %v", err)
 	}
 	if row.ID != id || row.Name != "lookup" || row.Key != key {
 		t.Fatalf("API key row = %#v, want id=%d name=lookup key=%s", row, id, key)
@@ -198,22 +198,22 @@ func TestSQLiteAPIKeyReadDoesNotWaitBehindAccountWrite(t *testing.T) {
 
 	db, err := New("sqlite", dbPath)
 	if err != nil {
-		t.Fatalf("New(sqlite) 返回错误: %v", err)
+		t.Fatalf("New(sqlite) returned error: %v", err)
 	}
 	defer db.Close()
 
 	ctx := context.Background()
 	if _, err := db.InsertAPIKey(ctx, "lookup", "sk-test-lookup-1234567890"); err != nil {
-		t.Fatalf("InsertAPIKey 返回错误: %v", err)
+		t.Fatalf("InsertAPIKey returned error: %v", err)
 	}
 	accountID, err := db.InsertAccount(ctx, "writer", "rt-writer", "")
 	if err != nil {
-		t.Fatalf("InsertAccount 返回错误: %v", err)
+		t.Fatalf("InsertAccount returned error: %v", err)
 	}
 
 	tx, err := db.conn.BeginTx(ctx, nil)
 	if err != nil {
-		t.Fatalf("BeginTx 返回错误: %v", err)
+		t.Fatalf("BeginTx returned error: %v", err)
 	}
 	defer tx.Rollback()
 	if _, err := tx.ExecContext(ctx, `UPDATE accounts SET updated_at = CURRENT_TIMESTAMP WHERE id = $1`, accountID); err != nil {
@@ -224,7 +224,7 @@ func TestSQLiteAPIKeyReadDoesNotWaitBehindAccountWrite(t *testing.T) {
 	defer cancel()
 	count, err := db.CountAPIKeys(readCtx)
 	if err != nil {
-		t.Fatalf("CountAPIKeys while account write is open 返回错误: %v", err)
+		t.Fatalf("CountAPIKeys while account write is open returned error: %v", err)
 	}
 	if count != 1 {
 		t.Fatalf("CountAPIKeys = %d, want 1", count)
@@ -236,19 +236,19 @@ func TestSQLiteQueuedAccountWritesDoNotBlockAPIKeyReads(t *testing.T) {
 
 	db, err := New("sqlite", dbPath)
 	if err != nil {
-		t.Fatalf("New(sqlite) 返回错误: %v", err)
+		t.Fatalf("New(sqlite) returned error: %v", err)
 	}
 	defer db.Close()
 
 	ctx := context.Background()
 	if _, err := db.InsertAPIKey(ctx, "lookup", "sk-test-lookup-1234567890"); err != nil {
-		t.Fatalf("InsertAPIKey 返回错误: %v", err)
+		t.Fatalf("InsertAPIKey returned error: %v", err)
 	}
 	accountIDs := make([]int64, 0, maxSQLiteOpenConns*2)
 	for i := 0; i < maxSQLiteOpenConns*2; i++ {
 		id, err := db.InsertAccount(ctx, "writer", "rt-writer", "")
 		if err != nil {
-			t.Fatalf("InsertAccount 返回错误: %v", err)
+			t.Fatalf("InsertAccount returned error: %v", err)
 		}
 		accountIDs = append(accountIDs, id)
 	}
@@ -271,7 +271,7 @@ func TestSQLiteQueuedAccountWritesDoNotBlockAPIKeyReads(t *testing.T) {
 	<-db.sqliteWriteSem
 	wg.Wait()
 	if err != nil {
-		t.Fatalf("CountAPIKeys while account writes are queued 返回错误: %v", err)
+		t.Fatalf("CountAPIKeys while account writes are queued returned error: %v", err)
 	}
 	if count != 1 {
 		t.Fatalf("CountAPIKeys = %d, want 1", count)
@@ -283,7 +283,7 @@ func TestSQLiteUpdateCredentialsMergesAtomically(t *testing.T) {
 
 	db, err := New("sqlite", dbPath)
 	if err != nil {
-		t.Fatalf("New(sqlite) 返回错误: %v", err)
+		t.Fatalf("New(sqlite) returned error: %v", err)
 	}
 	defer db.Close()
 
@@ -293,18 +293,18 @@ func TestSQLiteUpdateCredentialsMergesAtomically(t *testing.T) {
 		"email":         "old@example.com",
 	}, "")
 	if err != nil {
-		t.Fatalf("InsertAccountWithCredentials 返回错误: %v", err)
+		t.Fatalf("InsertAccountWithCredentials returned error: %v", err)
 	}
 	if err := db.UpdateCredentials(ctx, accountID, map[string]interface{}{
 		"codex_7d_used_percent": 42.5,
 		"email":                 "new@example.com",
 	}); err != nil {
-		t.Fatalf("UpdateCredentials 返回错误: %v", err)
+		t.Fatalf("UpdateCredentials returned error: %v", err)
 	}
 
 	row, err := db.GetAccountByID(ctx, accountID)
 	if err != nil {
-		t.Fatalf("GetAccountByID 返回错误: %v", err)
+		t.Fatalf("GetAccountByID returned error: %v", err)
 	}
 	if got := row.GetCredential("refresh_token"); got != "rt-merge" {
 		t.Fatalf("refresh_token = %q, want rt-merge", got)
@@ -322,7 +322,7 @@ func TestFindActiveAccountByOAuthIdentity(t *testing.T) {
 
 	db, err := New("sqlite", dbPath)
 	if err != nil {
-		t.Fatalf("New(sqlite) 返回错误: %v", err)
+		t.Fatalf("New(sqlite) returned error: %v", err)
 	}
 	defer db.Close()
 
@@ -334,12 +334,12 @@ func TestFindActiveAccountByOAuthIdentity(t *testing.T) {
 		"allow_duplicate": "true",
 	}, "")
 	if err != nil {
-		t.Fatalf("InsertAccountWithCredentials 返回错误: %v", err)
+		t.Fatalf("InsertAccountWithCredentials returned error: %v", err)
 	}
 
 	got, err := db.FindActiveAccountByOAuthIdentity(ctx, " user@example.com ", "workspace-identity")
 	if err != nil {
-		t.Fatalf("FindActiveAccountByOAuthIdentity 返回错误: %v", err)
+		t.Fatalf("FindActiveAccountByOAuthIdentity returned error: %v", err)
 	}
 	if got != id {
 		t.Fatalf("matched id = %d, want %d", got, id)
@@ -351,24 +351,24 @@ func TestFindActiveAccountByOAuthIdentity(t *testing.T) {
 		"workspace_id":  "workspace-identity",
 	}, "")
 	if err != nil {
-		t.Fatalf("InsertAccountWithCredentials other 返回错误: %v", err)
+		t.Fatalf("InsertAccountWithCredentials other returned error: %v", err)
 	}
 	got, err = db.FindActiveAccountByOAuthIdentity(ctx, "user@example.com", "workspace-identity", id)
 	if err != nil {
-		t.Fatalf("FindActiveAccountByOAuthIdentity with exclude 返回错误: %v", err)
+		t.Fatalf("FindActiveAccountByOAuthIdentity with exclude returned error: %v", err)
 	}
 	if got != otherID {
 		t.Fatalf("matched id with exclude = %d, want %d", got, otherID)
 	}
 
 	if err := db.SoftDeleteAccount(ctx, id); err != nil {
-		t.Fatalf("SoftDeleteAccount 返回错误: %v", err)
+		t.Fatalf("SoftDeleteAccount returned error: %v", err)
 	}
 	if err := db.SoftDeleteAccount(ctx, otherID); err != nil {
-		t.Fatalf("SoftDeleteAccount other 返回错误: %v", err)
+		t.Fatalf("SoftDeleteAccount other returned error: %v", err)
 	}
 	if _, err := db.FindActiveAccountByOAuthIdentity(ctx, "user@example.com", "workspace-identity"); err == nil {
-		t.Fatal("FindActiveAccountByOAuthIdentity 应该排除已删除账号")
+		t.Fatal("FindActiveAccountByOAuthIdentity should exclude deleted accounts")
 	} else if err != sql.ErrNoRows {
 		t.Fatalf("FindActiveAccountByOAuthIdentity err = %v, want sql.ErrNoRows", err)
 	}
@@ -379,7 +379,7 @@ func TestFindActiveAccountByOAuthRouteIdentitySeparatesWorkspaceOverrides(t *tes
 
 	db, err := New("sqlite", dbPath)
 	if err != nil {
-		t.Fatalf("New(sqlite) 返回错误: %v", err)
+		t.Fatalf("New(sqlite) returned error: %v", err)
 	}
 	defer db.Close()
 
@@ -390,7 +390,7 @@ func TestFindActiveAccountByOAuthRouteIdentitySeparatesWorkspaceOverrides(t *tes
 		"workspace_id": "personal-workspace",
 	}, "")
 	if err != nil {
-		t.Fatalf("InsertAccountWithCredentials personal 返回错误: %v", err)
+		t.Fatalf("InsertAccountWithCredentials personal returned error: %v", err)
 	}
 	teamID, err := db.InsertAccountWithCredentials(ctx, "team", map[string]interface{}{
 		"access_token": "at-shared",
@@ -401,12 +401,12 @@ func TestFindActiveAccountByOAuthRouteIdentitySeparatesWorkspaceOverrides(t *tes
 		},
 	}, "")
 	if err != nil {
-		t.Fatalf("InsertAccountWithCredentials team 返回错误: %v", err)
+		t.Fatalf("InsertAccountWithCredentials team returned error: %v", err)
 	}
 
 	got, err := db.FindActiveAccountByOAuthRouteIdentity(ctx, "USER@example.com", "personal-workspace")
 	if err != nil {
-		t.Fatalf("FindActiveAccountByOAuthRouteIdentity personal 返回错误: %v", err)
+		t.Fatalf("FindActiveAccountByOAuthRouteIdentity personal returned error: %v", err)
 	}
 	if got != personalID {
 		t.Fatalf("personal matched id = %d, want %d", got, personalID)
@@ -414,7 +414,7 @@ func TestFindActiveAccountByOAuthRouteIdentitySeparatesWorkspaceOverrides(t *tes
 
 	got, err = db.FindActiveAccountByOAuthRouteIdentity(ctx, "user@example.com", "team-workspace")
 	if err != nil {
-		t.Fatalf("FindActiveAccountByOAuthRouteIdentity team 返回错误: %v", err)
+		t.Fatalf("FindActiveAccountByOAuthRouteIdentity team returned error: %v", err)
 	}
 	if got != teamID {
 		t.Fatalf("team matched id = %d, want %d", got, teamID)
@@ -430,75 +430,75 @@ func TestFindActiveAccountByOAuthIdentityIgnoresLegacyIDs(t *testing.T) {
 
 	db, err := New("sqlite", dbPath)
 	if err != nil {
-		t.Fatalf("New(sqlite) 返回错误: %v", err)
+		t.Fatalf("New(sqlite) returned error: %v", err)
 	}
 	defer db.Close()
 
 	ctx := context.Background()
 
-	// 账号 A：credentials 里存的是 user_id 键
+	// Account A: credentials stores the user_id key
 	_, err = db.InsertAccountWithCredentials(ctx, "uid-key", map[string]interface{}{
 		"access_token": "at-uid-key",
 		"email":        "solo@example.com",
 		"user_id":      "user-abc123",
 	}, "")
 	if err != nil {
-		t.Fatalf("InsertAccountWithCredentials A 返回错误: %v", err)
+		t.Fatalf("InsertAccountWithCredentials A returned error: %v", err)
 	}
 	if _, err := db.FindActiveAccountByOAuthIdentity(ctx, "solo@example.com", "user-abc123"); err != sql.ErrNoRows {
 		t.Fatalf("user_id lookup err = %v, want sql.ErrNoRows", err)
 	}
 
-	// 账号 B：旧版 wham 回填把 user_id 污染进了 account_id 字段
+	// Account B: the old wham backfill wrote user_id into the account_id field
 	_, err = db.InsertAccountWithCredentials(ctx, "polluted", map[string]interface{}{
 		"access_token": "at-polluted",
 		"email":        "legacy@example.com",
-		"account_id":   "user-def456", // 实为 user_id
+		"account_id":   "user-def456", // actually user_id
 	}, "")
 	if err != nil {
-		t.Fatalf("InsertAccountWithCredentials B 返回错误: %v", err)
+		t.Fatalf("InsertAccountWithCredentials B returned error: %v", err)
 	}
 	if _, err := db.FindActiveAccountByOAuthIdentity(ctx, "legacy@example.com", "user-def456"); err != sql.ErrNoRows {
 		t.Fatalf("legacy account_id lookup err = %v, want sql.ErrNoRows", err)
 	}
 }
 
-// v2 迁移：user_id 也是身份别名——个人账号（credentials 只有 user_id）和被旧版
-// wham 回填污染（user_id 写进了 account_id）的账号必须合并为一组。
-// 勾选"允许重复添加"强制导入的副本（allow_duplicate 标记）不参与合并。
+// v2 migration: user_id is also an identity alias: personal accounts (credentials has only user_id) and accounts
+// polluted by the old wham backfill (user_id written into account_id) must be merged into one group.
+// Copies force-imported by ticking "Allow duplicates" (allow_duplicate flag) do not take part in merging.
 func TestSQLiteDataMigrationV2DedupesByUserID(t *testing.T) {
 	dbPath := filepath.Join(t.TempDir(), "codex2api.db")
 	ctx := context.Background()
 
 	db, err := New("sqlite", dbPath)
 	if err != nil {
-		t.Fatalf("New(sqlite) 返回错误: %v", err)
+		t.Fatalf("New(sqlite) returned error: %v", err)
 	}
 	defer db.Close()
 
 	if _, err := db.conn.ExecContext(ctx, `DELETE FROM data_migrations WHERE version = $1`, dataMigrationOAuthIdentityDedupeV2); err != nil {
-		t.Fatalf("清理 v2 data migration 标记返回错误: %v", err)
+		t.Fatalf("clearing v2 data migration marker returned error: %v", err)
 	}
 
-	// 旧账号：account_id 字段被污染成 user_id（旧版 wham 回填）
+	// Old account: the account_id field was polluted with user_id (old wham backfill)
 	pollutedID, err := db.InsertAccountWithCredentials(ctx, "polluted", map[string]interface{}{
 		"access_token": "at-old-rotation",
 		"email":        "solo@example.com",
 		"account_id":   "user-dup999",
 	}, "")
 	if err != nil {
-		t.Fatalf("Insert polluted 返回错误: %v", err)
+		t.Fatalf("Insert polluted returned error: %v", err)
 	}
-	// 新账号：正确存在 user_id 键（新导入路径）
+	// New account: the user_id key is correctly present (new import path)
 	freshID, err := db.InsertAccountWithCredentials(ctx, "fresh", map[string]interface{}{
 		"access_token": "at-new-rotation",
 		"email":        "solo@example.com",
 		"user_id":      "user-dup999",
 	}, "")
 	if err != nil {
-		t.Fatalf("Insert fresh 返回错误: %v", err)
+		t.Fatalf("Insert fresh returned error: %v", err)
 	}
-	// 强制重复副本：allow_duplicate 标记，身份与上面相同，但必须保留
+	// Forced duplicate copy: allow_duplicate flag, same identity as above, but it must be kept
 	forcedID, err := db.InsertAccountWithCredentials(ctx, "forced-dup", map[string]interface{}{
 		"access_token":    "at-forced-copy",
 		"email":           "solo@example.com",
@@ -506,30 +506,30 @@ func TestSQLiteDataMigrationV2DedupesByUserID(t *testing.T) {
 		"allow_duplicate": "true",
 	}, "")
 	if err != nil {
-		t.Fatalf("Insert forced 返回错误: %v", err)
+		t.Fatalf("Insert forced returned error: %v", err)
 	}
 
 	if err := db.runDataMigrationsWithTimeout(); err != nil {
-		t.Fatalf("runDataMigrations 返回错误: %v", err)
+		t.Fatalf("runDataMigrations returned error: %v", err)
 	}
 
 	var remaining int
 	if err := db.conn.QueryRowContext(ctx, `SELECT COUNT(*) FROM accounts WHERE id IN ($1, $2) AND status <> 'deleted' AND COALESCE(error_message, '') <> 'deleted'`, pollutedID, freshID).Scan(&remaining); err != nil {
-		t.Fatalf("查询存活账号数返回错误: %v", err)
+		t.Fatalf("querying live account count returned error: %v", err)
 	}
 	if remaining != 1 {
-		t.Fatalf("v2 迁移后存活账号 = %d, want 1（user_id 重复应被合并）", remaining)
+		t.Fatalf("live accounts after v2 migration = %d, want 1 (duplicate user_id should be merged)", remaining)
 	}
 
 	var forcedAlive int
 	if err := db.conn.QueryRowContext(ctx, `SELECT COUNT(*) FROM accounts WHERE id = $1 AND status <> 'deleted' AND COALESCE(error_message, '') <> 'deleted'`, forcedID).Scan(&forcedAlive); err != nil {
-		t.Fatalf("查询强制副本返回错误: %v", err)
+		t.Fatalf("querying forced copy returned error: %v", err)
 	}
 	if forcedAlive != 1 {
-		t.Fatal("allow_duplicate 副本被迁移误删，应保留")
+		t.Fatal("allow_duplicate copy was deleted by the migration by mistake, it should be kept")
 	}
 
-	// v3 动态判重不再把历史 user_id/account_id 当作 workspace_id。
+	// v3 dynamic dedup no longer treats historical user_id/account_id as workspace_id.
 	if _, err := db.FindActiveAccountByOAuthIdentity(ctx, "solo@example.com", "user-dup999"); err != sql.ErrNoRows {
 		t.Fatalf("FindActiveAccountByOAuthIdentity err = %v, want sql.ErrNoRows", err)
 	}
@@ -541,11 +541,11 @@ func TestSQLiteDataMigrationDedupesOAuthIdentityOnce(t *testing.T) {
 
 	db, err := New("sqlite", dbPath)
 	if err != nil {
-		t.Fatalf("New(sqlite) 返回错误: %v", err)
+		t.Fatalf("New(sqlite) returned error: %v", err)
 	}
 
 	if _, err := db.conn.ExecContext(ctx, `DELETE FROM data_migrations WHERE version = $1`, dataMigrationOAuthIdentityDedupeV1); err != nil {
-		t.Fatalf("清理 data migration 标记返回错误: %v", err)
+		t.Fatalf("clearing data migration marker returned error: %v", err)
 	}
 
 	oldTime := time.Now().Add(-2 * time.Hour).UTC().Truncate(time.Second)
@@ -558,7 +558,7 @@ func TestSQLiteDataMigrationDedupesOAuthIdentityOnce(t *testing.T) {
 		"account_id":    "acc-dedupe",
 	}, "")
 	if err != nil {
-		t.Fatalf("Insert old duplicate 返回错误: %v", err)
+		t.Fatalf("Insert old duplicate returned error: %v", err)
 	}
 	midID, err := db.InsertAccountWithCredentials(ctx, "mid-duplicate", map[string]interface{}{
 		"access_token":        "at-mid-duplicate",
@@ -570,7 +570,7 @@ func TestSQLiteDataMigrationDedupesOAuthIdentityOnce(t *testing.T) {
 		"codex_usage_updated": "true",
 	}, "")
 	if err != nil {
-		t.Fatalf("Insert mid duplicate 返回错误: %v", err)
+		t.Fatalf("Insert mid duplicate returned error: %v", err)
 	}
 	winnerID, err := db.InsertAccountWithCredentials(ctx, "new-duplicate", map[string]interface{}{
 		"session_token": "st-new-duplicate",
@@ -578,7 +578,7 @@ func TestSQLiteDataMigrationDedupesOAuthIdentityOnce(t *testing.T) {
 		"account_id":    "acc-dedupe",
 	}, "")
 	if err != nil {
-		t.Fatalf("Insert winner 返回错误: %v", err)
+		t.Fatalf("Insert winner returned error: %v", err)
 	}
 	otherID, err := db.InsertAccountWithCredentials(ctx, "other-workspace", map[string]interface{}{
 		"refresh_token": "rt-other-workspace",
@@ -586,7 +586,7 @@ func TestSQLiteDataMigrationDedupesOAuthIdentityOnce(t *testing.T) {
 		"account_id":    "acc-other",
 	}, "")
 	if err != nil {
-		t.Fatalf("Insert other 返回错误: %v", err)
+		t.Fatalf("Insert other returned error: %v", err)
 	}
 	bridgeOldID, err := db.InsertAccountWithCredentials(ctx, "bridge-old", map[string]interface{}{
 		"refresh_token":      "rt-bridge-old",
@@ -595,7 +595,7 @@ func TestSQLiteDataMigrationDedupesOAuthIdentityOnce(t *testing.T) {
 		"chatgpt_account_id": "acc-bridge",
 	}, "")
 	if err != nil {
-		t.Fatalf("Insert bridge old 返回错误: %v", err)
+		t.Fatalf("Insert bridge old returned error: %v", err)
 	}
 	bridgeWinnerID, err := db.InsertAccountWithCredentials(ctx, "bridge-winner", map[string]interface{}{
 		"access_token": "at-bridge-winner",
@@ -603,7 +603,7 @@ func TestSQLiteDataMigrationDedupesOAuthIdentityOnce(t *testing.T) {
 		"account_id":   "acc-bridge",
 	}, "")
 	if err != nil {
-		t.Fatalf("Insert bridge winner 返回错误: %v", err)
+		t.Fatalf("Insert bridge winner returned error: %v", err)
 	}
 	deletedID, err := db.InsertAccountWithCredentials(ctx, "deleted-duplicate", map[string]interface{}{
 		"refresh_token": "rt-deleted-duplicate",
@@ -611,10 +611,10 @@ func TestSQLiteDataMigrationDedupesOAuthIdentityOnce(t *testing.T) {
 		"account_id":    "acc-dedupe",
 	}, "")
 	if err != nil {
-		t.Fatalf("Insert deleted 返回错误: %v", err)
+		t.Fatalf("Insert deleted returned error: %v", err)
 	}
 	if err := db.SoftDeleteAccount(ctx, deletedID); err != nil {
-		t.Fatalf("SoftDeleteAccount 返回错误: %v", err)
+		t.Fatalf("SoftDeleteAccount returned error: %v", err)
 	}
 
 	for id, ts := range map[int64]time.Time{
@@ -626,22 +626,22 @@ func TestSQLiteDataMigrationDedupesOAuthIdentityOnce(t *testing.T) {
 		bridgeWinnerID: newTime,
 	} {
 		if _, err := db.conn.ExecContext(ctx, `UPDATE accounts SET updated_at = $1 WHERE id = $2`, sqliteTimeParam(ts), id); err != nil {
-			t.Fatalf("设置账号 %d updated_at 返回错误: %v", id, err)
+			t.Fatalf("setting account %d updated_at returned error: %v", id, err)
 		}
 	}
 
 	if err := db.Close(); err != nil {
-		t.Fatalf("Close 返回错误: %v", err)
+		t.Fatalf("Close returned error: %v", err)
 	}
 
 	db, err = New("sqlite", dbPath)
 	if err != nil {
-		t.Fatalf("reopen New(sqlite) 返回错误: %v", err)
+		t.Fatalf("reopen New(sqlite) returned error: %v", err)
 	}
 
 	activeRows, err := db.ListActive(ctx)
 	if err != nil {
-		t.Fatalf("ListActive 返回错误: %v", err)
+		t.Fatalf("ListActive returned error: %v", err)
 	}
 	activeIDs := map[int64]bool{}
 	for _, row := range activeRows {
@@ -656,7 +656,7 @@ func TestSQLiteDataMigrationDedupesOAuthIdentityOnce(t *testing.T) {
 
 	deletedRows, err := db.ListDeleted(ctx)
 	if err != nil {
-		t.Fatalf("ListDeleted 返回错误: %v", err)
+		t.Fatalf("ListDeleted returned error: %v", err)
 	}
 	deletedIDs := map[int64]bool{}
 	for _, row := range deletedRows {
@@ -670,7 +670,7 @@ func TestSQLiteDataMigrationDedupesOAuthIdentityOnce(t *testing.T) {
 
 	var migrationCount int
 	if err := db.conn.QueryRowContext(ctx, `SELECT COUNT(*) FROM data_migrations WHERE version = $1`, dataMigrationOAuthIdentityDedupeV1).Scan(&migrationCount); err != nil {
-		t.Fatalf("查询 data_migrations 返回错误: %v", err)
+		t.Fatalf("querying data_migrations returned error: %v", err)
 	}
 	if migrationCount != 1 {
 		t.Fatalf("migration count = %d, want 1", migrationCount)
@@ -678,7 +678,7 @@ func TestSQLiteDataMigrationDedupesOAuthIdentityOnce(t *testing.T) {
 
 	var eventCount int
 	if err := db.conn.QueryRowContext(ctx, `SELECT COUNT(*) FROM account_events WHERE source = 'oauth_identity_dedupe_v1' AND account_id IN ($1, $2, $3)`, oldID, midID, bridgeOldID).Scan(&eventCount); err != nil {
-		t.Fatalf("查询 account_events 返回错误: %v", err)
+		t.Fatalf("querying account_events returned error: %v", err)
 	}
 	if eventCount != 3 {
 		t.Fatalf("dedupe event count = %d, want 3", eventCount)
@@ -690,22 +690,22 @@ func TestSQLiteDataMigrationDedupesOAuthIdentityOnce(t *testing.T) {
 		"account_id":    "acc-dedupe",
 	}, "")
 	if err != nil {
-		t.Fatalf("Insert post migration duplicate 返回错误: %v", err)
+		t.Fatalf("Insert post migration duplicate returned error: %v", err)
 	}
 	if err := db.Close(); err != nil {
-		t.Fatalf("Close after post migration duplicate 返回错误: %v", err)
+		t.Fatalf("Close after post migration duplicate returned error: %v", err)
 	}
 
 	db, err = New("sqlite", dbPath)
 	if err != nil {
-		t.Fatalf("second reopen New(sqlite) 返回错误: %v", err)
+		t.Fatalf("second reopen New(sqlite) returned error: %v", err)
 	}
 
 	if _, err := db.GetAccountByID(ctx, postMigrationDuplicateID); err != nil {
 		t.Fatalf("post migration duplicate should remain active because migration is one-shot: %v", err)
 	}
 	if err := db.Close(); err != nil {
-		t.Fatalf("final Close 返回错误: %v", err)
+		t.Fatalf("final Close returned error: %v", err)
 	}
 }
 
@@ -714,7 +714,7 @@ func TestSQLiteAPIKeyQuotaAndExpiration(t *testing.T) {
 
 	db, err := New("sqlite", dbPath)
 	if err != nil {
-		t.Fatalf("New(sqlite) 返回错误: %v", err)
+		t.Fatalf("New(sqlite) returned error: %v", err)
 	}
 	defer db.Close()
 
@@ -728,12 +728,12 @@ func TestSQLiteAPIKeyQuotaAndExpiration(t *testing.T) {
 		ExpiresAt:  sql.NullTime{Time: expiresAt, Valid: true},
 	})
 	if err != nil {
-		t.Fatalf("InsertAPIKeyWithOptions 返回错误: %v", err)
+		t.Fatalf("InsertAPIKeyWithOptions returned error: %v", err)
 	}
 
 	row, err := db.GetAPIKeyByValue(ctx, key)
 	if err != nil {
-		t.Fatalf("GetAPIKeyByValue 返回错误: %v", err)
+		t.Fatalf("GetAPIKeyByValue returned error: %v", err)
 	}
 	if row.ID != id || row.QuotaLimit != 0.01 || !row.ExpiresAt.Valid {
 		t.Fatalf("API key row = %#v, want quota and expiration", row)
@@ -750,13 +750,13 @@ func TestSQLiteAPIKeyQuotaAndExpiration(t *testing.T) {
 		InputTokens:  1000,
 		OutputTokens: 0,
 	}); err != nil {
-		t.Fatalf("InsertUsageLog 返回错误: %v", err)
+		t.Fatalf("InsertUsageLog returned error: %v", err)
 	}
 	db.flushLogs()
 
 	row, err = db.GetAPIKeyByValue(ctx, key)
 	if err != nil {
-		t.Fatalf("GetAPIKeyByValue after usage 返回错误: %v", err)
+		t.Fatalf("GetAPIKeyByValue after usage returned error: %v", err)
 	}
 	if row.QuotaUsed != 0.0025 {
 		t.Fatalf("QuotaUsed = %.12f, want %.12f", row.QuotaUsed, 0.0025)
@@ -768,7 +768,7 @@ func TestSQLiteUpdateAPIKeyPatchesSelectedFields(t *testing.T) {
 
 	db, err := New("sqlite", dbPath)
 	if err != nil {
-		t.Fatalf("New(sqlite) 返回错误: %v", err)
+		t.Fatalf("New(sqlite) returned error: %v", err)
 	}
 	defer db.Close()
 
@@ -783,15 +783,15 @@ func TestSQLiteUpdateAPIKeyPatchesSelectedFields(t *testing.T) {
 		AllowedGroupIDs: []int64{1, 2},
 	})
 	if err != nil {
-		t.Fatalf("InsertAPIKeyWithOptions 返回错误: %v", err)
+		t.Fatalf("InsertAPIKeyWithOptions returned error: %v", err)
 	}
 
 	if err := db.UpdateAPIKey(ctx, id, APIKeyUpdate{Name: "patched", NameSet: true}); err != nil {
-		t.Fatalf("UpdateAPIKey name 返回错误: %v", err)
+		t.Fatalf("UpdateAPIKey name returned error: %v", err)
 	}
 	row, err := db.GetAPIKeyByValue(ctx, key)
 	if err != nil {
-		t.Fatalf("GetAPIKeyByValue 返回错误: %v", err)
+		t.Fatalf("GetAPIKeyByValue returned error: %v", err)
 	}
 	if row.Name != "patched" || row.QuotaLimit != 1 || !row.ExpiresAt.Valid || len(row.AllowedGroupIDs) != 2 {
 		t.Fatalf("row = %#v, want only name patched", row)
@@ -805,11 +805,11 @@ func TestSQLiteUpdateAPIKeyPatchesSelectedFields(t *testing.T) {
 		AllowedGroupIDsSet: true,
 		AllowedGroupIDs:    []int64{3},
 	}); err != nil {
-		t.Fatalf("UpdateAPIKey limits 返回错误: %v", err)
+		t.Fatalf("UpdateAPIKey limits returned error: %v", err)
 	}
 	row, err = db.GetAPIKeyByValue(ctx, key)
 	if err != nil {
-		t.Fatalf("GetAPIKeyByValue after patch 返回错误: %v", err)
+		t.Fatalf("GetAPIKeyByValue after patch returned error: %v", err)
 	}
 	if row.Name != "patched" || row.QuotaLimit != 0 || row.ExpiresAt.Valid || len(row.AllowedGroupIDs) != 1 || row.AllowedGroupIDs[0] != 3 {
 		t.Fatalf("row = %#v, want limits/groups patched", row)
@@ -839,13 +839,13 @@ func TestSQLiteMigratesLegacyAPIKeysColumns(t *testing.T) {
 
 	db, err := New("sqlite", dbPath)
 	if err != nil {
-		t.Fatalf("New(sqlite legacy) 返回错误: %v", err)
+		t.Fatalf("New(sqlite legacy) returned error: %v", err)
 	}
 	defer db.Close()
 
 	row, err := db.GetAPIKeyByValue(context.Background(), "sk-legacy-1234567890")
 	if err != nil {
-		t.Fatalf("GetAPIKeyByValue legacy 返回错误: %v", err)
+		t.Fatalf("GetAPIKeyByValue legacy returned error: %v", err)
 	}
 	if row.Name != "legacy" || row.QuotaLimit != 0 || row.QuotaUsed != 0 || row.ExpiresAt.Valid || len(row.AllowedGroupIDs) != 0 {
 		t.Fatalf("legacy row = %#v, want migrated defaults", row)
@@ -857,36 +857,36 @@ func TestSQLiteAccountsEnabledDefaultsAndCanToggle(t *testing.T) {
 
 	db, err := New("sqlite", dbPath)
 	if err != nil {
-		t.Fatalf("New(sqlite) 返回错误: %v", err)
+		t.Fatalf("New(sqlite) returned error: %v", err)
 	}
 	defer db.Close()
 
 	ctx := context.Background()
 	id, err := db.InsertAccount(ctx, "test", "rt", "")
 	if err != nil {
-		t.Fatalf("InsertAccount 返回错误: %v", err)
+		t.Fatalf("InsertAccount returned error: %v", err)
 	}
 
 	rows, err := db.ListActive(ctx)
 	if err != nil {
-		t.Fatalf("ListActive 返回错误: %v", err)
+		t.Fatalf("ListActive returned error: %v", err)
 	}
 	if len(rows) != 1 {
-		t.Fatalf("ListActive 返回 %d 条，want 1", len(rows))
+		t.Fatalf("ListActive returned %d rows, want 1", len(rows))
 	}
 	if !rows[0].Enabled {
 		t.Fatal("new account Enabled = false, want true")
 	}
 
 	if err := db.SetAccountEnabled(ctx, id, false); err != nil {
-		t.Fatalf("SetAccountEnabled 返回错误: %v", err)
+		t.Fatalf("SetAccountEnabled returned error: %v", err)
 	}
 	rows, err = db.ListActive(ctx)
 	if err != nil {
-		t.Fatalf("ListActive 返回错误: %v", err)
+		t.Fatalf("ListActive returned error: %v", err)
 	}
 	if len(rows) != 1 {
-		t.Fatalf("ListActive 返回 %d 条，want 1", len(rows))
+		t.Fatalf("ListActive returned %d rows, want 1", len(rows))
 	}
 	if rows[0].Enabled {
 		t.Fatal("disabled account Enabled = true, want false")
@@ -902,14 +902,14 @@ func TestSQLiteListActiveByChannel(t *testing.T) {
 
 	db, err := New("sqlite", dbPath)
 	if err != nil {
-		t.Fatalf("New(sqlite) 返回错误: %v", err)
+		t.Fatalf("New(sqlite) returned error: %v", err)
 	}
 	defer db.Close()
 
 	ctx := context.Background()
 	codexID, err := db.InsertAccount(ctx, "codex-one", "rt-codex", "")
 	if err != nil {
-		t.Fatalf("InsertAccount codex 返回错误: %v", err)
+		t.Fatalf("InsertAccount codex returned error: %v", err)
 	}
 	agentID, err := db.InsertAccountWithUpstream(ctx, "agent-one", "openai", "oauth", map[string]interface{}{
 		"upstream_type": "codex",
@@ -917,12 +917,12 @@ func TestSQLiteListActiveByChannel(t *testing.T) {
 		"email":         "agent@example.com",
 	}, "")
 	if err != nil {
-		t.Fatalf("InsertAccountWithUpstream agent identity 返回错误: %v", err)
+		t.Fatalf("InsertAccountWithUpstream agent identity returned error: %v", err)
 	}
 
 	all, err := db.ListActiveByChannel(ctx, "")
 	if err != nil {
-		t.Fatalf("ListActiveByChannel(\"\") 返回错误: %v", err)
+		t.Fatalf("ListActiveByChannel(\"\") returned error: %v", err)
 	}
 	if len(all) != 2 {
 		t.Fatalf("ListActiveByChannel(\"\") len = %d, want 2", len(all))
@@ -930,7 +930,7 @@ func TestSQLiteListActiveByChannel(t *testing.T) {
 
 	codexRows, err := db.ListActiveByChannel(ctx, UpstreamChannelCodex)
 	if err != nil {
-		t.Fatalf("ListActiveByChannel(codex) 返回错误: %v", err)
+		t.Fatalf("ListActiveByChannel(codex) returned error: %v", err)
 	}
 	if len(codexRows) != 2 || codexRows[0].ID != codexID || codexRows[1].ID != agentID {
 		t.Fatalf("ListActiveByChannel(codex) = %+v, want ids %d and %d", codexRows, codexID, agentID)
@@ -942,25 +942,25 @@ func TestSQLiteUsageLogsHasAPIKeyColumns(t *testing.T) {
 
 	db, err := New("sqlite", dbPath)
 	if err != nil {
-		t.Fatalf("New(sqlite) 返回错误: %v", err)
+		t.Fatalf("New(sqlite) returned error: %v", err)
 	}
 	defer db.Close()
 
 	ctx := context.Background()
 	columns, err := db.sqliteTableColumns(ctx, "usage_logs")
 	if err != nil {
-		t.Fatalf("sqliteTableColumns 返回错误: %v", err)
+		t.Fatalf("sqliteTableColumns returned error: %v", err)
 	}
 
 	for _, name := range []string{"api_key_id", "api_key_name", "api_key_masked", "client_ip", "client_user_agent", "upstream_user_agent", "user_agent_overridden", "internal_reason", "parent_request_id", "image_count", "image_width", "image_height", "image_bytes", "image_format", "image_size", "effective_model", "compact", "has_compaction_history", "account_billed", "user_billed", "is_retry_attempt", "attempt_index", "upstream_error_kind", "error_message"} {
 		if _, ok := columns[name]; !ok {
-			t.Fatalf("usage_logs 缺少列 %q", name)
+			t.Fatalf("usage_logs is missing column %q", name)
 		}
 	}
 
 	rows, err := db.conn.QueryContext(ctx, `SELECT name FROM sqlite_master WHERE type = 'index' AND tbl_name = 'usage_logs'`)
 	if err != nil {
-		t.Fatalf("查询 usage_logs 索引返回错误: %v", err)
+		t.Fatalf("querying usage_logs indexes returned error: %v", err)
 	}
 	defer rows.Close()
 
@@ -968,15 +968,15 @@ func TestSQLiteUsageLogsHasAPIKeyColumns(t *testing.T) {
 	for rows.Next() {
 		var name string
 		if err := rows.Scan(&name); err != nil {
-			t.Fatalf("读取 usage_logs 索引返回错误: %v", err)
+			t.Fatalf("reading usage_logs indexes returned error: %v", err)
 		}
 		indexes[name] = true
 	}
 	if err := rows.Err(); err != nil {
-		t.Fatalf("遍历 usage_logs 索引返回错误: %v", err)
+		t.Fatalf("iterating usage_logs indexes returned error: %v", err)
 	}
 	if !indexes["idx_usage_logs_account_created_at"] {
-		t.Fatal("usage_logs 缺少索引 idx_usage_logs_account_created_at")
+		t.Fatal("usage_logs is missing index idx_usage_logs_account_created_at")
 	}
 }
 
@@ -985,7 +985,7 @@ func TestUsageLogModeErrorsSkipsSuccessfulLogsButChargesQuota(t *testing.T) {
 
 	db, err := New("sqlite", dbPath)
 	if err != nil {
-		t.Fatalf("New(sqlite) 返回错误: %v", err)
+		t.Fatalf("New(sqlite) returned error: %v", err)
 	}
 	defer db.Close()
 	db.SetUsageLogConfig(UsageLogModeErrors, 10, 5)
@@ -993,7 +993,7 @@ func TestUsageLogModeErrorsSkipsSuccessfulLogsButChargesQuota(t *testing.T) {
 	ctx := context.Background()
 	apiKeyID, err := db.InsertAPIKey(ctx, "mode-errors", "sk-mode-errors-1234567890")
 	if err != nil {
-		t.Fatalf("InsertAPIKey 返回错误: %v", err)
+		t.Fatalf("InsertAPIKey returned error: %v", err)
 	}
 	if err := db.InsertUsageLog(ctx, &UsageLogInput{
 		AccountID:   1,
@@ -1003,7 +1003,7 @@ func TestUsageLogModeErrorsSkipsSuccessfulLogsButChargesQuota(t *testing.T) {
 		StatusCode:  200,
 		InputTokens: 1000,
 	}); err != nil {
-		t.Fatalf("InsertUsageLog success 返回错误: %v", err)
+		t.Fatalf("InsertUsageLog success returned error: %v", err)
 	}
 	if err := db.InsertUsageLog(ctx, &UsageLogInput{
 		AccountID:    1,
@@ -1012,13 +1012,13 @@ func TestUsageLogModeErrorsSkipsSuccessfulLogsButChargesQuota(t *testing.T) {
 		StatusCode:   500,
 		ErrorMessage: "upstream failed",
 	}); err != nil {
-		t.Fatalf("InsertUsageLog error 返回错误: %v", err)
+		t.Fatalf("InsertUsageLog error returned error: %v", err)
 	}
 	db.flushLogs()
 
 	logs, err := db.ListRecentUsageLogs(ctx, 10)
 	if err != nil {
-		t.Fatalf("ListRecentUsageLogs 返回错误: %v", err)
+		t.Fatalf("ListRecentUsageLogs returned error: %v", err)
 	}
 	if len(logs) != 1 {
 		t.Fatalf("len(logs) = %d, want 1", len(logs))
@@ -1030,7 +1030,7 @@ func TestUsageLogModeErrorsSkipsSuccessfulLogsButChargesQuota(t *testing.T) {
 	want := calculateCost(1000, 0, 0, "gpt-5.4", "")
 	var quotaUsed, totalUsed float64
 	if err := db.conn.QueryRowContext(ctx, `SELECT quota_used, total_used FROM api_keys WHERE id = $1`, apiKeyID).Scan(&quotaUsed, &totalUsed); err != nil {
-		t.Fatalf("查询 API Key 用量返回错误: %v", err)
+		t.Fatalf("querying API key usage returned error: %v", err)
 	}
 	if math.Abs(quotaUsed-want) > 1e-12 || math.Abs(totalUsed-want) > 1e-12 {
 		t.Fatalf("API Key usage = quota %.12f total %.12f, want %.12f", quotaUsed, totalUsed, want)
@@ -1042,7 +1042,7 @@ func TestUsageErrorSummaryAndFilters(t *testing.T) {
 
 	db, err := New("sqlite", dbPath)
 	if err != nil {
-		t.Fatalf("New(sqlite) 返回错误: %v", err)
+		t.Fatalf("New(sqlite) returned error: %v", err)
 	}
 	defer db.Close()
 
@@ -1089,7 +1089,7 @@ func TestUsageErrorSummaryAndFilters(t *testing.T) {
 		},
 	} {
 		if err := db.InsertUsageLog(ctx, usageLog); err != nil {
-			t.Fatalf("InsertUsageLog 返回错误: %v", err)
+			t.Fatalf("InsertUsageLog returned error: %v", err)
 		}
 	}
 	db.flushLogs()
@@ -1105,7 +1105,7 @@ func TestUsageErrorSummaryAndFilters(t *testing.T) {
 	}
 	page, err := db.ListUsageLogsByTimeRangePaged(ctx, filter)
 	if err != nil {
-		t.Fatalf("ListUsageLogsByTimeRangePaged 返回错误: %v", err)
+		t.Fatalf("ListUsageLogsByTimeRangePaged returned error: %v", err)
 	}
 	if page.Total != 3 {
 		t.Fatalf("page.Total = %d, want 3", page.Total)
@@ -1124,12 +1124,12 @@ func TestUsageErrorSummaryAndFilters(t *testing.T) {
 		}
 	}
 	if !foundRetry {
-		t.Fatal("未找到 upstream_timeout 错误日志")
+		t.Fatal("upstream_timeout error log not found")
 	}
 
 	summary, err := db.GetUsageErrorSummary(ctx, filter)
 	if err != nil {
-		t.Fatalf("GetUsageErrorSummary 返回错误: %v", err)
+		t.Fatalf("GetUsageErrorSummary returned error: %v", err)
 	}
 	if summary.TotalErrors != 3 {
 		t.Fatalf("TotalErrors = %d, want 3", summary.TotalErrors)
@@ -1140,7 +1140,7 @@ func TestUsageErrorSummaryAndFilters(t *testing.T) {
 
 	charts, err := db.GetChartAggregation(ctx, filter.Start, filter.End, 5, "")
 	if err != nil {
-		t.Fatalf("GetChartAggregation 返回错误: %v", err)
+		t.Fatalf("GetChartAggregation returned error: %v", err)
 	}
 	var chart4xx, chart5xx int64
 	for _, point := range charts.Timeline {
@@ -1154,7 +1154,7 @@ func TestUsageErrorSummaryAndFilters(t *testing.T) {
 	filter.StatusFamily = "5xx"
 	page, err = db.ListUsageLogsByTimeRangePaged(ctx, filter)
 	if err != nil {
-		t.Fatalf("ListUsageLogsByTimeRangePaged status family 返回错误: %v", err)
+		t.Fatalf("ListUsageLogsByTimeRangePaged status family returned error: %v", err)
 	}
 	if page.Total != 1 || len(page.Logs) != 1 || page.Logs[0].StatusCode != 500 {
 		t.Fatalf("5xx page = total %d len %d first %+v", page.Total, len(page.Logs), page.Logs)
@@ -1169,7 +1169,7 @@ func TestUsageErrorSummaryAndFilters(t *testing.T) {
 	}
 	page, err = db.ListUsageLogsByTimeRangePaged(ctx, filter)
 	if err != nil {
-		t.Fatalf("ListUsageLogsByTimeRangePaged 2xx 返回错误: %v", err)
+		t.Fatalf("ListUsageLogsByTimeRangePaged 2xx returned error: %v", err)
 	}
 	if page.Total != 1 || len(page.Logs) != 1 || page.Logs[0].StatusCode != 200 {
 		t.Fatalf("2xx page = total %d len %d first %+v", page.Total, len(page.Logs), page.Logs)
@@ -1186,7 +1186,7 @@ func TestUsageErrorSummaryAndFilters(t *testing.T) {
 	}
 	page, err = db.ListUsageLogsByTimeRangePaged(ctx, filter)
 	if err != nil {
-		t.Fatalf("ListUsageLogsByTimeRangePaged retry 返回错误: %v", err)
+		t.Fatalf("ListUsageLogsByTimeRangePaged retry returned error: %v", err)
 	}
 	if page.Total != 1 || len(page.Logs) != 1 || !page.Logs[0].IsRetryAttempt {
 		t.Fatalf("retry page = total %d len %d first %+v", page.Total, len(page.Logs), page.Logs)
@@ -1202,7 +1202,7 @@ func TestUsageErrorSummaryAndFilters(t *testing.T) {
 	}
 	page, err = db.ListUsageLogsByTimeRangePaged(ctx, filter)
 	if err != nil {
-		t.Fatalf("ListUsageLogsByTimeRangePaged websocket 返回错误: %v", err)
+		t.Fatalf("ListUsageLogsByTimeRangePaged websocket returned error: %v", err)
 	}
 	if page.Total != 1 || len(page.Logs) != 1 || !page.Logs[0].ViaWebsocket {
 		t.Fatalf("websocket page = total %d len %d first %+v", page.Total, len(page.Logs), page.Logs)
@@ -1214,7 +1214,7 @@ func TestUsageLogModeOffSkipsAllLogsButChargesQuota(t *testing.T) {
 
 	db, err := New("sqlite", dbPath)
 	if err != nil {
-		t.Fatalf("New(sqlite) 返回错误: %v", err)
+		t.Fatalf("New(sqlite) returned error: %v", err)
 	}
 	defer db.Close()
 	db.SetUsageLogConfig(UsageLogModeOff, 10, 5)
@@ -1222,7 +1222,7 @@ func TestUsageLogModeOffSkipsAllLogsButChargesQuota(t *testing.T) {
 	ctx := context.Background()
 	apiKeyID, err := db.InsertAPIKey(ctx, "mode-off", "sk-mode-off-1234567890")
 	if err != nil {
-		t.Fatalf("InsertAPIKey 返回错误: %v", err)
+		t.Fatalf("InsertAPIKey returned error: %v", err)
 	}
 	if err := db.InsertUsageLog(ctx, &UsageLogInput{
 		AccountID:   1,
@@ -1232,13 +1232,13 @@ func TestUsageLogModeOffSkipsAllLogsButChargesQuota(t *testing.T) {
 		StatusCode:  200,
 		InputTokens: 1000,
 	}); err != nil {
-		t.Fatalf("InsertUsageLog 返回错误: %v", err)
+		t.Fatalf("InsertUsageLog returned error: %v", err)
 	}
 	db.flushLogs()
 
 	logs, err := db.ListRecentUsageLogs(ctx, 10)
 	if err != nil {
-		t.Fatalf("ListRecentUsageLogs 返回错误: %v", err)
+		t.Fatalf("ListRecentUsageLogs returned error: %v", err)
 	}
 	if len(logs) != 0 {
 		t.Fatalf("len(logs) = %d, want 0", len(logs))
@@ -1247,7 +1247,7 @@ func TestUsageLogModeOffSkipsAllLogsButChargesQuota(t *testing.T) {
 	want := calculateCost(1000, 0, 0, "gpt-5.4", "")
 	var quotaUsed, totalUsed float64
 	if err := db.conn.QueryRowContext(ctx, `SELECT quota_used, total_used FROM api_keys WHERE id = $1`, apiKeyID).Scan(&quotaUsed, &totalUsed); err != nil {
-		t.Fatalf("查询 API Key 用量返回错误: %v", err)
+		t.Fatalf("querying API key usage returned error: %v", err)
 	}
 	if math.Abs(quotaUsed-want) > 1e-12 || math.Abs(totalUsed-want) > 1e-12 {
 		t.Fatalf("API Key usage = quota %.12f total %.12f, want %.12f", quotaUsed, totalUsed, want)
@@ -1260,7 +1260,7 @@ func TestUsageLogModesPreserveCanceledQuotaExemption(t *testing.T) {
 			dbPath := filepath.Join(t.TempDir(), "codex2api.db")
 			db, err := New("sqlite", dbPath)
 			if err != nil {
-				t.Fatalf("New(sqlite) 返回错误: %v", err)
+				t.Fatalf("New(sqlite) returned error: %v", err)
 			}
 			defer db.Close()
 			db.SetUsageLogConfig(mode, 10, 5)
@@ -1268,7 +1268,7 @@ func TestUsageLogModesPreserveCanceledQuotaExemption(t *testing.T) {
 			ctx := context.Background()
 			apiKeyID, err := db.InsertAPIKey(ctx, "mode-499-"+mode, "sk-mode-499-"+mode+"-1234567890")
 			if err != nil {
-				t.Fatalf("InsertAPIKey 返回错误: %v", err)
+				t.Fatalf("InsertAPIKey returned error: %v", err)
 			}
 			if err := db.InsertUsageLog(ctx, &UsageLogInput{
 				APIKeyID:    apiKeyID,
@@ -1277,13 +1277,13 @@ func TestUsageLogModesPreserveCanceledQuotaExemption(t *testing.T) {
 				StatusCode:  499,
 				InputTokens: 1000,
 			}); err != nil {
-				t.Fatalf("InsertUsageLog 返回错误: %v", err)
+				t.Fatalf("InsertUsageLog returned error: %v", err)
 			}
 			db.flushLogs()
 
 			var quotaUsed, totalUsed float64
 			if err := db.conn.QueryRowContext(ctx, `SELECT quota_used, total_used FROM api_keys WHERE id = $1`, apiKeyID).Scan(&quotaUsed, &totalUsed); err != nil {
-				t.Fatalf("查询 API Key 用量返回错误: %v", err)
+				t.Fatalf("querying API key usage returned error: %v", err)
 			}
 			if quotaUsed != 0 || totalUsed != 0 {
 				t.Fatalf("API Key usage = quota %.12f total %.12f, want 0", quotaUsed, totalUsed)
@@ -1298,35 +1298,35 @@ func TestSQLiteModelCooldownPersistence(t *testing.T) {
 
 	db, err := New("sqlite", dbPath)
 	if err != nil {
-		t.Fatalf("New(sqlite) 返回错误: %v", err)
+		t.Fatalf("New(sqlite) returned error: %v", err)
 	}
 	defer db.Close()
 
 	resetAt := time.Now().Add(15 * time.Minute).Truncate(time.Second)
 	if err := db.SetModelCooldown(ctx, 42, "gpt-5.4", "model_capacity", resetAt); err != nil {
-		t.Fatalf("SetModelCooldown 返回错误: %v", err)
+		t.Fatalf("SetModelCooldown returned error: %v", err)
 	}
 
 	rows, err := db.ListActiveModelCooldowns(ctx)
 	if err != nil {
-		t.Fatalf("ListActiveModelCooldowns 返回错误: %v", err)
+		t.Fatalf("ListActiveModelCooldowns returned error: %v", err)
 	}
 	if len(rows) != 1 {
-		t.Fatalf("ListActiveModelCooldowns 返回 %d 条，want 1", len(rows))
+		t.Fatalf("ListActiveModelCooldowns returned %d rows, want 1", len(rows))
 	}
 	if rows[0].AccountID != 42 || rows[0].Model != "gpt-5.4" || rows[0].Reason != "model_capacity" {
 		t.Fatalf("cooldown row = %#v", rows[0])
 	}
 
 	if err := db.ClearModelCooldown(ctx, 42, "gpt-5.4"); err != nil {
-		t.Fatalf("ClearModelCooldown 返回错误: %v", err)
+		t.Fatalf("ClearModelCooldown returned error: %v", err)
 	}
 	rows, err = db.ListActiveModelCooldowns(ctx)
 	if err != nil {
-		t.Fatalf("ListActiveModelCooldowns 返回错误: %v", err)
+		t.Fatalf("ListActiveModelCooldowns returned error: %v", err)
 	}
 	if len(rows) != 0 {
-		t.Fatalf("ListActiveModelCooldowns 返回 %d 条，want 0", len(rows))
+		t.Fatalf("ListActiveModelCooldowns returned %d rows, want 0", len(rows))
 	}
 }
 
@@ -1335,7 +1335,7 @@ func TestModelCooldownSettingsDefaultsAndUpdate(t *testing.T) {
 	dbPath := filepath.Join(t.TempDir(), "codex2api.db")
 	db, err := New("sqlite", dbPath)
 	if err != nil {
-		t.Fatalf("New(sqlite) 返回错误: %v", err)
+		t.Fatalf("New(sqlite) returned error: %v", err)
 	}
 	defer db.Close()
 
@@ -1379,7 +1379,7 @@ func TestAccountRequestCountsSeparateRetryAttempts(t *testing.T) {
 
 	db, err := New("sqlite", dbPath)
 	if err != nil {
-		t.Fatalf("New(sqlite) 返回错误: %v", err)
+		t.Fatalf("New(sqlite) returned error: %v", err)
 	}
 	defer db.Close()
 
@@ -1390,14 +1390,14 @@ func TestAccountRequestCountsSeparateRetryAttempts(t *testing.T) {
 	}
 	for _, usageLog := range logs {
 		if err := db.InsertUsageLog(ctx, usageLog); err != nil {
-			t.Fatalf("InsertUsageLog 返回错误: %v", err)
+			t.Fatalf("InsertUsageLog returned error: %v", err)
 		}
 	}
 	db.flushLogs()
 
 	counts, err := db.GetAccountRequestCounts(ctx)
 	if err != nil {
-		t.Fatalf("GetAccountRequestCounts 返回错误: %v", err)
+		t.Fatalf("GetAccountRequestCounts returned error: %v", err)
 	}
 	got := counts[7]
 	if got == nil {
@@ -1413,18 +1413,18 @@ func TestSQLiteUsageStatsBaselineHasBillingColumns(t *testing.T) {
 
 	db, err := New("sqlite", dbPath)
 	if err != nil {
-		t.Fatalf("New(sqlite) 返回错误: %v", err)
+		t.Fatalf("New(sqlite) returned error: %v", err)
 	}
 	defer db.Close()
 
 	columns, err := db.sqliteTableColumns(context.Background(), "usage_stats_baseline")
 	if err != nil {
-		t.Fatalf("sqliteTableColumns 返回错误: %v", err)
+		t.Fatalf("sqliteTableColumns returned error: %v", err)
 	}
 
 	for _, name := range []string{"account_billed", "user_billed", "cache_hit_requests", "first_token_ms_sum", "first_token_samples"} {
 		if _, ok := columns[name]; !ok {
-			t.Fatalf("usage_stats_baseline 缺少列 %q", name)
+			t.Fatalf("usage_stats_baseline is missing column %q", name)
 		}
 	}
 }
@@ -1434,7 +1434,7 @@ func TestSQLiteSystemSettingsPersistsFirstTokenTimeoutSeconds(t *testing.T) {
 
 	db, err := New("sqlite", dbPath)
 	if err != nil {
-		t.Fatalf("New(sqlite) 返回错误: %v", err)
+		t.Fatalf("New(sqlite) returned error: %v", err)
 	}
 	defer db.Close()
 
@@ -1500,15 +1500,15 @@ func TestSQLiteSystemSettingsPersistsFirstTokenTimeoutSeconds(t *testing.T) {
 		AutoResetCreditsBeforeExpiryMin:   75,
 		AutoActivate5hWindowEnabled:       true,
 	}); err != nil {
-		t.Fatalf("UpdateSystemSettings 返回错误: %v", err)
+		t.Fatalf("UpdateSystemSettings returned error: %v", err)
 	}
 
 	settings, err := db.GetSystemSettings(ctx)
 	if err != nil {
-		t.Fatalf("GetSystemSettings 返回错误: %v", err)
+		t.Fatalf("GetSystemSettings returned error: %v", err)
 	}
 	if settings == nil {
-		t.Fatal("GetSystemSettings 返回 nil")
+		t.Fatal("GetSystemSettings returned nil")
 	}
 	if settings.FirstTokenTimeoutSeconds != 17 {
 		t.Fatalf("FirstTokenTimeoutSeconds = %d, want 17", settings.FirstTokenTimeoutSeconds)
@@ -1594,11 +1594,11 @@ func TestSQLiteSystemSettingsPersistsFirstTokenTimeoutSeconds(t *testing.T) {
 
 	settings.PublicKeyUsagePageEnabled = false
 	if err := db.UpdateSystemSettings(ctx, settings); err != nil {
-		t.Fatalf("UpdateSystemSettings false PublicKeyUsagePageEnabled 返回错误: %v", err)
+		t.Fatalf("UpdateSystemSettings false PublicKeyUsagePageEnabled returned error: %v", err)
 	}
 	settings, err = db.GetSystemSettings(ctx)
 	if err != nil {
-		t.Fatalf("GetSystemSettings after false PublicKeyUsagePageEnabled 返回错误: %v", err)
+		t.Fatalf("GetSystemSettings after false PublicKeyUsagePageEnabled returned error: %v", err)
 	}
 	if settings.PublicKeyUsagePageEnabled {
 		t.Fatal("PublicKeyUsagePageEnabled = true, want false")
@@ -1606,11 +1606,11 @@ func TestSQLiteSystemSettingsPersistsFirstTokenTimeoutSeconds(t *testing.T) {
 
 	settings.PublicImageStudioPageEnabled = false
 	if err := db.UpdateSystemSettings(ctx, settings); err != nil {
-		t.Fatalf("UpdateSystemSettings false PublicImageStudioPageEnabled 返回错误: %v", err)
+		t.Fatalf("UpdateSystemSettings false PublicImageStudioPageEnabled returned error: %v", err)
 	}
 	settings, err = db.GetSystemSettings(ctx)
 	if err != nil {
-		t.Fatalf("GetSystemSettings after false PublicImageStudioPageEnabled 返回错误: %v", err)
+		t.Fatalf("GetSystemSettings after false PublicImageStudioPageEnabled returned error: %v", err)
 	}
 	if settings.PublicImageStudioPageEnabled {
 		t.Fatal("PublicImageStudioPageEnabled = true, want false")
@@ -1618,11 +1618,11 @@ func TestSQLiteSystemSettingsPersistsFirstTokenTimeoutSeconds(t *testing.T) {
 
 	settings.FirstTokenExcludesWsAcquire = false
 	if err := db.UpdateSystemSettings(ctx, settings); err != nil {
-		t.Fatalf("UpdateSystemSettings false FirstTokenExcludesWsAcquire 返回错误: %v", err)
+		t.Fatalf("UpdateSystemSettings false FirstTokenExcludesWsAcquire returned error: %v", err)
 	}
 	settings, err = db.GetSystemSettings(ctx)
 	if err != nil {
-		t.Fatalf("GetSystemSettings after false FirstTokenExcludesWsAcquire 返回错误: %v", err)
+		t.Fatalf("GetSystemSettings after false FirstTokenExcludesWsAcquire returned error: %v", err)
 	}
 	if settings.FirstTokenExcludesWsAcquire {
 		t.Fatal("FirstTokenExcludesWsAcquire = true, want false")
@@ -1637,21 +1637,21 @@ func TestSystemSettingsNormalizeBlankBillingTierPolicy(t *testing.T) {
 
 	db, err := New("sqlite", dbPath)
 	if err != nil {
-		t.Fatalf("New(sqlite) 返回错误: %v", err)
+		t.Fatalf("New(sqlite) returned error: %v", err)
 	}
 	defer db.Close()
 
 	ctx := context.Background()
 	if _, err := db.conn.ExecContext(ctx, `INSERT INTO system_settings (id, billing_tier_policy) VALUES (1, '')`); err != nil {
-		t.Fatalf("插入空 billing_tier_policy 失败: %v", err)
+		t.Fatalf("failed to insert empty billing_tier_policy: %v", err)
 	}
 
 	settings, err := db.GetSystemSettings(ctx)
 	if err != nil {
-		t.Fatalf("GetSystemSettings 返回错误: %v", err)
+		t.Fatalf("GetSystemSettings returned error: %v", err)
 	}
 	if settings == nil {
-		t.Fatal("GetSystemSettings 返回 nil")
+		t.Fatal("GetSystemSettings returned nil")
 	}
 	if settings.BillingTierPolicy != "actual" {
 		t.Fatalf("BillingTierPolicy = %q, want actual", settings.BillingTierPolicy)
@@ -1659,11 +1659,11 @@ func TestSystemSettingsNormalizeBlankBillingTierPolicy(t *testing.T) {
 
 	settings.BillingTierPolicy = ""
 	if err := db.UpdateSystemSettings(ctx, settings); err != nil {
-		t.Fatalf("UpdateSystemSettings 返回错误: %v", err)
+		t.Fatalf("UpdateSystemSettings returned error: %v", err)
 	}
 	var stored string
 	if err := db.conn.QueryRowContext(ctx, `SELECT billing_tier_policy FROM system_settings WHERE id = 1`).Scan(&stored); err != nil {
-		t.Fatalf("读取 billing_tier_policy 返回错误: %v", err)
+		t.Fatalf("reading billing_tier_policy returned error: %v", err)
 	}
 	if stored != "actual" {
 		t.Fatalf("stored billing_tier_policy = %q, want actual", stored)
@@ -1674,7 +1674,7 @@ func TestSQLitePartialBackgroundSettingsUpdatesPreserveAutoResetCredits(t *testi
 	dbPath := filepath.Join(t.TempDir(), "codex2api.db")
 	db, err := New("sqlite", dbPath)
 	if err != nil {
-		t.Fatalf("New(sqlite) 返回错误: %v", err)
+		t.Fatalf("New(sqlite) returned error: %v", err)
 	}
 	defer db.Close()
 
@@ -1703,7 +1703,7 @@ func TestSQLitePartialBackgroundSettingsUpdatesPreserveAutoResetCredits(t *testi
 	if got == nil {
 		t.Fatal("GetSystemSettings returned nil")
 	}
-	// 模拟管理员从旧快照保存无关设置；后台刚写入的模型定价不能被回滚。
+	// Simulate an admin saving unrelated settings from an old snapshot; the model pricing the background just wrote must not be rolled back.
 	staleFullUpdate := *got
 	staleFullUpdate.SiteName = "Concurrent Admin Save"
 	staleFullUpdate.CodexSyncedCLIVersion = "0.0.1"
@@ -1737,25 +1737,25 @@ func TestSQLiteMigratesAccountGroupBaseConcurrencyOverride(t *testing.T) {
 	dbPath := filepath.Join(t.TempDir(), "legacy.db")
 	legacy, err := sql.Open("sqlite", dbPath)
 	if err != nil {
-		t.Fatalf("sql.Open legacy sqlite 返回错误: %v", err)
+		t.Fatalf("sql.Open legacy sqlite returned error: %v", err)
 	}
 	if _, err := legacy.Exec(`CREATE TABLE account_groups (id INTEGER PRIMARY KEY AUTOINCREMENT, name TEXT UNIQUE NOT NULL)`); err != nil {
 		legacy.Close()
-		t.Fatalf("创建旧 account_groups 表返回错误: %v", err)
+		t.Fatalf("creating legacy account_groups table returned error: %v", err)
 	}
 	if err := legacy.Close(); err != nil {
-		t.Fatalf("关闭旧 SQLite 返回错误: %v", err)
+		t.Fatalf("closing legacy SQLite returned error: %v", err)
 	}
 
 	db, err := New("sqlite", dbPath)
 	if err != nil {
-		t.Fatalf("New(sqlite) 迁移旧库返回错误: %v", err)
+		t.Fatalf("New(sqlite) migrating legacy database returned error: %v", err)
 	}
 	defer db.Close()
 
 	var columnCount int
 	if err := db.conn.QueryRowContext(context.Background(), `SELECT COUNT(*) FROM pragma_table_info('account_groups') WHERE name = 'base_concurrency_override'`).Scan(&columnCount); err != nil {
-		t.Fatalf("查询迁移列返回错误: %v", err)
+		t.Fatalf("querying migrated columns returned error: %v", err)
 	}
 	if columnCount != 1 {
 		t.Fatalf("base_concurrency_override column count = %d, want 1", columnCount)
@@ -1766,21 +1766,21 @@ func TestAccountGroupBaseConcurrencyOverrideCRUD(t *testing.T) {
 	dbPath := filepath.Join(t.TempDir(), "codex2api.db")
 	db, err := New("sqlite", dbPath)
 	if err != nil {
-		t.Fatalf("New(sqlite) 返回错误: %v", err)
+		t.Fatalf("New(sqlite) returned error: %v", err)
 	}
 	defer db.Close()
 
 	ctx := context.Background()
 	groupID, err := db.CreateAccountGroup(ctx, "Concurrency", "", "", 0, 0, sql.NullInt64{Int64: 6, Valid: true})
 	if err != nil {
-		t.Fatalf("CreateAccountGroup 返回错误: %v", err)
+		t.Fatalf("CreateAccountGroup returned error: %v", err)
 	}
 
 	assertOverride := func(want sql.NullInt64) {
 		t.Helper()
 		groups, err := db.ListAccountGroups(ctx)
 		if err != nil {
-			t.Fatalf("ListAccountGroups 返回错误: %v", err)
+			t.Fatalf("ListAccountGroups returned error: %v", err)
 		}
 		if len(groups) != 1 || groups[0].ID != groupID {
 			t.Fatalf("groups = %#v, want group %d", groups, groupID)
@@ -1795,20 +1795,20 @@ func TestAccountGroupBaseConcurrencyOverrideCRUD(t *testing.T) {
 	if err := db.UpdateAccountGroup(ctx, groupID, nil, nil, nil, &UpdateAccountGroupOpts{
 		BaseConcurrencyOverride: OptionalNullInt64{Set: true, Value: sql.NullInt64{Int64: 3, Valid: true}},
 	}); err != nil {
-		t.Fatalf("UpdateAccountGroup set override 返回错误: %v", err)
+		t.Fatalf("UpdateAccountGroup set override returned error: %v", err)
 	}
 	assertOverride(sql.NullInt64{Int64: 3, Valid: true})
 
 	name := "Concurrency renamed"
 	if err := db.UpdateAccountGroup(ctx, groupID, &name, nil, nil, nil); err != nil {
-		t.Fatalf("UpdateAccountGroup unrelated field 返回错误: %v", err)
+		t.Fatalf("UpdateAccountGroup unrelated field returned error: %v", err)
 	}
 	assertOverride(sql.NullInt64{Int64: 3, Valid: true})
 
 	if err := db.UpdateAccountGroup(ctx, groupID, nil, nil, nil, &UpdateAccountGroupOpts{
 		BaseConcurrencyOverride: OptionalNullInt64{Set: true},
 	}); err != nil {
-		t.Fatalf("UpdateAccountGroup clear override 返回错误: %v", err)
+		t.Fatalf("UpdateAccountGroup clear override returned error: %v", err)
 	}
 	assertOverride(sql.NullInt64{})
 }
@@ -1818,18 +1818,18 @@ func TestDeleteAccountGroupDoesNotBroadenScopedAPIKey(t *testing.T) {
 
 	db, err := New("sqlite", dbPath)
 	if err != nil {
-		t.Fatalf("New(sqlite) 返回错误: %v", err)
+		t.Fatalf("New(sqlite) returned error: %v", err)
 	}
 	defer db.Close()
 
 	ctx := context.Background()
 	groupA, err := db.CreateAccountGroup(ctx, "Group A", "", "#2563eb", 0, 0, sql.NullInt64{}, 0)
 	if err != nil {
-		t.Fatalf("CreateAccountGroup A 返回错误: %v", err)
+		t.Fatalf("CreateAccountGroup A returned error: %v", err)
 	}
 	groupB, err := db.CreateAccountGroup(ctx, "Group B", "", "#16a34a", 0, 0, sql.NullInt64{}, 1)
 	if err != nil {
-		t.Fatalf("CreateAccountGroup B 返回错误: %v", err)
+		t.Fatalf("CreateAccountGroup B returned error: %v", err)
 	}
 
 	keyOnlyA, err := db.InsertAPIKeyWithOptions(ctx, APIKeyInput{
@@ -1838,7 +1838,7 @@ func TestDeleteAccountGroupDoesNotBroadenScopedAPIKey(t *testing.T) {
 		AllowedGroupIDs: []int64{groupA},
 	})
 	if err != nil {
-		t.Fatalf("InsertAPIKeyWithOptions only-a 返回错误: %v", err)
+		t.Fatalf("InsertAPIKeyWithOptions only-a returned error: %v", err)
 	}
 	keyAB, err := db.InsertAPIKeyWithOptions(ctx, APIKeyInput{
 		Name:            "A and B",
@@ -1846,16 +1846,16 @@ func TestDeleteAccountGroupDoesNotBroadenScopedAPIKey(t *testing.T) {
 		AllowedGroupIDs: []int64{groupA, groupB},
 	})
 	if err != nil {
-		t.Fatalf("InsertAPIKeyWithOptions a-b 返回错误: %v", err)
+		t.Fatalf("InsertAPIKeyWithOptions a-b returned error: %v", err)
 	}
 
 	if err := db.DeleteAccountGroup(ctx, groupA, true); err != nil {
-		t.Fatalf("DeleteAccountGroup 返回错误: %v", err)
+		t.Fatalf("DeleteAccountGroup returned error: %v", err)
 	}
 
 	rows, err := db.ListAPIKeys(ctx)
 	if err != nil {
-		t.Fatalf("ListAPIKeys 返回错误: %v", err)
+		t.Fatalf("ListAPIKeys returned error: %v", err)
 	}
 
 	got := make(map[int64][]int64)
@@ -1924,7 +1924,7 @@ func TestUsageLogsPersistEffectiveModel(t *testing.T) {
 
 	db, err := New("sqlite", dbPath)
 	if err != nil {
-		t.Fatalf("New(sqlite) 返回错误: %v", err)
+		t.Fatalf("New(sqlite) returned error: %v", err)
 	}
 	defer db.Close()
 
@@ -1939,13 +1939,13 @@ func TestUsageLogsPersistEffectiveModel(t *testing.T) {
 		StatusCode:       200,
 		ReasoningEffort:  "high",
 	}); err != nil {
-		t.Fatalf("InsertUsageLog 返回错误: %v", err)
+		t.Fatalf("InsertUsageLog returned error: %v", err)
 	}
 	db.flushLogs()
 
 	logs, err := db.ListRecentUsageLogs(ctx, 10)
 	if err != nil {
-		t.Fatalf("ListRecentUsageLogs 返回错误: %v", err)
+		t.Fatalf("ListRecentUsageLogs returned error: %v", err)
 	}
 	if len(logs) != 1 {
 		t.Fatalf("len(logs) = %d, want 1", len(logs))
@@ -1966,7 +1966,7 @@ func TestUsageLogsPersistUserAgentAudit(t *testing.T) {
 
 	db, err := New("sqlite", dbPath)
 	if err != nil {
-		t.Fatalf("New(sqlite) 返回错误: %v", err)
+		t.Fatalf("New(sqlite) returned error: %v", err)
 	}
 	defer db.Close()
 
@@ -1980,13 +1980,13 @@ func TestUsageLogsPersistUserAgentAudit(t *testing.T) {
 		UpstreamUserAgent:   "codex-tui/0.151.0 (Mac OS 15.5.0; arm64) xterm-256color (codex-tui; 0.151.0)",
 		UserAgentOverridden: true,
 	}); err != nil {
-		t.Fatalf("InsertUsageLog 返回错误: %v", err)
+		t.Fatalf("InsertUsageLog returned error: %v", err)
 	}
 	db.flushLogs()
 
 	logs, err := db.ListRecentUsageLogs(ctx, 10)
 	if err != nil {
-		t.Fatalf("ListRecentUsageLogs 返回错误: %v", err)
+		t.Fatalf("ListRecentUsageLogs returned error: %v", err)
 	}
 	if len(logs) != 1 {
 		t.Fatalf("len(logs) = %d, want 1", len(logs))
@@ -2006,7 +2006,7 @@ func TestUsageLogsPersistAttributedInternalRequest(t *testing.T) {
 	dbPath := filepath.Join(t.TempDir(), "codex2api.db")
 	db, err := New("sqlite", dbPath)
 	if err != nil {
-		t.Fatalf("New(sqlite) 返回错误: %v", err)
+		t.Fatalf("New(sqlite) returned error: %v", err)
 	}
 	defer db.Close()
 
@@ -2024,13 +2024,13 @@ func TestUsageLogsPersistAttributedInternalRequest(t *testing.T) {
 		InternalReason:  "overflow_compact_summary",
 		ParentRequestID: "req-parent-42",
 	}); err != nil {
-		t.Fatalf("InsertUsageLog 返回错误: %v", err)
+		t.Fatalf("InsertUsageLog returned error: %v", err)
 	}
 	db.flushLogs()
 
 	logs, err := db.ListRecentUsageLogs(ctx, 10)
 	if err != nil {
-		t.Fatalf("ListRecentUsageLogs 返回错误: %v", err)
+		t.Fatalf("ListRecentUsageLogs returned error: %v", err)
 	}
 	if len(logs) != 1 {
 		t.Fatalf("len(logs) = %d, want 1", len(logs))
@@ -2041,7 +2041,7 @@ func TestUsageLogsPersistAttributedInternalRequest(t *testing.T) {
 
 	usage, err := db.GetAPIKeyWindowUsage(ctx, 42, time.Hour)
 	if err != nil {
-		t.Fatalf("GetAPIKeyWindowUsage 返回错误: %v", err)
+		t.Fatalf("GetAPIKeyWindowUsage returned error: %v", err)
 	}
 	if usage.Requests != 1 || usage.Tokens != 1_000_000 || usage.UserBilled <= 0 {
 		t.Fatalf("attributed internal usage aggregate = %+v", usage)
@@ -2053,7 +2053,7 @@ func TestUsageLogsPersistImageMetadata(t *testing.T) {
 
 	db, err := New("sqlite", dbPath)
 	if err != nil {
-		t.Fatalf("New(sqlite) 返回错误: %v", err)
+		t.Fatalf("New(sqlite) returned error: %v", err)
 	}
 	defer db.Close()
 
@@ -2073,13 +2073,13 @@ func TestUsageLogsPersistImageMetadata(t *testing.T) {
 		ImageFormat:      "png",
 		ImageSize:        "3840x2160",
 	}); err != nil {
-		t.Fatalf("InsertUsageLog 返回错误: %v", err)
+		t.Fatalf("InsertUsageLog returned error: %v", err)
 	}
 	db.flushLogs()
 
 	logs, err := db.ListRecentUsageLogs(ctx, 10)
 	if err != nil {
-		t.Fatalf("ListRecentUsageLogs 返回错误: %v", err)
+		t.Fatalf("ListRecentUsageLogs returned error: %v", err)
 	}
 	if len(logs) != 1 {
 		t.Fatalf("len(logs) = %d, want 1", len(logs))
@@ -2095,7 +2095,7 @@ func TestUsageLogsReturnBillingFields(t *testing.T) {
 
 	db, err := New("sqlite", dbPath)
 	if err != nil {
-		t.Fatalf("New(sqlite) 返回错误: %v", err)
+		t.Fatalf("New(sqlite) returned error: %v", err)
 	}
 	defer db.Close()
 
@@ -2114,13 +2114,13 @@ func TestUsageLogsReturnBillingFields(t *testing.T) {
 		ActualServiceTier:  "default",
 		BillingServiceTier: "default",
 	}); err != nil {
-		t.Fatalf("InsertUsageLog 返回错误: %v", err)
+		t.Fatalf("InsertUsageLog returned error: %v", err)
 	}
 	db.flushLogs()
 
 	logs, err := db.ListRecentUsageLogs(ctx, 10)
 	if err != nil {
-		t.Fatalf("ListRecentUsageLogs 返回错误: %v", err)
+		t.Fatalf("ListRecentUsageLogs returned error: %v", err)
 	}
 	if len(logs) != 1 {
 		t.Fatalf("len(logs) = %d, want 1", len(logs))
@@ -2144,7 +2144,7 @@ func TestUsageLogsBillFastByActualServiceTier(t *testing.T) {
 
 	db, err := New("sqlite", dbPath)
 	if err != nil {
-		t.Fatalf("New(sqlite) 返回错误: %v", err)
+		t.Fatalf("New(sqlite) returned error: %v", err)
 	}
 	defer db.Close()
 
@@ -2162,7 +2162,7 @@ func TestUsageLogsBillFastByActualServiceTier(t *testing.T) {
 		ActualServiceTier:    "default",
 		BillingServiceTier:   "default",
 	}); err != nil {
-		t.Fatalf("InsertUsageLog 返回错误: %v", err)
+		t.Fatalf("InsertUsageLog returned error: %v", err)
 	}
 	if err := db.InsertUsageLog(ctx, &UsageLogInput{
 		AccountID:            1,
@@ -2177,13 +2177,13 @@ func TestUsageLogsBillFastByActualServiceTier(t *testing.T) {
 		ActualServiceTier:    "priority",
 		BillingServiceTier:   "priority",
 	}); err != nil {
-		t.Fatalf("InsertUsageLog 返回错误: %v", err)
+		t.Fatalf("InsertUsageLog returned error: %v", err)
 	}
 	db.flushLogs()
 
 	logs, err := db.ListRecentUsageLogs(ctx, 10)
 	if err != nil {
-		t.Fatalf("ListRecentUsageLogs 返回错误: %v", err)
+		t.Fatalf("ListRecentUsageLogs returned error: %v", err)
 	}
 	if len(logs) != 2 {
 		t.Fatalf("len(logs) = %d, want 2", len(logs))
@@ -2216,7 +2216,7 @@ func TestUsageLogsReturnErrorMessage(t *testing.T) {
 
 	db, err := New("sqlite", dbPath)
 	if err != nil {
-		t.Fatalf("New(sqlite) 返回错误: %v", err)
+		t.Fatalf("New(sqlite) returned error: %v", err)
 	}
 	defer db.Close()
 
@@ -2228,13 +2228,13 @@ func TestUsageLogsReturnErrorMessage(t *testing.T) {
 		StatusCode:   429,
 		ErrorMessage: "rate_limit_exceeded · Too many requests",
 	}); err != nil {
-		t.Fatalf("InsertUsageLog 返回错误: %v", err)
+		t.Fatalf("InsertUsageLog returned error: %v", err)
 	}
 	db.flushLogs()
 
 	logs, err := db.ListRecentUsageLogs(ctx, 10)
 	if err != nil {
-		t.Fatalf("ListRecentUsageLogs 返回错误: %v", err)
+		t.Fatalf("ListRecentUsageLogs returned error: %v", err)
 	}
 	if len(logs) != 1 {
 		t.Fatalf("len(logs) = %d, want 1", len(logs))
@@ -2249,7 +2249,7 @@ func TestUsageStatsIncludeBillingTotals(t *testing.T) {
 
 	db, err := New("sqlite", dbPath)
 	if err != nil {
-		t.Fatalf("New(sqlite) 返回错误: %v", err)
+		t.Fatalf("New(sqlite) returned error: %v", err)
 	}
 	defer db.Close()
 
@@ -2275,14 +2275,14 @@ func TestUsageStatsIncludeBillingTotals(t *testing.T) {
 		},
 	} {
 		if err := db.InsertUsageLog(ctx, usageLog); err != nil {
-			t.Fatalf("InsertUsageLog 返回错误: %v", err)
+			t.Fatalf("InsertUsageLog returned error: %v", err)
 		}
 	}
 	db.flushLogs()
 
 	stats, err := db.GetUsageStats(ctx, time.Time{}, time.Time{}, "")
 	if err != nil {
-		t.Fatalf("GetUsageStats 返回错误: %v", err)
+		t.Fatalf("GetUsageStats returned error: %v", err)
 	}
 
 	want := calculateCost(1000, 500, 0, "gpt-5.5", "")
@@ -2312,7 +2312,7 @@ func TestUsageStatsIncludeCodex2APIBreakdowns(t *testing.T) {
 
 	db, err := New("sqlite", dbPath)
 	if err != nil {
-		t.Fatalf("New(sqlite) 返回错误: %v", err)
+		t.Fatalf("New(sqlite) returned error: %v", err)
 	}
 	defer db.Close()
 
@@ -2358,8 +2358,8 @@ func TestUsageStatsIncludeCodex2APIBreakdowns(t *testing.T) {
 			APIKeyID:     8,
 			APIKeyName:   "Cherry Studio",
 			APIKeyMasked: "sk-...2222",
-			// attempt_index 是 1-based：这条是「第二次尝试」，也就是真正重试出来的那一次。
-			// 写 1 的话它只是一次首发失败（哪怕 is_retry_attempt=true），不该计入重试数。
+			// attempt_index is 1-based: this is the "second attempt", i.e. the one that was actually produced by a retry.
+			// If it were 1, it would only be a first-attempt failure (even with is_retry_attempt=true) and must not count toward the retry total.
 			IsRetryAttempt: true,
 			AttemptIndex:   2,
 		},
@@ -2376,14 +2376,14 @@ func TestUsageStatsIncludeCodex2APIBreakdowns(t *testing.T) {
 	}
 	for _, usageLog := range logs {
 		if err := db.InsertUsageLog(ctx, usageLog); err != nil {
-			t.Fatalf("InsertUsageLog 返回错误: %v", err)
+			t.Fatalf("InsertUsageLog returned error: %v", err)
 		}
 	}
 	db.flushLogs()
 
 	stats, err := db.GetUsageStats(ctx, time.Time{}, time.Time{}, "")
 	if err != nil {
-		t.Fatalf("GetUsageStats 返回错误: %v", err)
+		t.Fatalf("GetUsageStats returned error: %v", err)
 	}
 	if stats.TotalRequests != 3 {
 		t.Fatalf("TotalRequests = %d, want 3", stats.TotalRequests)
@@ -2432,18 +2432,18 @@ func TestAPIKeySelfUsageReportScopesToSingleKey(t *testing.T) {
 
 	db, err := New("sqlite", dbPath)
 	if err != nil {
-		t.Fatalf("New(sqlite) 返回错误: %v", err)
+		t.Fatalf("New(sqlite) returned error: %v", err)
 	}
 	defer db.Close()
 
 	ctx := context.Background()
 	keyID, err := db.InsertAPIKey(ctx, "Client A", "sk-self-usage-a-1234567890")
 	if err != nil {
-		t.Fatalf("InsertAPIKey A 返回错误: %v", err)
+		t.Fatalf("InsertAPIKey A returned error: %v", err)
 	}
 	otherKeyID, err := db.InsertAPIKey(ctx, "Client B", "sk-self-usage-b-1234567890")
 	if err != nil {
-		t.Fatalf("InsertAPIKey B 返回错误: %v", err)
+		t.Fatalf("InsertAPIKey B returned error: %v", err)
 	}
 	now := time.Now()
 	insertUsage := func(apiKeyID int64, model string, endpoint string, statusCode int, totalTokens int, userBilled float64) {
@@ -2466,7 +2466,7 @@ func TestAPIKeySelfUsageReportScopesToSingleKey(t *testing.T) {
 
 	report, err := db.GetAPIKeySelfUsageReport(ctx, keyID, now.Add(-time.Hour), now.Add(time.Hour), 1, 10)
 	if err != nil {
-		t.Fatalf("GetAPIKeySelfUsageReport 返回错误: %v", err)
+		t.Fatalf("GetAPIKeySelfUsageReport returned error: %v", err)
 	}
 	if report.Summary.Requests != 2 || report.Summary.Tokens != 200 || report.Summary.ErrorCount != 1 {
 		t.Fatalf("summary = %+v, want requests=2 tokens=200 errors=1", report.Summary)
@@ -2498,18 +2498,18 @@ func TestAPIKeySelfUsageReportPaginatesRecentLogs(t *testing.T) {
 
 	db, err := New("sqlite", dbPath)
 	if err != nil {
-		t.Fatalf("New(sqlite) 返回错误: %v", err)
+		t.Fatalf("New(sqlite) returned error: %v", err)
 	}
 	defer db.Close()
 
 	ctx := context.Background()
 	keyID, err := db.InsertAPIKey(ctx, "Client A", "sk-self-usage-page-a-1234567890")
 	if err != nil {
-		t.Fatalf("InsertAPIKey A 返回错误: %v", err)
+		t.Fatalf("InsertAPIKey A returned error: %v", err)
 	}
 	otherKeyID, err := db.InsertAPIKey(ctx, "Client B", "sk-self-usage-page-b-1234567890")
 	if err != nil {
-		t.Fatalf("InsertAPIKey B 返回错误: %v", err)
+		t.Fatalf("InsertAPIKey B returned error: %v", err)
 	}
 
 	now := time.Now()
@@ -2534,7 +2534,7 @@ func TestAPIKeySelfUsageReportPaginatesRecentLogs(t *testing.T) {
 
 	report, err := db.GetAPIKeySelfUsageReport(ctx, keyID, now.Add(-time.Hour), now.Add(time.Hour), 2, 2)
 	if err != nil {
-		t.Fatalf("GetAPIKeySelfUsageReport 返回错误: %v", err)
+		t.Fatalf("GetAPIKeySelfUsageReport returned error: %v", err)
 	}
 	if report.RecentLogsTotal != 5 || report.RecentLogsPage != 2 || report.RecentLogsPageSize != 2 {
 		t.Fatalf("recent log pagination = total %d page %d page_size %d, want 5/2/2", report.RecentLogsTotal, report.RecentLogsPage, report.RecentLogsPageSize)
@@ -2548,7 +2548,7 @@ func TestAPIKeySelfUsageReportPaginatesRecentLogs(t *testing.T) {
 
 	clamped, err := db.GetAPIKeySelfUsageReport(ctx, keyID, now.Add(-time.Hour), now.Add(time.Hour), 99, 2)
 	if err != nil {
-		t.Fatalf("GetAPIKeySelfUsageReport clamped 返回错误: %v", err)
+		t.Fatalf("GetAPIKeySelfUsageReport clamped returned error: %v", err)
 	}
 	if clamped.RecentLogsPage != 3 || len(clamped.RecentLogs) != 1 || clamped.RecentLogs[0].Model != "model-1" {
 		t.Fatalf("clamped page logs = page %d rows %+v, want page 3 with model-1", clamped.RecentLogsPage, clamped.RecentLogs)
@@ -2558,14 +2558,14 @@ func TestAPIKeySelfUsageReportPaginatesRecentLogs(t *testing.T) {
 func TestSQLiteAPIKeySelfUsageReportLogFilters(t *testing.T) {
 	db, err := New("sqlite", filepath.Join(t.TempDir(), "codex2api.db"))
 	if err != nil {
-		t.Fatalf("New(sqlite) 返回错误: %v", err)
+		t.Fatalf("New(sqlite) returned error: %v", err)
 	}
 	defer db.Close()
 
 	ctx := context.Background()
 	keyID, err := db.InsertAPIKey(ctx, "Client", "sk-self-usage-filter-1234567890")
 	if err != nil {
-		t.Fatalf("InsertAPIKey 返回错误: %v", err)
+		t.Fatalf("InsertAPIKey returned error: %v", err)
 	}
 	now := time.Now()
 	insertUsage := func(channel, endpoint, model, effectiveModel string, statusCode int, stream bool) {
@@ -2609,7 +2609,7 @@ func TestSQLiteAPIKeySelfUsageReportLogFilters(t *testing.T) {
 	for _, tc := range cases {
 		report, err := db.GetAPIKeySelfUsageReportFiltered(ctx, keyID, now.Add(-time.Hour), now.Add(time.Hour), 1, 25, tc.filter)
 		if err != nil {
-			t.Fatalf("%s: GetAPIKeySelfUsageReportFiltered 返回错误: %v", tc.name, err)
+			t.Fatalf("%s: GetAPIKeySelfUsageReportFiltered returned error: %v", tc.name, err)
 		}
 		if report.RecentLogsTotal != tc.want || int64(len(report.RecentLogs)) != tc.want {
 			t.Fatalf("%s: total=%d rows=%d, want %d", tc.name, report.RecentLogsTotal, len(report.RecentLogs), tc.want)
@@ -2624,7 +2624,7 @@ func TestSQLiteAPIKeySelfUsageReportLogFilters(t *testing.T) {
 
 	report, err := db.GetAPIKeySelfUsageReportFiltered(ctx, keyID, now.Add(-time.Hour), now.Add(time.Hour), 1, 25, APIKeySelfLogFilter{Endpoint: "/v1/messages"})
 	if err != nil {
-		t.Fatalf("GetAPIKeySelfUsageReportFiltered 返回错误: %v", err)
+		t.Fatalf("GetAPIKeySelfUsageReportFiltered returned error: %v", err)
 	}
 	if report.RecentLogs[0].Channel != "claude" {
 		t.Fatalf("channel = %q, want claude", report.RecentLogs[0].Channel)
@@ -2636,7 +2636,7 @@ func TestUsageStatsBreakdownsRespectExplicitRange(t *testing.T) {
 
 	db, err := New("sqlite", dbPath)
 	if err != nil {
-		t.Fatalf("New(sqlite) 返回错误: %v", err)
+		t.Fatalf("New(sqlite) returned error: %v", err)
 	}
 	defer db.Close()
 
@@ -2679,23 +2679,23 @@ func TestUsageStatsBreakdownsRespectExplicitRange(t *testing.T) {
 	}
 	for _, usageLog := range logs {
 		if err := db.InsertUsageLog(ctx, usageLog); err != nil {
-			t.Fatalf("InsertUsageLog 返回错误: %v", err)
+			t.Fatalf("InsertUsageLog returned error: %v", err)
 		}
 	}
 	db.flushLogs()
 
 	oldCreatedAt := rangeStart.Add(-24 * time.Hour)
 	if _, err := db.conn.ExecContext(ctx, `UPDATE usage_logs SET created_at = $1 WHERE model = $2`, sqliteTimeParam(oldCreatedAt), "old-model"); err != nil {
-		t.Fatalf("更新旧日志时间失败: %v", err)
+		t.Fatalf("failed to update old log time: %v", err)
 	}
-	// 直接改写已落库日志的时间,小时汇总需要按明细重建。
+	// Rewrite the time of logs already written to the database directly; the hourly summary has to be rebuilt from the detail rows.
 	if err := db.RebuildUsageHourlyRollup(ctx); err != nil {
-		t.Fatalf("重建用量小时汇总失败: %v", err)
+		t.Fatalf("failed to rebuild hourly usage summary: %v", err)
 	}
 
 	stats, err := db.GetUsageStats(ctx, rangeStart, rangeEnd, "")
 	if err != nil {
-		t.Fatalf("GetUsageStats 返回错误: %v", err)
+		t.Fatalf("GetUsageStats returned error: %v", err)
 	}
 	if stats.TodayRequests != 1 || stats.TodayTokens != 100 || stats.TodayPrompt != 70 || stats.TodayCompletion != 30 {
 		t.Fatalf("range stats = requests %d tokens %d prompt %d completion %d, want 1/100/70/30",
@@ -2731,7 +2731,7 @@ func TestUsageStatsBaselinePreservesCacheRateAndFirstTokenAfterClear(t *testing.
 
 	db, err := New("sqlite", dbPath)
 	if err != nil {
-		t.Fatalf("New(sqlite) 返回错误: %v", err)
+		t.Fatalf("New(sqlite) returned error: %v", err)
 	}
 	defer db.Close()
 
@@ -2760,18 +2760,18 @@ func TestUsageStatsBaselinePreservesCacheRateAndFirstTokenAfterClear(t *testing.
 		},
 	} {
 		if err := db.InsertUsageLog(ctx, usageLog); err != nil {
-			t.Fatalf("InsertUsageLog 返回错误: %v", err)
+			t.Fatalf("InsertUsageLog returned error: %v", err)
 		}
 	}
 	db.flushLogs()
 
 	if err := db.ClearUsageLogs(ctx); err != nil {
-		t.Fatalf("ClearUsageLogs 返回错误: %v", err)
+		t.Fatalf("ClearUsageLogs returned error: %v", err)
 	}
 
 	stats, err := db.GetUsageStats(ctx, time.Time{}, time.Time{}, "")
 	if err != nil {
-		t.Fatalf("GetUsageStats 返回错误: %v", err)
+		t.Fatalf("GetUsageStats returned error: %v", err)
 	}
 	if stats.TotalRequests != 2 {
 		t.Fatalf("TotalRequests = %d, want 2", stats.TotalRequests)
@@ -2788,7 +2788,7 @@ func TestUsageStatsRollupPreservesFullTotalsAndChannelSemantics(t *testing.T) {
 	dbPath := filepath.Join(t.TempDir(), "codex2api.db")
 	db, err := New("sqlite", dbPath)
 	if err != nil {
-		t.Fatalf("New(sqlite) 返回错误: %v", err)
+		t.Fatalf("New(sqlite) returned error: %v", err)
 	}
 	defer db.Close()
 
@@ -2799,54 +2799,54 @@ func TestUsageStatsRollupPreservesFullTotalsAndChannelSemantics(t *testing.T) {
 		{AccountID: 3, Channel: "codex", Endpoint: "/v1/responses", Model: "gpt-5.5", StatusCode: 499, TotalTokens: 999},
 	} {
 		if err := db.InsertUsageLog(ctx, usageLog); err != nil {
-			t.Fatalf("InsertUsageLog 返回错误: %v", err)
+			t.Fatalf("InsertUsageLog returned error: %v", err)
 		}
 	}
 	db.FlushUsageLogs()
 
 	all, err := db.GetUsageStats(ctx, time.Time{}, time.Time{}, "")
 	if err != nil {
-		t.Fatalf("GetUsageStats(all) 返回错误: %v", err)
+		t.Fatalf("GetUsageStats(all) returned error: %v", err)
 	}
 	if all.TotalRequests != 2 || all.TotalTokens != 230 || all.TotalCachedTokens != 32 || all.AvgFirstTokenMs != 600 {
-		t.Fatalf("完整累计汇总 = %+v, want requests=2 tokens=230 cached=32 first_token=600", all)
+		t.Fatalf("full cumulative summary = %+v, want requests=2 tokens=230 cached=32 first_token=600", all)
 	}
 	codex, err := db.GetUsageStats(ctx, time.Time{}, time.Time{}, "codex")
 	if err != nil {
-		t.Fatalf("GetUsageStats(codex) 返回错误: %v", err)
+		t.Fatalf("GetUsageStats(codex) returned error: %v", err)
 	}
 	if codex.TotalRequests != 1 || codex.TotalTokens != 150 || codex.TotalCachedTokens != 32 {
-		t.Fatalf("codex 累计汇总 = %+v, want requests=1 tokens=150 cached=32", codex)
+		t.Fatalf("codex cumulative summary = %+v, want requests=1 tokens=150 cached=32", codex)
 	}
 
 	if err := db.ClearUsageLogs(ctx); err != nil {
-		t.Fatalf("ClearUsageLogs 返回错误: %v", err)
+		t.Fatalf("ClearUsageLogs returned error: %v", err)
 	}
 	cleared, err := db.GetUsageStats(ctx, time.Time{}, time.Time{}, "")
 	if err != nil {
-		t.Fatalf("GetUsageStats(clear) 返回错误: %v", err)
+		t.Fatalf("GetUsageStats(clear) returned error: %v", err)
 	}
 	if cleared.TotalRequests != 2 || cleared.TotalTokens != 230 || cleared.TotalCachedTokens != 32 || cleared.AvgFirstTokenMs != 600 {
-		t.Fatalf("清理日志后完整累计丢失: %+v", cleared)
+		t.Fatalf("full cumulative summary lost after clearing logs: %+v", cleared)
 	}
 	clearedCodex, err := db.GetUsageStats(ctx, time.Time{}, time.Time{}, "codex")
 	if err != nil {
-		t.Fatalf("GetUsageStats(codex after clear) 返回错误: %v", err)
+		t.Fatalf("GetUsageStats(codex after clear) returned error: %v", err)
 	}
 	if clearedCodex.TotalRequests != 0 {
-		t.Fatalf("清理后渠道累计 = %d, want 0（历史 baseline 无渠道维度）", clearedCodex.TotalRequests)
+		t.Fatalf("channel cumulative after clear = %d, want 0 (historical baseline has no channel dimension)", clearedCodex.TotalRequests)
 	}
 
 	if err := db.InsertUsageLog(ctx, &UsageLogInput{AccountID: 4, Channel: "codex", Endpoint: "/v1/responses", Model: "gpt-5.5", StatusCode: 200, TotalTokens: 70}); err != nil {
-		t.Fatalf("InsertUsageLog(after clear) 返回错误: %v", err)
+		t.Fatalf("InsertUsageLog(after clear) returned error: %v", err)
 	}
 	db.FlushUsageLogs()
 	updated, err := db.GetUsageStats(ctx, time.Time{}, time.Time{}, "")
 	if err != nil {
-		t.Fatalf("GetUsageStats(updated) 返回错误: %v", err)
+		t.Fatalf("GetUsageStats(updated) returned error: %v", err)
 	}
 	if updated.TotalRequests != 3 || updated.TotalTokens != 300 {
-		t.Fatalf("清理后新增的完整累计 = requests %d tokens %d, want 3/300", updated.TotalRequests, updated.TotalTokens)
+		t.Fatalf("full cumulative added after clear = requests %d tokens %d, want 3/300", updated.TotalRequests, updated.TotalTokens)
 	}
 }
 
@@ -2855,35 +2855,35 @@ func TestSoftDeleteAccountMarksDeletedStatus(t *testing.T) {
 
 	db, err := New("sqlite", dbPath)
 	if err != nil {
-		t.Fatalf("New(sqlite) 返回错误: %v", err)
+		t.Fatalf("New(sqlite) returned error: %v", err)
 	}
 	defer db.Close()
 
 	ctx := context.Background()
 	id, err := db.InsertAccount(ctx, "delete-me", "rt-delete-me", "")
 	if err != nil {
-		t.Fatalf("InsertAccount 返回错误: %v", err)
+		t.Fatalf("InsertAccount returned error: %v", err)
 	}
 	if err := db.SoftDeleteAccount(ctx, id); err != nil {
-		t.Fatalf("SoftDeleteAccount 返回错误: %v", err)
+		t.Fatalf("SoftDeleteAccount returned error: %v", err)
 	}
 
 	active, err := db.ListActive(ctx)
 	if err != nil {
-		t.Fatalf("ListActive 返回错误: %v", err)
+		t.Fatalf("ListActive returned error: %v", err)
 	}
 	if len(active) != 0 {
-		t.Fatalf("ListActive 返回 %d 条，want 0", len(active))
+		t.Fatalf("ListActive returned %d rows, want 0", len(active))
 	}
 	if _, err := db.GetAccountByID(ctx, id); err == nil {
-		t.Fatal("GetAccountByID 应该排除已删除账号")
+		t.Fatal("GetAccountByID should exclude deleted accounts")
 	}
 
 	var status string
 	var errorMessage string
 	var deletedAt sql.NullString
 	if err := db.conn.QueryRowContext(ctx, `SELECT status, error_message, deleted_at FROM accounts WHERE id = $1`, id).Scan(&status, &errorMessage, &deletedAt); err != nil {
-		t.Fatalf("查询账号状态返回错误: %v", err)
+		t.Fatalf("querying account status returned error: %v", err)
 	}
 	if status != "deleted" {
 		t.Fatalf("status = %q, want deleted", status)
@@ -2892,25 +2892,25 @@ func TestSoftDeleteAccountMarksDeletedStatus(t *testing.T) {
 		t.Fatalf("error_message = %q, want empty", errorMessage)
 	}
 	if !deletedAt.Valid || deletedAt.String == "" {
-		t.Fatal("deleted_at 未写入")
+		t.Fatal("deleted_at was not written")
 	}
 }
 
 func TestSQLiteSoftDeleteWaitsForUnifiedWriteLock(t *testing.T) {
 	db, err := New("sqlite", filepath.Join(t.TempDir(), "codex2api.db"))
 	if err != nil {
-		t.Fatalf("New(sqlite) 返回错误: %v", err)
+		t.Fatalf("New(sqlite) returned error: %v", err)
 	}
 	defer db.Close()
 
 	ctx := context.Background()
 	singleID, err := db.InsertAccount(ctx, "queued-single-delete", "rt-single-delete", "")
 	if err != nil {
-		t.Fatalf("InsertAccount(single) 返回错误: %v", err)
+		t.Fatalf("InsertAccount(single) returned error: %v", err)
 	}
 	batchID, err := db.InsertAccount(ctx, "queued-batch-delete", "rt-batch-delete", "")
 	if err != nil {
-		t.Fatalf("InsertAccount(batch) 返回错误: %v", err)
+		t.Fatalf("InsertAccount(batch) returned error: %v", err)
 	}
 
 	db.sqliteWriteSem <- struct{}{}
@@ -2955,22 +2955,22 @@ func TestSQLiteMigratesLegacyDeletedAccounts(t *testing.T) {
 
 	db, err := New("sqlite", dbPath)
 	if err != nil {
-		t.Fatalf("New(sqlite) 返回错误: %v", err)
+		t.Fatalf("New(sqlite) returned error: %v", err)
 	}
 	id, err := db.InsertAccount(ctx, "legacy-delete", "rt-legacy-delete", "")
 	if err != nil {
-		t.Fatalf("InsertAccount 返回错误: %v", err)
+		t.Fatalf("InsertAccount returned error: %v", err)
 	}
 	if err := db.SetError(ctx, id, "deleted"); err != nil {
-		t.Fatalf("SetError 返回错误: %v", err)
+		t.Fatalf("SetError returned error: %v", err)
 	}
 	if err := db.Close(); err != nil {
-		t.Fatalf("Close 返回错误: %v", err)
+		t.Fatalf("Close returned error: %v", err)
 	}
 
 	db, err = New("sqlite", dbPath)
 	if err != nil {
-		t.Fatalf("reopen New(sqlite) 返回错误: %v", err)
+		t.Fatalf("reopen New(sqlite) returned error: %v", err)
 	}
 	defer db.Close()
 
@@ -2978,7 +2978,7 @@ func TestSQLiteMigratesLegacyDeletedAccounts(t *testing.T) {
 	var errorMessage string
 	var deletedAt sql.NullString
 	if err := db.conn.QueryRowContext(ctx, `SELECT status, error_message, deleted_at FROM accounts WHERE id = $1`, id).Scan(&status, &errorMessage, &deletedAt); err != nil {
-		t.Fatalf("查询迁移后账号返回错误: %v", err)
+		t.Fatalf("querying accounts after migration returned error: %v", err)
 	}
 	if status != "deleted" {
 		t.Fatalf("status = %q, want deleted", status)
@@ -2987,7 +2987,7 @@ func TestSQLiteMigratesLegacyDeletedAccounts(t *testing.T) {
 		t.Fatalf("error_message = %q, want empty", errorMessage)
 	}
 	if !deletedAt.Valid || deletedAt.String == "" {
-		t.Fatal("deleted_at 未迁移")
+		t.Fatal("deleted_at was not migrated")
 	}
 }
 
@@ -2996,25 +2996,25 @@ func TestListActiveIncludesErrorAccounts(t *testing.T) {
 
 	db, err := New("sqlite", dbPath)
 	if err != nil {
-		t.Fatalf("New(sqlite) 返回错误: %v", err)
+		t.Fatalf("New(sqlite) returned error: %v", err)
 	}
 	defer db.Close()
 
 	ctx := context.Background()
 	id, err := db.InsertAccount(ctx, "error-account", "rt-error", "")
 	if err != nil {
-		t.Fatalf("InsertAccount 返回错误: %v", err)
+		t.Fatalf("InsertAccount returned error: %v", err)
 	}
 	if err := db.SetError(ctx, id, "batch test failed"); err != nil {
-		t.Fatalf("SetError 返回错误: %v", err)
+		t.Fatalf("SetError returned error: %v", err)
 	}
 
 	rows, err := db.ListActive(ctx)
 	if err != nil {
-		t.Fatalf("ListActive 返回错误: %v", err)
+		t.Fatalf("ListActive returned error: %v", err)
 	}
 	if len(rows) != 1 {
-		t.Fatalf("ListActive 返回 %d 条，want 1", len(rows))
+		t.Fatalf("ListActive returned %d rows, want 1", len(rows))
 	}
 	if rows[0].Status != "error" {
 		t.Fatalf("status = %q, want error", rows[0].Status)
@@ -3029,34 +3029,34 @@ func TestSetCooldownWithErrorPersistsMessage(t *testing.T) {
 
 	db, err := New("sqlite", dbPath)
 	if err != nil {
-		t.Fatalf("New(sqlite) 返回错误: %v", err)
+		t.Fatalf("New(sqlite) returned error: %v", err)
 	}
 	defer db.Close()
 
 	ctx := context.Background()
 	id, err := db.InsertAccount(ctx, "cooldown-account", "rt-cooldown", "")
 	if err != nil {
-		t.Fatalf("InsertAccount 返回错误: %v", err)
+		t.Fatalf("InsertAccount returned error: %v", err)
 	}
 	until := time.Now().Add(time.Hour)
-	if err := db.SetCooldownWithError(ctx, id, "unauthorized", until, "上游返回 401: token_invalidated"); err != nil {
-		t.Fatalf("SetCooldownWithError 返回错误: %v", err)
+	if err := db.SetCooldownWithError(ctx, id, "unauthorized", until, "upstream returned 401: token_invalidated"); err != nil {
+		t.Fatalf("SetCooldownWithError returned error: %v", err)
 	}
 
 	var reason string
 	var errorMessage string
 	var cooldownUntil sql.NullTime
 	if err := db.conn.QueryRowContext(ctx, `SELECT cooldown_reason, error_message, cooldown_until FROM accounts WHERE id = $1`, id).Scan(&reason, &errorMessage, &cooldownUntil); err != nil {
-		t.Fatalf("查询账号冷却状态返回错误: %v", err)
+		t.Fatalf("querying account cooldown status returned error: %v", err)
 	}
 	if reason != "unauthorized" {
 		t.Fatalf("cooldown_reason = %q, want unauthorized", reason)
 	}
-	if errorMessage != "上游返回 401: token_invalidated" {
+	if errorMessage != "upstream returned 401: token_invalidated" {
 		t.Fatalf("error_message = %q, want recorded upstream error", errorMessage)
 	}
 	if !cooldownUntil.Valid {
-		t.Fatal("cooldown_until 未写入")
+		t.Fatal("cooldown_until was not written")
 	}
 }
 
@@ -3065,7 +3065,7 @@ func TestUsageLogsFilterByAPIKeyID(t *testing.T) {
 
 	db, err := New("sqlite", dbPath)
 	if err != nil {
-		t.Fatalf("New(sqlite) 返回错误: %v", err)
+		t.Fatalf("New(sqlite) returned error: %v", err)
 	}
 	defer db.Close()
 
@@ -3109,17 +3109,17 @@ func TestUsageLogsFilterByAPIKeyID(t *testing.T) {
 
 	for _, usageLog := range logs {
 		if err := db.InsertUsageLog(ctx, usageLog); err != nil {
-			t.Fatalf("InsertUsageLog 返回错误: %v", err)
+			t.Fatalf("InsertUsageLog returned error: %v", err)
 		}
 	}
 	db.flushLogs()
 
 	recentLogs, err := db.ListRecentUsageLogs(ctx, 10)
 	if err != nil {
-		t.Fatalf("ListRecentUsageLogs 返回错误: %v", err)
+		t.Fatalf("ListRecentUsageLogs returned error: %v", err)
 	}
 	if len(recentLogs) != len(logs) {
-		t.Fatalf("recentLogs 长度 = %d, want %d", len(recentLogs), len(logs))
+		t.Fatalf("recentLogs length = %d, want %d", len(recentLogs), len(logs))
 	}
 
 	foundSnapshot := false
@@ -3145,10 +3145,10 @@ func TestUsageLogsFilterByAPIKeyID(t *testing.T) {
 		}
 	}
 	if !foundSnapshot {
-		t.Fatal("未找到带 API 密钥快照的最近日志")
+		t.Fatal("did not find the recent log with an API key snapshot")
 	}
 	if !foundCompact {
-		t.Fatal("未找到 compact 使用日志")
+		t.Fatal("did not find the compact usage log")
 	}
 
 	page, err := db.ListUsageLogsByTimeRangePaged(ctx, UsageLogFilter{
@@ -3159,7 +3159,7 @@ func TestUsageLogsFilterByAPIKeyID(t *testing.T) {
 		APIKeyID: &targetAPIKeyID,
 	})
 	if err != nil {
-		t.Fatalf("ListUsageLogsByTimeRangePaged 返回错误: %v", err)
+		t.Fatalf("ListUsageLogsByTimeRangePaged returned error: %v", err)
 	}
 
 	if page.Total != 2 {
@@ -3189,7 +3189,7 @@ func TestUsageLogsFilterByAPIKeyID(t *testing.T) {
 		AccountID: &targetAccountID,
 	})
 	if err != nil {
-		t.Fatalf("ListUsageLogsByTimeRangePaged account filter 返回错误: %v", err)
+		t.Fatalf("ListUsageLogsByTimeRangePaged account filter returned error: %v", err)
 	}
 	if page.Total != 2 {
 		t.Fatalf("account filter page.Total = %d, want %d", page.Total, 2)
@@ -3206,18 +3206,18 @@ func TestUsageLogsIncludeAccountNameForOpenAIResponsesAccount(t *testing.T) {
 
 	db, err := New("sqlite", dbPath)
 	if err != nil {
-		t.Fatalf("New(sqlite) 返回错误: %v", err)
+		t.Fatalf("New(sqlite) returned error: %v", err)
 	}
 	defer db.Close()
 
 	ctx := context.Background()
 	now := time.Now().UTC()
-	accountID, err := db.InsertAccountWithUpstream(ctx, "API 别名", "openai", "oauth", map[string]interface{}{
+	accountID, err := db.InsertAccountWithUpstream(ctx, "API alias", "openai", "oauth", map[string]interface{}{
 		"base_url": "https://api.example.com",
 		"email":    "https://api.example.com",
 	}, "")
 	if err != nil {
-		t.Fatalf("InsertAccountWithUpstream 返回错误: %v", err)
+		t.Fatalf("InsertAccountWithUpstream returned error: %v", err)
 	}
 	if err := db.InsertUsageLog(ctx, &UsageLogInput{
 		AccountID:  accountID,
@@ -3226,19 +3226,19 @@ func TestUsageLogsIncludeAccountNameForOpenAIResponsesAccount(t *testing.T) {
 		StatusCode: 200,
 		DurationMs: 120,
 	}); err != nil {
-		t.Fatalf("InsertUsageLog 返回错误: %v", err)
+		t.Fatalf("InsertUsageLog returned error: %v", err)
 	}
 	db.flushLogs()
 
 	recentLogs, err := db.ListRecentUsageLogs(ctx, 10)
 	if err != nil {
-		t.Fatalf("ListRecentUsageLogs 返回错误: %v", err)
+		t.Fatalf("ListRecentUsageLogs returned error: %v", err)
 	}
 	if len(recentLogs) != 1 {
-		t.Fatalf("recentLogs 长度 = %d, want 1", len(recentLogs))
+		t.Fatalf("recentLogs length = %d, want 1", len(recentLogs))
 	}
-	if recentLogs[0].AccountName != "API 别名" {
-		t.Fatalf("AccountName = %q, want API 别名", recentLogs[0].AccountName)
+	if recentLogs[0].AccountName != "API alias" {
+		t.Fatalf("AccountName = %q, want API alias", recentLogs[0].AccountName)
 	}
 	if recentLogs[0].AccountEmail != "https://api.example.com" {
 		t.Fatalf("AccountEmail = %q, want base URL", recentLogs[0].AccountEmail)
@@ -3249,27 +3249,27 @@ func TestUsageLogsIncludeAccountNameForOpenAIResponsesAccount(t *testing.T) {
 		End:      now.Add(1 * time.Hour),
 		Page:     1,
 		PageSize: 10,
-		Email:    "API 别名",
+		Email:    "API alias",
 	})
 	if err != nil {
-		t.Fatalf("ListUsageLogsByTimeRangePaged 返回错误: %v", err)
+		t.Fatalf("ListUsageLogsByTimeRangePaged returned error: %v", err)
 	}
 	if page.Total != 1 || len(page.Logs) != 1 {
 		t.Fatalf("page = total %d len %d, want 1/1", page.Total, len(page.Logs))
 	}
-	if page.Logs[0].AccountName != "API 别名" {
-		t.Fatalf("paged AccountName = %q, want API 别名", page.Logs[0].AccountName)
+	if page.Logs[0].AccountName != "API alias" {
+		t.Fatalf("paged AccountName = %q, want API alias", page.Logs[0].AccountName)
 	}
 
 	logs, err := db.ListUsageLogsByFilter(ctx, UsageLogFilter{
 		Start: now.Add(-1 * time.Hour),
 		End:   now.Add(1 * time.Hour),
-		Query: "API 别名",
+		Query: "API alias",
 	})
 	if err != nil {
-		t.Fatalf("ListUsageLogsByFilter 返回错误: %v", err)
+		t.Fatalf("ListUsageLogsByFilter returned error: %v", err)
 	}
-	if len(logs) != 1 || logs[0].AccountName != "API 别名" {
+	if len(logs) != 1 || logs[0].AccountName != "API alias" {
 		t.Fatalf("filter logs = %+v, want one account name match", logs)
 	}
 }
@@ -3279,7 +3279,7 @@ func TestSQLiteUsageLogsTimeRangeUsesUTCStorage(t *testing.T) {
 
 	db, err := New("sqlite", dbPath)
 	if err != nil {
-		t.Fatalf("New(sqlite) 返回错误: %v", err)
+		t.Fatalf("New(sqlite) returned error: %v", err)
 	}
 	defer db.Close()
 
@@ -3293,7 +3293,7 @@ func TestSQLiteUsageLogsTimeRangeUsesUTCStorage(t *testing.T) {
 		VALUES (1, '/v1/images/generations', '/v1/images/generations', '/v1/responses', 'gpt-image-2',
 			200, 1790, 34, 1756, $1)
 	`, sqliteTimeParam(createdUTC)); err != nil {
-		t.Fatalf("insert usage log 返回错误: %v", err)
+		t.Fatalf("insert usage log returned error: %v", err)
 	}
 
 	shanghai := time.FixedZone("Asia/Shanghai", 8*60*60)
@@ -3305,7 +3305,7 @@ func TestSQLiteUsageLogsTimeRangeUsesUTCStorage(t *testing.T) {
 		PageSize: 10,
 	})
 	if err != nil {
-		t.Fatalf("ListUsageLogsByTimeRangePaged 返回错误: %v", err)
+		t.Fatalf("ListUsageLogsByTimeRangePaged returned error: %v", err)
 	}
 	if page.Total != 1 {
 		t.Fatalf("page.Total = %d, want %d", page.Total, 1)
@@ -3326,7 +3326,7 @@ func TestGetAccountUsageStatsAggregatesRecentAccountSummary(t *testing.T) {
 
 	db, err := New("sqlite", dbPath)
 	if err != nil {
-		t.Fatalf("New(sqlite) 返回错误: %v", err)
+		t.Fatalf("New(sqlite) returned error: %v", err)
 	}
 	defer db.Close()
 
@@ -3359,14 +3359,14 @@ func TestGetAccountUsageStatsAggregatesRecentAccountSummary(t *testing.T) {
 	if _, err := db.conn.ExecContext(ctx, `UPDATE usage_logs SET first_token_ms = 1500, compact = 1 WHERE account_id = 7 AND total_tokens = 2000`); err != nil {
 		t.Fatalf("update second usage quality fields: %v", err)
 	}
-	// attempt_index = 2：真正重试出来的那一次尝试（1 是首发，计入重试数就等于把每个请求都算成重试）。
+	// attempt_index = 2: the retry attempt that actually happened (1 is the first attempt; counting it as a retry would make every request count as a retry).
 	if _, err := db.conn.ExecContext(ctx, `UPDATE usage_logs SET first_token_ms = 2500, stream = 1, compact = 1, is_retry_attempt = 1, attempt_index = 2 WHERE account_id = 7 AND model = 'gpt-4.1'`); err != nil {
 		t.Fatalf("update third usage quality fields: %v", err)
 	}
 
 	got, err := db.GetAccountUsageStats(ctx, 7, 30)
 	if err != nil {
-		t.Fatalf("GetAccountUsageStats 返回错误: %v", err)
+		t.Fatalf("GetAccountUsageStats returned error: %v", err)
 	}
 
 	if got.PeriodDays != 30 {
@@ -3435,7 +3435,7 @@ func TestGetAccountUsageStatsAggregatesRecentAccountSummary(t *testing.T) {
 
 	todayOnly, err := db.GetAccountUsageStats(ctx, 7, 1)
 	if err != nil {
-		t.Fatalf("GetAccountUsageStats today 返回错误: %v", err)
+		t.Fatalf("GetAccountUsageStats today returned error: %v", err)
 	}
 	if todayOnly.TotalRequests != 1 || todayOnly.TotalTokens != 1000 {
 		t.Fatalf("todayOnly = requests %d tokens %d, want 1/1000", todayOnly.TotalRequests, todayOnly.TotalTokens)
@@ -3443,7 +3443,7 @@ func TestGetAccountUsageStatsAggregatesRecentAccountSummary(t *testing.T) {
 
 	allTime, err := db.GetAccountUsageStats(ctx, 7, 0)
 	if err != nil {
-		t.Fatalf("GetAccountUsageStats all-time 返回错误: %v", err)
+		t.Fatalf("GetAccountUsageStats all-time returned error: %v", err)
 	}
 	if allTime.PeriodDays != 0 {
 		t.Fatalf("allTime.PeriodDays = %d, want 0", allTime.PeriodDays)
@@ -3458,7 +3458,7 @@ func TestGetAccountsBilledSinceUsesPerAccountWindows(t *testing.T) {
 
 	db, err := New("sqlite", dbPath)
 	if err != nil {
-		t.Fatalf("New(sqlite) 返回错误: %v", err)
+		t.Fatalf("New(sqlite) returned error: %v", err)
 	}
 	defer db.Close()
 
@@ -3486,7 +3486,7 @@ func TestGetAccountsBilledSinceUsesPerAccountWindows(t *testing.T) {
 		3: now.Add(-1 * time.Hour),
 	})
 	if err != nil {
-		t.Fatalf("GetAccountsBilledSince 返回错误: %v", err)
+		t.Fatalf("GetAccountsBilledSince returned error: %v", err)
 	}
 
 	if got[1] != 1.25 {
@@ -3504,7 +3504,7 @@ func TestGetAccountUsageWindowsAggregatesBothRangesInOnePass(t *testing.T) {
 	dbPath := filepath.Join(t.TempDir(), "codex2api.db")
 	db, err := New("sqlite", dbPath)
 	if err != nil {
-		t.Fatalf("New(sqlite) 返回错误: %v", err)
+		t.Fatalf("New(sqlite) returned error: %v", err)
 	}
 	defer db.Close()
 
@@ -3812,7 +3812,7 @@ func TestFlushLogsRequeuesBatchWhenSQLiteBeginFails(t *testing.T) {
 
 	db, err := New("sqlite", dbPath)
 	if err != nil {
-		t.Fatalf("New(sqlite) 返回错误: %v", err)
+		t.Fatalf("New(sqlite) returned error: %v", err)
 	}
 	close(db.logStop)
 	db.logWg.Wait()
@@ -3825,11 +3825,11 @@ func TestFlushLogsRequeuesBatchWhenSQLiteBeginFails(t *testing.T) {
 			StatusCode:  200,
 			InputTokens: 1000,
 		}); err != nil {
-			t.Fatalf("InsertUsageLog 返回错误: %v", err)
+			t.Fatalf("InsertUsageLog returned error: %v", err)
 		}
 	}
 	if err := db.conn.Close(); err != nil {
-		t.Fatalf("关闭 sqlite 连接返回错误: %v", err)
+		t.Fatalf("close sqlite connection returned error: %v", err)
 	}
 
 	db.flushLogs()
@@ -3849,7 +3849,7 @@ func TestFlushLogsRollsBackAndRequeuesWhenQuotaUpdateFails(t *testing.T) {
 
 	db, err := New("sqlite", dbPath)
 	if err != nil {
-		t.Fatalf("New(sqlite) 返回错误: %v", err)
+		t.Fatalf("New(sqlite) returned error: %v", err)
 	}
 	close(db.logStop)
 	db.logWg.Wait()
@@ -3857,7 +3857,7 @@ func TestFlushLogsRollsBackAndRequeuesWhenQuotaUpdateFails(t *testing.T) {
 
 	ctx := context.Background()
 	if _, err := db.conn.ExecContext(ctx, `ALTER TABLE api_keys RENAME TO api_keys_broken`); err != nil {
-		t.Fatalf("rename api_keys 返回错误: %v", err)
+		t.Fatalf("rename api_keys returned error: %v", err)
 	}
 	if err := db.InsertUsageLog(ctx, &UsageLogInput{
 		APIKeyID:    123,
@@ -3866,7 +3866,7 @@ func TestFlushLogsRollsBackAndRequeuesWhenQuotaUpdateFails(t *testing.T) {
 		StatusCode:  200,
 		InputTokens: 1000,
 	}); err != nil {
-		t.Fatalf("InsertUsageLog 返回错误: %v", err)
+		t.Fatalf("InsertUsageLog returned error: %v", err)
 	}
 
 	db.flushLogs()
@@ -3884,7 +3884,7 @@ func TestFlushLogsRollsBackAndRequeuesWhenQuotaUpdateFails(t *testing.T) {
 
 	var count int
 	if err := db.conn.QueryRowContext(ctx, `SELECT COUNT(*) FROM usage_logs`).Scan(&count); err != nil {
-		t.Fatalf("count usage_logs 返回错误: %v", err)
+		t.Fatalf("count usage_logs returned error: %v", err)
 	}
 	if count != 0 {
 		t.Fatalf("usage_logs count = %d, want 0 after rolled-back flush", count)
@@ -3896,7 +3896,7 @@ func TestFlushLogsRetriesQuotaOnlyBatchWithoutDoubleCharge(t *testing.T) {
 
 	db, err := New("sqlite", dbPath)
 	if err != nil {
-		t.Fatalf("New(sqlite) 返回错误: %v", err)
+		t.Fatalf("New(sqlite) returned error: %v", err)
 	}
 	close(db.logStop)
 	db.logWg.Wait()
@@ -3906,10 +3906,10 @@ func TestFlushLogsRetriesQuotaOnlyBatchWithoutDoubleCharge(t *testing.T) {
 	ctx := context.Background()
 	apiKeyID, err := db.InsertAPIKey(ctx, "quota-only-retry", "sk-quota-only-retry-1234567890")
 	if err != nil {
-		t.Fatalf("InsertAPIKey 返回错误: %v", err)
+		t.Fatalf("InsertAPIKey returned error: %v", err)
 	}
 	if _, err := db.conn.ExecContext(ctx, `ALTER TABLE api_keys RENAME TO api_keys_broken`); err != nil {
-		t.Fatalf("rename api_keys 返回错误: %v", err)
+		t.Fatalf("rename api_keys returned error: %v", err)
 	}
 	if err := db.InsertUsageLog(ctx, &UsageLogInput{
 		APIKeyID:    apiKeyID,
@@ -3918,7 +3918,7 @@ func TestFlushLogsRetriesQuotaOnlyBatchWithoutDoubleCharge(t *testing.T) {
 		StatusCode:  200,
 		InputTokens: 1000,
 	}); err != nil {
-		t.Fatalf("InsertUsageLog 返回错误: %v", err)
+		t.Fatalf("InsertUsageLog returned error: %v", err)
 	}
 
 	db.flushLogs()
@@ -3934,7 +3934,7 @@ func TestFlushLogsRetriesQuotaOnlyBatchWithoutDoubleCharge(t *testing.T) {
 	db.logMu.Unlock()
 
 	if _, err := db.conn.ExecContext(ctx, `ALTER TABLE api_keys_broken RENAME TO api_keys`); err != nil {
-		t.Fatalf("restore api_keys 返回错误: %v", err)
+		t.Fatalf("restore api_keys returned error: %v", err)
 	}
 	db.flushLogs()
 	db.flushLogs()
@@ -3942,7 +3942,7 @@ func TestFlushLogsRetriesQuotaOnlyBatchWithoutDoubleCharge(t *testing.T) {
 	want := calculateCost(1000, 0, 0, "gpt-5.4", "")
 	var quotaUsed, totalUsed float64
 	if err := db.conn.QueryRowContext(ctx, `SELECT quota_used, total_used FROM api_keys WHERE id = $1`, apiKeyID).Scan(&quotaUsed, &totalUsed); err != nil {
-		t.Fatalf("查询 API Key 用量返回错误: %v", err)
+		t.Fatalf("query API Key usage returned error: %v", err)
 	}
 	if math.Abs(quotaUsed-want) > 1e-12 || math.Abs(totalUsed-want) > 1e-12 {
 		t.Fatalf("API Key usage = quota %.12f total %.12f, want exactly one charge %.12f", quotaUsed, totalUsed, want)
@@ -3950,7 +3950,7 @@ func TestFlushLogsRetriesQuotaOnlyBatchWithoutDoubleCharge(t *testing.T) {
 
 	var count int
 	if err := db.conn.QueryRowContext(ctx, `SELECT COUNT(*) FROM usage_logs`).Scan(&count); err != nil {
-		t.Fatalf("count usage_logs 返回错误: %v", err)
+		t.Fatalf("count usage_logs returned error: %v", err)
 	}
 	if count != 0 {
 		t.Fatalf("usage_logs count = %d, want 0", count)
@@ -3962,7 +3962,7 @@ func TestPromptFilterLogsPersistReviewMetadata(t *testing.T) {
 
 	db, err := New("sqlite", dbPath)
 	if err != nil {
-		t.Fatalf("New(sqlite) 返回错误: %v", err)
+		t.Fatalf("New(sqlite) returned error: %v", err)
 	}
 	defer db.Close()
 
@@ -3991,12 +3991,12 @@ func TestPromptFilterLogsPersistReviewMetadata(t *testing.T) {
 		RequestCorrelationID: "298ee1bb-ad0f-4e96-8924-d34066def71e",
 		SessionHash:          "cb74e520ed6af73b8a9564cc",
 	}); err != nil {
-		t.Fatalf("InsertPromptFilterLog 返回错误: %v", err)
+		t.Fatalf("InsertPromptFilterLog returned error: %v", err)
 	}
 
 	logs, total, err := db.ListPromptFilterLogsPage(ctx, PromptFilterLogQuery{Page: 1, PageSize: 10, Query: "temporary"})
 	if err != nil {
-		t.Fatalf("ListPromptFilterLogsPage 返回错误: %v", err)
+		t.Fatalf("ListPromptFilterLogsPage returned error: %v", err)
 	}
 	if total != 1 || len(logs) != 1 {
 		t.Fatalf("logs total=%d len=%d, want 1", total, len(logs))
@@ -4017,7 +4017,7 @@ func TestPromptFilterLogsPersistReviewMetadata(t *testing.T) {
 
 	matched, matchTotal, err := db.ListPromptFilterLogsPage(ctx, PromptFilterLogQuery{Page: 1, PageSize: 10, Query: "trigger excerpt"})
 	if err != nil {
-		t.Fatalf("ListPromptFilterLogsPage(match context) 返回错误: %v", err)
+		t.Fatalf("ListPromptFilterLogsPage(match context) returned error: %v", err)
 	}
 	if matchTotal != 1 || len(matched) != 1 || matched[0].MatchContext != "actual trigger excerpt" {
 		t.Fatalf("match context search total=%d logs=%+v", matchTotal, matched)
@@ -4025,7 +4025,7 @@ func TestPromptFilterLogsPersistReviewMetadata(t *testing.T) {
 
 	byAuditReference, auditReferenceTotal, err := db.ListPromptFilterLogsPage(ctx, PromptFilterLogQuery{Page: 1, PageSize: 10, Query: "298ee1bb-ad0f-4e96-8924-d34066def71e"})
 	if err != nil {
-		t.Fatalf("ListPromptFilterLogsPage(audit reference) 返回错误: %v", err)
+		t.Fatalf("ListPromptFilterLogsPage(audit reference) returned error: %v", err)
 	}
 	if auditReferenceTotal != 1 || len(byAuditReference) != 1 || byAuditReference[0].RequestCorrelationID != "298ee1bb-ad0f-4e96-8924-d34066def71e" {
 		t.Fatalf("audit reference search total=%d logs=%+v", auditReferenceTotal, byAuditReference)
@@ -4033,7 +4033,7 @@ func TestPromptFilterLogsPersistReviewMetadata(t *testing.T) {
 
 	bySessionHash, sessionHashTotal, err := db.ListPromptFilterLogsPage(ctx, PromptFilterLogQuery{Page: 1, PageSize: 10, Query: "cb74e520ed6af73b8a9564cc"})
 	if err != nil {
-		t.Fatalf("ListPromptFilterLogsPage(session hash) 返回错误: %v", err)
+		t.Fatalf("ListPromptFilterLogsPage(session hash) returned error: %v", err)
 	}
 	if sessionHashTotal != 1 || len(bySessionHash) != 1 || bySessionHash[0].SessionHash != "cb74e520ed6af73b8a9564cc" {
 		t.Fatalf("session hash search total=%d logs=%+v", sessionHashTotal, bySessionHash)
@@ -4041,7 +4041,7 @@ func TestPromptFilterLogsPersistReviewMetadata(t *testing.T) {
 
 	nearest, err := db.FindNearestPromptFilterLog(ctx, got.CreatedAt, "local_filter", "/v1/messages", 0, 5)
 	if err != nil {
-		t.Fatalf("FindNearestPromptFilterLog 返回错误: %v", err)
+		t.Fatalf("FindNearestPromptFilterLog returned error: %v", err)
 	}
 	if nearest == nil || nearest.MatchContext != "actual trigger excerpt" {
 		t.Fatalf("nearest prompt filter log = %+v", nearest)
@@ -4051,7 +4051,7 @@ func TestPromptFilterLogsPersistReviewMetadata(t *testing.T) {
 func TestPromptFilterReviewHistorySeparatesIntelligenceAndNullableScores(t *testing.T) {
 	db, err := New("sqlite", filepath.Join(t.TempDir(), "codex2api.db"))
 	if err != nil {
-		t.Fatalf("New(sqlite) 返回错误: %v", err)
+		t.Fatalf("New(sqlite) returned error: %v", err)
 	}
 	defer db.Close()
 
@@ -4061,8 +4061,8 @@ func TestPromptFilterReviewHistorySeparatesIntelligenceAndNullableScores(t *test
 	ctx := context.Background()
 	inputs := []*PromptFilterLogInput{
 		{Source: "intel_run", Endpoint: "prompt_intelligence", Action: "completed", Mode: "audit", FullText: `{}`},
-		{Source: "local_filter", Endpoint: "/v1/responses", Model: "gpt-5.6-sol", Action: "block", Mode: "block", TextPreview: "redacted request", Reviewed: true, ReviewModel: "review-model", ReviewFlagged: true, ReviewConfidence: &confidence, ReviewThreshold: &threshold, ReviewReason: "攻击他人系统", ReviewEndpoint: "https://review.example/chat/completions", ReviewRequestMode: "chat_completions", ReviewLatencyMS: &latencyMS},
-		{Source: "local_filter", Endpoint: "/v1/chat/completions", Model: "gpt-5.6-sol", Action: "allow", Mode: "block", TextPreview: "benign request", Reviewed: true, ReviewModel: "review-model", ReviewFlagged: false, ReviewReason: "正常开发"},
+		{Source: "local_filter", Endpoint: "/v1/responses", Model: "gpt-5.6-sol", Action: "block", Mode: "block", TextPreview: "redacted request", Reviewed: true, ReviewModel: "review-model", ReviewFlagged: true, ReviewConfidence: &confidence, ReviewThreshold: &threshold, ReviewReason: "attacking other systems", ReviewEndpoint: "https://review.example/chat/completions", ReviewRequestMode: "chat_completions", ReviewLatencyMS: &latencyMS},
+		{Source: "local_filter", Endpoint: "/v1/chat/completions", Model: "gpt-5.6-sol", Action: "allow", Mode: "block", TextPreview: "benign request", Reviewed: true, ReviewModel: "review-model", ReviewFlagged: false, ReviewReason: "normal development"},
 		{Source: "local_filter", Endpoint: "/v1/responses", Model: "gpt-5.6-sol", Action: "allow", Mode: "block", TextPreview: "review timeout", Reviewed: true, ReviewModel: "review-model", ReviewError: "context deadline exceeded"},
 		{Source: "local_filter", Endpoint: "/v1/messages", Model: "claude-sonnet", Action: "warn", Mode: "warn", Score: 70},
 	}
@@ -4090,7 +4090,7 @@ func TestPromptFilterReviewHistorySeparatesIntelligenceAndNullableScores(t *test
 	if !got.Reviewed || got.ReviewConfidence == nil || *got.ReviewConfidence != confidence || got.ReviewThreshold == nil || *got.ReviewThreshold != threshold || got.ReviewLatencyMS == nil || *got.ReviewLatencyMS != latencyMS {
 		t.Fatalf("nullable review metadata = %+v", got)
 	}
-	if got.ReviewReason != "攻击他人系统" || got.ReviewEndpoint != "https://review.example/chat/completions" || got.ReviewRequestMode != "chat_completions" {
+	if got.ReviewReason != "attacking other systems" || got.ReviewEndpoint != "https://review.example/chat/completions" || got.ReviewRequestMode != "chat_completions" {
 		t.Fatalf("review request/response metadata = %+v", got)
 	}
 	cleared, clearedTotal, err := db.ListPromptFilterLogsPage(ctx, PromptFilterLogQuery{Page: 1, PageSize: 10, ReviewResult: "cleared", ExcludeIntelligence: true})
@@ -4146,27 +4146,27 @@ func TestSQLiteMigratesPromptFilterMatchContextColumn(t *testing.T) {
 	dbPath := filepath.Join(t.TempDir(), "codex2api.db")
 	db, err := New("sqlite", dbPath)
 	if err != nil {
-		t.Fatalf("New(sqlite) 返回错误: %v", err)
+		t.Fatalf("New(sqlite) returned error: %v", err)
 	}
 	if err := db.Close(); err != nil {
-		t.Fatalf("Close sqlite 返回错误: %v", err)
+		t.Fatalf("Close sqlite returned error: %v", err)
 	}
 
 	legacy, err := sql.Open("sqlite", dbPath)
 	if err != nil {
-		t.Fatalf("open legacy sqlite 返回错误: %v", err)
+		t.Fatalf("open legacy sqlite returned error: %v", err)
 	}
 	if _, err := legacy.Exec(`ALTER TABLE prompt_filter_logs DROP COLUMN match_context`); err != nil {
 		legacy.Close()
 		t.Fatalf("remove match_context to simulate legacy schema: %v", err)
 	}
 	if err := legacy.Close(); err != nil {
-		t.Fatalf("close legacy sqlite 返回错误: %v", err)
+		t.Fatalf("close legacy sqlite returned error: %v", err)
 	}
 
 	db, err = New("sqlite", dbPath)
 	if err != nil {
-		t.Fatalf("New(sqlite legacy) 返回错误: %v", err)
+		t.Fatalf("New(sqlite legacy) returned error: %v", err)
 	}
 	defer db.Close()
 
@@ -4178,11 +4178,11 @@ func TestSQLiteMigratesPromptFilterMatchContextColumn(t *testing.T) {
 		Mode:         "monitor",
 		MatchContext: "migrated trigger excerpt",
 	}); err != nil {
-		t.Fatalf("InsertPromptFilterLog after migration 返回错误: %v", err)
+		t.Fatalf("InsertPromptFilterLog after migration returned error: %v", err)
 	}
 	logs, err := db.ListPromptFilterLogs(ctx, 10)
 	if err != nil {
-		t.Fatalf("ListPromptFilterLogs after migration 返回错误: %v", err)
+		t.Fatalf("ListPromptFilterLogs after migration returned error: %v", err)
 	}
 	if len(logs) != 1 || logs[0].MatchContext != "migrated trigger excerpt" {
 		t.Fatalf("migrated prompt filter logs = %+v", logs)
@@ -4199,7 +4199,7 @@ func TestSQLiteSystemSettingsContinueThinkingRoundtrip(t *testing.T) {
 
 	ctx := context.Background()
 
-	// 播种默认行（全新库无 system_settings 行），并确认续想默认关闭、轮数 8。
+	// Seed the default row (a fresh database has no system_settings row), and confirm that continue thinking defaults to off and the round count is 8.
 	seed := &SystemSettings{
 		MaxConcurrency:         2,
 		TestConcurrency:        1,
@@ -4214,13 +4214,13 @@ func TestSQLiteSystemSettingsContinueThinkingRoundtrip(t *testing.T) {
 		t.Fatalf("GetSystemSettings: %v", err)
 	}
 	if got.CodexContinueThinkingEnabled {
-		t.Errorf("默认应关闭续想, got enabled")
+		t.Errorf("continue thinking should default to off, got enabled")
 	}
 	if got.CodexContinueMaxRounds != 8 {
-		t.Errorf("默认轮数 = %d, want 8", got.CodexContinueMaxRounds)
+		t.Errorf("default round count = %d, want 8", got.CodexContinueMaxRounds)
 	}
 
-	// 写入后读回。
+	// Read back after write.
 	got.CodexContinueThinkingEnabled = true
 	got.CodexContinueMaxRounds = 15
 	if err := db.UpdateSystemSettings(ctx, got); err != nil {
@@ -4231,10 +4231,10 @@ func TestSQLiteSystemSettingsContinueThinkingRoundtrip(t *testing.T) {
 		t.Fatalf("GetSystemSettings(2): %v", err)
 	}
 	if !after.CodexContinueThinkingEnabled || after.CodexContinueMaxRounds != 15 {
-		t.Fatalf("往返后 = {enabled=%v rounds=%d}, want {true 15}", after.CodexContinueThinkingEnabled, after.CodexContinueMaxRounds)
+		t.Fatalf("after round trip = {enabled=%v rounds=%d}, want {true 15}", after.CodexContinueThinkingEnabled, after.CodexContinueMaxRounds)
 	}
 
-	// 越界轮数落库时归一到上界 32。
+	// An out-of-range round count is clamped to the upper bound 32 when persisted.
 	after.CodexContinueMaxRounds = 100
 	if err := db.UpdateSystemSettings(ctx, after); err != nil {
 		t.Fatalf("UpdateSystemSettings(clamp): %v", err)
@@ -4244,12 +4244,12 @@ func TestSQLiteSystemSettingsContinueThinkingRoundtrip(t *testing.T) {
 		t.Fatalf("GetSystemSettings(3): %v", err)
 	}
 	if clamped.CodexContinueMaxRounds != 32 {
-		t.Errorf("越界轮数应归一到 32, got %d", clamped.CodexContinueMaxRounds)
+		t.Errorf("out-of-range round count should clamp to 32, got %d", clamped.CodexContinueMaxRounds)
 	}
 }
 
-// TestSQLiteSystemSettingsUTLSShutdownTimeoutRoundtrip 验证 uTLS 优雅关闭上限
-// （issue #446）能在 SQLite 上完成 播种默认 → 写入 → 读回 → 越界夹取 的全链路。
+// TestSQLiteSystemSettingsUTLSShutdownTimeoutRoundtrip verifies that the uTLS graceful shutdown cap
+// (issue #446) can complete the full chain on SQLite: seed defaults → write → read back → clamp out-of-range values.
 func TestSQLiteSystemSettingsUTLSShutdownTimeoutRoundtrip(t *testing.T) {
 	dbPath := filepath.Join(t.TempDir(), "codex2api.db")
 	db, err := New("sqlite", dbPath)
@@ -4260,8 +4260,8 @@ func TestSQLiteSystemSettingsUTLSShutdownTimeoutRoundtrip(t *testing.T) {
 
 	ctx := context.Background()
 
-	// 全新库播种：未显式指定该字段时必须落到默认 30 分钟，而不是 0
-	//（0 会让在途流式请求被立即截断）。
+	// On a fresh database seed: when the field is not set explicitly it must fall back to the default 30 minutes, not 0
+	// (0 would cut off in-flight streaming requests immediately).
 	seed := &SystemSettings{
 		MaxConcurrency:  2,
 		TestConcurrency: 1,
@@ -4275,10 +4275,10 @@ func TestSQLiteSystemSettingsUTLSShutdownTimeoutRoundtrip(t *testing.T) {
 		t.Fatalf("GetSystemSettings: %v", err)
 	}
 	if got.UTLSShutdownTimeoutMinutes != 30 {
-		t.Fatalf("默认 utls_shutdown_timeout_minutes = %d, want 30", got.UTLSShutdownTimeoutMinutes)
+		t.Fatalf("default utls_shutdown_timeout_minutes = %d, want 30", got.UTLSShutdownTimeoutMinutes)
 	}
 
-	// 写入合法值后读回。
+	// Write a valid value, then read it back.
 	got.UTLSShutdownTimeoutMinutes = 7
 	if err := db.UpdateSystemSettings(ctx, got); err != nil {
 		t.Fatalf("UpdateSystemSettings(7): %v", err)
@@ -4288,20 +4288,20 @@ func TestSQLiteSystemSettingsUTLSShutdownTimeoutRoundtrip(t *testing.T) {
 		t.Fatalf("GetSystemSettings(after): %v", err)
 	}
 	if after.UTLSShutdownTimeoutMinutes != 7 {
-		t.Fatalf("往返后 = %d, want 7", after.UTLSShutdownTimeoutMinutes)
+		t.Fatalf("after round trip = %d, want 7", after.UTLSShutdownTimeoutMinutes)
 	}
 
-	// 越界值必须在持久化时被夹到上界。
+	// Out-of-range values must be clamped to the upper bound when persisted.
 	after.UTLSShutdownTimeoutMinutes = 100000
 	if err := db.UpdateSystemSettings(ctx, after); err != nil {
-		t.Fatalf("UpdateSystemSettings(越界): %v", err)
+		t.Fatalf("UpdateSystemSettings(out of range): %v", err)
 	}
 	clamped, err := db.GetSystemSettings(ctx)
 	if err != nil {
 		t.Fatalf("GetSystemSettings(clamped): %v", err)
 	}
 	if clamped.UTLSShutdownTimeoutMinutes != 240 {
-		t.Fatalf("越界值应夹到 240, got %d", clamped.UTLSShutdownTimeoutMinutes)
+		t.Fatalf("out-of-range value should clamp to 240, got %d", clamped.UTLSShutdownTimeoutMinutes)
 	}
 }
 

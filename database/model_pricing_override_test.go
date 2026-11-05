@@ -7,13 +7,13 @@ import (
 func TestModelPricingOverride_MergeAndPrecedence(t *testing.T) {
 	t.Cleanup(func() { SetModelPricingOverrides(nil) })
 
-	// 基线：gpt-5.4 代码默认 $2.5/$15。
+	// Baseline: gpt-5.4 code default $2.5/$15.
 	base := GetModelPricing("gpt-5.4")
 	if base.InputPricePerMToken != 2.5 || base.OutputPricePerMToken != 15.0 {
 		t.Fatalf("baseline gpt-5.4 = %.2f/%.2f, want 2.5/15", base.InputPricePerMToken, base.OutputPricePerMToken)
 	}
 
-	// 部分覆盖：只改 output，input 应保持代码默认。
+	// Partial override: only change output; input should keep the code default.
 	SetModelPricingOverrides(map[string]ModelPricingOverride{
 		"gpt-5.4": {Source: ModelPricingSourceCustom, Output: 99.0},
 	})
@@ -24,16 +24,16 @@ func TestModelPricingOverride_MergeAndPrecedence(t *testing.T) {
 	if p.InputPricePerMToken != 2.5 {
 		t.Fatalf("input should stay code default 2.5, got %.2f", p.InputPricePerMToken)
 	}
-	// 覆盖不能污染共享默认：再查一次未覆盖模型仍为原值。
+	// An override must not pollute the shared default: querying an unoverridden model again still gives the original value.
 	if base2 := GetModelPricing("gpt-5.5"); base2.OutputPricePerMToken != 30.0 {
 		t.Fatalf("gpt-5.5 leaked to %.2f, want 30", base2.OutputPricePerMToken)
 	}
 
-	// gpt-5.6-terra 是独立规范键：不跟随 gpt-5.4 的 custom 覆盖。
+	// gpt-5.6-terra is an independent canonical key: it does not follow gpt-5.4's custom override.
 	if terra := GetModelPricing("gpt-5.6-terra"); terra.OutputPricePerMToken != 12.0 {
 		t.Fatalf("terra should keep own default 12, got %.2f", terra.OutputPricePerMToken)
 	}
-	// terra 自身覆盖可独立生效。
+	// Terra's own override takes effect independently.
 	SetModelPricingOverrides(map[string]ModelPricingOverride{
 		"gpt-5.4":       {Source: ModelPricingSourceCustom, Output: 99.0},
 		"gpt-5.6-terra": {Source: ModelPricingSourceCustom, Output: 42.0},
@@ -45,7 +45,7 @@ func TestModelPricingOverride_MergeAndPrecedence(t *testing.T) {
 		t.Fatalf("gpt-5.4 override = %.2f, want 99", gpt54.OutputPricePerMToken)
 	}
 
-	// 清空覆盖 → 回退代码默认。
+	// Clear the override → fall back to the code default.
 	SetModelPricingOverrides(nil)
 	if p := GetModelPricing("gpt-5.4"); p.OutputPricePerMToken != 15.0 {
 		t.Fatalf("after clear, output = %.2f, want 15", p.OutputPricePerMToken)
@@ -79,8 +79,8 @@ func TestModelPricingOverride_ExactCodexAliasPrecedesCanonicalOverride(t *testin
 func TestModelPricingOverride_SyncedAliasNeverShadowsCustomCanonical(t *testing.T) {
 	t.Cleanup(func() { SetModelPricingOverrides(nil) })
 
-	// 管理员手填(custom)的 canonical 价必须压过同步(synced)进来的别名价,
-	// 否则一次定价同步就能静默替换运营者的手工定价决策(custom > synced)。
+	// A custom canonical price entered by an admin must override the alias price that comes in via sync (synced),
+	// otherwise a single pricing sync could silently replace the operator's manual pricing decision (custom > synced).
 	SetModelPricingOverrides(map[string]ModelPricingOverride{
 		"codex-auto-review": {Source: ModelPricingSourceSynced, Input: 2.5, Output: 15},
 		"gpt-5.4":           {Source: ModelPricingSourceCustom, Input: 9, Output: 90},
@@ -90,7 +90,7 @@ func TestModelPricingOverride_SyncedAliasNeverShadowsCustomCanonical(t *testing.
 			pricing.InputPricePerMToken, pricing.OutputPricePerMToken)
 	}
 
-	// custom 别名仍然压过 custom canonical(同源之下更精确的键生效)。
+	// A custom alias still overrides a custom canonical (of the same source, the more precise key wins).
 	SetModelPricingOverrides(map[string]ModelPricingOverride{
 		"codex-auto-review": {Source: ModelPricingSourceCustom, Input: 2.5, Output: 15},
 		"gpt-5.4":           {Source: ModelPricingSourceCustom, Input: 9, Output: 90},
@@ -104,8 +104,8 @@ func TestModelPricingOverride_SyncedAliasNeverShadowsCustomCanonical(t *testing.
 func TestModelPricingOverride_PartialAliasFallsBackToCanonicalOverride(t *testing.T) {
 	t.Cleanup(func() { SetModelPricingOverrides(nil) })
 
-	// 别名条目只填了 input 时,其余字段应回退 canonical 生效价(90),
-	// 而不是无视管理员的 canonical 配置直接掉回代码默认价。
+	// When an alias entry only fills in input, the other fields should fall back to the canonical effective price (90),
+	// instead of ignoring the admin's canonical config and dropping straight back to the code default price.
 	SetModelPricingOverrides(map[string]ModelPricingOverride{
 		"codex-auto-review": {Source: ModelPricingSourceCustom, Input: 2.5},
 		"gpt-5.4":           {Source: ModelPricingSourceCustom, Input: 9, Output: 90},
@@ -186,7 +186,7 @@ func TestModelPricingOverride_AstraAppliesLongContextPrices(t *testing.T) {
 
 	for _, source := range []string{ModelPricingSourceCustom, ModelPricingSourceSynced} {
 		t.Run(source, func(t *testing.T) {
-			// 手工价和官方 API 同步价都保留 Astra 的长档与阈值。
+			// Both the manual price and the official API sync price keep Astra's long tier and threshold.
 			override := ModelPricingOverride{
 				Source: source, Input: 12, CachedInput: 2, Output: 60,
 				InputPriority: 24, CachedInputPriority: 4, OutputPriority: 120,
@@ -223,7 +223,7 @@ func TestModelPricingOverride_AstraAppliesLongContextPrices(t *testing.T) {
 				}
 			}
 
-			// 相同的覆盖用于其他模型时，长档价和阈值全部继续生效。
+			// When the same override is used for other models, the long-tier prices and threshold all still apply.
 			if got := ModelPricingOverrideFromPricing(GetModelPricing("gpt-5.6-sol"), source); got != override {
 				t.Fatalf("other model override changed: %+v, want %+v", got, override)
 			}

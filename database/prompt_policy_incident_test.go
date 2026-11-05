@@ -59,8 +59,8 @@ func promptPolicyTestInputs(incidentID string) (PromptPolicyIncidentInput, Promp
 	incident := PromptPolicyIncidentInput{
 		IncidentID: incidentID, RequestCorrelationID: "request-1", AttemptIndex: 2, Transport: "sse",
 		Endpoint: "/v1/responses", Protocol: "responses", Provider: "openai", Model: "gpt-5.4",
-		StatusCode: 400, AccountID: 7, AccountName: "account@example.com", AccountPlatform: "openai", AccountGroupIDs: []int64{4, 7}, AccountGroupNames: []string{"打铁", "Team"},
-		APIKeyID: 9, APIKeyName: "test", APIKeyAllowedGroupIDs: []int64{1, 4, 7}, APIKeyAllowedGroupNames: []string{"示例平台", "打铁", "Team"}, UpstreamErrorCode: "cyber_policy",
+		StatusCode: 400, AccountID: 7, AccountName: "account@example.com", AccountPlatform: "openai", AccountGroupIDs: []int64{4, 7}, AccountGroupNames: []string{"Blacksmith", "Team"},
+		APIKeyID: 9, APIKeyName: "test", APIKeyAllowedGroupIDs: []int64{1, 4, 7}, APIKeyAllowedGroupNames: []string{"Example platform", "Blacksmith", "Team"}, UpstreamErrorCode: "cyber_policy",
 		UpstreamError: `{"error":{"code":"cyber_policy"}}`, LocalEvaluationState: PromptPolicyEvaluationCompleted,
 		LocalOutcome: PromptPolicyOutcomeNoHit, LocalAction: "allow", LocalScore: &zero, LocalRawScore: &zero,
 		LocalAuditScore: &zero, LocalAuditRawScore: &zero, LocalThreshold: 50, LocalMode: "block",
@@ -531,9 +531,9 @@ func TestUsageLogIncidentIDSurvivesEveryDetailQueryPath(t *testing.T) {
 	assertID("paged", paged.Logs, nil)
 }
 
-// TestMergePromptPolicyCandidateEvidenceMetadataEscapeInflation 验证 JSON
-// HTML 转义膨胀(<>& → \u00XX)不会让对账报错回滚整个日志事务:学习包正文
-// 按编码后体积收缩,对账结论字段始终保留。
+// TestMergePromptPolicyCandidateEvidenceMetadataEscapeInflation verifies that JSON
+// HTML escape inflation (<>& → \u00XX) does not make reconciliation fail and roll back the whole log transaction: the learning package body
+// shrinks by the encoded size, and the reconciliation conclusion fields are always kept.
 func TestMergePromptPolicyCandidateEvidenceMetadataEscapeInflation(t *testing.T) {
 	bundle := fmt.Sprintf(`{"version":1,"quality":"complete","prompt_text":%q,"context":[{"origin":"history","text":%q}],"upstream_error":%q}`,
 		strings.Repeat("<", 20000), strings.Repeat("&", 11000), strings.Repeat(">", 4000))

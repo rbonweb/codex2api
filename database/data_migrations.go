@@ -15,12 +15,12 @@ import (
 
 const (
 	dataMigrationOAuthIdentityDedupeV1 = "20260616_oauth_identity_dedupe_v1"
-	// v2: 身份别名补充 user_id。个人账号(无工作区 account_id)此前只按凭证原文
-	// 去重，AT 轮换后产生的重复账号 v1 清不掉；v2 把 email+user_id 也纳入别名
-	// 后重跑一次合并。
+	// v2: identity aliases add user_id. Personal accounts (without a workspace account_id) previously were deduplicated only by credential text,
+	// so duplicate accounts produced after AT rotation could not be cleaned up by v1; v2 adds email+user_id to the aliases
+	// and reruns the merge once.
 	dataMigrationOAuthIdentityDedupeV2 = "20260702_oauth_identity_dedupe_v2"
-	// usage_logs.channel 回填：按 accounts.platform 推导渠道（xai→grok，其余→codex）；
-	// 账号已删的历史行默认 codex（Grok 上线前的流量全部是 codex）。
+	// Backfill usage_logs.channel: derive the channel from accounts.platform (xai→grok, others→codex);
+	// for history rows whose account has been deleted, the default is codex (all traffic before Grok launched was codex).
 	dataMigrationUsageLogChannelV1   = "20260721_usage_log_channel_backfill_v1"
 	dataMigrationWorkspaceIdentityV3 = "20260722_workspace_identity_v3"
 	// Provider-only migrations (Grok group classification, Claude provider backfill)
@@ -71,15 +71,15 @@ func (db *DB) runDataMigrations(ctx context.Context) error {
 // markDataMigrationDoneOnly is the body of a retired provider-only migration: runDataMigrationOnce records the key and this does nothing else.
 func markDataMigrationDoneOnly(context.Context, *sql.Tx) error { return nil }
 
-// backfillUsageLogChannel 给存量 usage_logs 回填 channel：先按现存账号的 platform
-// 标记 grok，其余空值统一置 codex（Grok 渠道上线前的历史流量全部走 Codex）。
+// backfillUsageLogChannel backfills channel on existing usage_logs: first it marks grok by the platform of the existing accounts,
+// then it sets all remaining empty values to codex (all historical traffic before the Grok channel launched went through Codex).
 func (db *DB) backfillUsageLogChannel(ctx context.Context, tx *sql.Tx) error {
 	if db.isSQLite() {
 		if _, err := tx.ExecContext(ctx, `
 			UPDATE usage_logs SET channel = 'grok'
 			WHERE COALESCE(channel, '') = ''
 			  AND account_id IN (SELECT id FROM accounts WHERE platform = 'xai')`); err != nil {
-			return fmt.Errorf("回填 grok 渠道: %w", err)
+			return fmt.Errorf("backfill grok channel: %w", err)
 		}
 	} else {
 		if _, err := tx.ExecContext(ctx, `
@@ -88,13 +88,13 @@ func (db *DB) backfillUsageLogChannel(ctx context.Context, tx *sql.Tx) error {
 			WHERE COALESCE(usage_logs.channel, '') = ''
 			  AND usage_logs.account_id = a.id
 			  AND a.platform = 'xai'`); err != nil {
-			return fmt.Errorf("回填 grok 渠道: %w", err)
+			return fmt.Errorf("backfill grok channel: %w", err)
 		}
 	}
 	if _, err := tx.ExecContext(ctx, `
 		UPDATE usage_logs SET channel = 'codex'
 		WHERE COALESCE(channel, '') = ''`); err != nil {
-		return fmt.Errorf("回填 codex 渠道: %w", err)
+		return fmt.Errorf("backfill codex channel: %w", err)
 	}
 	return nil
 }
@@ -113,7 +113,7 @@ func (db *DB) ensureDataMigrationsTable(ctx context.Context) error {
 		)
 	`)
 	if err != nil {
-		return fmt.Errorf("创建 data_migrations 表失败: %w", err)
+		return fmt.Errorf("failed to create data_migrations table: %w", err)
 	}
 	return nil
 }
@@ -132,7 +132,7 @@ func (db *DB) runDataMigrationOnce(ctx context.Context, version string, migrate 
 			ON CONFLICT(version) DO NOTHING
 		`, version)
 		if err != nil {
-			return fmt.Errorf("记录 data migration %s 失败: %w", version, err)
+			return fmt.Errorf("failed to record data migration %s: %w", version, err)
 		}
 		affected, err := res.RowsAffected()
 		if err != nil {
@@ -143,7 +143,7 @@ func (db *DB) runDataMigrationOnce(ctx context.Context, version string, migrate 
 		}
 
 		if err := migrate(ctx, tx); err != nil {
-			return fmt.Errorf("执行 data migration %s 失败: %w", version, err)
+			return fmt.Errorf("failed to run data migration %s: %w", version, err)
 		}
 		return tx.Commit()
 	})
@@ -224,7 +224,7 @@ func (db *DB) dedupeOAuthIdentityAccounts(ctx context.Context, tx *sql.Tx) error
 	if err := insertAccountEventsTx(ctx, tx, loserIDs, "deleted", "oauth_identity_dedupe_v1"); err != nil {
 		return err
 	}
-	log.Printf("[data_migration] %s: 发现 %d 组重复 OAuth 身份，已软删除 %d 个重复账号", dataMigrationOAuthIdentityDedupeV1, duplicateGroups, len(loserIDs))
+	log.Printf("[data_migration] %s: found %d groups of duplicate OAuth identities, soft-deleted %d duplicate accounts", dataMigrationOAuthIdentityDedupeV1, duplicateGroups, len(loserIDs))
 	return nil
 }
 
@@ -294,7 +294,7 @@ func (db *DB) migrateWorkspaceIdentityV3(ctx context.Context, tx *sql.Tx) error 
 	if err := insertAccountEventsTx(ctx, tx, loserIDs, "deleted", "workspace_identity_v3"); err != nil {
 		return err
 	}
-	log.Printf("[data_migration] %s: 已软删除 %d 个重复账号", dataMigrationWorkspaceIdentityV3, len(loserIDs))
+	log.Printf("[data_migration] %s: soft-deleted %d duplicate accounts", dataMigrationWorkspaceIdentityV3, len(loserIDs))
 	return nil
 }
 
@@ -349,11 +349,11 @@ func (db *DB) listOAuthIdentityDedupeAccounts(ctx context.Context, tx *sql.Tx) (
 		account.credentials = decodeCredentials(rawCredentials)
 		account.createdAt, err = parseDBTimeValue(createdRaw)
 		if err != nil {
-			return nil, fmt.Errorf("解析账号 %d created_at 失败: %w", account.id, err)
+			return nil, fmt.Errorf("failed to parse created_at of account %d: %w", account.id, err)
 		}
 		account.updatedAt, err = parseDBTimeValue(updatedRaw)
 		if err != nil {
-			return nil, fmt.Errorf("解析账号 %d updated_at 失败: %w", account.id, err)
+			return nil, fmt.Errorf("failed to parse updated_at of account %d: %w", account.id, err)
 		}
 		accounts = append(accounts, account)
 	}
@@ -364,8 +364,8 @@ func (db *DB) listOAuthIdentityDedupeAccounts(ctx context.Context, tx *sql.Tx) (
 }
 
 func oauthIdentityDedupeAliases(credentials map[string]interface{}) []string {
-	// 用户勾选"允许重复添加"强制导入的副本带 allow_duplicate 标记，
-	// 是故意保留的重复（如同一账号配不同代理），不得参与合并。
+	// Copies force-imported by the user ticking "allow duplicate add" carry the allow_duplicate flag,
+	// they are deliberate duplicates (for example the same account with a different proxy) and must not take part in merging.
 	if strings.EqualFold(strings.TrimSpace(credentialStringFromMap(credentials, "allow_duplicate")), "true") {
 		return nil
 	}
@@ -374,8 +374,8 @@ func oauthIdentityDedupeAliases(credentials map[string]interface{}) []string {
 		return nil
 	}
 	seen := make(map[string]struct{}, 2)
-	// user_id 也是身份别名：个人账号可能没有工作区 account_id，且旧版 wham
-	// 回填曾把 user_id 写进 account_id 字段，两种形态要能合并到同一组。
+	// user_id is also an identity alias: a personal account may have no workspace account_id, and the old wham
+	// backfill once wrote user_id into the account_id field; both shapes must be able to merge into the same group.
 	for _, key := range []string{"account_id", "chatgpt_account_id", "user_id"} {
 		accountID := strings.TrimSpace(credentialStringFromMap(credentials, key))
 		if accountID == "" {
@@ -467,7 +467,7 @@ func softDeleteAccountsTx(ctx context.Context, tx *sql.Tx, ids []int64) error {
 			WHERE status <> 'deleted' AND id IN (%s)
 		`, strings.Join(placeholders, ","))
 		if _, err := tx.ExecContext(ctx, query, args...); err != nil {
-			return fmt.Errorf("软删除重复账号失败: %w", err)
+			return fmt.Errorf("failed to soft-delete duplicate account: %w", err)
 		}
 
 		// Keep the duplicate account's last group snapshot for historical usage
@@ -494,7 +494,7 @@ func insertAccountEventsTx(ctx context.Context, tx *sql.Tx, ids []int64, eventTy
 		}
 		query := fmt.Sprintf(`INSERT INTO account_events (account_id, event_type, source) VALUES %s`, strings.Join(placeholders, ","))
 		if _, err := tx.ExecContext(ctx, query, args...); err != nil {
-			return fmt.Errorf("记录重复账号清理事件失败: %w", err)
+			return fmt.Errorf("failed to record duplicate account cleanup event: %w", err)
 		}
 	}
 	return nil

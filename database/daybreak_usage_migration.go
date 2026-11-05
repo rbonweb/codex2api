@@ -5,7 +5,7 @@ import (
 	"database/sql"
 )
 
-// 将旧日志中的 Daybreak 后缀迁到独立字段，恢复 effective_model 的模型语义。
+// Moves the Daybreak suffix in old logs into a separate field, restoring the model semantics of effective_model.
 func (db *DB) backfillDaybreakUsageProgram(ctx context.Context, tx *sql.Tx) error {
 	for _, variant := range []struct{ suffix, program string }{
 		{"-daybreak-blue", "daybreak_blue"},

@@ -7,31 +7,31 @@ import (
 	"time"
 )
 
-// API Key 分组/账号维度限额的 scope 类型。
+// Scope type of the API key group/account dimension limits.
 const (
 	APIKeyScopeTypeGroup   = "group"
 	APIKeyScopeTypeAccount = "account"
 )
 
-// scope 额度耗尽后的行为。
-//   - skip:   把该 scope 的账号从本次请求的候选池剔除,自动落到其它分组/账号;
-//     候选被剔空时返回 429 并说明是 scope 预算耗尽(而不是 503 无可用账号)。
-//   - reject: 只要该 scope 超额,这个 Key 的请求一律 429,不换号。
+// Behavior when the scope quota is exhausted.
+//   - skip:   remove that scope's accounts from the candidate pool for this request, automatically falling through to other groups/accounts;
+//     when the candidate pool is emptied, return 429 and state that the scope budget is exhausted (rather than 503 no available account).
+//   - reject: as soon as this scope is over its limit, every request of this key gets 429, with no account switching.
 const (
 	APIKeyScopeOnExhaustedSkip   = "skip"
 	APIKeyScopeOnExhaustedReject = "reject"
 )
 
-// APIKeyScopeWindow 是 scope 限额支持的滑动窗口。label 同时用于缓存键与错误文案。
+// APIKeyScopeWindow is a sliding window supported by scope limits. label is used both for the cache key and the error text.
 type APIKeyScopeWindow struct {
 	Label  string
 	Window time.Duration
 }
 
-// APIKeyScopeWindowTotal 是累计额度在错误/展示里使用的伪窗口标签。
+// APIKeyScopeWindowTotal is the pseudo-window label that cumulative quotas use in errors and display.
 const APIKeyScopeWindowTotal = "total"
 
-// APIKeyScopeWindows 是全部候选窗口,顺序即校验顺序(短窗口优先命中,文案更贴近现场)。
+// APIKeyScopeWindows is all candidate windows; the order is the validation order (shorter windows are checked first, so the message matches the situation better).
 var APIKeyScopeWindows = []APIKeyScopeWindow{
 	{Label: "5h", Window: 5 * time.Hour},
 	{Label: "1d", Window: 24 * time.Hour},
@@ -39,13 +39,13 @@ var APIKeyScopeWindows = []APIKeyScopeWindow{
 	{Label: "30d", Window: 30 * 24 * time.Hour},
 }
 
-// APIKeyScopeLimit 是一个 API Key 针对某个账号分组 / 单账号的用量上限(issue #439)。
+// APIKeyScopeLimit is one API key's usage cap for an account group or a single account (issue #439).
 //
-// 语义:限额只约束「这个 Key 打到这个 scope 的用量」,不影响该 scope 被其它 Key 使用,
-// 也不影响这个 Key 打到其它 scope。0 值表示该维度不限。
+// Semantics: the limit only constrains "this key's usage toward this scope"; it does not affect the scope's use by other keys,
+// nor this key's usage toward other scopes. A zero value means that dimension is unlimited.
 //
-// 计量口径统一取 user_billed(与 Key 级 cost 限额一致);未配下游定价的模型 cost 恒为 0,
-// 这类场景请改用 token / 请求数维度。
+// The metering basis is always user_billed (consistent with the key-level cost limit); for models without downstream pricing the cost is always 0,
+// in those cases use the token / request-count dimensions instead.
 type APIKeyScopeLimit struct {
 	ScopeType   string `json:"scope_type"`
 	ScopeID     int64  `json:"scope_id"`
@@ -63,24 +63,24 @@ type APIKeyScopeLimit struct {
 
 	Requests1d int64 `json:"requests_1d,omitempty"`
 
-	// MaxConcurrency 是该 Key 在这条 scope 上允许的最大在途请求数(进程内软上限)。
-	// 与 Key 级 max_concurrency 不同:它只约束打到这条 scope 的请求,位满时按 OnExhausted
-	// 换号或拒绝。
+	// MaxConcurrency is the maximum number of in-flight requests this key may have on this scope (a soft in-process limit).
+	// Unlike the key-level max_concurrency, it only constrains requests going to this scope; when the slots are full it chooses, according to OnExhausted, to
+	// switch accounts or reject.
 	MaxConcurrency int `json:"max_concurrency,omitempty"`
 
-	// 累计额度(不随时间衰减,用完须手动重置;语义对齐 api_keys.quota_limit)。
-	// 已用量存在 api_key_scope_counters 表里,不放在这份配置里。
+	// Cumulative quota (does not decay over time; must be reset manually once used up; semantics aligned with api_keys.quota_limit).
+	// The used amount is stored in the api_key_scope_counters table, not in this configuration.
 	QuotaCost     float64 `json:"quota_cost,omitempty"`
 	QuotaTokens   int64   `json:"quota_tokens,omitempty"`
 	QuotaRequests int64   `json:"quota_requests,omitempty"`
 }
 
-// HasCumulativeQuota 判断该条 scope 是否配了累计额度。
+// HasCumulativeQuota reports whether this scope has a cumulative quota configured.
 func (s APIKeyScopeLimit) HasCumulativeQuota() bool {
 	return s.QuotaCost > 0 || s.QuotaTokens > 0 || s.QuotaRequests > 0
 }
 
-// CheckCumulative 用累计计数器判定该条 scope 的累计额度是否用尽。
+// CheckCumulative uses the cumulative counter to decide whether this scope's cumulative quota is used up.
 func (s APIKeyScopeLimit) CheckCumulative(counter APIKeyScopeCounter) (APIKeyScopeExhaustion, bool) {
 	if s.QuotaCost > 0 && counter.UsedCost >= s.QuotaCost {
 		return APIKeyScopeExhaustion{Window: APIKeyScopeWindowTotal, Metric: "cost", Used: counter.UsedCost, Limit: s.QuotaCost}, true
@@ -94,7 +94,7 @@ func (s APIKeyScopeLimit) CheckCumulative(counter APIKeyScopeCounter) (APIKeySco
 	return APIKeyScopeExhaustion{}, false
 }
 
-// ResolveScopeType 归一 scope 类型;未知值返回 ""(调用方应丢弃该条)。
+// ResolveScopeType normalizes the scope type; an unknown value returns "" (the caller should drop the entry).
 func (s APIKeyScopeLimit) ResolveScopeType() string {
 	switch strings.ToLower(strings.TrimSpace(s.ScopeType)) {
 	case APIKeyScopeTypeGroup:
@@ -105,7 +105,7 @@ func (s APIKeyScopeLimit) ResolveScopeType() string {
 	return ""
 }
 
-// ResolveOnExhausted 归一耗尽行为;未知值一律按 skip(更保守:仍可服务)。
+// ResolveOnExhausted normalizes the exhaustion behavior; unknown values always fall back to skip (the most conservative choice: still able to serve).
 func (s APIKeyScopeLimit) ResolveOnExhausted() string {
 	if strings.ToLower(strings.TrimSpace(s.OnExhausted)) == APIKeyScopeOnExhaustedReject {
 		return APIKeyScopeOnExhaustedReject
@@ -113,15 +113,15 @@ func (s APIKeyScopeLimit) ResolveOnExhausted() string {
 	return APIKeyScopeOnExhaustedSkip
 }
 
-// HasAnyLimit 判断该条 scope 是否配了至少一个有效上限。全 0 的条目没有约束力,
-// 保存时应被丢弃,否则会白白拖起一次窗口聚合查询。
+// HasAnyLimit reports whether this scope has at least one effective cap. An all-zero entry has no binding force,
+// so it should be dropped on save, otherwise it would needlessly trigger a window aggregation query.
 func (s APIKeyScopeLimit) HasAnyLimit() bool {
 	return s.Cost5h > 0 || s.Cost1d > 0 || s.Cost7d > 0 || s.Cost30d > 0 ||
 		s.Token5h > 0 || s.Token1d > 0 || s.Token7d > 0 || s.Token30d > 0 ||
 		s.Requests1d > 0 || s.MaxConcurrency > 0 || s.HasCumulativeQuota()
 }
 
-// NeedsWindow 判断该条 scope 是否用到某个窗口,用于按需触发窗口聚合查询。
+// NeedsWindow reports whether this scope uses a given window, used to trigger the window aggregation query on demand.
 func (s APIKeyScopeLimit) NeedsWindow(label string) bool {
 	switch label {
 	case "5h":
@@ -136,7 +136,7 @@ func (s APIKeyScopeLimit) NeedsWindow(label string) bool {
 	return false
 }
 
-// APIKeyScopeExhaustion 描述一条 scope 限额的触发结果。
+// APIKeyScopeExhaustion describes the trigger result of one scope limit.
 type APIKeyScopeExhaustion struct {
 	Window string
 	Metric string
@@ -144,10 +144,10 @@ type APIKeyScopeExhaustion struct {
 	Limit  float64
 }
 
-// Describe 返回给下游客户端看的超额说明。金额与 token 用不同的格式,和 Key 级
-// 限额的文案风格保持一致。
+// Describe returns the exhaustion explanation shown to downstream clients. Amounts and tokens use different formats, consistent with the
+// wording style of key-level limits.
 func (e APIKeyScopeExhaustion) Describe(scopeLabel string) string {
-	// 累计额度没有"最近 N"的说法，单独措辞，否则会读成 "in last total"。
+	// A cumulative quota has no "last N" wording, so it gets its own phrasing; otherwise it would read as "in last total".
 	scopeWindow := "in last " + e.Window
 	if e.Window == APIKeyScopeWindowTotal {
 		scopeWindow = "in total (needs a manual reset)"
@@ -160,8 +160,8 @@ func (e APIKeyScopeExhaustion) Describe(scopeLabel string) string {
 		scopeLabel, int64(e.Used), int64(e.Limit), e.Metric, scopeWindow)
 }
 
-// formatScopeCost 格式化金额:常规预算按分保留两位,极小额度(如按次计费的实验值)
-// 多留几位,避免文案显示成 "$0.00 / $0.00" 让人无从判断。
+// formatScopeCost formats the amount: ordinary budgets keep two decimal places in cents, while tiny quotas (such as experimental per-call values)
+// keep a few more digits, so that the text does not show "$0.00 / $0.00" and leave people unable to judge.
 func formatScopeCost(value float64) string {
 	if value > 0 && value < 0.01 {
 		return strconv.FormatFloat(value, 'f', 6, 64)
@@ -169,8 +169,8 @@ func formatScopeCost(value float64) string {
 	return strconv.FormatFloat(value, 'f', 2, 64)
 }
 
-// CheckWindow 用某窗口的实际用量判定该条 scope 是否已耗尽。命中返回 (结果, true)。
-// 判定用 >= ,与 Key 级限额一致:达到上限即视为用尽。
+// CheckWindow uses the actual usage of a window to decide whether this scope is exhausted. On a hit it returns (result, true).
+// The check uses >=, consistent with key-level limits: reaching the cap counts as exhausted.
 func (s APIKeyScopeLimit) CheckWindow(label string, usage APIKeyWindowUsage) (APIKeyScopeExhaustion, bool) {
 	var costLimit float64
 	var tokenLimit, requestLimit int64
@@ -198,8 +198,8 @@ func (s APIKeyScopeLimit) CheckWindow(label string, usage APIKeyWindowUsage) (AP
 	return APIKeyScopeExhaustion{}, false
 }
 
-// NormalizeAPIKeyScopeLimits 归一 scope 限额列表:丢弃未知类型 / 非法 ID / 全 0 的条目,
-// 同 (type, id) 去重(后者覆盖前者),负值置 0。返回 nil 表示没有任何有效 scope 限额。
+// NormalizeAPIKeyScopeLimits normalizes the scope limit list: it drops entries with unknown types, invalid IDs or all zeros,
+// dedupes by (type, id) (a later entry overrides an earlier one), and clamps negative values to 0. It returns nil when there are no valid scope limits.
 func NormalizeAPIKeyScopeLimits(in []APIKeyScopeLimit) []APIKeyScopeLimit {
 	if len(in) == 0 {
 		return nil
@@ -252,8 +252,8 @@ func NormalizeAPIKeyScopeLimits(in []APIKeyScopeLimit) []APIKeyScopeLimit {
 	return out
 }
 
-// PruneAPIKeyScopeLimitsForScope 删除指向某个已删除分组 / 账号的 scope 限额条目。
-// 返回 (剩余条目, 是否有改动)。
+// PruneAPIKeyScopeLimitsForScope deletes scope limit entries that point to a deleted group / account.
+// It returns (remaining entries, whether anything changed).
 func PruneAPIKeyScopeLimitsForScope(in []APIKeyScopeLimit, scopeType string, scopeID int64) ([]APIKeyScopeLimit, bool) {
 	if len(in) == 0 || scopeID <= 0 {
 		return in, false

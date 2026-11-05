@@ -11,21 +11,21 @@ import (
 	"time"
 )
 
-// Codex 邀请快照的两种类型。资格与已发记录的变化速度不同，各自独立过期。
+// There are two kinds of Codex invite snapshots. Eligibility and sent-record data change at different speeds, so each expires on its own.
 const (
 	CodexInviteSnapshotEligibility = "eligibility"
 	CodexInviteSnapshotTracking    = "tracking"
 )
 
-// CodexInviteSnapshot 是一次成功的上游邀请查询结果，按账号 + 类型 + 作用域留存。
+// CodexInviteSnapshot is one successful upstream invite query result, kept per account + kind + scope.
 //
-// Scope 是「同一份结果的完整标识」，由调用方按类型拼：资格用 program|entrypoint，
-// 已发记录还要带上 period|limit——limit=10 与 limit=100 是两份不同的数据，只按
-// program 做键会让前者被当成后者返回。
+// Scope is "the full identity of one result set", built by the caller per kind: eligibility uses program|entrypoint,
+// sent records also carry period|limit: limit=10 and limit=100 are two different data sets, so keying only by
+// program would make the former be returned as the latter.
 //
-// 只有成功的查询才写进来：上游这两个端点挂在 Cloudflare bot 管理后面，挑战页
-// 借用 403 与「无资格」同码，把失败也存成快照会让一次挑战抹掉最后一份可用配额。
-// CredentialGeneration 参与写入条件，账号重新授权后旧快照读不出来也压不住新值。
+// Only successful queries are written: these two upstream endpoints sit behind Cloudflare bot management, and the challenge page
+// borrows the 403 code that also means "not eligible", so storing failures as snapshots would let one challenge wipe out the last usable quota.
+// CredentialGeneration takes part in the write condition: after an account is re-authorized, old snapshots cannot be read back and cannot hold back a newer value.
 type CodexInviteSnapshot struct {
 	AccountID            int64
 	Kind                 string
@@ -38,8 +38,8 @@ type CodexInviteSnapshot struct {
 	UpdatedAt            time.Time
 }
 
-// Expired 判断快照是否已过软 TTL。expires_at 是显式列而不是由 observed_at 现算，
-// 便于在配额变化时（例如刚发过邀请）直接把某一行提前置为过期。
+// Expired reports whether the snapshot is past its soft TTL. expires_at is an explicit column rather than computed from observed_at on the fly,
+// so that when quota changes (for example, an invite was just sent) the row can be set to expired early.
 func (s *CodexInviteSnapshot) Expired(now time.Time) bool {
 	return s == nil || s.ExpiresAt.IsZero() || !now.Before(s.ExpiresAt)
 }
@@ -59,7 +59,7 @@ func normalizeCodexInviteKind(kind string) string {
 
 func (db *DB) ensureCodexInviteSnapshotTable(ctx context.Context) error {
 	if db == nil || db.conn == nil {
-		return fmt.Errorf("数据库不可用")
+		return fmt.Errorf("database unavailable")
 	}
 	codexInviteSnapshotInitMu.Lock()
 	defer codexInviteSnapshotInitMu.Unlock()
@@ -105,8 +105,8 @@ func (db *DB) ensureCodexInviteSnapshotTable(ctx context.Context) error {
 	return nil
 }
 
-// GetCodexInviteSnapshot 读取一份邀请快照。没有记录时返回 (nil, nil)——「还没查过」
-// 是正常状态，不该逼调用方去分辨 sql.ErrNoRows。过期与否由调用方按自己的 TTL 判定。
+// GetCodexInviteSnapshot reads one invite snapshot. When there is no record it returns (nil, nil): "not queried yet"
+// is a normal state, and callers should not have to distinguish sql.ErrNoRows. Whether it is expired is decided by the caller with its own TTL.
 func (db *DB) GetCodexInviteSnapshot(ctx context.Context, accountID int64, kind, scope string) (*CodexInviteSnapshot, error) {
 	if err := db.ensureCodexInviteSnapshotTable(ctx); err != nil {
 		return nil, err
@@ -140,11 +140,11 @@ func (db *DB) GetCodexInviteSnapshot(ctx context.Context, accountID int64, kind,
 	return snap, nil
 }
 
-// UpsertCodexInviteSnapshot 写入一份成功观测。DO UPDATE 带 credential_generation
-// 单调条件：重新授权后仍在途的旧探针回来时，压不掉新一代凭据写下的快照。
+// UpsertCodexInviteSnapshot writes a successful observation. The DO UPDATE with the credential_generation
+// monotonic condition: when an old probe still in flight returns after re-authorization, it cannot overwrite the snapshot written under the new credential generation.
 func (db *DB) UpsertCodexInviteSnapshot(ctx context.Context, snap *CodexInviteSnapshot) error {
 	if snap == nil {
-		return fmt.Errorf("快照为空")
+		return fmt.Errorf("snapshot is empty")
 	}
 	if err := db.ensureCodexInviteSnapshotTable(ctx); err != nil {
 		return err
@@ -182,8 +182,8 @@ func (db *DB) UpsertCodexInviteSnapshot(ctx context.Context, snap *CodexInviteSn
 	return err
 }
 
-// DeleteCodexInviteSnapshots 清掉一个账号的全部邀请快照。发送邀请成功后调用：
-// 配额刚被本网关消耗掉，任何缓存值都已经是错的，留着比没有更糟。
+// DeleteCodexInviteSnapshots clears all invite snapshots of one account. It is called after an invite is sent successfully:
+// the quota has just been consumed by this gateway, so any cached value is already wrong, and keeping it is worse than having none.
 func (db *DB) DeleteCodexInviteSnapshots(ctx context.Context, accountID int64) error {
 	if err := db.ensureCodexInviteSnapshotTable(ctx); err != nil {
 		return err
@@ -192,8 +192,8 @@ func (db *DB) DeleteCodexInviteSnapshots(ctx context.Context, accountID int64) e
 	return err
 }
 
-// PurgeExpiredCodexInviteSnapshots 删除早于 before 的过期行，供后台清理调用。
-// 返回删除行数；驱动不支持 RowsAffected 时返回 0，不算错误。
+// PurgeExpiredCodexInviteSnapshots deletes expired rows older than before, and is called by background cleanup.
+// Returns the number of rows deleted; when the driver does not support RowsAffected it returns 0, which is not treated as an error.
 func (db *DB) PurgeExpiredCodexInviteSnapshots(ctx context.Context, before time.Time) (int64, error) {
 	if err := db.ensureCodexInviteSnapshotTable(ctx); err != nil {
 		return 0, err

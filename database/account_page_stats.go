@@ -7,14 +7,14 @@ import (
 	"time"
 )
 
-// accountRequestCountBreakdownMaxIDs 是错误码/成功模型拆分的 ID 上限。
-// 与管理页单页上限一致:再大就是全池刷新,那两条额外 GROUP BY 不应再跑。
+// accountRequestCountBreakdownMaxIDs is the ID cap for the error-code and successful-model breakdowns.
+// It matches the single-page cap of the admin page: beyond that it is a full-pool refresh, and those two extra GROUP BYs should not run.
 const accountRequestCountBreakdownMaxIDs = 500
 
-// appendAccountIDFilter 生成 account_id 的匹配子句并把绑定值追加进 args。
-// PostgreSQL 走单个数组参数 `= ANY($n)`:几万账号的全池统计刷新若逐个展开
-// 占位符,解析/规划开销随池规模线性放大,且触及扩展协议 65535 个参数的硬上限
-// (超过后查询直接报错,统计永久停在刷新中);SQLite 保持逐个占位符。
+// appendAccountIDFilter builds the account_id match clause and appends the bound values to args.
+// PostgreSQL uses a single array parameter `= ANY($n)`: if a full-pool stats refresh over tens of thousands of accounts expanded one placeholder per account,
+// parse and plan overhead would grow linearly with the pool size, and it would hit the hard limit of 65535 parameters in the extended protocol
+// (beyond that the query errors outright and the stats stay stuck in "refreshing" forever); SQLite keeps one placeholder per ID.
 func (db *DB) appendAccountIDFilter(args *[]interface{}, ids []int64) string {
 	if db.isSQLite() {
 		placeholders := make([]string, 0, len(ids))
@@ -35,9 +35,9 @@ func (db *DB) GetAccountRequestCountsByIDs(ctx context.Context, ids []int64) (ma
 	return db.getAccountRequestCountsByIDs(ctx, ids, true)
 }
 
-// GetAccountRequestCountTotalsByIDs 只聚合成功/失败/429 计数,不附带错误码和
-// 成功模型拆分。全池分批刷新走这条路径:拆分只给当前页胶囊用,每批再扫两遍
-// usage_logs 没有收益。
+// GetAccountRequestCountTotalsByIDs aggregates only success / failure / 429 counts, without the error-code and
+// successful-model breakdowns. The full-pool batched refresh takes this path: the breakdowns are only for the current page's capsules, and each batch would scan
+// usage_logs two more times for no benefit.
 func (db *DB) GetAccountRequestCountTotalsByIDs(ctx context.Context, ids []int64) (map[int64]*AccountRequestCount, error) {
 	return db.getAccountRequestCountsByIDs(ctx, ids, false)
 }
@@ -81,8 +81,8 @@ func (db *DB) getAccountRequestCountsByIDs(ctx context.Context, ids []int64, wit
 	if err := rows.Err(); err != nil {
 		return nil, err
 	}
-	// 错误码/成功模型拆分只给当前页胶囊用。全池分批刷新若也跑这两条
-	// GROUP BY,每一批都会把 usage_logs 再扫两遍。
+	// The error-code and successful-model breakdowns are only for the current page's capsules. If a full-pool batched refresh also ran these two
+	// GROUP BYs, every batch would scan usage_logs two more times.
 	if withBreakdown && len(ids) <= accountRequestCountBreakdownMaxIDs {
 		if err := db.attachErrorStatusCounts(ctx, result, ids); err != nil {
 			return nil, err
@@ -255,8 +255,8 @@ func (db *DB) GetAccountUsageSinceByIDs(ctx context.Context, ids []int64, since 
 	return result, rows.Err()
 }
 
-// GetAccountModelCountsSinceByIDs 按模型拆分指定账号在 since 之后的请求数、成功数与平均首字时长。
-// 过滤口径与 GetAccountUsageSinceByIDs 一致，保证浮层合计对得上今日统计数字。
+// GetAccountModelCountsSinceByIDs splits, by model, the request count, success count and average time to first token of the specified accounts since the given time.
+// The filter basis is the same as GetAccountUsageSinceByIDs, so the overlay totals match the today-statistics figures.
 func (db *DB) GetAccountModelCountsSinceByIDs(ctx context.Context, ids []int64, since time.Time) (map[int64]map[string]AccountModelCount, error) {
 	result := make(map[int64]map[string]AccountModelCount, len(ids))
 	ids = positiveUniqueIDs(ids)

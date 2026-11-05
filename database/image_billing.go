@@ -7,7 +7,7 @@ import (
 
 var gptImage25ModelPattern = regexp.MustCompile(`^(gpt-image-2\.5-(?:flare|sunburst))(?:-\d{4}-\d{2}-\d{2})?(?:-(?:2k|4k))?$`)
 
-// GPTImage25BillingModel 将日期快照和本地尺寸别名归到对应的图片模型费率。
+// GPTImage25BillingModel maps dated snapshots and local size aliases onto the matching image model rate.
 func GPTImage25BillingModel(model string) string {
 	match := gptImage25ModelPattern.FindStringSubmatch(strings.ToLower(strings.TrimSpace(model)))
 	if len(match) == 0 {
@@ -16,7 +16,7 @@ func GPTImage25BillingModel(model string) string {
 	return match[1]
 }
 
-// 2026-09-09 核对官方 Flare/Sunburst 模型页，单位 USD / 1M tokens。
+// 2026-09-09 checked the official Flare/Sunburst model pages. Unit: USD / 1M tokens.
 // https://developers.openai.com/api/docs/models/gpt-image-2.5-sunburst
 var gptImage25Pricing = ModelPricing{
 	InputPricePerMToken: 5, CacheReadPricePerMToken: 1.25,
@@ -24,8 +24,8 @@ var gptImage25Pricing = ModelPricing{
 	OutputPricePerMToken: 30,
 }
 
-// UsageLogCostBreakdown 统一实时限额、日志落库和日志展示的计费口径。
-// 图片输入是 InputTokens 的子集，不能在总输入费用上重复计费。
+// UsageLogCostBreakdown unifies the billing basis for real-time limits, log persistence and log display.
+// Image input is a subset of InputTokens and must not be billed again in the total input cost.
 func UsageLogCostBreakdown(log *UsageLogInput) CostBreakdown {
 	if log == nil {
 		return CostBreakdown{}
@@ -48,7 +48,7 @@ func imageTokenCostBreakdown(input, output, cached, imageInput, imageOutput, cac
 	cached = min(max(0, cached), input)
 	cachedImage = min(max(0, cachedImage), min(cached, imageInput))
 	cachedText := min(cached-cachedImage, textInput)
-	// 上游只有缓存总量时，超出文本输入总量的部分必然来自图片。
+	// When upstream only reports a total cache count, the part beyond the text input total must come from images.
 	cachedImage = min(imageInput, cached-cachedText)
 	if imageOutput > 0 {
 		output = min(imageOutput, output)

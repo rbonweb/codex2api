@@ -25,7 +25,7 @@ var (
 
 func (db *DB) ensureModelTraceBankSchema(ctx context.Context) error {
 	if db == nil || db.conn == nil {
-		return fmt.Errorf("数据库不可用")
+		return fmt.Errorf("database unavailable")
 	}
 	modelTraceBankInitMu.Lock()
 	defer modelTraceBankInitMu.Unlock()

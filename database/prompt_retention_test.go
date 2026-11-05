@@ -40,11 +40,11 @@ func (db *DB) mustCount(t *testing.T, query string, args ...interface{}) int {
 	return n
 }
 
-// seedPromptRetentionFixture 写入：
-//   - 日志 1..4：1、2 过期，3 过期但关联 CY（corr=cy-1），4 未过期
-//   - 风险事件：e1 挂日志 1（过期），e2 挂 CY（过期），e3 挂日志 4（未过期）
-//   - 来源：s1(e1)、s2(e2)、s3(e3)、s4 孤儿过期、s5 孤儿未过期
-//   - CY：incident-1，request_correlation_id=cy-1
+// seedPromptRetentionFixture writes:
+//   - logs 1..4: 1 and 2 expired, 3 expired but linked to a CY (corr=cy-1), 4 not expired
+//   - risk events: e1 attached to log 1 (expired), e2 attached to a CY (expired), e3 attached to log 4 (not expired)
+//   - sources: s1(e1), s2(e2), s3(e3), s4 orphan expired, s5 orphan not expired
+//   - CY: incident-1, request_correlation_id=cy-1
 func seedPromptRetentionFixture(t *testing.T, db *DB) {
 	t.Helper()
 	old := sqliteTimeParam(time.Now().UTC().Add(-10 * 24 * time.Hour))
@@ -80,7 +80,7 @@ func TestPurgeExpiredPromptLogs_KeepsIncidentEvidenceAndFreshRows(t *testing.T) 
 	if result.Logs != 2 || result.Events != 1 || result.Sources != 2 || result.Interrupted {
 		t.Fatalf("result = %+v, want logs=2 events=1 sources=2", result)
 	}
-	// batch=1 时每张表都要多跑一轮"空批"才能确认清完：3 + 2 + 3。
+	// With batch=1, each table needs one more round of "empty batch" to confirm it is fully purged: 3 + 2 + 3.
 	if result.Batches < 6 {
 		t.Fatalf("batches = %d, expected batched deletes", result.Batches)
 	}
@@ -93,13 +93,13 @@ func TestPurgeExpiredPromptLogs_KeepsIncidentEvidenceAndFreshRows(t *testing.T) 
 	if got := db.mustCount(t, `SELECT COUNT(*) FROM prompt_risk_events WHERE id IN (2, 3)`); got != 2 {
 		t.Fatalf("incident/fresh events missing: %d", got)
 	}
-	// 写入日志 / CY 时后台画像会自动登记 prompt_filter_log / prompt_policy_incident 来源
-	// （processed_at 为当前时间，未过期），这里只断言测试自己写的 src 来源。
+	// When logs or CYs are written, the background profile automatically registers prompt_filter_log / prompt_policy_incident sources
+	// (processed_at is the current time, so not expired); here we only assert on the src sources the test itself wrote.
 	if got := db.mustCount(t, `SELECT COUNT(*) FROM prompt_risk_event_sources WHERE source_type = 'src'`); got != 3 {
 		t.Fatalf("src sources remaining = %d, want s2 s3 s5", got)
 	}
 
-	// 再跑一次应当无事可做。
+	// Running it again should have nothing to do.
 	again, err := db.PurgeExpiredPromptLogs(context.Background(), cutoff, 100, 0)
 	if err != nil || again.Logs+again.Events+again.Sources != 0 {
 		t.Fatalf("second purge = %+v err=%v", again, err)
@@ -121,7 +121,7 @@ func TestPurgePromptFilterLogs_ManualClearRespectsFilterAndIncident(t *testing.T
 	if err != nil {
 		t.Fatalf("purge: %v", err)
 	}
-	// 1 与 4 被清，3 因 CY 保留；风险事件与来源记录一律不动。
+	// 1 and 4 are purged, 3 is kept because of the CY; risk events and source records are left untouched.
 	if result.Logs != 2 || result.Events != 0 || result.Sources != 0 {
 		t.Fatalf("full manual purge = %+v", result)
 	}
@@ -148,11 +148,11 @@ func TestDeletePromptPolicyIncident_CascadesLinkedLogsButKeepsRiskProfile(t *tes
 	if got := db.mustCount(t, `SELECT COUNT(*) FROM prompt_filter_logs`); got != 3 {
 		t.Fatalf("unrelated logs = %d, want 3", got)
 	}
-	// 风险画像保留：事件 e2 与来源 s2 仍在，之后由保留策略按天龄清理。
+	// Risk profiles are kept: event e2 and source s2 still exist, and are purged by age by the retention policy later.
 	if got := db.mustCount(t, `SELECT COUNT(*) FROM prompt_risk_events`); got != 3 {
 		t.Fatalf("risk events must survive incident deletion, got %d", got)
 	}
-	// CY 与日志都没了 → e2 不再受保护，下一轮保留清理会带走它和 s2。
+	// The CY and logs are both gone → e2 is no longer protected, and the next retention purge will take it and s2 with it.
 	result, err := db.PurgeExpiredPromptLogs(context.Background(), time.Now().UTC().Add(-7*24*time.Hour), 100, 0)
 	if err != nil {
 		t.Fatalf("purge: %v", err)

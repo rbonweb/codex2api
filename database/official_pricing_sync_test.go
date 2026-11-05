@@ -61,8 +61,8 @@ func TestOfficialPricingSyncConfigLifecycleSQLite(t *testing.T) {
 	}
 }
 
-// 重启后首次读取不能去抢写锁:慢盘 SQLite 启动时用量回填长时间占着写锁,
-// 读取若先跑种子行 INSERT 就会等到超时 (#778)。
+// After a restart, the first read must not compete for the write lock: on a slow-disk SQLite at startup, usage backfill holds the write lock for a long time,
+// and if the read ran the seed-row INSERT first it would wait until timeout (#778).
 func TestOfficialPricingSyncConfigReadDoesNotWaitForWriterSQLite(t *testing.T) {
 	path := filepath.Join(t.TempDir(), "codex2api.db")
 	seeded, err := New("sqlite", path)

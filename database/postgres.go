@@ -25,7 +25,7 @@ import (
 
 const usageStatsRollupInitTimeout = 5 * time.Minute
 
-// AccountRow 数据库中的账号行
+// AccountRow is an account row in the database.
 type AccountRow struct {
 	ID                      int64
 	CredentialGeneration    int64
@@ -120,7 +120,7 @@ type AccountCredentialIndex struct {
 	AccountIDs    map[string]bool
 }
 
-// GetCredential 从 credentials JSONB 获取字符串字段
+// GetCredential reads a string field from the credentials JSONB column.
 func (a *AccountRow) GetCredential(key string) string {
 	if a.Credentials == nil {
 		return ""
@@ -194,7 +194,7 @@ type sqlExecer interface {
 	ExecContext(ctx context.Context, query string, args ...interface{}) (sql.Result, error)
 }
 
-// DB PostgreSQL 数据库操作
+// DB PostgreSQL database operations
 type DB struct {
 	conn              *sql.DB
 	driver            string
@@ -211,15 +211,15 @@ type DB struct {
 	backgroundTaskCtx     context.Context
 	backgroundTaskCancel  context.CancelFunc
 
-	// 使用日志批量写入缓冲
+	// Buffer for batched usage log writes.
 	logBuf  []usageLogEntry
 	logMu   sync.Mutex
 	logStop chan struct{}
 	logWg   sync.WaitGroup
 
-	// 缓冲溢出/脏数据丢弃的累计条数，暴露在运行状态里供运维观察
+	// Cumulative count of entries dropped due to buffer overflow or dirty data, exposed in runtime status for operators to observe.
 	usageLogDropped   atomic.Int64
-	usageLogDropLogAt time.Time // 溢出日志的限流时间戳，由 logMu 保护
+	usageLogDropLogAt time.Time // Rate-limit timestamp for overflow logs, protected by logMu
 
 	usageLogMode          atomic.Value // string: full|errors|off
 	usageLogBatchSize     atomic.Int64
@@ -231,11 +231,11 @@ type DB struct {
 	channelMonitorOnce    sync.Once
 	channelMonitorInitErr error
 
-	// 查询发现用量小时汇总落后于明细时通知维护协程修复，容量 1，重复通知合并。
+	// When a query finds the usage hourly rollup lagging behind the detail rows, notify the maintenance goroutine to repair it. Capacity 1; duplicate notifications are merged.
 	usageHourlyRepairNotify chan struct{}
 
-	// 配了 scope 累计额度的 API Key 集合（issue #439 v2）。落库热路径靠它跳过
-	// 绝大多数 Key，60s 刷新一次；管理端保存后会主动失效。
+	// Set of API Keys with a cumulative scope quota configured (issue #439 v2). The hot persist path uses it to skip
+	// the vast majority of keys. Refreshed every 60s; the admin panel actively invalidates it after a save.
 	scopeQuotaMu        sync.Mutex
 	scopeQuotaKeys      map[int64]struct{}
 	scopeQuotaExpiresAt time.Time
@@ -258,9 +258,9 @@ const (
 	usageLogInsertColumnCount   = 70
 	maxUsageLogInsertRowsPerSQL = 900 // 70 cols * 900 = 63000 < 65535 PG bind limit
 
-	// usageLogBufferHardLimit 内存缓冲的硬上限。PG 长时间不可用时（维护、主从切换、
-	// 磁盘写满）失败批次会一直被放回缓冲区，没有上限的话内存一路涨到 OOM——那会把
-	// 整个网关拖死，比丢日志严重得多。超限时丢最旧的，丢弃条数计入运行状态。
+	// usageLogBufferHardLimit is the hard cap on the in-memory buffer. When PG is unavailable for a long time (maintenance, primary/replica switchover,
+	// disk full), failed batches keep being put back into the buffer. Without a cap, memory keeps growing until OOM—which would
+	// take down the entire gateway, far worse than losing logs. When over the limit, the oldest entries are dropped, and the dropped count is included in runtime status.
 	usageLogBufferHardLimit = 20000
 )
 
@@ -299,7 +299,7 @@ func NormalizeUsageLogFlushIntervalSeconds(n int) int {
 	return n
 }
 
-// usageLogEntry 日志缓冲条目
+// usageLogEntry is an entry in the usage log buffer.
 type usageLogEntry struct {
 	UserBilling
 	RequestID            string
@@ -324,9 +324,9 @@ type usageLogEntry struct {
 	Model                string
 	EffectiveModel       string
 	DaybreakProgram      string
-	// UpstreamResponseModel 是上游响应自报的模型名（观测值，未自报为空串）。
+	// UpstreamResponseModel is the model name self-reported by the upstream response (observed value; empty string if not self-reported).
 	UpstreamResponseModel string
-	// UpstreamModelMismatch 三态：nil=上游未自报；true/false=自报与实发是否一致。
+	// UpstreamModelMismatch is tri-state: nil = upstream did not self-report; true/false = whether the self-reported model matches the model actually sent.
 	UpstreamModelMismatch  *bool
 	PromptTokens           int
 	CompletionTokens       int
@@ -374,12 +374,12 @@ type usageLogEntry struct {
 	PromptPolicyIncidentID string
 }
 
-// New 创建数据库连接并自动建表。
-// schema 仅对 PostgreSQL 生效；为空时保持数据库默认 search_path。
+// New creates the database connection and auto-creates the tables.
+// schema only takes effect for PostgreSQL; when empty, keep the database's default search_path.
 func New(driver string, dsn string, schema ...string) (*DB, error) {
 	driver = normalizeDriver(driver)
 	driverName := sqlOpenDriverName(driver)
-	// 测试注册了 schema 模板且目标文件尚不存在时，直接复制模板并跳过迁移。
+	// If a test registered a schema template and the target file does not exist yet, copy the template directly and skip migrations.
 	fromSchemaTemplate := false
 	if driver == "sqlite" {
 		if target, ok := sqliteSchemaTemplateTarget(dsn); ok {
@@ -396,10 +396,10 @@ func New(driver string, dsn string, schema ...string) (*DB, error) {
 
 	conn, err := sql.Open(driverName, dsn)
 	if err != nil {
-		return nil, fmt.Errorf("连接数据库失败: %w", err)
+		return nil, fmt.Errorf("failed to connect to database: %w", err)
 	}
 
-	// ==================== 连接池优化 ====================
+	// ==================== Connection pool tuning ====================
 	if driver == "sqlite" {
 		if sqliteSingleConn {
 			conn.SetMaxOpenConns(1)
@@ -408,18 +408,18 @@ func New(driver string, dsn string, schema ...string) (*DB, error) {
 			applySQLiteConnLimits(conn, defaultSQLiteMaxOpenConns)
 		}
 	} else {
-		// 高并发场景：大量 RT 刷新 + 前端查询 + 使用日志写入 并行
-		conn.SetMaxOpenConns(100)                 // 增加最大打开连接数以处理更高并发
-		conn.SetMaxIdleConns(50)                  // 增加空闲连接数以保持热连接
-		conn.SetConnMaxLifetime(60 * time.Minute) // 增加连接最大生存时间
-		conn.SetConnMaxIdleTime(30 * time.Minute) // 增加空闲连接最大闲置时间
+		// High-concurrency scenario: many RT refreshes + frontend queries + usage log writes running in parallel
+		conn.SetMaxOpenConns(100)                 // Raise the max open connections to handle higher concurrency
+		conn.SetMaxIdleConns(50)                  // Raise the idle connection count to keep connections warm
+		conn.SetConnMaxLifetime(60 * time.Minute) // Raise the max connection lifetime
+		conn.SetConnMaxIdleTime(30 * time.Minute) // Raise the max idle time for a connection
 	}
 
 	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
 	defer cancel()
 
 	if err := conn.PingContext(ctx); err != nil {
-		return nil, fmt.Errorf("数据库连接测试失败: %w", err)
+		return nil, fmt.Errorf("database connection test failed: %w", err)
 	}
 
 	backgroundTaskCtx, backgroundTaskCancel := context.WithCancel(context.Background())
@@ -440,41 +440,41 @@ func New(driver string, dsn string, schema ...string) (*DB, error) {
 	db.SetUsageLogConfig(defaultUsageLogMode, defaultUsageLogBatchSize, defaultUsageLogFlushIntervalSeconds)
 	if db.isSQLite() {
 		if err := db.configureSQLite(ctx); err != nil {
-			return nil, fmt.Errorf("配置 SQLite 失败: %w", err)
+			return nil, fmt.Errorf("failed to configure SQLite: %w", err)
 		}
 	} else {
-		// PostgreSQL: 统一会话时区为 UTC，确保 NOW() 和时间字面量一致
+		// PostgreSQL: unify the session time zone to UTC, so NOW() and time literals agree
 		if _, err := conn.ExecContext(ctx, "SET timezone = 'UTC'"); err != nil {
-			return nil, fmt.Errorf("设置数据库时区失败: %w", err)
+			return nil, fmt.Errorf("failed to set database time zone: %w", err)
 		}
-		// 自定义 schema：确保 schema 存在并确认当前会话 search_path 已生效。
-		// search_path 已通过 DSN 的 options=-c search_path=... 在所有连接启动时设置；
-		// 这里仅做一次幂等的 CREATE SCHEMA + SET 兜底，便于首次部署时自动建好 schema。
+		// Custom schema: make sure the schema exists and confirm the current session search_path is in effect.
+		// search_path is already set at startup on all connections via the DSN's options=-c search_path=...;
+		// here we only run one idempotent CREATE SCHEMA + SET as a fallback, so the schema is created automatically on first deployment.
 		if pgSchema != "" {
 			quoted := quotePostgresIdent(pgSchema)
 			if _, err := conn.ExecContext(ctx, "CREATE SCHEMA IF NOT EXISTS "+quoted); err != nil {
-				return nil, fmt.Errorf("创建数据库 schema 失败: %w", err)
+				return nil, fmt.Errorf("failed to create database schema: %w", err)
 			}
 			if _, err := conn.ExecContext(ctx, "SET search_path TO "+quoted+", public"); err != nil {
-				return nil, fmt.Errorf("设置 search_path 失败: %w", err)
+				return nil, fmt.Errorf("failed to set search_path: %w", err)
 			}
 		}
 	}
-	// 模板复制出来的库已经包含下面全部 schema（模板本身就是走完整路径建出来的），
-	// 跳过迁移与各 ensure*：在 -race 下这些幂等 DDL 每次仍要几百毫秒。
+	// A database cloned from the template already contains all the schemas below (the template itself was built via the full path),
+	// so skip migrations and the ensure* functions: under -race these idempotent DDL statements still take several hundred milliseconds each.
 	if !fromSchemaTemplate {
 		if err := db.migrate(ctx); err != nil {
-			return nil, fmt.Errorf("数据库迁移失败: %w", err)
+			return nil, fmt.Errorf("database migration failed: %w", err)
 		}
 		if err := db.ensureQualityTestSchema(ctx); err != nil {
-			return nil, fmt.Errorf("初始化检测记录表失败: %w", err)
+			return nil, fmt.Errorf("failed to initialize detection record table: %w", err)
 		}
 		// Fill empty credential family ids; Codex reads and token refresh rely on it.
 		familyCtx, familyCancel := context.WithTimeout(context.WithoutCancel(ctx), dataMigrationTimeout)
 		familyErr := db.ensureCredentialFamilyBackfill(familyCtx)
 		familyCancel()
 		if familyErr != nil {
-			return nil, fmt.Errorf("补全账号凭据家族 ID 失败: %w", familyErr)
+			return nil, fmt.Errorf("failed to backfill account credential family IDs: %w", familyErr)
 		}
 		// Data migrations may legitimately consume minutes. Do not reuse the original
 		// ten-second startup context for the remaining small schemas.
@@ -482,25 +482,25 @@ func New(driver string, dsn string, schema ...string) (*DB, error) {
 		defer postMigrateCancel()
 		ctx = postMigrateCtx
 		if err := db.ensureCodexRefreshSchema(ctx); err != nil {
-			return nil, fmt.Errorf("初始化 Codex 刷新保护表失败: %w", err)
+			return nil, fmt.Errorf("failed to initialize Codex refresh protection table: %w", err)
 		}
 		if err := db.ensureIntelligenceCheckSchema(ctx); err != nil {
 			return nil, fmt.Errorf("initialize intelligence checks: %w", err)
 		}
 		if err := db.ensureChannelMonitorSchema(ctx); err != nil {
-			return nil, fmt.Errorf("初始化渠道监控表失败: %w", err)
+			return nil, fmt.Errorf("failed to initialize channel monitoring table: %w", err)
 		}
 		if err := db.ensurePromptFilterNewAPIBindingsTable(ctx); err != nil {
-			return nil, fmt.Errorf("创建 NewAPI 平台绑定表失败: %w", err)
+			return nil, fmt.Errorf("failed to create NewAPI platform binding table: %w", err)
 		}
 		if err := db.ensurePromptRuleCandidatesTable(ctx); err != nil {
-			return nil, fmt.Errorf("创建提示词规则候选表失败: %w", err)
+			return nil, fmt.Errorf("failed to create prompt rule candidate table: %w", err)
 		}
 		if err := db.ensurePromptPolicyIncidentsTable(ctx); err != nil {
-			return nil, fmt.Errorf("创建提示词策略事件表失败: %w", err)
+			return nil, fmt.Errorf("failed to create prompt policy event table: %w", err)
 		}
 		if err := db.ensurePromptConversationLocksTable(ctx); err != nil {
-			return nil, fmt.Errorf("创建提示词会话锁表失败: %w", err)
+			return nil, fmt.Errorf("failed to create prompt session lock table: %w", err)
 		}
 		if err := db.ensureImageAssetRetentionSchema(ctx); err != nil {
 			backgroundTaskCancel()
@@ -509,30 +509,30 @@ func New(driver string, dsn string, schema ...string) (*DB, error) {
 		}
 	}
 	if err := db.ensureProxyRiskScoringTables(ctx); err != nil {
-		return nil, fmt.Errorf("创建代理风险评分表失败: %w", err)
+		return nil, fmt.Errorf("failed to create proxy risk score table: %w", err)
 	}
 
 	if err := db.ensureAPIKeyAuthCacheSchema(ctx); err != nil {
 		backgroundTaskCancel()
 		_ = conn.Close()
-		return nil, fmt.Errorf("初始化鉴权缓存修订表失败: %w", err)
+		return nil, fmt.Errorf("failed to initialize auth cache revision table: %w", err)
 	}
 	if err := db.initializeRuntimeCacheScope(ctx); err != nil {
 		backgroundTaskCancel()
 		_ = conn.Close()
-		return nil, fmt.Errorf("初始化共享运行态作用域失败: %w", err)
+		return nil, fmt.Errorf("failed to initialize shared runtime state scope: %w", err)
 	}
-	// 用量小时汇总要在写入协程启动前定好回填边界：此后落库的日志由写入事务维护。
+	// The usage hourly rollup's backfill boundary must be fixed before the write goroutine starts: after this, logs written are maintained by the write transaction.
 	if !fromSchemaTemplate {
 		if err := db.ensureUsageHourlySchema(ctx); err != nil {
-			return nil, fmt.Errorf("初始化用量小时汇总表失败: %w", err)
+			return nil, fmt.Errorf("failed to initialize usage hourly rollup table: %w", err)
 		}
 	}
 	usageHourlyBackfill, err := db.initUsageHourlyRollup(ctx)
 	if err != nil {
-		return nil, fmt.Errorf("初始化用量小时汇总失败: %w", err)
+		return nil, fmt.Errorf("failed to initialize usage hourly rollup: %w", err)
 	}
-	// 启动批量写入后台协程
+	// Start the batch-write background goroutine
 	db.startLogFlusher()
 	db.startUsageHourlyMaintainer(usageHourlyBackfill)
 
@@ -560,13 +560,13 @@ func New(driver string, dsn string, schema ...string) (*DB, error) {
 			)
 		`)
 	if err != nil {
-		return nil, fmt.Errorf("创建 usage_stats_baseline 表失败: %w", err)
+		return nil, fmt.Errorf("failed to create usage_stats_baseline table: %w", err)
 	}
 
-	// 确保 baseline 行存在
+	// Make sure the baseline row exists
 	_, err = db.conn.ExecContext(ctx, baselineInsert)
 	if err != nil {
-		return nil, fmt.Errorf("初始化 usage_stats_baseline 失败: %w", err)
+		return nil, fmt.Errorf("failed to initialize usage_stats_baseline: %w", err)
 	}
 	if err := db.ensureUsageStatsBaselineBillingColumns(ctx); err != nil {
 		return nil, err
@@ -575,19 +575,19 @@ func New(driver string, dsn string, schema ...string) (*DB, error) {
 	rollupErr := db.ensureUsageStatsRollup(rollupCtx)
 	rollupCancel()
 	if rollupErr != nil {
-		return nil, fmt.Errorf("初始化用量累计汇总失败: %w", rollupErr)
+		return nil, fmt.Errorf("failed to initialize usage cumulative rollup: %w", rollupErr)
 	}
 	db.promptFilterAudit = newPromptFilterAuditQueue(db)
 	db.promptFilterAudit.start()
 	db.RunBackgroundTask(func(taskCtx context.Context) {
 		if err := db.backfillPromptRiskEvents(taskCtx); err != nil && !errors.Is(err, context.Canceled) {
-			log.Printf("回填提示词风险画像失败，将在下次启动继续: %v", err)
+			log.Printf("failed to backfill prompt risk profile, will continue on next startup: %v", err)
 		}
 	})
 	if !db.isSQLite() {
 		db.RunBackgroundTask(func(taskCtx context.Context) {
 			if err := db.ensureUsageLogsGenerationIndex(taskCtx); err != nil && !errors.Is(err, context.Canceled) {
-				log.Printf("在线创建 usage_logs 代际索引失败（仅影响查询性能，将在下次启动重试）: %v", err)
+				log.Printf("failed to create usage_logs generation index online (only affects query performance, will retry on next startup): %v", err)
 			}
 		})
 	}
@@ -595,12 +595,12 @@ func New(driver string, dsn string, schema ...string) (*DB, error) {
 	return db, nil
 }
 
-// ensureUsageLogsGenerationIndex 在启动后台在线构建 usage_logs 的代际聚合索引。
-// usage_logs 是有真实流量部署的最大表，普通 CREATE INDEX 会持 SHARE 锁阻塞全部
-// 日志写入，放进 10 秒启动事务还会超时回滚形成崩溃循环，因此这里独立于启动
-// 路径、用 CONCURRENTLY 构建（不阻塞写入），失败只降级查询性能，不影响服务。
-// CONCURRENTLY 构建被中断会留下 INVALID 索引且使 IF NOT EXISTS 误判存在，
-// 所以先探测有效性，无效则先删再建。
+// ensureUsageLogsGenerationIndex builds the usage_logs generation aggregate index in the background after startup, online.
+// usage_logs is the largest table in deployments with real traffic; a plain CREATE INDEX holds a SHARE lock that blocks all
+// log writes, and putting it in the 10-second startup transaction would time out, roll back, and cause a crash loop. So it is kept separate from the startup
+// path and built with CONCURRENTLY (not blocking writes); failure only degrades query performance and does not affect service.
+// An interrupted CONCURRENTLY build leaves an INVALID index, and IF NOT EXISTS then wrongly treats it as existing,
+// so first probe its validity; if invalid, drop it first and then rebuild.
 func (db *DB) ensureUsageLogsGenerationIndex(parent context.Context) error {
 	ctx, cancel := context.WithTimeout(parent, 60*time.Minute)
 	defer cancel()
@@ -621,7 +621,7 @@ func (db *DB) ensureUsageLogsGenerationIndex(parent context.Context) error {
 		unlockCtx, unlockCancel := context.WithTimeout(context.Background(), 5*time.Second)
 		defer unlockCancel()
 		if _, err := conn.ExecContext(unlockCtx, `SELECT pg_advisory_unlock(hashtext('codex2api:usage-log-indexes'))`); err != nil {
-			log.Printf("释放 usage_logs 索引构建锁失败: %v", err)
+			log.Printf("failed to release usage_logs index build lock: %v", err)
 		}
 	}()
 	for _, index := range []struct{ name, definition string }{
@@ -641,20 +641,20 @@ func ensureUsageLogsOnlineIndex(ctx context.Context, conn *sql.Conn, indexName, 
 	err := conn.QueryRowContext(ctx, `SELECT to_regclass($1) IS NOT NULL,
  COALESCE((SELECT i.indisvalid FROM pg_index i WHERE i.indexrelid = to_regclass($1)), FALSE)`, indexName).Scan(&exists, &valid)
 	if err != nil {
-		return fmt.Errorf("探测索引 %s 状态失败: %w", indexName, err)
+		return fmt.Errorf("failed to probe status of index %s: %w", indexName, err)
 	}
 	if exists && valid {
 		return nil
 	}
 	if exists {
 		if _, err := conn.ExecContext(ctx, `DROP INDEX CONCURRENTLY IF EXISTS `+quotePostgresIdent(indexName)); err != nil {
-			return fmt.Errorf("清理无效索引 %s 失败: %w", indexName, err)
+			return fmt.Errorf("failed to clean up invalid index %s: %w", indexName, err)
 		}
 	}
 	if _, err := conn.ExecContext(ctx, `CREATE INDEX CONCURRENTLY IF NOT EXISTS `+quotePostgresIdent(indexName)+` ON usage_logs`+definition); err != nil {
-		return fmt.Errorf("在线创建索引 %s 失败: %w", indexName, err)
+		return fmt.Errorf("failed to create index %s online: %w", indexName, err)
 	}
-	log.Printf("usage_logs 索引 %s 已就绪", indexName)
+	log.Printf("usage_logs index %s is ready", indexName)
 	return nil
 }
 
@@ -900,17 +900,17 @@ func applyUsageStatsRollupWithExec(ctx context.Context, execer sqlExecer, batch 
 	return err
 }
 
-// Close 关闭数据库连接
+// Close closes the database connection
 func (db *DB) Close() error {
 	if !db.DrainBackgroundTasks(2 * time.Second) {
-		log.Printf("数据库后台任务超过优雅关闭窗口，已取消并等待退出")
+		log.Printf("database background tasks exceeded the graceful shutdown window; cancelled and waiting for exit")
 	}
-	// 停止批量写入并刷完缓冲。这里必须用 FlushUsageLogs 而不是 flushLogs：
-	// 后者每次只取 usage_log_batch_size 条，剩余部分靠 notifyLogFlush 让后台协程接着刷，
-	// 而此刻 flusher 已经退出，没人消费这个信号，超出一个批次的日志会被静默丢弃。
+	// Stop batched writes and flush the buffer. This must use FlushUsageLogs rather than flushLogs:
+	// the latter takes only usage_log_batch_size entries each time, and the rest are flushed by the background goroutine via notifyLogFlush,
+	// but by now the flusher has already exited, nothing consumes that signal, so logs beyond one batch are silently dropped.
 	close(db.logStop)
 	db.logWg.Wait()
-	db.FlushUsageLogs() // 最后一次 flush，刷完整个缓冲
+	db.FlushUsageLogs() // Final flush, drains the entire buffer
 	if db.promptFilterAudit != nil {
 		db.promptFilterAudit.close(2 * time.Second)
 	}
@@ -1034,7 +1034,7 @@ func (db *DB) GetUsageLogFlushIntervalSeconds() int {
 	return NormalizeUsageLogFlushIntervalSeconds(int(d / time.Second))
 }
 
-// UsageLogRuntimeStats 描述 usage_logs 写入器当前的运行态。
+// UsageLogRuntimeStats describes the current runtime state of the usage_logs writer.
 type UsageLogRuntimeStats struct {
 	Mode                 string
 	Enabled              bool
@@ -1042,12 +1042,12 @@ type UsageLogRuntimeStats struct {
 	FlushIntervalSeconds int
 	BufferLength         int
 	BufferCapacity       int
-	// BufferLimit 内存缓冲硬上限，DroppedTotal 是启动以来因溢出或脏数据丢掉的日志条数。
+	// BufferLimit is the hard cap on the in-memory buffer; DroppedTotal is the number of log entries dropped since startup due to overflow or dirty data.
 	BufferLimit  int
 	DroppedTotal int64
 }
 
-// GetUsageLogRuntimeStats 返回 usage_logs 配置和当前内存缓冲长度。
+// GetUsageLogRuntimeStats returns the usage_logs configuration and the current in-memory buffer length.
 func (db *DB) GetUsageLogRuntimeStats() UsageLogRuntimeStats {
 	stats := UsageLogRuntimeStats{
 		Mode:                 defaultUsageLogMode,
@@ -1106,7 +1106,7 @@ func (db *DB) notifyLogFlush() {
 	}
 }
 
-// migrate 自动建表
+// migrate creates tables automatically
 func (db *DB) migrate(ctx context.Context) error {
 	if db.isSQLite() {
 		return db.migrateSQLite(ctx)
@@ -1231,7 +1231,7 @@ func (db *DB) migrate(ctx context.Context) error {
 	CREATE INDEX IF NOT EXISTS idx_usage_logs_created_status ON usage_logs(created_at, status_code);
 	CREATE INDEX IF NOT EXISTS idx_usage_logs_account_status ON usage_logs(account_id, status_code);
 
-	-- 增强字段（向后兼容 ALTER）
+	-- Enhanced fields (backward-compatible ALTER)
 	ALTER TABLE usage_logs ADD COLUMN IF NOT EXISTS input_tokens INT DEFAULT 0;
 	ALTER TABLE usage_logs ADD COLUMN IF NOT EXISTS output_tokens INT DEFAULT 0;
 	ALTER TABLE usage_logs ADD COLUMN IF NOT EXISTS reasoning_tokens INT DEFAULT 0;
@@ -1241,8 +1241,8 @@ func (db *DB) migrate(ctx context.Context) error {
 	ALTER TABLE usage_logs ADD COLUMN IF NOT EXISTS via_websocket BOOLEAN DEFAULT FALSE;
 	ALTER TABLE usage_logs ADD COLUMN IF NOT EXISTS effective_model VARCHAR(100) DEFAULT '';
 	ALTER TABLE usage_logs ADD COLUMN IF NOT EXISTS daybreak_program VARCHAR(32) NOT NULL DEFAULT '';
-	-- 上游响应模型审计：upstream_response_model=上游自报模型名（NULL=未自报），
-	-- upstream_model_mismatch=与实发模型比对结果（NULL=未自报无法比对）。
+	-- Upstream response model audit: upstream_response_model=model name self-reported by upstream (NULL=not self-reported),
+	-- upstream_model_mismatch=result of comparing against the model actually sent (NULL=not self-reported, cannot compare).
 	ALTER TABLE usage_logs ADD COLUMN IF NOT EXISTS upstream_response_model VARCHAR(200);
 	ALTER TABLE usage_logs ADD COLUMN IF NOT EXISTS upstream_model_mismatch BOOLEAN;
 	ALTER TABLE usage_logs ADD COLUMN IF NOT EXISTS inbound_endpoint VARCHAR(100) DEFAULT '';
@@ -1296,11 +1296,11 @@ func (db *DB) migrate(ctx context.Context) error {
 	ALTER TABLE usage_logs ADD COLUMN IF NOT EXISTS upstream_error_kind VARCHAR(64) DEFAULT '';
 	ALTER TABLE usage_logs ADD COLUMN IF NOT EXISTS error_message TEXT DEFAULT '';
 	ALTER TABLE usage_logs ADD COLUMN IF NOT EXISTS credential_generation BIGINT NOT NULL DEFAULT 0;
-	-- idx_usage_logs_account_generation_created_at 不在此批次内创建：usage_logs 是
-	-- 生产最大表，非 CONCURRENTLY 建索引会持锁阻塞写入，且本批次运行在 10 秒启动
-	-- 超时的单个隐式事务里，大表下会超时回滚导致启动崩溃循环。改由
-	-- ensureUsageLogsGenerationIndex 在启动后用 CREATE INDEX CONCURRENTLY 在线构建。
-	-- 上游渠道（codex），写入时按调度账号固化，供仪表盘/用量分渠道聚合
+	-- idx_usage_logs_account_generation_created_at is not created in this batch: usage_logs is
+	-- the largest production table; a non-CONCURRENTLY index build holds a lock that blocks writes, and this batch runs inside a 10-second startup
+	-- implicit transaction, so on a large table it would time out, roll back, and cause a startup crash loop. It is instead built online after startup, via
+	-- ensureUsageLogsGenerationIndex using CREATE INDEX CONCURRENTLY.
+	-- Upstream channel (codex), frozen from the scheduled account at write time, for dashboard/usage aggregation by channel
 	ALTER TABLE usage_logs ADD COLUMN IF NOT EXISTS channel VARCHAR(16) DEFAULT '';
 	ALTER TABLE usage_logs ALTER COLUMN reasoning_effort TYPE VARCHAR(100);
 	ALTER TABLE usage_logs ALTER COLUMN service_tier TYPE VARCHAR(100);
@@ -1473,8 +1473,8 @@ func (db *DB) migrate(ctx context.Context) error {
 	ALTER TABLE system_settings ADD COLUMN IF NOT EXISTS prompt_filter_review_model TEXT DEFAULT 'deepseek-v4-flash';
 	ALTER TABLE system_settings ADD COLUMN IF NOT EXISTS prompt_filter_review_timeout_seconds INT DEFAULT 10;
 	ALTER TABLE system_settings ADD COLUMN IF NOT EXISTS prompt_filter_review_fail_closed BOOLEAN DEFAULT TRUE;
-	-- 审查服务从未配置过(无 key、未启用)且仍是旧出厂默认时,迁移到新的
-	-- DeepSeek 默认供应商;真在用 OpenAI 审核的部署不受影响。
+	-- If the review service has never been configured (no key, not enabled) and still has the old factory default, migrate it to the new
+	-- DeepSeek default provider; deployments actually using OpenAI review are unaffected.
 	UPDATE system_settings
 	SET prompt_filter_review_base_url = 'https://api.deepseek.com',
 		prompt_filter_review_model = 'deepseek-v4-flash'
@@ -1482,8 +1482,8 @@ func (db *DB) migrate(ctx context.Context) error {
 	  AND COALESCE(prompt_filter_review_enabled, FALSE) = FALSE
 	  AND COALESCE(prompt_filter_review_base_url, '') = 'https://api.openai.com'
 	  AND COALESCE(prompt_filter_review_model, '') = 'omni-moderation-latest';
-	-- gpt-5.4 全系已下线(2026-09 上游 ChatGPT 账号 manifest 不再包含):仍指向它的
-	-- 连通性测试模型改回出厂默认,否则测连必 400。
+	-- The gpt-5.4 family is fully retired (2026-09, no longer in the upstream ChatGPT account manifest): any setting still pointing to it
+	-- connectivity test model reverted to the factory default; otherwise the test connection always returns 400.
 	ALTER TABLE system_settings ALTER COLUMN test_model SET DEFAULT 'gpt-5.5';
 	UPDATE system_settings
 	SET test_model = 'gpt-5.5'
@@ -1782,7 +1782,7 @@ func (db *DB) migrate(ctx context.Context) error {
 		return fmt.Errorf("install scheduler outbox triggers: %w", err)
 	}
 
-	// 独立长超时：将已有 TIMESTAMP 列迁移为 TIMESTAMPTZ（大表 ALTER COLUMN TYPE 可能较慢）
+	// Standalone long timeout: migrate existing TIMESTAMP columns to TIMESTAMPTZ (ALTER COLUMN TYPE on a large table can be slow)
 	migrateQuery := `
 	DO $$
 	DECLARE
@@ -1814,7 +1814,7 @@ func (db *DB) migrate(ctx context.Context) error {
 
 // ==================== API Keys ====================
 
-// APIKeyRow API 密钥行
+// APIKeyRow is an API key row
 type APIKeyRow struct {
 	ID              int64        `json:"id"`
 	Name            string       `json:"name"`
@@ -1831,26 +1831,26 @@ type APIKeyRow struct {
 	CreatedAt       time.Time    `json:"created_at"`
 }
 
-// APIKeyLimits 是 API Key 级别的细粒度限流/配额配置。
-// 0 或空字段表示该项不限。落库为 JSON,允许平滑扩展字段。
+// APIKeyLimits are the fine-grained rate limit/quota settings at the API key level.
+// 0 or empty fields mean the item is unlimited. Persisted as JSON, allowing fields to be extended smoothly.
 //
-//   - ModelAllow / ModelDeny: 模型白/黑名单。同时配置时白名单生效,黑名单忽略。
-//   - RPM: 每分钟请求数 (滑动 60s 窗口)。
-//   - RPD: 每天请求数 (滑动 24h 窗口)。
-//   - MaxConcurrency: 同一 API Key 在当前实例内允许的最大并发请求数。
-//   - CostLimit5h / CostLimit7d: 美元成本上限,滑动 5h / 7d 窗口,与账号侧窗口语义一致。
-//   - TokenLimit5h / TokenLimit7d: token 上限,滑动 5h / 7d 窗口。
-//   - CostLimitDaily / TokenLimitDaily: 自然日(服务器本地时区,零点清零)上限。与滑动窗口
-//     不同,到点全额恢复;与 scope 维度的 1d(滚动 24h)也刻意区分(issue #460)。
-//   - PlanAllow: 账号套餐白名单(plus/pro/team/...)。非空时该 Key 仅调度命中其一的账号,
-//     语义与 AllowedGroupIDs 类似,均在账号选择阶段过滤。空表示不限套餐。
+//   - ModelAllow / ModelDeny: model allowlist / blocklist. When both are set, the allowlist applies and the blocklist is ignored.
+//   - RPM: requests per minute (sliding 60s window).
+//   - RPD: requests per day (sliding 24h window).
+//   - MaxConcurrency: maximum concurrent requests allowed for the same API key within the current instance.
+//   - CostLimit5h / CostLimit7d: cost ceilings in US dollars, sliding 5h / 7d windows, with the same semantics as the account-side windows.
+//   - TokenLimit5h / TokenLimit7d: token ceilings, sliding 5h / 7d windows.
+//   - CostLimitDaily / TokenLimitDaily: ceilings for the calendar day (server local time zone, reset at midnight). Unlike sliding windows
+//     they fully recover at the reset point; they are also deliberately distinguished from the scope-dimension 1d (rolling 24h) (issue #460).
+//   - PlanAllow: account plan allowlist (plus/pro/team/...). When non-empty, this key is only scheduled to accounts matching one of them,
+//     with semantics similar to AllowedGroupIDs; both filter during account selection. Empty means no plan restriction.
 type APIKeyLimits struct {
 	ModelRequestLimits []APIKeyModelRequestLimit `json:"model_request_limits,omitempty"`
 	ModelAllow         []string                  `json:"model_allow,omitempty"`
 	ModelDeny          []string                  `json:"model_deny,omitempty"`
 	PlanAllow          []string                  `json:"plan_allow,omitempty"`
-	// NoAffinityGroupIDs 指定未携带 Codex 引擎指纹或 X-Codex2API-Affinity-Key 的请求使用的账号分组。
-	// 空表示不启用分流，继续沿用 AllowedGroupIDs 的现有行为。
+	// NoAffinityGroupIDs specifies the account groups used for requests that carry no Codex engine fingerprint or X-Codex2API-Affinity-Key.
+	// Empty means no traffic split is enabled, and the existing behavior of AllowedGroupIDs continues to apply.
 	NoAffinityGroupIDs []int64 `json:"no_affinity_group_ids,omitempty"`
 	RPM                int     `json:"rpm,omitempty"`
 	RPD                int     `json:"rpd,omitempty"`
@@ -1863,51 +1863,51 @@ type APIKeyLimits struct {
 	TokenLimit7d       int64   `json:"token_limit_7d,omitempty"`
 	TokenLimit30d      int64   `json:"token_limit_30d,omitempty"`
 	TokenLimitDaily    int64   `json:"token_limit_daily,omitempty"`
-	// DisableImageGeneration 为 true 时，该 Key 禁止访问生图模型(gpt-image-*)与
-	// 生图工具链路(image_generation 工具 / /v1/images 端点)，命中一律 403。
-	// 保留为向后兼容字段：新配置改用 ImageGenerationPolicy；未设 policy 时该 bool=true
-	// 等价于 policy=block（见 ResolveImageGenerationPolicy）。
+	// DisableImageGeneration: when true, this key is forbidden from accessing image generation models (gpt-image-*) and
+	// the image generation tool path (image_generation tool / /v1/images endpoint); a hit always returns 403.
+	// Kept as a backward-compatibility field: new configuration should use ImageGenerationPolicy; when no policy is set, this bool=true
+	// is equivalent to policy=block (see ResolveImageGenerationPolicy).
 	DisableImageGeneration bool `json:"disable_image_generation,omitempty"`
-	// ImageGenerationPolicy 控制该 Key 遇到 Codex 图片工具能力时的处理策略：
-	//   - ""/allow: 正常放行(默认行为)
-	//   - strip:    剥离图片工具声明后作为普通文本请求继续转发上游(不返回 403)
-	//   - block:    命中生图能力一律 403(等价旧 DisableImageGeneration=true)
+	// ImageGenerationPolicy controls how this key is handled when the request uses the Codex image tool capability:
+	//   - ""/allow: normal pass-through (default behavior)
+	//   - strip:    strip the image tool declaration and keep forwarding the request upstream as a plain text request (does not return 403)
+	//   - block:    always return 403 on an image generation capability hit (equivalent to the old DisableImageGeneration=true)
 	ImageGenerationPolicy string `json:"image_generation_policy,omitempty"`
-	// AutoCompactOnOverflow 为 true 时，该 Key 的请求收到上游上下文超窗错误
-	// (context_length_exceeded)后，网关把 input 旧轮次摘要压缩并重试一次，
-	// 而不是直接把 400 透传给下游。默认关闭。
+	// AutoCompactOnOverflow: when true, after this key's request receives an upstream context-window overflow error
+	// (context_length_exceeded), the gateway compacts the older input turns into a summary and retries once,
+	// instead of passing the 400 straight through to the downstream client. Off by default.
 	AutoCompactOnOverflow bool `json:"auto_compact_overflow,omitempty"`
-	// AllowLive 为 true 时，该 Key 可以使用 ChatGPT Live（/v1/live 与
-	// /backend-api/codex/realtime/calls）。管理端新建 auto/codex Key 时默认开启。
+	// AllowLive: when true, this key may use ChatGPT Live (/v1/live and
+	// /backend-api/codex/realtime/calls). The admin panel turns this on by default when creating auto/codex keys.
 	AllowLive bool `json:"allow_live,omitempty"`
-	// UpstreamChannel 限定该 Key 的请求只调度到指定上游渠道的账号：
-	//   - ""/auto: 不限（默认，按模型路由）
-	//   - codex:   仅 Codex 账号（现在是唯一渠道）
+	// UpstreamChannel restricts this key's requests to be scheduled only to accounts on the specified upstream channel:
+	//   - ""/auto: unrestricted (default, routed by model)
+	//   - codex:   Codex accounts only (currently the only channel)
 	UpstreamChannel string `json:"upstream_channel,omitempty"`
-	// ScopeLimits 是「该 Key × 某账号分组 / 某账号」维度的用量上限（issue #439）。
-	// 与上面的 Cost/Token 限额不同，它只统计该 Key 打到对应 scope 的用量，超额后默认
-	// 把该 scope 的账号从候选池剔除（自动落到其它分组），详见 APIKeyScopeLimit。
+	// ScopeLimits are usage ceilings along the "this key × an account group / an account" dimension (issue #439).
+	// Unlike the Cost/Token limits above, they only count the usage this key sends to the matching scope. When exceeded, by default
+	// the scope's accounts are removed from the candidate pool (traffic automatically falls to other groups). See APIKeyScopeLimit.
 	ScopeLimits []APIKeyScopeLimit `json:"scope_limits,omitempty"`
-	// ExternalScheduler 为 true 时，该 Key 由外部调度器管理（issue #831）：每个执行请求
-	// 必须用 X-Codex2API-Account-ID 指定账号，网关只在该账号上执行，不做内部选号、
-	// 换号或重试，也不以冷却 / 并发 / 自动暂停等内部调度判断拒绝请求。默认关闭。
+	// ExternalScheduler: when true, this key is managed by an external scheduler (issue #831): each request
+	// must specify the account with X-Codex2API-Account-ID; the gateway only executes on that account, with no internal account selection,
+	// switching, or retry, and does not reject requests based on internal scheduling checks such as cooldown / concurrency / auto-pause. Off by default.
 	ExternalScheduler bool `json:"external_scheduler,omitempty"`
 }
 
-// 图片工具策略取值。
+// Image tool policy values.
 const (
 	ImageGenerationPolicyAllow = "allow"
 	ImageGenerationPolicyStrip = "strip"
 	ImageGenerationPolicyBlock = "block"
 )
 
-// 上游渠道限定取值。
+// Upstream channel restriction values.
 const (
 	UpstreamChannelAuto  = ""
 	UpstreamChannelCodex = "codex"
 )
 
-// ResolveUpstreamChannel 归一 Key 的上游渠道限定；未知值一律视为不限（auto）。
+// ResolveUpstreamChannel normalizes the key's upstream channel restriction; unknown values are always treated as unrestricted (auto).
 func (l APIKeyLimits) ResolveUpstreamChannel() string {
 	switch strings.ToLower(strings.TrimSpace(l.UpstreamChannel)) {
 	case UpstreamChannelCodex:
@@ -1916,9 +1916,9 @@ func (l APIKeyLimits) ResolveUpstreamChannel() string {
 	return UpstreamChannelAuto
 }
 
-// ResolveImageGenerationPolicy 归一 Key 的图片工具策略，统一新旧两种配置来源：
-// 显式 ImageGenerationPolicy 优先；未设时旧 DisableImageGeneration=true 映射为 block；
-// 其余一律 allow。返回值恒为 allow/strip/block 之一。
+// ResolveImageGenerationPolicy normalizes the key's image tool policy, unifying the old and new configuration sources:
+// an explicit ImageGenerationPolicy takes precedence; when unset, the old DisableImageGeneration=true maps to block;
+// everything else is allow. The return value is always one of allow/strip/block.
 func (l APIKeyLimits) ResolveImageGenerationPolicy() string {
 	switch strings.ToLower(strings.TrimSpace(l.ImageGenerationPolicy)) {
 	case ImageGenerationPolicyStrip:
@@ -1934,7 +1934,7 @@ func (l APIKeyLimits) ResolveImageGenerationPolicy() string {
 	return ImageGenerationPolicyAllow
 }
 
-// IsZero 判断是否为空 limits(全部字段都未配置)
+// IsZero reports whether limits are empty (no field configured)
 func (l APIKeyLimits) IsZero() bool {
 	return len(l.ModelAllow) == 0 && len(l.ModelDeny) == 0 && len(l.PlanAllow) == 0 &&
 		len(l.NoAffinityGroupIDs) == 0 &&
@@ -1978,7 +1978,7 @@ type APIKeyUpdate struct {
 
 const apiKeySelectColumns = `id, name, key, created_at, COALESCE(quota_limit, 0), COALESCE(quota_used, 0), COALESCE(total_used, 0), COALESCE(reset_count, 0), last_reset_at, expires_at, COALESCE(allowed_group_ids, '[]'), COALESCE(limits, '{}'), COALESCE(enabled, TRUE)`
 
-// ListAPIKeys 获取所有 API 密钥
+// ListAPIKeys returns all API keys
 func (db *DB) ListAPIKeys(ctx context.Context) ([]*APIKeyRow, error) {
 	rows, err := db.conn.QueryContext(ctx, `SELECT `+apiKeySelectColumns+` FROM api_keys ORDER BY id`)
 	if err != nil {
@@ -1997,7 +1997,7 @@ func (db *DB) ListAPIKeys(ctx context.Context) ([]*APIKeyRow, error) {
 	return keys, rows.Err()
 }
 
-// CountAPIKeys 返回当前 API Key 数量。
+// CountAPIKeys returns the current number of API keys.
 func (db *DB) CountAPIKeys(ctx context.Context) (int, error) {
 	var count int
 	if err := db.conn.QueryRowContext(ctx, `SELECT COUNT(*) FROM api_keys`).Scan(&count); err != nil {
@@ -2006,7 +2006,7 @@ func (db *DB) CountAPIKeys(ctx context.Context) (int, error) {
 	return count, nil
 }
 
-// GetAPIKeyByValue 通过完整 API Key 查找元数据，用于鉴权热路径的按 key 缓存。
+// GetAPIKeyByValue looks up key metadata by the full API key, for the per-key cache on the auth hot path.
 func (db *DB) GetAPIKeyByValue(ctx context.Context, key string) (*APIKeyRow, error) {
 	rows, err := db.conn.QueryContext(ctx, `SELECT `+apiKeySelectColumns+` FROM api_keys WHERE key = $1`, key)
 	if err != nil {
@@ -2019,7 +2019,7 @@ func (db *DB) GetAPIKeyByValue(ctx context.Context, key string) (*APIKeyRow, err
 	return scanAPIKeyRow(rows)
 }
 
-// InsertAPIKey 插入新 API 密钥
+// InsertAPIKey inserts a new API key
 func (db *DB) InsertAPIKey(ctx context.Context, name, key string) (int64, error) {
 	return db.InsertAPIKeyWithOptions(ctx, APIKeyInput{Name: name, Key: key})
 }
@@ -2144,7 +2144,7 @@ func (db *DB) UpdateAPIKeyAllowedGroupIDs(ctx context.Context, id int64, groupID
 }
 
 // UpdateAPIKeyLimits persists the per-key rate / quota / model limit configuration.
-// 空 APIKeyLimits 等价于"清除所有限制",对应数据库列为 '{}'。
+// An empty APIKeyLimits is equivalent to "clear all limits", corresponding to the database column being '{}'.
 func (db *DB) UpdateAPIKeyLimits(ctx context.Context, id int64, limits APIKeyLimits) error {
 	rules, err := NormalizeAPIKeyModelRequestLimits(limits.ModelRequestLimits)
 	if err != nil {
@@ -2334,15 +2334,15 @@ const (
 	MaxModelsListReadMaxBytes     int64 = 256 << 20
 )
 
-// ValidateModelsListReadMaxBytes 校验模型列表响应的最大读取字节数。
+// ValidateModelsListReadMaxBytes validates the maximum number of bytes read from a models list response.
 func ValidateModelsListReadMaxBytes(value int64) error {
 	if value < MinModelsListReadMaxBytes || value > MaxModelsListReadMaxBytes {
-		return fmt.Errorf("models_list_read_max_bytes 必须在 %d 到 %d 字节之间", MinModelsListReadMaxBytes, MaxModelsListReadMaxBytes)
+		return fmt.Errorf("models_list_read_max_bytes must be between %d and %d bytes", MinModelsListReadMaxBytes, MaxModelsListReadMaxBytes)
 	}
 	return nil
 }
 
-// NormalizeModelsListReadMaxBytes 把缺失或越界旧值收敛到安全范围。
+// NormalizeModelsListReadMaxBytes clamps a missing or out-of-range old value into the safe range.
 func NormalizeModelsListReadMaxBytes(value int64) int64 {
 	if value <= 0 {
 		return DefaultModelsListReadMaxBytes
@@ -2356,7 +2356,7 @@ func NormalizeModelsListReadMaxBytes(value int64) int64 {
 	return value
 }
 
-// SystemSettings 运行时设置项
+// SystemSettings are runtime settings items
 type SystemSettings struct {
 	SiteName                           string
 	SiteLogo                           string
@@ -2386,7 +2386,7 @@ type SystemSettings struct {
 	AllowRemoteMigration               bool
 	ModelMapping                       string // JSON: {"anthropic_model": "codex_model", ...}
 	CodexModelMapping                  string // JSON: {"requested_codex_model": "upstream_codex_model", ...}
-	PayloadRules                       string // JSON: 请求体重写规则（default/override/append/filter 等规则组）
+	PayloadRules                       string // JSON: request body rewrite rules (rule groups such as default/override/append/filter)
 	ReasoningEffortModels              string // JSON: [{"model":"gpt-5.5","effort":"xhigh"}, ...]
 	BackgroundRefreshIntervalMinutes   int
 	UsageProbeMaxAgeMinutes            int
@@ -2394,13 +2394,13 @@ type SystemSettings struct {
 	UsageProbeResponsesFallbackEnabled bool
 	RecoveryProbeIntervalMinutes       int
 	SchedulerMode                      string
-	AffinityMode                       string // session 粘性模式: bounded / off / strict
-	SessionAffinitySpread              bool   // 新亲和键按 HRW 哈希散列选号(issue #484)
-	SessionSlotBufferEnabled           bool   // 成功请求结束后为原会话短暂保留并发槽
-	SessionSlotBufferSeconds           int    // 会话并发槽缓冲时间，默认 10 秒，范围 1..60
-	ModelsListReadMaxBytes             int64  // 上游 /models 与 Codex 模型清单的最大读取字节数，默认 8 MiB
-	ResinURL                           string // Resin 代理池地址（含 Token），例如 http://127.0.0.1:2260/my-token
-	ResinPlatformName                  string // Resin 平台标识，例如 codex2api
+	AffinityMode                       string // session stickiness mode: bounded / off / strict
+	SessionAffinitySpread              bool   // New affinity keys pick accounts via HRW hash spreading (issue #484)
+	SessionSlotBufferEnabled           bool   // After a successful request ends, briefly keep the concurrency slot for the original session
+	SessionSlotBufferSeconds           int    // Session concurrency slot buffer time, default 10 seconds, range 1..60
+	ModelsListReadMaxBytes             int64  // Max bytes read from upstream /models and the Codex model list, default 8 MiB
+	ResinURL                           string // Resin proxy pool address (includes Token), e.g. http://127.0.0.1:2260/my-token
+	ResinPlatformName                  string // Resin platform identifier, e.g. codex2api
 	PromptFilterEnabled                bool
 	PromptFilterMode                   string
 	PromptFilterThreshold              int
@@ -2423,7 +2423,7 @@ type SystemSettings struct {
 	CodexUserAgentConfig               string
 	CodexTelemetryEnabled              bool
 	CodexTelemetryTimingDebug          bool
-	CodexImagesMainModel               string // 空值沿用部署默认的生图文本驱动模型
+	CodexImagesMainModel               string // Empty value falls back to the deployment's default text driver model for image generation
 	UsageLogMode                       string
 	UsageLogBatchSize                  int
 	UsageLogFlushIntervalSeconds       int
@@ -2434,80 +2434,80 @@ type SystemSettings struct {
 	BillingTierPolicy                  string
 	ImageStorageConfig                 string // JSON: {"backend":"s3","endpoint":"...","region":"...","bucket":"...","access_key":"...","secret_key":"...","prefix":"...","force_path_style":false}
 	ShowFullUsageNumbers               bool
-	// ShowUpstreamModelMismatch 控制用量页是否标出上游响应模型与请求模型不一致。
-	// 只影响展示和筛选，不停止记录。默认开启。
+	// ShowUpstreamModelMismatch controls whether the usage page marks cases where the upstream response model differs from the requested model.
+	// Only affects display and filtering; it does not stop recording. On by default.
 	ShowUpstreamModelMismatch       bool
 	PublicKeyUsagePageEnabled       bool
 	PublicImageStudioPageEnabled    bool
-	PublicAccountPortalPageEnabled  bool // 账号自助添加公开门户开关，默认 false
-	CodexForceWebsocket             bool // 强制 Codex 上游走 WebSocket（复用连接池），默认 false
-	CodexRequestCompression         bool // HTTP /responses 请求体 zstd 压缩（对齐真实客户端），默认 true
-	CodexWSWeakNetworkMode          bool // WS 弱网保守复用模式，默认 false
-	CodexWSKeepaliveEnabled         bool // 启用上游 WS 空闲连接保活（仅 Ping，不发业务帧），默认 false
-	CodexWSKeepaliveIntervalSec     int  // WS 保活 Ping 间隔（秒），默认 60
-	CodexWSHideUpstreamErrors       bool // 隐藏上游 WS 原始错误，默认 true
-	CodexWSSilentRetryEnabled       bool // 首包前 WS 上游错误静默换号重试，默认 true
-	CodexWSSilentMaxRetries         int  // WS 静默换号最大重试次数，默认 2
-	CodexWSSizeRouterEnabled        bool // 1009 自学习体积路由：超大请求直接首发 HTTP，默认 true
-	CodexWSBusyAcquireMaxWaitSec    int  // busy session/容量等待的累计上限（秒），默认 30（issue #413）
-	CodexWSBusyOverflowEnabled      bool // busy session 溢出到同账号兄弟连接，默认 false（issue #413）
-	CodexWSBusyPatienceSec          int  // 触发溢出前的短等待（秒），默认 2（issue #413）
-	CodexWSStatelessSlots           int  // 每账号空白上游 WS 槽位预算，默认 8，范围 0-32
-	CodexWSDownstreamKeepaliveSlots int  // 每账号空闲聊天续链连接的独立保留上限，默认 8，范围 0-32
-	// GithubToken 用于 api.github.com 请求的 Personal Access Token（提升限流配额，
-	// 只发给 api.github.com，绝不发给镜像/其他主机；空表示未配置，issue #522）。
+	PublicAccountPortalPageEnabled  bool // Public portal switch for account self-service adding, default false
+	CodexForceWebsocket             bool // Force Codex upstream over WebSocket (reusing the connection pool), default false
+	CodexRequestCompression         bool // zstd compression of HTTP /responses request bodies (aligned with real clients), default true
+	CodexWSWeakNetworkMode          bool // Conservative WS reuse mode for weak networks, default false
+	CodexWSKeepaliveEnabled         bool // Enable keepalive for idle upstream WS connections (ping only, no business frames), default false
+	CodexWSKeepaliveIntervalSec     int  // WS keepalive ping interval (seconds), default 60
+	CodexWSHideUpstreamErrors       bool // Hide raw upstream WS errors, default true
+	CodexWSSilentRetryEnabled       bool // Silently switch accounts and retry on upstream WS errors before the first packet, default true
+	CodexWSSilentMaxRetries         int  // Max silent account-switch retries for WS, default 2
+	CodexWSSizeRouterEnabled        bool // 1009 self-learning size routing: oversized requests go straight to HTTP first, default true
+	CodexWSBusyAcquireMaxWaitSec    int  // Cumulative cap (seconds) on waiting for a busy session/capacity, default 30 (issue #413)
+	CodexWSBusyOverflowEnabled      bool // Overflow a busy session onto a sibling connection of the same account, default false (issue #413)
+	CodexWSBusyPatienceSec          int  // Short wait (seconds) before triggering overflow, default 2 (issue #413)
+	CodexWSStatelessSlots           int  // Per-account budget for blank upstream WS slots, default 8, range 0-32
+	CodexWSDownstreamKeepaliveSlots int  // Separate retention cap per account for idle chat continuation connections, default 8, range 0-32
+	// GithubToken is the Personal Access Token used for api.github.com requests (raises the rate limit quota,
+	// only sent to api.github.com, never to mirrors or other hosts; empty means not configured, issue #522).
 	GithubToken string
-	// GithubProxyURL GitHub 域名（github.com / api.github.com / *.githubusercontent.com）
-	// 专用出站代理；空表示回落全局代理/环境代理（issue #522）。
+	// GithubProxyURL is a dedicated outbound proxy for GitHub domains (github.com / api.github.com / *.githubusercontent.com);
+	// empty means fall back to the global proxy / environment proxy (issue #522).
 	GithubProxyURL string
-	// Codex 过载熔断：单账号滑动窗口内 server_is_overloaded 占比达到阈值时
-	// 自动暂停调度一段时间（默认关闭）。
+	// Codex overload circuit breaker: when the server_is_overloaded share within a single account's sliding window reaches the threshold,
+	// scheduling for that account is automatically paused for a period (off by default).
 	CodexOverloadPauseEnabled           bool
-	CodexOverloadThresholdPercent       int  // 触发比例（%），默认 20，范围 1-100
-	CodexOverloadPauseMinutes           int  // 暂停时长（分钟），默认 30，范围 1-1440
-	CodexOverloadWindowMinutes          int  // 统计窗口（分钟），默认 5，范围 1-120
-	OverflowAutoCompactEnabled          bool // 上下文超窗时自动摘要旧轮次并重试一次（实验性，默认 false，issue #415）
-	CompactViaResponsesEnabled          bool // /v1/responses/compact 改写为 /responses body-signal 压缩（上游已下线专用端点，默认 false）
-	CodexPreflightSSEPassthroughEnabled bool // 前置元数据 SSE 事件立即透传下游（旧版兼容，默认 false，issue #425）
-	FirstTokenExcludesWsAcquire         bool // 落库 first_token_ms 扣除 WS 取连耗时，默认 false（原始值 = first_token_ms + ws_acquire_ms）
-	CodexContinueThinkingEnabled        bool // 检测到上游截断思考时自动续想并折叠成单响应，默认 false
-	CodexContinueMaxRounds              int  // 单次请求最大续想轮数（含首轮），默认 8
-	UTLSShutdownTimeoutMinutes          int  // uTLS 连接被摘出池后等待在途 stream 收尾的上限（分钟，默认 30，范围 1-240，issue #446）
-	// CodexFingerprintDefaultMode 是新导入/新建 Codex 账号默认盖上的指纹收敛档位
-	// （off/device/session/full，默认 off）。只影响导入之后新建的账号，已有账号不变。
+	CodexOverloadThresholdPercent       int  // Trigger ratio (%), default 20, range 1-100
+	CodexOverloadPauseMinutes           int  // Pause duration (minutes), default 30, range 1-1440
+	CodexOverloadWindowMinutes          int  // Stats window (minutes), default 5, range 1-120
+	OverflowAutoCompactEnabled          bool // On context-window overflow, automatically summarize old turns and retry once (experimental, default false, issue #415)
+	CompactViaResponsesEnabled          bool // Rewrite /v1/responses/compact to /responses body-signal compaction (dedicated endpoint that upstream has retired, default false)
+	CodexPreflightSSEPassthroughEnabled bool // Pass preflight metadata SSE events straight through to downstream immediately (legacy compatibility, default false, issue #425)
+	FirstTokenExcludesWsAcquire         bool // Subtract WS connection acquisition time from the persisted first_token_ms, default false (raw value = first_token_ms + ws_acquire_ms)
+	CodexContinueThinkingEnabled        bool // When an upstream truncated thinking is detected, automatically continue thinking and fold it into a single response, default false
+	CodexContinueMaxRounds              int  // Max continue-thinking rounds per request (including the first round), default 8
+	UTLSShutdownTimeoutMinutes          int  // Upper limit (minutes) to wait for in-flight streams to finish after a uTLS connection is removed from the pool, default 30, range 1-240, issue #446
+	// CodexFingerprintDefaultMode is the convergence level applied by default to newly imported/created Codex accounts
+	// (off/device/session/full, default off). Only affects accounts created after import; existing accounts are unchanged.
 	CodexFingerprintDefaultMode string
 	AutoPause5hThreshold        float64
 	AutoPause7dThreshold        float64
 	AutoPause5hGuardBandPercent float64
 	AutoPause5hGuardConcurrency int
-	SmartPacingEnabled          bool   // issue #312 智能配速总开关
-	SmartPacingMinConcurrency   int    // 配速并发下限
+	SmartPacingEnabled          bool   // issue #312 smart pacing master switch
+	SmartPacingMinConcurrency   int    // Lower bound of pacing concurrency
 	SmartPacingWindows          string // "5h,7d" / "5h" / "7d"
-	IgnoreUsageLimitStatus      bool   // 用量窗口仅作参考，以 Responses 成功/usage_limit_reached 判定可用性
-	RetryIntervalMS             int    // 重试间隔毫秒（0 = 立即重试，保持旧行为）
-	TransportRetryPolicy        string // 传输错误重试策略: rotate（换号，旧行为）/ sticky（同号延迟重试）
-	// CodexSyncedCLIVersion 是从 openai/codex releases 同步到的最新 Codex CLI 版本缓存，
-	// 用于抬升出站 UA / manifest 的模拟版本（绝不低于内置常量），空表示尚未同步。
+	IgnoreUsageLimitStatus      bool   // Usage windows are reference only; availability is judged by Responses success / usage_limit_reached
+	RetryIntervalMS             int    // Retry interval in ms (0 = retry immediately, keeps old behavior)
+	TransportRetryPolicy        string // Transport error retry policy: rotate (switch accounts, old behavior) / sticky (retry on the same account after a delay)
+	// CodexSyncedCLIVersion is the cache of the latest Codex CLI version synced from openai/codex releases,
+	// used to raise the simulated version for outbound UA / manifest (never below the built-in constant); empty means not synced yet.
 	CodexSyncedCLIVersion          string
 	CodexSyncedDesktopMacBuild     string
 	CodexSyncedDesktopWindowsBuild string
 	CodexSyncedVSCodeBuild         string
-	// CodexCLIVersionSyncEnabled 控制是否后台定时自动同步 Codex CLI 版本（默认 true）。
+	// CodexCLIVersionSyncEnabled controls whether the Codex CLI version is automatically synced in the background on a schedule (default true).
 	CodexCLIVersionSyncEnabled bool
-	// CodexCLIVersionSyncIntervalHours 是定时同步间隔（小时，默认 12，范围 1-720）。
+	// CodexCLIVersionSyncIntervalHours is the scheduled sync interval (hours, default 12, range 1-720).
 	CodexCLIVersionSyncIntervalHours int
-	// AutoResetCreditsEnabled 控制 Plus/Pro 主动重置次数的临期自动消费（默认关闭）。
+	// AutoResetCreditsEnabled controls automatic use of Plus/Pro proactive reset credits when near expiry (default off).
 	AutoResetCreditsEnabled bool
 	// AutoResetCreditsOnExhaustionEnabled consumes a credit after a live window reaches 100%.
 	AutoResetCreditsOnExhaustionEnabled bool
-	// AutoResetCreditsBeforeExpiryMin 是进入临期窗口的提前分钟数（默认 60，范围 10-10080）。
+	// AutoResetCreditsBeforeExpiryMin is how many minutes ahead of expiry the window starts (default 60, range 10-10080).
 	AutoResetCreditsBeforeExpiryMin int
-	// AutoActivate5hWindowEnabled 控制 5h 窗口重置后是否发送一次最小真实 /responses 以启动下一轮窗口（默认关闭，issue #581）。
+	// AutoActivate5hWindowEnabled controls whether, after the 5h window resets, a minimal real /responses is sent once to start the next window (default off, issue #581).
 	AutoActivate5hWindowEnabled bool
-	// ModelPricingOverrides 是模型定价覆盖 JSON（model → ModelPricingOverride），
-	// custom/synced 覆盖代码默认；空为 "{}"。
+	// ModelPricingOverrides is the model pricing override JSON (model → ModelPricingOverride),
+	// custom/synced overrides the code default; empty is "{}".
 	ModelPricingOverrides string
-	// ModelPricingSyncURL 是「从 JSON URL 同步定价」的来源地址，空时用内置默认。
+	// ModelPricingSyncURL is the source address for "sync pricing from JSON URL"; when empty, the built-in default is used.
 	ModelPricingSyncURL              string
 	RelayModelCooldownMode           string
 	RelayModelCooldownSeconds        int
@@ -2538,14 +2538,14 @@ func normalizeBillingTierPolicy(policy string) string {
 	}
 }
 
-// normalizeFirstTokenMode 统一返回 loose：严格首字开关已取消，旧行里的 strict
-// 按宽松口径生效，列保留只为兼容旧库。
+// normalizeFirstTokenMode always returns loose: the strict first-token switch has been removed, and legacy strict values in old rows
+// take effect under the loose semantics; the column is kept only for compatibility with old databases.
 func normalizeFirstTokenMode(_ string) string {
 	return "loose"
 }
 
-// NormalizeAutoResetCreditsBeforeExpiryMinutes 将临期自动消费阈值限制在
-// 10 分钟到 7 天；非正值回退默认 60 分钟。
+// NormalizeAutoResetCreditsBeforeExpiryMinutes clamps the auto-reset-before-expiry threshold to
+// 10 minutes to 7 days; non-positive values fall back to the default of 60 minutes.
 func NormalizeAutoResetCreditsBeforeExpiryMinutes(minutes int) int {
 	if minutes <= 0 {
 		return 60
@@ -2559,7 +2559,7 @@ func NormalizeAutoResetCreditsBeforeExpiryMinutes(minutes int) int {
 	return minutes
 }
 
-// normalizeSmartPacingMinConcurrencyDB 归一化智能配速并发下限（1..1000，默认 1）。
+// normalizeSmartPacingMinConcurrencyDB normalizes the smart pacing concurrency lower bound (1..1000, default 1).
 func normalizeSmartPacingMinConcurrencyDB(value int) int {
 	if value < 1 {
 		return 1
@@ -2570,7 +2570,7 @@ func normalizeSmartPacingMinConcurrencyDB(value int) int {
 	return value
 }
 
-// normalizeSmartPacingWindowsDB 归一化配速窗口为 "5h,7d" / "5h" / "7d"，非法回退 "5h,7d"。
+// normalizeSmartPacingWindowsDB normalizes the pacing windows to "5h,7d" / "5h" / "7d"; invalid values fall back to "5h,7d".
 func normalizeSmartPacingWindowsDB(raw string) string {
 	var w5h, w7d bool
 	for _, part := range strings.Split(strings.ToLower(strings.TrimSpace(raw)), ",") {
@@ -2619,10 +2619,10 @@ func NormalizeSchedulerEngine(value string, legacyFastEnabled bool) string {
 	}
 }
 
-// GetSystemSettings 加载全局设置
+// GetSystemSettings loads the global settings
 func (db *DB) GetSystemSettings(ctx context.Context) (*SystemSettings, error) {
 	s := &SystemSettings{}
-	// 模板缓存列仍留在表里，读取后丢弃，避免改动既有 SELECT 列序。
+	// The template cache column is still in the table; it is read and discarded, to avoid changing the existing SELECT column order.
 	var ignoredTurnStateTemplateCache bool
 	var ignoredTurnStateAccountMode string
 	err := db.conn.QueryRowContext(ctx, `
@@ -2968,9 +2968,9 @@ func continuousRetryPolicySelectQuery(forUpdate bool) string {
 	return query
 }
 
-// NormalizeCodexFingerprintDefaultMode 把新账号默认指纹收敛档位归一到已知
-// 取值之一；空值和非法值回落 off（与 auth.NormalizeCodexFingerprintMode 语义一致，
-// database 包不能反向依赖 auth，故此处独立实现）。
+// NormalizeCodexFingerprintDefaultMode normalizes the new-account default fingerprint convergence level to one of the known
+// values; empty and invalid values fall back to off (consistent with auth.NormalizeCodexFingerprintMode semantics;
+// the database package cannot depend back on auth, so it is implemented independently here).
 func NormalizeCodexFingerprintDefaultMode(mode string) string {
 	switch strings.ToLower(strings.TrimSpace(mode)) {
 	case "single_machine_multi_window":
@@ -2986,21 +2986,21 @@ func NormalizeCodexFingerprintDefaultMode(mode string) string {
 	}
 }
 
-// systemSettingsExecer 让同一份 system_settings upsert 既能直接在连接上执行，
-// 也能在事务内执行，供需要原子提交多份设置的调用方复用。
+// systemSettingsExecer lets the same system_settings upsert run either directly on a connection
+// or inside a transaction, for callers that need to atomically commit several settings together.
 type systemSettingsExecer interface {
 	ExecContext(ctx context.Context, query string, args ...any) (sql.Result, error)
 }
 
-// UpdateSystemSettings 更新全局设置（upsert：无行时自动插入）。
-// codex_synced_cli_version 与 model_pricing_* 由各自的窄更新独立维护；冲突更新时
-// 保留数据库当前值，避免管理员保存其他设置时回滚后台同步刚写入的数据。
+// UpdateSystemSettings updates the global settings (upsert: inserts automatically when no row exists).
+// codex_synced_cli_version and model_pricing_* are maintained independently by their own narrow updates; on conflict updates
+// keep the current database value, so saving other settings by an admin does not roll back data just written by background sync.
 func (db *DB) UpdateSystemSettings(ctx context.Context, s *SystemSettings) error {
 	return updateSystemSettingsWithExecer(ctx, db.conn, s)
 }
 
-// updateSystemSettingsWithExecer 执行全局设置 upsert。它不关心调用方是
-// *sql.DB 还是 *sql.Tx，由调用方决定是否与其他写入共享事务。
+// updateSystemSettingsWithExecer runs the global settings upsert. It does not care whether the caller passes
+// *sql.DB or *sql.Tx; the caller decides whether to share a transaction with other writes.
 func updateSystemSettingsWithExecer(ctx context.Context, execer systemSettingsExecer, s *SystemSettings) error {
 	reasoningEffortModels := strings.TrimSpace(s.ReasoningEffortModels)
 	if reasoningEffortModels == "" {
@@ -3295,8 +3295,8 @@ func updateSystemSettingsWithExecer(ctx context.Context, execer systemSettingsEx
 	return err
 }
 
-// UpdateCodexSyncedCLIVersion 只更新后台同步得到的 Codex CLI 版本，避免用
-// 读取到的旧 SystemSettings 快照覆盖管理员刚保存的其他设置。
+// UpdateCodexSyncedCLIVersion only updates the Codex CLI version obtained by background sync, to avoid using
+// a stale SystemSettings snapshot that was read to overwrite other settings an admin just saved.
 func (db *DB) UpdateCodexSyncedCLIVersion(ctx context.Context, version string) error {
 	_, err := db.conn.ExecContext(ctx, `
 		INSERT INTO system_settings (id, codex_synced_cli_version)
@@ -3307,7 +3307,7 @@ func (db *DB) UpdateCodexSyncedCLIVersion(ctx context.Context, version string) e
 	return err
 }
 
-// UpdateCodexSyncedAppBuild 只更新一个已知客户端的构建号，不回写整个设置快照。
+// UpdateCodexSyncedAppBuild updates only the build number of one known client, without writing back the whole settings snapshot.
 func (db *DB) UpdateCodexSyncedAppBuild(ctx context.Context, kind, version string) error {
 	columns := map[string]string{
 		"desktop-mac":     "codex_synced_desktop_mac_build",
@@ -3324,7 +3324,7 @@ func (db *DB) UpdateCodexSyncedAppBuild(ctx context.Context, kind, version strin
 	return err
 }
 
-// UpdateModelsListReadMaxBytes 原子更新模型列表读取上限，不回写整行设置。
+// UpdateModelsListReadMaxBytes atomically updates the models list read cap, without writing back the whole settings row.
 func (db *DB) UpdateModelsListReadMaxBytes(ctx context.Context, value int64) error {
 	if err := ValidateModelsListReadMaxBytes(value); err != nil {
 		return err
@@ -3338,7 +3338,7 @@ func (db *DB) UpdateModelsListReadMaxBytes(ctx context.Context, value int64) err
 	return err
 }
 
-// UpdateModelPricingSettings 原子更新模型定价覆盖及其同步来源，不回写整行设置。
+// UpdateModelPricingSettings atomically updates model pricing overrides and their sync source, without writing back the whole settings row.
 func (db *DB) UpdateModelPricingSettings(ctx context.Context, overridesJSON, syncURL string) error {
 	_, err := db.conn.ExecContext(ctx, `
 		INSERT INTO system_settings (id, model_pricing_overrides, model_pricing_sync_url)
@@ -3350,7 +3350,7 @@ func (db *DB) UpdateModelPricingSettings(ctx context.Context, overridesJSON, syn
 	return err
 }
 
-// normalizeModelPricingOverridesJSON 空/非法 JSON 归一为 "{}"。
+// normalizeModelPricingOverridesJSON normalizes empty/invalid JSON to "{}".
 func normalizeModelPricingOverridesJSON(s string) string {
 	s = strings.TrimSpace(s)
 	if s == "" {
@@ -3362,7 +3362,7 @@ func normalizeModelPricingOverridesJSON(s string) string {
 	return s
 }
 
-// NormalizeCodexCLIVersionSyncIntervalHours 把定时同步间隔(小时)限制在 1-720，非正值回落默认 12。
+// NormalizeCodexCLIVersionSyncIntervalHours limits the scheduled sync interval (hours) to 1-720; non-positive values fall back to the default of 12.
 func NormalizeCodexCLIVersionSyncIntervalHours(hours int) int {
 	if hours <= 0 {
 		return 12
@@ -3373,7 +3373,7 @@ func NormalizeCodexCLIVersionSyncIntervalHours(hours int) int {
 	return hours
 }
 
-// normalizeCodexWSKeepaliveInterval 把 WS 保活间隔(秒)归一,非正值 → 默认 60。
+// normalizeCodexWSKeepaliveInterval normalizes the WS keepalive interval (seconds); non-positive values become the default of 60.
 func normalizeCodexWSKeepaliveInterval(sec int) int {
 	if sec <= 0 {
 		return 60
@@ -3381,7 +3381,7 @@ func normalizeCodexWSKeepaliveInterval(sec int) int {
 	return sec
 }
 
-// normalizeRetryIntervalMSDB 把重试间隔限制在 0-30000ms(0 = 立即重试)。
+// normalizeRetryIntervalMSDB limits the retry interval to 0-30000ms (0 = retry immediately).
 func normalizeRetryIntervalMSDB(ms int) int {
 	if ms < 0 {
 		return 0
@@ -3392,7 +3392,7 @@ func normalizeRetryIntervalMSDB(ms int) int {
 	return ms
 }
 
-// NormalizeTransportRetryPolicy 归一化传输错误重试策略,空/未知值回落到 rotate(换号,旧行为)。
+// NormalizeTransportRetryPolicy normalizes the transport error retry policy; empty/unknown values fall back to rotate (switch accounts, old behavior).
 func NormalizeTransportRetryPolicy(policy string) string {
 	switch strings.ToLower(strings.TrimSpace(policy)) {
 	case "sticky":
@@ -3402,7 +3402,7 @@ func NormalizeTransportRetryPolicy(policy string) string {
 	}
 }
 
-// NormalizeCodexWSBusyAcquireMaxWaitSec 把 busy 等待上限限制在 1-300 秒,非正值回落默认 30。
+// NormalizeCodexWSBusyAcquireMaxWaitSec limits the busy wait cap to 1-300 seconds; non-positive values fall back to the default of 30.
 func NormalizeCodexWSBusyAcquireMaxWaitSec(seconds int) int {
 	if seconds <= 0 {
 		return 30
@@ -3413,7 +3413,7 @@ func NormalizeCodexWSBusyAcquireMaxWaitSec(seconds int) int {
 	return seconds
 }
 
-// NormalizeCodexWSBusyPatienceSec 把溢出前短等待限制在 0-300 秒,负值回落默认 2。
+// NormalizeCodexWSBusyPatienceSec limits the short wait before overflow to 0-300 seconds; negative values fall back to the default of 2.
 func NormalizeCodexWSBusyPatienceSec(seconds int) int {
 	if seconds < 0 {
 		return 2
@@ -3424,7 +3424,7 @@ func NormalizeCodexWSBusyPatienceSec(seconds int) int {
 	return seconds
 }
 
-// NormalizeCodexOverloadThresholdPercent 把过载熔断触发比例限制在 1-100，非正值回落默认 20。
+// NormalizeCodexOverloadThresholdPercent limits the overload circuit breaker trigger ratio to 1-100; non-positive values fall back to the default of 20.
 func NormalizeCodexOverloadThresholdPercent(percent int) int {
 	if percent <= 0 {
 		return 20
@@ -3435,7 +3435,7 @@ func NormalizeCodexOverloadThresholdPercent(percent int) int {
 	return percent
 }
 
-// NormalizeCodexOverloadPauseMinutes 把过载暂停时长限制在 1-1440 分钟，非正值回落默认 30。
+// NormalizeCodexOverloadPauseMinutes limits the overload pause duration to 1-1440 minutes; non-positive values fall back to the default of 30.
 func NormalizeCodexOverloadPauseMinutes(minutes int) int {
 	if minutes <= 0 {
 		return 30
@@ -3446,7 +3446,7 @@ func NormalizeCodexOverloadPauseMinutes(minutes int) int {
 	return minutes
 }
 
-// NormalizeCodexOverloadWindowMinutes 把过载统计窗口限制在 1-120 分钟，非正值回落默认 5。
+// NormalizeCodexOverloadWindowMinutes limits the overload stats window to 1-120 minutes; non-positive values fall back to the default of 5.
 func NormalizeCodexOverloadWindowMinutes(minutes int) int {
 	if minutes <= 0 {
 		return 5
@@ -3457,7 +3457,7 @@ func NormalizeCodexOverloadWindowMinutes(minutes int) int {
 	return minutes
 }
 
-// NormalizeCodexWSStatelessSlots 把账号共享的 WS 槽位预算限制在 0-32，负值回落默认 8。
+// NormalizeCodexWSStatelessSlots limits the account-shared WS slot budget to 0-32; negative values fall back to the default of 8.
 func NormalizeCodexWSStatelessSlots(slots int) int {
 	if slots < 0 {
 		return 8
@@ -3468,7 +3468,7 @@ func NormalizeCodexWSStatelessSlots(slots int) int {
 	return slots
 }
 
-// normalizeCodexWSSilentMaxRetries 把 WS 静默重试次数限制在 0-10。
+// normalizeCodexWSSilentMaxRetries limits the WS silent retry count to 0-10.
 func normalizeCodexWSSilentMaxRetries(retries int) int {
 	if retries < 0 {
 		return 0
@@ -3479,15 +3479,15 @@ func normalizeCodexWSSilentMaxRetries(retries int) int {
 	return retries
 }
 
-// UTLS 优雅关闭等待上限的边界（分钟，issue #446）。
+// Boundaries for the uTLS graceful shutdown wait cap (minutes, issue #446).
 const (
 	defaultUTLSShutdownTimeoutMinutes = 30
 	minUTLSShutdownTimeoutMinutes     = 1
 	maxUTLSShutdownTimeoutMinutes     = 240
 )
 
-// NormalizeUTLSShutdownTimeoutMinutes 把 uTLS 连接优雅关闭的等待上限夹到
-// 1-240 分钟，非正值回落默认 30。
+// NormalizeUTLSShutdownTimeoutMinutes clamps the uTLS connection graceful shutdown wait cap to
+// 1-240 minutes; non-positive values fall back to the default of 30.
 func NormalizeUTLSShutdownTimeoutMinutes(minutes int) int {
 	if minutes <= 0 {
 		return defaultUTLSShutdownTimeoutMinutes
@@ -3501,7 +3501,7 @@ func NormalizeUTLSShutdownTimeoutMinutes(minutes int) int {
 	return minutes
 }
 
-// NormalizeCodexContinueMaxRounds 把续想最大轮数限制在 1-32,非正值回落默认 8。
+// NormalizeCodexContinueMaxRounds limits the max continue-thinking rounds to 1-32; non-positive values fall back to the default of 8.
 func NormalizeCodexContinueMaxRounds(rounds int) int {
 	if rounds <= 0 {
 		return 8
@@ -3512,7 +3512,7 @@ func NormalizeCodexContinueMaxRounds(rounds int) int {
 	return rounds
 }
 
-// normalizeAffinityMode 把 SystemSettings.AffinityMode 落库前归一,空字符串 → "bounded"。
+// normalizeAffinityMode normalizes SystemSettings.AffinityMode before persisting; an empty string becomes "bounded".
 func normalizeAffinityMode(mode string) string {
 	switch strings.TrimSpace(mode) {
 	case "bounded", "off", "strict":
@@ -3522,7 +3522,7 @@ func normalizeAffinityMode(mode string) string {
 	}
 }
 
-// DeleteAPIKey 删除 API 密钥
+// DeleteAPIKey deletes an API key
 func (db *DB) DeleteAPIKey(ctx context.Context, id int64) error {
 	err := db.withSQLiteWriteLock(ctx, func() error {
 		tx, err := db.conn.BeginTx(ctx, nil)
@@ -3542,7 +3542,7 @@ func (db *DB) DeleteAPIKey(ctx context.Context, id int64) error {
 		if _, err := tx.ExecContext(ctx, `DELETE FROM api_key_model_request_ledger WHERE api_key_id = $1`, id); err != nil {
 			return err
 		}
-		// scope 累计计数器没有外键约束，删 Key 时顺带清掉，避免留下永远不会再被读到的孤行。
+		// The scope cumulative counters have no foreign key constraint, so they are cleared together when the key is deleted, to avoid leaving orphan rows that are never read again.
 		if _, err := tx.ExecContext(ctx, `DELETE FROM api_key_scope_counters WHERE api_key_id = $1`, id); err != nil {
 			return err
 		}
@@ -3555,7 +3555,7 @@ func (db *DB) DeleteAPIKey(ctx context.Context, id int64) error {
 	return nil
 }
 
-// GetAllAPIKeyValues 获取所有密钥值（用于鉴权）
+// GetAllAPIKeyValues returns all key values (used for authentication)
 func (db *DB) GetAllAPIKeyValues(ctx context.Context) ([]string, error) {
 	rows, err := db.conn.QueryContext(ctx, `SELECT key FROM api_keys`)
 	if err != nil {
@@ -3584,7 +3584,7 @@ const (
 
 var ErrProxyTestTargetChanged = errors.New("proxy test target changed")
 
-// ProxyRow 代理行
+// ProxyRow is a proxy row
 type ProxyRow struct {
 	ID            int64     `json:"id"`
 	URL           string    `json:"url"`
@@ -3595,14 +3595,14 @@ type ProxyRow struct {
 	TestLocation  string    `json:"test_location"`
 	TestLatencyMs int       `json:"test_latency_ms"`
 	TestStatus    string    `json:"test_status"`
-	// BoundCount 是绑定到该代理的账号数,由列表接口按 proxy_url 聚合填充,
-	// 前端据此免拉全量账号(代理页大号池卡死问题)。
+	// BoundCount is the number of accounts bound to this proxy, filled in by the list API aggregated by proxy_url,
+	// so the frontend can avoid fetching all accounts (fixes the proxy page freezing with a large account pool).
 	BoundCount int64                   `json:"bound_count"`
 	RiskScore  *ProxyRiskScoreSnapshot `json:"risk_score,omitempty"`
 }
 
-// SetAccountProxyURLs 在单事务里批量更新账号的 proxy_url(代理均衡绑定)。
-// 调用方负责同步运行时 store(ApplyAccountProxyURL)。
+// SetAccountProxyURLs batch-updates accounts' proxy_url in a single transaction (balanced proxy binding).
+// The caller is responsible for syncing the runtime store (ApplyAccountProxyURL).
 func (db *DB) SetAccountProxyURLs(ctx context.Context, assignments map[int64]string) error {
 	if len(assignments) == 0 {
 		return nil
@@ -3630,8 +3630,8 @@ func (db *DB) SetAccountProxyURLs(ctx context.Context, assignments map[int64]str
 	return tx.Commit()
 }
 
-// CountAccountsByProxyURL 统计各 proxy_url 绑定的未删除账号数。
-// 供代理列表页展示绑定数,替代前端拉全量账号自行聚合。
+// CountAccountsByProxyURL counts the non-deleted accounts bound to each proxy_url.
+// Used by the proxy list page to show binding counts, replacing the frontend's full account fetch and self-aggregation.
 func (db *DB) CountAccountsByProxyURL(ctx context.Context) (map[string]int64, error) {
 	rows, err := db.conn.QueryContext(ctx, `
 		SELECT TRIM(proxy_url), COUNT(*)
@@ -3658,7 +3658,7 @@ func (db *DB) CountAccountsByProxyURL(ctx context.Context) (map[string]int64, er
 	return out, rows.Err()
 }
 
-// ListProxies 获取所有代理
+// ListProxies returns all proxies
 func (db *DB) ListProxies(ctx context.Context) ([]*ProxyRow, error) {
 	rows, err := db.conn.QueryContext(ctx, `SELECT id, url, label, enabled, created_at, COALESCE(test_ip,''), COALESCE(test_location,''), COALESCE(test_latency_ms,0), COALESCE(test_status,'untested') FROM proxies ORDER BY id`)
 	if err != nil {
@@ -3770,7 +3770,7 @@ func (db *DB) ListProxiesByIDs(ctx context.Context, ids []int64) ([]*ProxyRow, e
 	return proxies, rows.Err()
 }
 
-// ListEnabledProxies 获取已启用的代理
+// ListEnabledProxies returns enabled proxies
 func (db *DB) ListEnabledProxies(ctx context.Context) ([]*ProxyRow, error) {
 	query := `SELECT id, url, label, enabled, created_at, COALESCE(test_ip,''), COALESCE(test_location,''), COALESCE(test_latency_ms,0), COALESCE(test_status,'untested') FROM proxies WHERE enabled = true AND COALESCE(test_status,'untested') <> 'error' ORDER BY id`
 	if db.isSQLite() {
@@ -3798,7 +3798,7 @@ func (db *DB) ListEnabledProxies(ctx context.Context) ([]*ProxyRow, error) {
 	return proxies, rows.Err()
 }
 
-// InsertProxy 插入单个代理
+// InsertProxy inserts a single proxy
 func (db *DB) InsertProxy(ctx context.Context, url, label string) (int64, error) {
 	return db.insertRowID(ctx,
 		`INSERT INTO proxies (url, label) VALUES ($1, $2) ON CONFLICT (url) DO NOTHING RETURNING id`,
@@ -3807,7 +3807,7 @@ func (db *DB) InsertProxy(ctx context.Context, url, label string) (int64, error)
 	)
 }
 
-// InsertProxies 批量插入代理（跳过已存在的）
+// InsertProxies batch-inserts proxies (skipping existing ones)
 func (db *DB) InsertProxies(ctx context.Context, urls []string, label string) (int, error) {
 	inserted := 0
 	for _, u := range urls {
@@ -3839,7 +3839,7 @@ func (db *DB) InsertProxies(ctx context.Context, urls []string, label string) (i
 	return inserted, nil
 }
 
-// DeleteProxy 删除单个代理
+// DeleteProxy deletes a single proxy
 func (db *DB) DeleteProxy(ctx context.Context, id int64) error {
 	res, err := db.conn.ExecContext(ctx, `DELETE FROM proxies WHERE id = $1`, id)
 	if err != nil {
@@ -3855,12 +3855,12 @@ func (db *DB) DeleteProxy(ctx context.Context, id int64) error {
 	return nil
 }
 
-// DeleteProxies 批量删除代理
+// DeleteProxies batch-deletes proxies
 func (db *DB) DeleteProxies(ctx context.Context, ids []int64) (int, error) {
 	if len(ids) == 0 {
 		return 0, nil
 	}
-	// 构建 IN 子句
+	// Build the IN clause
 	args := make([]interface{}, len(ids))
 	placeholders := make([]string, len(ids))
 	for i, id := range ids {
@@ -3876,7 +3876,7 @@ func (db *DB) DeleteProxies(ctx context.Context, ids []int64) (int, error) {
 	return int(affected), nil
 }
 
-// UpdateProxy 更新代理
+// UpdateProxy updates a proxy
 func (db *DB) UpdateProxy(ctx context.Context, id int64, urlValue *string, label *string, enabled *bool) error {
 	if urlValue == nil && label == nil && enabled == nil {
 		var exists int
@@ -3926,7 +3926,7 @@ func (db *DB) UpdateProxy(ctx context.Context, id int64, urlValue *string, label
 	return nil
 }
 
-// UpdateProxyTestResult 仅在代理 URL 与测试目标仍一致时更新测试结果。
+// UpdateProxyTestResult updates the test result only when the proxy URL still matches the test target.
 func (db *DB) UpdateProxyTestResult(ctx context.Context, id int64, expectedURL, status, ip, location string, latencyMs int) error {
 	switch status {
 	case ProxyTestStatusUntested, ProxyTestStatusSuccess, ProxyTestStatusError:
@@ -3954,7 +3954,7 @@ func (db *DB) UpdateProxyTestResult(ctx context.Context, id int64, expectedURL, 
 	return nil
 }
 
-// ProxyErrorCleanupResult 汇总错误代理清理的持久化结果。
+// ProxyErrorCleanupResult summarizes the persisted result of error proxy cleanup.
 type ProxyErrorCleanupResult struct {
 	Deleted           int
 	Unbound           int
@@ -3962,7 +3962,7 @@ type ProxyErrorCleanupResult struct {
 	DeletedProxyURLs  []string
 }
 
-// CleanErrorProxies 删除全部测试错误的代理，并在同一事务中解绑引用它们的账号。
+// CleanErrorProxies deletes all proxies that failed testing, and in the same transaction unbinds the accounts referencing them.
 func (db *DB) CleanErrorProxies(ctx context.Context) (ProxyErrorCleanupResult, error) {
 	var result ProxyErrorCleanupResult
 	err := db.withSQLiteWriteLock(ctx, func() error {
@@ -4108,8 +4108,8 @@ func unbindAccountsFromProxyURLsTx(ctx context.Context, tx *sql.Tx, sqlite bool,
 	return scanUnboundAccountIDs(rows)
 }
 
-// RetireProxiesByIDs 删除指定代理，并在同一事务中解绑仍引用这些 URL 的账号。
-// 用于单条/批量删除，避免删除后账号 proxy_url 继续把流量打到已不存在的出口(issue #517)。
+// RetireProxiesByIDs deletes the specified proxies, and in the same transaction unbinds the accounts still referencing these URLs.
+// Used for single/batch deletion, to avoid accounts' proxy_url continuing to send traffic to a no-longer-existing egress (issue #517).
 func (db *DB) RetireProxiesByIDs(ctx context.Context, ids []int64) (ProxyErrorCleanupResult, error) {
 	var result ProxyErrorCleanupResult
 	if len(ids) == 0 {
@@ -4198,7 +4198,7 @@ func (db *DB) RetireProxiesByIDs(ctx context.Context, ids []int64) (ProxyErrorCl
 	return result, nil
 }
 
-// RebindAccountProxyURLs 把仍指向 oldURL 的账号绑定改写为 newURL（代理行改 URL 时跟上）。
+// RebindAccountProxyURLs rewrites account bindings still pointing to oldURL to newURL (follows when a proxy row's URL changes).
 func (db *DB) RebindAccountProxyURLs(ctx context.Context, oldURL, newURL string) ([]int64, error) {
 	oldURL = strings.TrimSpace(oldURL)
 	newURL = strings.TrimSpace(newURL)
@@ -4226,9 +4226,9 @@ func (db *DB) RebindAccountProxyURLs(ctx context.Context, oldURL, newURL string)
 	return ids, nil
 }
 
-// ==================== Usage Logs（批量写入） ====================
+// ==================== Usage Logs (batch write) ====================
 
-// UsageLog 请求日志行
+// UsageLog is a request log row
 type UsageLog struct {
 	UserBilling
 	RequestID            string `json:"request_id"`
@@ -4253,11 +4253,11 @@ type UsageLog struct {
 	Model                string `json:"model"`
 	EffectiveModel       string `json:"effective_model"`
 	DaybreakProgram      string `json:"daybreak_program"`
-	// UpstreamResponseModel 是上游响应自报的模型名（取自 response.model 等字段，
-	// 未经协议转换或改写）。空串=上游未自报或历史行。
+	// UpstreamResponseModel is the model name self-reported by the upstream response (taken from response.model and similar fields,
+	// not converted or rewritten by the protocol). Empty string = not self-reported by upstream or a legacy row.
 	UpstreamResponseModel string `json:"upstream_response_model,omitempty"`
-	// UpstreamModelMismatch 三态：nil=上游未自报（或历史行），无法比对；
-	// true/false=已比对，上游自报与实发模型是否一致。
+	// UpstreamModelMismatch is tri-state: nil = not self-reported by upstream (or a legacy row), cannot compare;
+	// true/false = compared, whether the upstream self-reported model matches the model actually sent.
 	UpstreamModelMismatch  *bool     `json:"upstream_model_mismatch,omitempty"`
 	PromptTokens           int       `json:"prompt_tokens"`
 	CompletionTokens       int       `json:"completion_tokens"`
@@ -4326,25 +4326,25 @@ type UsageLog struct {
 	PromptPolicyIncidentID string    `json:"prompt_policy_incident_id,omitempty"`
 }
 
-// usage_logs 中受 varchar 长度约束的列宽。这些字段大多直接来自下游请求体或上游响应
-// （reasoning_effort、service_tier、image_format 等），长度不受网关控制。一条超长值会让
-// 整条批量 INSERT 回滚，失败的 batch 又会被原样放回缓冲区头部，下一轮继续失败——
-// 单条脏数据就能永久堵死整个日志写入。因此写入前按列宽截断。
+// Column widths for usage_logs fields constrained by varchar length. Most of these come directly from the downstream request body or upstream response
+// (reasoning_effort, service_tier, image_format, etc.), and their length is not controlled by the gateway. One overlong value would roll back
+// the entire batch INSERT, and the failed batch would be put back at the head of the buffer as-is, failing again on the next round—
+// a single piece of dirty data could permanently block all log writes. So values are truncated to the column width before writing.
 const (
 	usageLogChannelMaxLen   = 16  // channel
 	usageLogImageSizeMaxLen = 32  // image_size
 	usageLogShortTextMaxLen = 64  // client_ip / api_key_masked / upstream_error_kind
 	usageLogTextMaxLen      = 100 // endpoint / model / *_service_tier / reasoning_effort ...
-	// upstreamResponseModelMaxLen 与 usage_logs.upstream_response_model 列宽一致：
-	// 上游自报模型名不受网关控制，写入前按列宽截断。
+	// upstreamResponseModelMaxLen matches the column width of usage_logs.upstream_response_model:
+	// the upstream self-reported model name is not controlled by the gateway, so it is truncated to the column width before writing.
 	upstreamResponseModelMaxLen = 200
 	usageLogRequestIDMaxLen     = 128 // parent_request_id
 	usageLogTurnStateMaxLen     = 4096
 	usageLogAPIKeyNameMaxLen    = 255 // api_key_name
 )
 
-// clampUsageLogText 按字符数截断：PostgreSQL varchar(n) 限制的是字符而非字节，
-// 且按字节切会切出非法 UTF-8 序列。
+// clampUsageLogText truncates by character count: PostgreSQL varchar(n) limits characters, not bytes,
+// and cutting by bytes would produce invalid UTF-8 sequences.
 func clampUsageLogText(s string, maxRunes int) string {
 	if maxRunes <= 0 || len(s) <= maxRunes {
 		return s
@@ -4362,9 +4362,9 @@ func clampUsageLogText(s string, maxRunes int) string {
 	return s
 }
 
-// trimUsageLogBufferLocked 把缓冲裁到硬上限以内，丢最旧的日志。调用方必须持有 logMu。
-// 丢弃的日志同时会丢掉它们那份 API Key 额度累加（额度计数器和日志在同一个事务里落库），
-// 这是过载/长时间断库下的取舍：宁可少记一段用量，也不能让进程 OOM。
+// trimUsageLogBufferLocked trims the buffer to the hard limit, dropping the oldest logs. The caller must hold logMu.
+// Dropped logs also lose their share of the API key quota accumulation (the quota counter and the logs are persisted in the same transaction),
+// This is a trade-off under overload or a long database outage: it is better to miss a stretch of usage than to let the process run out of memory.
 func (db *DB) trimUsageLogBufferLocked() {
 	overflow := len(db.logBuf) - usageLogBufferHardLimit
 	if overflow <= 0 {
@@ -4374,12 +4374,12 @@ func (db *DB) trimUsageLogBufferLocked() {
 	total := db.usageLogDropped.Add(int64(overflow))
 	if now := time.Now(); now.Sub(db.usageLogDropLogAt) >= 30*time.Second {
 		db.usageLogDropLogAt = now
-		log.Printf("用量日志缓冲已达上限 %d 条，丢弃最旧的 %d 条（累计丢弃 %d 条），请检查数据库是否可写",
+		log.Printf("usage log buffer reached its limit of %d entries, dropping the oldest %d (%d dropped in total), check whether the database is writable",
 			usageLogBufferHardLimit, overflow, total)
 	}
 }
 
-// InsertUsageLog 将用量事件追加到内存缓冲（非阻塞）。
+// InsertUsageLog appends a usage event to the in-memory buffer (non-blocking).
 func (db *DB) InsertUsageLog(ctx context.Context, log *UsageLogInput) error {
 	if db == nil || log == nil {
 		return nil
@@ -4397,7 +4397,7 @@ func (db *DB) InsertUsageLog(ctx context.Context, log *UsageLogInput) error {
 		serviceTier = log.RequestedServiceTier
 	}
 
-	// 计算账号计费金额（基于实际计费 service tier）
+	// Calculate the account billing amount (based on the actual billing service tier)
 	accountBilled := UsageLogBilledCost(log)
 
 	// User image fees are independent of upstream token cost.
@@ -4482,29 +4482,29 @@ func (db *DB) InsertUsageLog(ctx context.Context, log *UsageLogInput) error {
 	bufLen := len(db.logBuf)
 	db.logMu.Unlock()
 
-	// 增加触发 flush 的阈值，减少 flush 频率
+	// Raise the threshold that triggers a flush to reduce flush frequency
 	if bufLen >= db.GetUsageLogBatchSize() {
 		db.notifyLogFlush()
 	}
 	return nil
 }
 
-// UsageLogInput 日志写入参数
+// UsageLogInput holds the parameters for writing a usage log
 type UsageLogInput struct {
 	billingSnapshot   *usageBillingSnapshot
 	RequestID         string
 	UpstreamRequestID string
 	UpstreamProxyID   int64
 	UpstreamProxyName string
-	// InjectedTurnState / UpstreamTurnState 是本次尝试实际注入到出站请求上的、以及
-	// 上游响应回带的 X-Codex-Turn-State（观测用，空串表示没有）。
+	// InjectedTurnState / UpstreamTurnState are the values actually injected into the outbound request for this attempt, and
+	// the X-Codex-Turn-State returned by the upstream response (for observation; an empty string means none).
 	InjectedTurnState string
 	UpstreamTurnState string
 	AccountID         int64
 	// CredentialGeneration attributes internally-generated traffic to the
 	// credential snapshot that issued it. Zero is legacy/unscoped traffic.
 	CredentialGeneration int64
-	// Channel 是处理该请求的上游渠道（codex），写入时固化，空值表示未知。
+	// Channel is the upstream channel (codex) that handled this request, fixed at write time; an empty value means unknown.
 	Channel              string
 	ClientIP             string
 	ClientUserAgent      string
@@ -4518,9 +4518,9 @@ type UsageLogInput struct {
 	Model                string
 	EffectiveModel       string
 	DaybreakProgram      string
-	// UpstreamResponseModel 是上游响应自报的模型名（观测值，未自报为空串）。
+	// UpstreamResponseModel is the model name the upstream response reports (observed value; an empty string if not reported).
 	UpstreamResponseModel string
-	// UpstreamModelMismatch 三态：nil=上游未自报；true/false=自报与实发是否一致。
+	// UpstreamModelMismatch is tri-state: nil=upstream did not report; true/false=whether the reported model matches the one sent.
 	UpstreamModelMismatch  *bool
 	PromptTokens           int
 	CompletionTokens       int
@@ -4620,7 +4620,7 @@ func (l *UsageLog) populateBillingBreakdown() {
 	}
 }
 
-// startLogFlusher 启动后台定时 flush 协程（每 5 秒一次）
+// startLogFlusher starts the background flush goroutine (every 5 seconds)
 func (db *DB) startLogFlusher() {
 	db.logWg.Add(1)
 	go func() {
@@ -4653,8 +4653,8 @@ func stopTimer(timer *time.Timer) {
 	}
 }
 
-// FlushUsageLogs 同步刷完当前用量日志缓冲。正常运行由后台 flusher 按批/按间隔触发，
-// 这里给需要「写入后立刻可查」的调用方（测试、诊断路径）一个确定性入口。
+// FlushUsageLogs synchronously flushes the current usage log buffer. In normal operation the background flusher triggers it per batch or per interval,
+// this gives callers that need logs to be queryable right after writing (tests, diagnostic paths) a deterministic entry point.
 func (db *DB) FlushUsageLogs() {
 	if db == nil {
 		return
@@ -4663,9 +4663,9 @@ func (db *DB) FlushUsageLogs() {
 	}
 }
 
-// flushLogs 将缓冲中的日志按配置批量写入 PG。
-// 高并发下 logBuf 可能在一个 flush 间隔内积累到数千条；这里每次只取
-// usage_log_batch_size，避免一次事务过大，也避免 PostgreSQL 65535 bind 参数上限。
+// flushLogs writes the buffered logs to PG in batches, as configured.
+// Under high concurrency logBuf can accumulate thousands of entries within one flush interval; each pass here takes only
+// usage_log_batch_size, to avoid an oversized transaction and to stay under PostgreSQL's 65535 bind parameter limit.
 func (db *DB) flushLogs() {
 	db.flushLogBatch(false)
 }
@@ -4700,34 +4700,34 @@ func (db *DB) flushLogBatch(drain bool) bool {
 	}
 	db.logMu.Unlock()
 
-	ctx, cancel := context.WithTimeout(context.Background(), 15*time.Second) // 增加超时时间
+	ctx, cancel := context.WithTimeout(context.Background(), 15*time.Second) // increase the timeout
 	defer cancel()
 
 	if err := db.withSQLiteWriteLock(ctx, func() error {
 		return db.insertUsageLogBatch(ctx, batch)
 	}); err != nil {
-		// 瞬时故障（连接断开、超时、死锁）原样放回缓冲区重试，一条都不能丢。
+		// Transient failures (dropped connections, timeouts, deadlocks) put the rows back into the buffer unchanged for retry; not one row may be lost.
 		if !isUsageLogDataError(err) {
-			log.Printf("批量写入日志失败，已重新放回缓冲区等待重试: %v", err)
+			log.Printf("batch write of logs failed, rows put back into the buffer to wait for retry: %v", err)
 			db.requeueUsageLogBatch(batch)
 			return false
 		}
-		// 脏数据重试多少次都写不进去，隔离出来丢掉，其余照常落库。
+		// Bad data never gets written no matter how often it is retried; isolate it and drop it, and store the rest as usual.
 		pending, dropped := db.salvageUsageLogBatch(ctx, batch, err)
 		if dropped > 0 {
 			total := db.usageLogDropped.Add(int64(dropped))
-			log.Printf("批量写入命中写不进去的日志：已丢弃 %d 条（累计 %d 条），其余继续落库。首个错误: %v",
+			log.Printf("batch write hit logs that cannot be written: dropped %d (%d in total), the rest continue to be stored. First error: %v",
 				dropped, total, err)
 		}
 		if len(pending) > 0 {
-			log.Printf("批量写入日志部分失败，%d 条已放回缓冲区等待重试", len(pending))
+			log.Printf("batch write of logs partly failed, %d entries put back into the buffer to wait for retry", len(pending))
 			db.requeueUsageLogBatch(pending)
 			return false
 		}
 	}
 
 	if storedLogCount := countStoredUsageLogs(batch); storedLogCount > 10 {
-		log.Printf("批量写入 %d 条使用日志", storedLogCount)
+		log.Printf("batch wrote %d usage logs", storedLogCount)
 	}
 	if remaining > 0 {
 		if drain {
@@ -4738,8 +4738,8 @@ func (db *DB) flushLogBatch(drain bool) bool {
 	return false
 }
 
-// insertUsageLogBatch 按驱动把一批日志写进去。整批是一个事务：日志行、API Key 累计额度
-// 计数器、api_keys.quota_used 要么一起成功，要么一起回滚。
+// insertUsageLogBatch writes a batch of logs using the driver. The whole batch is one transaction: the log rows, the API key cumulative quota
+// counter and api_keys.quota_used either all succeed together or all roll back together.
 func (db *DB) insertUsageLogBatch(ctx context.Context, batch []usageLogEntry) error {
 	if db.driver == "postgres" {
 		return db.batchInsertLogs(ctx, batch)
@@ -4747,10 +4747,10 @@ func (db *DB) insertUsageLogBatch(ctx context.Context, batch []usageLogEntry) er
 	return db.insertSQLiteUsageLogBatch(ctx, batch)
 }
 
-// isUsageLogDataError 判断失败是不是「这批数据本身写不进去」。PostgreSQL 的 SQLSTATE
-// class 22（数据异常：超长、非法 UTF-8 字节、数值溢出…）和 class 23（约束冲突）重试多少次
-// 都不会成功；其余错误（连接断开、超时、死锁、只读事务）是瞬时故障，必须继续重试，
-// 绝不能顺手把日志丢掉。
+// isUsageLogDataError reports whether a failure means "this batch of data itself cannot be written". PostgreSQL's SQLSTATE
+// class 22 (data exception: too long, invalid UTF-8 bytes, numeric overflow...) and class 23 (constraint violation) fail however many times they are retried;
+// other errors (dropped connections, timeouts, deadlocks, read-only transactions) are transient failures and must keep being retried,
+// and must never drop logs as a side effect.
 func isUsageLogDataError(err error) bool {
 	if err == nil {
 		return false
@@ -4766,16 +4766,16 @@ func isUsageLogDataError(err error) bool {
 	return false
 }
 
-// salvageUsageLogBatch 二分隔离写不进去的日志：能写的照常落库，脏数据丢掉并计数，
-// 途中遇到瞬时故障就把还没落库的部分交回调用方重试（已经写进去的不会再交回，避免重复计费）。
+// salvageUsageLogBatch bisects to isolate logs that cannot be written: the ones that can be written are stored as usual, bad data is dropped and counted,
+// and if a transient failure happens along the way, the part not yet stored is handed back to the caller for retry (rows already written are not handed back, to avoid double billing).
 //
-// 不做隔离的话，一条脏数据会让整批回滚、原样放回缓冲区头部、下一轮继续失败——日志永久停更，
-// 同一事务里的 API Key 额度计数器也跟着冻结，带预算的 Key 会一直判定为未超额。
+// Without isolation, one bad row would roll back the whole batch, put it back at the head of the buffer unchanged, and fail again in the next round, so logs would stop updating permanently,
+// and the API key quota counter in the same transaction would freeze too, so keys with a budget would keep being judged as not over quota.
 func (db *DB) salvageUsageLogBatch(ctx context.Context, batch []usageLogEntry, cause error) (pending []usageLogEntry, dropped int) {
 	return salvageUsageLogBatchWith(batch, cause,
 		func(chunk []usageLogEntry) error { return db.insertUsageLogBatch(ctx, chunk) },
 		func(e usageLogEntry, err error) {
-			log.Printf("丢弃 1 条写不进去的用量日志(endpoint=%s model=%s status=%d api_key_id=%d): %v",
+			log.Printf("dropped 1 usage log that cannot be written (endpoint=%s model=%s status=%d api_key_id=%d): %v",
 				e.Endpoint, e.Model, e.StatusCode, e.APIKeyID, err)
 		})
 }
@@ -4862,14 +4862,14 @@ func (db *DB) insertSQLiteUsageLogBatch(ctx context.Context, batch []usageLogEnt
 		return nil
 	}
 
-	// SQLite 使用事务插入
+	// SQLite inserts inside a transaction
 	tx, err := db.conn.BeginTx(ctx, nil)
 	if err != nil {
-		return fmt.Errorf("开始事务: %w", err)
+		return fmt.Errorf("begin transaction: %w", err)
 	}
 	defer tx.Rollback()
 
-	// usage_log_mode 只过滤审计行；额度仍按完整 batch 在同一事务内更新。
+	// usage_log_mode only filters audit rows; the quota is still updated for the full batch in the same transaction.
 	logsToStore := storedUsageLogs(batch)
 	insertedIDs := make([]int64, 0, len(logsToStore))
 	if len(logsToStore) > 0 {
@@ -4882,7 +4882,7 @@ func (db *DB) insertSQLiteUsageLogBatch(ctx context.Context, batch []usageLogEnt
 				  client_user_agent, upstream_user_agent, user_agent_overridden, turn_state_overridden, turn_state_rewrite_note, internal_reason, parent_request_id, prompt_policy_incident_id, request_id, upstream_request_id, upstream_proxy_id, upstream_proxy_name, injected_turn_state, upstream_turn_state, user_billing_mode, image_unit_price, billed_image_count, daybreak_program)
 				 VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16, $17, $18, $19, $20, $21, $22, $23, $24, $25, $26, $27, $28, $29, $30, $31, $32, $33, $34, $35, $36, $37, $38, $39, $40, $41, $42, $43, $44, $45, $46, $47, $48, $49, $50, $51, $52, $53, $54, $55, $56, $57, $58, $59, $60, $61, $62, $63, $64, $65, $66, $67, $68, $69, $70)`)
 		if err != nil {
-			return fmt.Errorf("准备语句: %w", err)
+			return fmt.Errorf("prepare statement: %w", err)
 		}
 		defer stmt.Close()
 
@@ -4894,37 +4894,37 @@ func (db *DB) insertSQLiteUsageLogBatch(ctx context.Context, batch []usageLogEnt
 				e.IsRetryAttempt, e.AttemptIndex, e.UpstreamErrorKind, e.ErrorMessage, e.ViaWebsocket,
 				e.ClientUserAgent, e.UpstreamUserAgent, e.UserAgentOverridden, e.TurnStateOverridden, e.TurnStateRewriteNote, e.InternalReason, e.ParentRequestID, nullablePromptPolicyIncidentID(e.PromptPolicyIncidentID), e.RequestID, e.UpstreamRequestID, e.UpstreamProxyID, e.UpstreamProxyName, e.InjectedTurnState, e.UpstreamTurnState, e.UserBillingMode, e.ImageUnitPrice, e.BilledImageCount, e.DaybreakProgram)
 			if err != nil {
-				return fmt.Errorf("执行插入: %w", err)
+				return fmt.Errorf("execute insert: %w", err)
 			}
 			id, err := res.LastInsertId()
 			if err != nil {
-				return fmt.Errorf("读取插入 id: %w", err)
+				return fmt.Errorf("read inserted id: %w", err)
 			}
 			insertedIDs = append(insertedIDs, id)
 		}
 	}
 
 	if err := db.applyAPIKeyScopeCountersWithExec(ctx, tx, batch); err != nil {
-		return fmt.Errorf("更新 scope 累计额度: %w", err)
+		return fmt.Errorf("update scope cumulative quota: %w", err)
 	}
 	if err := db.applyAPIKeyQuotaUsageWithExec(ctx, tx, batch); err != nil {
-		return fmt.Errorf("更新 API Key 额度用量: %w", err)
+		return fmt.Errorf("update API key quota usage: %w", err)
 	}
 	if err := applyUsageStatsRollupWithExec(ctx, tx, logsToStore); err != nil {
-		return fmt.Errorf("更新用量累计汇总: %w", err)
+		return fmt.Errorf("update cumulative usage summary: %w", err)
 	}
 	if err := db.applyUsageHourlyRollupWithExec(ctx, tx, insertedIDs); err != nil {
-		return fmt.Errorf("更新用量小时汇总: %w", err)
+		return fmt.Errorf("update hourly usage summary: %w", err)
 	}
 	if err := tx.Commit(); err != nil {
-		return fmt.Errorf("提交事务: %w", err)
+		return fmt.Errorf("commit transaction: %w", err)
 	}
 	return nil
 }
 
-// batchInsertLogs 使用 PostgreSQL 的批量插入优化。
-// PostgreSQL 单条语句最多 65535 个 bind 参数；按 usageLogInsertColumnCount
-// 限制每批行数，避免新增用量列后超出参数上限。
+// batchInsertLogs uses PostgreSQL's batch insert optimization.
+// A single PostgreSQL statement takes at most 65535 bind parameters; limit rows per batch by usageLogInsertColumnCount
+// so that adding usage columns does not exceed the parameter limit.
 func (db *DB) batchInsertLogs(ctx context.Context, batch []usageLogEntry) error {
 	if len(batch) == 0 {
 		return nil
@@ -4932,7 +4932,7 @@ func (db *DB) batchInsertLogs(ctx context.Context, batch []usageLogEntry) error 
 
 	tx, err := db.conn.BeginTx(ctx, nil)
 	if err != nil {
-		return fmt.Errorf("开始事务: %w", err)
+		return fmt.Errorf("begin transaction: %w", err)
 	}
 	defer tx.Rollback()
 
@@ -4942,7 +4942,7 @@ func (db *DB) batchInsertLogs(ctx context.Context, batch []usageLogEntry) error 
 		maxRowsPerBatch = paramSafeRows
 	}
 
-	// 分批处理
+	// process in chunks
 	insertedIDs := make([]int64, 0, len(logsToStore))
 	for start := 0; start < len(logsToStore); start += maxRowsPerBatch {
 		end := start + maxRowsPerBatch
@@ -4958,30 +4958,30 @@ func (db *DB) batchInsertLogs(ctx context.Context, batch []usageLogEntry) error 
 		insertedIDs = append(insertedIDs, ids...)
 	}
 	if err := db.applyAPIKeyScopeCountersWithExec(ctx, tx, batch); err != nil {
-		return fmt.Errorf("更新 scope 累计额度: %w", err)
+		return fmt.Errorf("update scope cumulative quota: %w", err)
 	}
 	if err := db.applyAPIKeyQuotaUsageWithExec(ctx, tx, batch); err != nil {
 		return err
 	}
 	if err := applyUsageStatsRollupWithExec(ctx, tx, logsToStore); err != nil {
-		return fmt.Errorf("更新用量累计汇总: %w", err)
+		return fmt.Errorf("update cumulative usage summary: %w", err)
 	}
 	if err := db.applyUsageHourlyRollupWithExec(ctx, tx, insertedIDs); err != nil {
-		return fmt.Errorf("更新用量小时汇总: %w", err)
+		return fmt.Errorf("update hourly usage summary: %w", err)
 	}
 	if err := tx.Commit(); err != nil {
-		return fmt.Errorf("提交事务: %w", err)
+		return fmt.Errorf("commit transaction: %w", err)
 	}
 	return nil
 }
 
-// batchInsertLogsChunk 插入单批日志（内部辅助函数），返回插入行的 id 供小时汇总按行累加。
+// batchInsertLogsChunk inserts one batch of logs (internal helper) and returns the ids of the inserted rows so the hourly summary can accumulate per row.
 func (db *DB) batchInsertLogsChunk(ctx context.Context, tx *sql.Tx, batch []usageLogEntry) ([]int64, error) {
 	if len(batch) == 0 {
 		return nil, nil
 	}
 
-	// 使用 COPY 或批量 VALUES 优化插入性能
+	// use COPY or batched VALUES to optimize insert performance
 	valueStrings := make([]string, 0, len(batch))
 	valueArgs := make([]interface{}, 0, len(batch)*usageLogInsertColumnCount)
 	argIdx := 1
@@ -5034,7 +5034,7 @@ func nullablePromptPolicyIncidentID(value string) any {
 	return value
 }
 
-// nullableUpstreamResponseModel 空串写 NULL（=上游未自报），非空写原值。
+// nullableUpstreamResponseModel writes NULL for an empty string (= upstream did not report), otherwise writes the original value.
 func nullableUpstreamResponseModel(value string) any {
 	if strings.TrimSpace(value) == "" {
 		return nil
@@ -5042,8 +5042,8 @@ func nullableUpstreamResponseModel(value string) any {
 	return value
 }
 
-// nullableUpstreamModelMismatch nil 直接透传（上游未自报/历史行）；
-// *bool 写 SQL 布尔。
+// nullableUpstreamModelMismatch passes nil through as is (upstream did not report, or a historical row);
+// *bool writes an SQL boolean.
 func nullableUpstreamModelMismatch(value *bool) any {
 	if value == nil {
 		return nil
@@ -5083,7 +5083,7 @@ func (db *DB) applyAPIKeyQuotaUsageWithExec(ctx context.Context, execer sqlExece
 	return nil
 }
 
-// UsageStats 使用统计
+// UsageStats holds usage statistics
 type UsageStats struct {
 	TotalRequests      int64               `json:"total_requests"`
 	TotalTokens        int64               `json:"total_tokens"`
@@ -5114,7 +5114,7 @@ type UsageStats struct {
 	APIKeyStats        []UsageAPIKeyStat   `json:"api_key_stats"`
 }
 
-// UsageModelStat 按计费模型聚合的请求和金额统计。
+// UsageModelStat holds request and amount statistics aggregated by billing model.
 type UsageModelStat struct {
 	Model         string  `json:"model"`
 	Requests      int64   `json:"requests"`
@@ -5127,7 +5127,7 @@ type UsageModelStat struct {
 	ErrorCount    int64   `json:"error_count"`
 }
 
-// UsageFeatureStat codex2api 代理能力维度的请求构成。
+// UsageFeatureStat is the request breakdown by codex2api proxy capability dimension.
 type UsageFeatureStat struct {
 	StreamRequests    int64 `json:"stream_requests"`
 	SyncRequests      int64 `json:"sync_requests"`
@@ -5139,7 +5139,7 @@ type UsageFeatureStat struct {
 	ErrorRequests     int64 `json:"error_requests"`
 }
 
-// UsageEndpointStat 按入口端点聚合的使用统计。
+// UsageEndpointStat holds usage statistics aggregated by inbound endpoint.
 type UsageEndpointStat struct {
 	Endpoint   string  `json:"endpoint"`
 	Requests   int64   `json:"requests"`
@@ -5148,7 +5148,7 @@ type UsageEndpointStat struct {
 	UserBilled float64 `json:"user_billed"`
 }
 
-// UsageAPIKeyStat 按 API Key 聚合的使用统计。
+// UsageAPIKeyStat holds usage statistics aggregated by API key.
 type UsageAPIKeyStat struct {
 	APIKeyID   int64   `json:"api_key_id"`
 	Label      string  `json:"label"`
@@ -5158,7 +5158,7 @@ type UsageAPIKeyStat struct {
 	UserBilled float64 `json:"user_billed"`
 }
 
-// TrafficSnapshot 近实时流量快照
+// TrafficSnapshot is a near-real-time traffic snapshot
 type TrafficSnapshot struct {
 	QPS     float64 `json:"qps"`
 	QPSPeak float64 `json:"qps_peak"`
@@ -5166,20 +5166,20 @@ type TrafficSnapshot struct {
 	TPSPeak float64 `json:"tps_peak"`
 }
 
-// GetUsageStats 获取使用统计（基线 + 当前日志）。
-// 当 rangeStart 为零值时回落到"今日"(本地 0 点起),与历史行为一致;
-// 当传入显式区间时,today_* 字段语义变为"该区间内的统计",total_* 字段始终是全量累计。
-// rangeEnd 为零值表示"至今"。
-// GetUsageStats 聚合用量统计。channel 非空（codex）时按渠道过滤；
-// 渠道视图下的「累计」只覆盖现存 usage_logs（清空日志前的 baseline 无渠道维度，不计入）。
+// GetUsageStats returns usage statistics (baseline + current logs).
+// When rangeStart is the zero value it falls back to "today" (from local midnight), consistent with the historical behavior;
+// when an explicit range is passed, the today_* fields mean "statistics within that range", and the total_* fields are always full cumulative totals.
+// a zero rangeEnd means "until now".
+// GetUsageStats aggregates usage statistics. When channel is non-empty (codex), it filters by channel;
+// in the channel view, the "cumulative" total only covers the existing usage_logs (the baseline before logs were cleared has no channel dimension and is not counted).
 func (db *DB) GetUsageStats(ctx context.Context, rangeStart, rangeEnd time.Time, channel string) (*UsageStats, error) {
 	return db.getUsageStats(ctx, rangeStart, rangeEnd, channel, true, UsageLogFilter{})
 }
 
-// GetUsageStatsFiltered 在 GetUsageStats 基础上按 dim 的维度条件(账号/密钥/模型/端点/搜索词/形态开关)
-// 收窄区间口径:today_*、rpm/tpm、错误率、延迟与分项统计都只覆盖命中的日志;
-// total_* 累计字段保持全局(或渠道)口径不变,因为累计 rollup 没有维度信息。
-// dim 里的时间范围、渠道与状态类条件被忽略,分别以显式参数与 channel 为准。
+// GetUsageStatsFiltered builds on GetUsageStats and narrows the range statistics by the dimension conditions of dim (account/key/model/endpoint/search term/shape toggles)
+// so today_*, rpm/tpm, error rate, latency and breakdown statistics only cover the matching logs;
+// the total_* cumulative fields keep the global (or channel) basis, because the cumulative rollup has no dimension information.
+// The time range, channel and status conditions in dim are ignored; the explicit parameters and channel take precedence for them.
 func (db *DB) GetUsageStatsFiltered(ctx context.Context, rangeStart, rangeEnd time.Time, channel string, dim UsageLogFilter, includeBreakdowns bool) (*UsageStats, error) {
 	return db.getUsageStats(ctx, rangeStart, rangeEnd, channel, includeBreakdowns, dim)
 }
@@ -5230,7 +5230,7 @@ func (db *DB) getUsageStats(ctx context.Context, rangeStart, rangeEnd time.Time,
 
 	rollup, err := db.loadUsageStatsRollup(ctx, channel)
 	if err != nil {
-		return nil, fmt.Errorf("读取用量累计汇总: %w", err)
+		return nil, fmt.Errorf("read cumulative usage summary: %w", err)
 	}
 	stats.TotalRequests = rollup.TotalRequests
 	stats.TotalTokens = rollup.TotalTokens
@@ -5263,7 +5263,7 @@ func (db *DB) getUsageStats(ctx context.Context, rangeStart, rangeEnd time.Time,
 	return stats, nil
 }
 
-// usageRangeTotals 是区间卡片用到的可加总计;均值在合并明细与汇总两部分后再算。
+// usageRangeTotals holds the additive totals used by the range cards; averages are computed after merging the detail and summary parts.
 type usageRangeTotals struct {
 	Requests, Tokens, Prompt, Completion, Cached int64
 	AccountBilled, UserBilled                    float64
@@ -5291,15 +5291,15 @@ func (t *usageRangeTotals) add(o usageRangeTotals) {
 	t.TPM += o.TPM
 }
 
-// usageStatsRollupServable 判断维度筛选能否由用量小时汇总回答:汇总只带模型、端点、API Key 维度,
-// 账号、搜索词与各种形态开关都得扫明细。
+// usageStatsRollupServable reports whether a dimension filter can be answered from the hourly usage summary: the summary only carries model, endpoint and API key dimensions,
+// so accounts, search terms and the various shape toggles must be scanned from the details.
 func usageStatsRollupServable(dim UsageLogFilter) bool {
 	rest := dim
 	rest.Model, rest.Endpoint, rest.APIKeyID = "", "", nil
 	return !rest.HasDimensionFilter()
 }
 
-// planUsageStatsQuery 拆分管理端区间统计:整点小时读汇总,零头与 cuts 所在小时扫明细。
+// planUsageStatsQuery splits the admin range statistics: whole hours are read from the summary, and the partial hours and the hours where cuts fall are scanned from the details.
 func (db *DB) planUsageStatsQuery(ctx context.Context, rangeStart, rangeEnd, now time.Time, dim UsageLogFilter, cuts ...time.Time) usageHourlyPlan {
 	if !usageStatsRollupServable(dim) {
 		return usageHourlyPlan{raw: []usageTimeSpan{{rangeStart, rangeEnd}}}
@@ -5307,8 +5307,8 @@ func (db *DB) planUsageStatsQuery(ctx context.Context, rangeStart, rangeEnd, now
 	return db.planUsageHourlyQuery(ctx, rangeStart, rangeEnd, now, cuts...)
 }
 
-// usageStatsFilterWhere 在 where 后追加渠道与维度条件。列带 u. 前缀,明细表与汇总表共用;
-// 能走汇总时维度只会是模型/端点/API Key,这几列两张表同名同义。
+// usageStatsFilterWhere appends the channel and dimension conditions after where. Columns carry the u. prefix and are shared by the detail and summary tables;
+// when the summary can be used, the dimensions can only be model/endpoint/API key, and these columns have the same names and meanings in both tables.
 func usageStatsFilterWhere(where string, args []interface{}, channel string, dim UsageLogFilter) (string, []interface{}) {
 	if channel != "" {
 		args = append(args, channel)
@@ -5324,8 +5324,8 @@ func usageStatsFilterWhere(where string, args []interface{}, channel string, dim
 	return where, args
 }
 
-// usageRangeTotals 汇总管理端区间卡片:排除 499 与内部请求。RPM/TPM 只来自明细,
-// "一分钟前"所在的小时总由明细负责(调用方把它作为 cut 传给 plan)。
+// usageRangeTotals aggregates the admin range cards: excludes 499 and internal requests. RPM/TPM come only from the details,
+// and the hour containing "one minute ago" is handled by the details (the caller passes it to the plan as a cut).
 func (db *DB) usageRangeTotals(ctx context.Context, plan usageHourlyPlan, channel string, dim UsageLogFilter, minuteAgo time.Time) (usageRangeTotals, error) {
 	var totals usageRangeTotals
 	scan := func(query string, args []interface{}) error {
@@ -5394,8 +5394,8 @@ func (db *DB) usageRangeTotals(ctx context.Context, plan usageHourlyPlan, channe
 	return totals, nil
 }
 
-// CountTodayRequestsByChannel 统计今日各渠道请求数（与 GetUsageStats 的"今日"口径一致：
-// 本地今日零点起、排除 499）。供仪表盘账号池概览按渠道展示。
+// CountTodayRequestsByChannel counts today's requests per channel (consistent with the "today" basis of GetUsageStats:
+// from local midnight today, excluding 499). Used by the dashboard account pool overview to show per channel.
 func (db *DB) CountTodayRequestsByChannel(ctx context.Context) (map[string]int64, error) {
 	now := time.Now()
 	todayStart := time.Date(now.Year(), now.Month(), now.Day(), 0, 0, 0, 0, now.Location())
@@ -5421,9 +5421,9 @@ func (db *DB) CountTodayRequestsByChannel(ctx context.Context) (map[string]int64
 	return out, rows.Err()
 }
 
-// populateUsageBreakdownStats 按(模型, 端点, API Key)分组填出模型排行(前 10)、端点/API Key
-// 排行(前 8)与功能构成。整点小时读用量小时汇总,零头扫明细,两边分组合并;分组通常只有
-// 几十到几百行,排序取前 N 在 Go 里做。
+// populateUsageBreakdownStats groups by (model, endpoint, API key) to fill the model ranking (top 10), the endpoint/API key
+// ranking (top 8), and the feature breakdown. Whole hours are read from the hourly usage summary, partial hours are scanned from the details, and the two groupings are merged; groups usually number only
+// a few dozen to a few hundred rows; sorting and taking the top N is done in Go.
 func (db *DB) populateUsageBreakdownStats(ctx context.Context, stats *UsageStats, plan usageHourlyPlan, channel string, dim UsageLogFilter) error {
 	if stats == nil {
 		return nil
@@ -5525,9 +5525,9 @@ func (db *DB) populateUsageBreakdownStats(ctx context.Context, stats *UsageStats
 				COALESCE(SUM(CASE WHEN u.cached_tokens > 0 THEN 1 ELSE 0 END), 0) AS cache_hit_requests,
 				COALESCE(SUM(CASE WHEN u.reasoning_tokens > 0 OR NULLIF(u.reasoning_effort, '') IS NOT NULL THEN 1 ELSE 0 END), 0) AS reasoning_requests,
 				COALESCE(SUM(CASE WHEN LOWER(COALESCE(NULLIF(u.inbound_endpoint, ''), u.endpoint, '')) LIKE '%/images/%' OR LOWER(COALESCE(u.model, '')) LIKE 'gpt-image-%' OR u.image_count > 0 THEN 1 ELSE 0 END), 0) AS image_requests,
-				-- attempt_index 是 1-based（首次尝试写 1，第一次重试写 2），所以「重试出来的请求」
-				-- 只能用 > 1。写成 > 0 会把每个请求都算进去，这个指标就恒等于总请求数（100%）；
-				-- is_retry_attempt 标的是「本次失败且将要重试」的那条失败记录，算进来会重复计一次。
+				-- attempt_index is 1-based (the first attempt writes 1, the first retry writes 2), so "requests that came from a retry"
+				-- must use > 1. Writing > 0 would count every request, so this metric would equal the total request count (100%);
+				-- is_retry_attempt marks the failed record of "this attempt failed and will be retried", counting it would count one retry twice.
 				COALESCE(SUM(CASE WHEN u.attempt_index > 1 THEN 1 ELSE 0 END), 0) AS retry_requests
 			FROM usage_logs u
 			WHERE `+where+`
@@ -5594,7 +5594,7 @@ func (db *DB) populateUsageBreakdownStats(ctx context.Context, stats *UsageStats
 	return nil
 }
 
-// topUsageStats 按 less 排序后取前 limit 项(值拷贝),空时返回非 nil 空切片。
+// topUsageStats sorts by less and returns the first limit items (value copies); when empty it returns a non-nil empty slice.
 func topUsageStats[K comparable, T any](byKey map[K]*T, limit int, less func(a, b *T) bool) []T {
 	items := make([]*T, 0, len(byKey))
 	for _, item := range byKey {
@@ -5611,7 +5611,7 @@ func topUsageStats[K comparable, T any](byKey map[K]*T, limit int, less func(a, 
 	return out
 }
 
-// GetTrafficSnapshot 获取近实时流量快照
+// GetTrafficSnapshot returns a near-real-time traffic snapshot
 func (db *DB) GetTrafficSnapshot(ctx context.Context) (*TrafficSnapshot, error) {
 	if db.isSQLite() {
 		return db.getTrafficSnapshotSQLite(ctx)
@@ -5657,7 +5657,7 @@ func (db *DB) GetTrafficSnapshot(ctx context.Context) (*TrafficSnapshot, error) 
 	return snapshot, nil
 }
 
-// ListRecentUsageLogs 获取最近的请求日志
+// ListRecentUsageLogs returns the most recent request logs
 func (db *DB) ListRecentUsageLogs(ctx context.Context, limit int) ([]*UsageLog, error) {
 	if limit <= 0 || limit > 5000 {
 		limit = 50
@@ -5717,9 +5717,9 @@ func (db *DB) ListRecentUsageLogs(ctx context.Context, limit int) ([]*UsageLog, 
 	return logs, rows.Err()
 }
 
-// ==================== 图表聚合（服务端） ====================
+// ==================== chart aggregation (server side) ====================
 
-// ChartTimelinePoint 时间轴聚合点
+// ChartTimelinePoint is an aggregated point on the timeline
 type ChartTimelinePoint struct {
 	Bucket          string  `json:"bucket"`
 	Requests        int64   `json:"requests"`
@@ -5732,26 +5732,26 @@ type ChartTimelinePoint struct {
 	Errors5xx       int64   `json:"errors_5xx"`
 }
 
-// ChartModelPoint 模型排行聚合点
+// ChartModelPoint is an aggregated point in the model ranking
 type ChartModelPoint struct {
 	Model    string `json:"model"`
 	Requests int64  `json:"requests"`
 }
 
-// ChartAggregation 仪表盘图表聚合结果
+// ChartAggregation is the aggregated result for dashboard charts
 type ChartAggregation struct {
 	Timeline []ChartTimelinePoint `json:"timeline"`
 	Models   []ChartModelPoint    `json:"models"`
 }
 
-// AccountEventPoint 账号事件趋势数据点
+// AccountEventPoint is a data point of the account event trend
 type AccountEventPoint struct {
 	Bucket  string `json:"bucket"`
 	Added   int    `json:"added"`
 	Deleted int    `json:"deleted"`
 }
 
-// AccountModelStat 单个模型的使用统计
+// AccountModelStat is the usage statistics of a single model
 type AccountModelStat struct {
 	Model           string  `json:"model"`
 	Requests        int64   `json:"requests"`
@@ -5773,7 +5773,7 @@ type AccountUsageDayStat struct {
 	UserBilled    float64 `json:"user_billed"`
 }
 
-// AccountKeyStat 单账号内按下游 Key 拆分的用量：某个 Key 调用了这个账号多少。
+// AccountKeyStat is the usage of a single account split by downstream key: how many times a given key called this account.
 type AccountKeyStat struct {
 	APIKeyID      int64   `json:"api_key_id"`
 	APIKeyName    string  `json:"api_key_name"`
@@ -5784,7 +5784,7 @@ type AccountKeyStat struct {
 	UserBilled    float64 `json:"user_billed"`
 }
 
-// AccountUsageDetail 单账号用量详情
+// AccountUsageDetail holds the usage details of a single account
 type AccountUsageDetail struct {
 	PeriodDays            int                   `json:"period_days"`
 	ActiveDays            int                   `json:"active_days"`
@@ -5820,7 +5820,7 @@ type AccountUsageDetail struct {
 	ByAPIKey              []AccountKeyStat      `json:"by_api_key"`
 }
 
-// GetChartAggregation 在数据库层完成图表数据的分桶聚合（无需传输原始行）
+// GetChartAggregation performs the bucketed aggregation of chart data in the database layer (no raw rows are transferred)
 func (db *DB) GetChartAggregation(ctx context.Context, start, end time.Time, bucketMinutes int, channel string) (*ChartAggregation, error) {
 	channel = strings.TrimSpace(channel)
 	if db.isSQLite() {
@@ -5913,7 +5913,7 @@ func (db *DB) GetChartAggregation(ctx context.Context, start, end time.Time, buc
 	return result, nil
 }
 
-// GetAccountUsageStats 查询单个账号的用量统计和模型分布。days<=0 表示全量。
+// GetAccountUsageStats queries the usage statistics and model distribution of a single account. days<=0 means all time.
 func (db *DB) GetAccountUsageStats(ctx context.Context, accountID int64, days int) (*AccountUsageDetail, error) {
 	periodDays := days
 	if periodDays > 3650 {
@@ -6016,9 +6016,9 @@ func (db *DB) GetAccountUsageStats(ctx context.Context, accountID int64, days in
 		if statusCode >= 400 {
 			result.ErrorRequests++
 		}
-		// attempt_index 是 1-based：首次尝试写 1，第一次重试写 2，所以「重试出来的请求」只能用 > 1。
-		// 写成 attemptIndex > 0 会把每个请求都计成重试（指标恒等于总请求数）；is_retry_attempt 标的是
-		// 「本次失败且将要重试」的那条失败记录，算进来会把一次重试重复计两次。
+		// attempt_index is 1-based: the first attempt writes 1, the first retry writes 2, so "requests that came from a retry" must use > 1.
+		// Writing attemptIndex > 0 would count every request as a retry (the metric would always equal the total request count); is_retry_attempt marks the
+		// failed record of "this attempt failed and will be retried", counting it would count one retry twice.
 		if attemptIndex > 1 {
 			result.RetryRequests++
 		}
@@ -6139,7 +6139,7 @@ func (db *DB) GetAccountUsageStats(ctx context.Context, accountID int64, days in
 	return result, nil
 }
 
-// ListUsageLogsByTimeRange 按时间范围查询请求日志
+// ListUsageLogsByTimeRange queries request logs by time range
 func (db *DB) ListUsageLogsByTimeRange(ctx context.Context, start, end time.Time) ([]*UsageLog, error) {
 	startArg, endArg := db.timeRangeArgs(start, end)
 	query := `SELECT u.id, u.account_id, COALESCE(u.client_ip, ''), u.endpoint, u.model, COALESCE(u.effective_model, ''), COALESCE(u.upstream_response_model, ''), u.upstream_model_mismatch, u.prompt_tokens, u.completion_tokens, u.total_tokens, u.status_code, u.duration_ms,
@@ -6198,13 +6198,13 @@ func (db *DB) ListUsageLogsByTimeRange(ctx context.Context, start, end time.Time
 	return logs, rows.Err()
 }
 
-// UsageLogPage 分页日志结果
+// UsageLogPage is a paged log result
 type UsageLogPage struct {
 	Logs  []*UsageLog `json:"logs"`
 	Total int64       `json:"total"`
 }
 
-// UsageLogFilter 日志查询过滤条件
+// UsageLogFilter is the filter condition for log queries
 type UsageLogFilter struct {
 	RequestID             string
 	UpstreamRequestID     string
@@ -6212,33 +6212,33 @@ type UsageLogFilter struct {
 	End                   time.Time
 	Page                  int
 	PageSize              int
-	Email                 string // LIKE 模糊匹配
-	Model                 string // 精确匹配
-	Endpoint              string // 精确匹配 inbound_endpoint
-	APIKeyID              *int64 // nil=全部
-	AccountID             *int64 // nil=全部
-	FastOnly              *bool  // nil=全部, true=仅fast, false=仅非fast
-	StreamOnly            *bool  // nil=全部, true=仅stream, false=仅sync
-	CompactOnly           *bool  // nil=全部, true=本次触发压缩, false=本次未触发压缩
-	CompactionHistoryOnly *bool  // nil=全部, true=携带压缩历史, false=未携带压缩历史
+	Email                 string // LIKE fuzzy match
+	Model                 string // exact match
+	Endpoint              string // exact match on inbound_endpoint
+	APIKeyID              *int64 // nil=all
+	AccountID             *int64 // nil=all
+	FastOnly              *bool  // nil=all, true=fast only, false=non-fast only
+	StreamOnly            *bool  // nil=all, true=stream only, false=sync only
+	CompactOnly           *bool  // nil=all, true=this request triggered compaction, false=this request did not trigger compaction
+	CompactionHistoryOnly *bool  // nil=all, true=carries compaction history, false=does not carry compaction history
 	ErrorOnly             bool
 	IncludeCanceled       bool
 	StatusCode            int
 	StatusFamily          string
 	ErrorKind             string
 	Query                 string
-	Channel               string // 上游渠道（codex），空=全部
-	RetryOnly             *bool  // nil=全部, true=仅重试请求, false=仅首次请求
-	ViaWebsocketOnly      *bool  // nil=全部, true=仅 WebSocket, false=仅 HTTP
-	UltraOnly             *bool  // nil=全部, true=仅 Codex Ultra 档, false=仅非 Ultra
-	// UpstreamModelMismatchOnly 上游响应模型审计筛选：nil=全部, true=仅不一致,
-	// false=仅一致。NULL（上游未自报）两种取值下都不命中。
+	Channel               string // upstream channel (codex), empty=all
+	RetryOnly             *bool  // nil=all, true=retry requests only, false=first attempts only
+	ViaWebsocketOnly      *bool  // nil=all, true=WebSocket only, false=HTTP only
+	UltraOnly             *bool  // nil=all, true=Codex Ultra tier only, false=non-Ultra only
+	// UpstreamModelMismatchOnly filters the upstream response model audit: nil=all, true=mismatch only,
+	// false=match only. NULL (upstream did not report) matches neither value.
 	UpstreamModelMismatchOnly *bool
 }
 
-// HasDimensionFilter 报告过滤条件里是否带有"维度"约束(账号/密钥/模型/端点/搜索词/形态开关等)。
-// 时间范围、渠道与状态类条件不算维度:区间统计卡片天然按状态拆分(成功数/错误率),
-// 若再按状态过滤会让错误率恒为 0% 或 100%,所以统计口径只跟随维度条件。
+// HasDimensionFilter reports whether the filter carries a "dimension" constraint (account/key/model/endpoint/search term/shape toggles, etc.).
+// Time range, channel and status conditions do not count as dimensions: the range statistics cards are naturally split by status (success count / error rate),
+// filtering by status as well would make the error rate always 0% or 100%, so the statistics basis follows only the dimension conditions.
 func (f UsageLogFilter) HasDimensionFilter() bool {
 	return f.Email != "" || f.RequestID != "" || f.UpstreamRequestID != "" ||
 		f.Model != "" || f.Endpoint != "" || f.APIKeyID != nil || f.AccountID != nil ||
@@ -6247,7 +6247,7 @@ func (f UsageLogFilter) HasDimensionFilter() bool {
 		f.UltraOnly != nil || f.UpstreamModelMismatchOnly != nil || f.Query != ""
 }
 
-// DimensionKey 把维度条件压成稳定字符串,供缓存键区分不同筛选组合。无维度条件时返回空串。
+// DimensionKey condenses the dimension conditions into a stable string, so cache keys can tell filter combinations apart. Returns an empty string when there are no dimension conditions.
 func (f UsageLogFilter) DimensionKey() string {
 	if !f.HasDimensionFilter() {
 		return ""
@@ -6296,8 +6296,8 @@ func (f UsageLogFilter) DimensionKey() string {
 	return b.String()
 }
 
-// usageLogDimensionWhere 生成维度条件片段(见 HasDimensionFilter),不含时间/渠道/状态类条件。
-// 列引用统一带 u. 前缀,调用方的 FROM 需给 usage_logs 起别名 u;占位符从 nextIdx 起编号。
+// usageLogDimensionWhere builds the dimension condition fragment (see HasDimensionFilter), excluding time/channel/status conditions.
+// Column references always carry the u. prefix, so the caller's FROM must alias usage_logs as u; placeholders are numbered starting at nextIdx.
 func usageLogDimensionWhere(f UsageLogFilter, nextIdx int) ([]string, []interface{}) {
 	parts := []string{}
 	args := []interface{}{}
@@ -6377,16 +6377,16 @@ func usageLogDimensionWhere(f UsageLogFilter, nextIdx int) ([]string, []interfac
 	}
 	if f.UpstreamModelMismatchOnly != nil {
 		p := addArg(*f.UpstreamModelMismatchOnly)
-		// 严格三态：NULL（上游未自报）在 true/false 两种取值下都不命中。
+		// Strict tri-state: NULL (upstream did not report) matches neither true nor false.
 		parts = append(parts, fmt.Sprintf(`u.upstream_model_mismatch = %s`, p))
 	}
 	if f.Query != "" {
 		p := addArg("%" + f.Query + "%")
-		// 注意:这里只匹配账号 name,不匹配 accounts.credentials。
-		// credentials 是不透明 JSON(含模型目录、URL、token 等结构化数据),把它纳入
-		// LIKE 会让搜索词(如 "5.6")命中凭据里的模型目录,从而把该账号全部日志(含
-		// gpt-6-* 等不含搜索词的记录)带入结果;同时对用户输入的 LIKE 模式扫描凭据
-		// 内容本身也不安全。按账号名/邮箱仍可通过 name 命中。
+		// Note: this only matches the account name, not accounts.credentials.
+		// credentials is opaque JSON (it holds structured data such as model catalogs, URLs and tokens); including it in
+		// LIKE would let a search term (such as "5.6") match the model catalog inside the credentials, and so pull in all logs of that account (including
+		// gpt-6-* records that do not contain the search term) into the results; and scanning the credentials with a LIKE pattern from user input
+		// is also unsafe. Matching by account name/email still works through name.
 		parts = append(parts, fmt.Sprintf(`(
 			LOWER(COALESCE(u.error_message, '')) LIKE LOWER(%[1]s)
  OR LOWER(COALESCE(u.request_id, '')) LIKE LOWER(%[1]s)
@@ -6415,8 +6415,8 @@ func (db *DB) buildUsageLogWhere(f UsageLogFilter) (string, []interface{}) {
 	return buildUsageLogFilterWhere(`u.created_at >= $1 AND u.created_at <= $2`, []interface{}{startArg, endArg}, f, false)
 }
 
-// buildUsageLogFilterWhere 在时间条件 timeWhere 之后追加 f 的其余筛选。rollup 为 true 时目标是
-// 用量小时汇总表:列名与明细同名同义,只有"仅错误"没法逐行判断,改由调用方读 error_rows 等错误列。
+// buildUsageLogFilterWhere appends the remaining filters of f after the time condition timeWhere. When rollup is true, the target is
+// the hourly usage summary table: its column names match the details with the same meaning; only "errors only" cannot be judged row by row, so the caller reads error columns such as error_rows instead.
 func buildUsageLogFilterWhere(timeWhere string, args []interface{}, f UsageLogFilter, rollup bool) (string, []interface{}) {
 	parts := []string{timeWhere}
 
@@ -6474,22 +6474,22 @@ type UsageErrorSummary struct {
 	AvgDurationMs float64 `json:"avg_duration_ms"`
 }
 
-// usageLogFilterRollupPlan 拆分请求日志筛选的计数/摘要查询:筛选全部落在小时汇总的维度上时,
-// 整点小时读汇总、零头扫明细;否则返回不读汇总的方案,调用方照旧整段扫明细。
-// 请求日志的区间是闭区间 [Start, End],拆分前把 End 换成等价的开区间上界。
+// usageLogFilterRollupPlan splits the count/summary queries of the request log filter: when all filters fall on hourly summary dimensions,
+// whole hours are read from the summary and partial hours are scanned from the details; otherwise it returns a plan that does not read the summary, and the caller scans the full range from the details as before.
+// The request log range is a closed interval [Start, End]; before splitting, End is replaced with the equivalent open upper bound.
 func (db *DB) usageLogFilterRollupPlan(ctx context.Context, f UsageLogFilter) usageHourlyPlan {
 	if !usageStatsRollupServable(f) || strings.TrimSpace(f.ErrorKind) != "" || f.Start.IsZero() || f.End.IsZero() {
 		return usageHourlyPlan{}
 	}
 	end := f.End.Truncate(time.Microsecond).Add(time.Microsecond)
 	if db.isSQLite() {
-		// SQLite 的时间参数精确到秒(sqliteTimeParam 截断小数),<= 某秒等价于 < 下一秒。
+		// SQLite time parameters are precise to the second (sqliteTimeParam truncates fractions), so <= a given second is equivalent to < the next second.
 		end = f.End.Truncate(time.Second).Add(time.Second)
 	}
 	return db.planUsageHourlyQuery(ctx, f.Start, end, time.Now())
 }
 
-// usageLogRawSpanWhere / usageLogRollupWhere 生成 plan 中明细区间、汇总小时两部分各自的完整 WHERE。
+// usageLogRawSpanWhere / usageLogRollupWhere build the full WHERE of the two parts of the plan: the detail range and the summary hours.
 func (db *DB) usageLogRawSpanWhere(span usageTimeSpan, f UsageLogFilter) (string, []interface{}) {
 	timeWhere, args := db.usageSpanWhere("u.created_at", span, nil)
 	return buildUsageLogFilterWhere(timeWhere, args, f, false)
@@ -6562,7 +6562,7 @@ func (db *DB) GetUsageErrorSummary(ctx context.Context, f UsageLogFilter) (*Usag
 				return nil, err
 			}
 		}
-		// 4xx/5xx/401/429/499 一定是错误行,直接按状态码维度求和;其余读错误专用列。
+		// 4xx/5xx/401/429/499 are always error rows, summed directly by the status code dimension; the rest read the dedicated error columns.
 		where, args := db.usageLogRollupWhere(plan, f)
 		if err := scan(`SELECT
 			`+sumBigint("u.error_rows")+`,
@@ -6586,7 +6586,7 @@ func (db *DB) GetUsageErrorSummary(ctx context.Context, f UsageLogFilter) (*Usag
 	return result, nil
 }
 
-// countUsageLogs 统计请求日志筛选命中的条数,能拆就让整点小时读汇总。
+// countUsageLogs counts the entries matching the request log filter, letting whole hours read the summary wherever it can be split.
 func (db *DB) countUsageLogs(ctx context.Context, f UsageLogFilter, where string, args []interface{}) (int64, error) {
 	plan := db.usageLogFilterRollupPlan(ctx, f)
 	if !plan.useRollup {
@@ -6615,7 +6615,7 @@ func (db *DB) countUsageLogs(ctx context.Context, f UsageLogFilter, where string
 	return total + count, nil
 }
 
-// ListUsageLogsByTimeRangePaged 按时间范围分页查询请求日志（支持筛选）
+// ListUsageLogsByTimeRangePaged queries request logs by time range with paging (supports filters)
 func (db *DB) ListUsageLogsByTimeRangePaged(ctx context.Context, f UsageLogFilter) (*UsageLogPage, error) {
 	if f.Page < 1 {
 		f.Page = 1
@@ -6626,10 +6626,10 @@ func (db *DB) ListUsageLogsByTimeRangePaged(ctx context.Context, f UsageLogFilte
 
 	where, args := db.buildUsageLogWhere(f)
 
-	// 总数单独计数:不 JOIN 账号、不取宽列;默认筛选(时间 + 排除 499)只走
-	// (created_at, status_code) 覆盖索引。以前用 COUNT(*) OVER() 和分页同查,
-	// SQLite 会把整个区间的宽行连同账号凭据物化进临时 B-tree 全量排序后才 LIMIT,
-	// 慢盘部署上 7 天区间就能超时。
+	// The total is counted separately: no JOIN to accounts, no wide columns; the default filter (time + excluding 499) only uses
+	// the (created_at, status_code) covering index. Previously COUNT(*) OVER() was queried together with the page,
+	// and SQLite would materialize all wide rows in the range, along with account credentials, into a temporary B-tree and sort them in full before applying LIMIT,
+	// so a 7-day range could time out on a slow disk deployment.
 	result := &UsageLogPage{Logs: []*UsageLog{}}
 	total, err := db.countUsageLogs(ctx, f, where, args)
 	if err != nil {
@@ -6641,8 +6641,8 @@ func (db *DB) ListUsageLogsByTimeRangePaged(ctx context.Context, f UsageLogFilte
 		return result, nil
 	}
 
-	// 先按索引顺序只取本页 id,再回表取宽列并关联账号:宽列与凭据只读 page_size 行。
-	// id 作次级排序键:批量落库会产生大量同一时刻的记录,没有确定顺序时翻页会重复/漏行。
+	// First take only this page's ids in index order, then go back to the table for the wide columns and join accounts: wide columns and credentials are read only for page_size rows.
+	// id is the secondary sort key: batch writes create many records at the same instant, and without a deterministic order paging would duplicate or skip rows.
 	paramIdx := len(args) + 1
 	pageIDs := fmt.Sprintf(`SELECT u.id FROM usage_logs u WHERE %s ORDER BY u.created_at DESC, u.id DESC LIMIT $%d OFFSET $%d`, where, paramIdx, paramIdx+1)
 	args = append(args, f.PageSize, offset)
@@ -6701,7 +6701,7 @@ func (db *DB) ListUsageLogsByTimeRangePaged(ctx context.Context, f UsageLogFilte
 	return result, rows.Err()
 }
 
-// ListUsageLogsByFilter 按过滤条件查询请求日志，不分页，用于导出。
+// ListUsageLogsByFilter queries request logs by filter without paging, for export.
 func (db *DB) ListUsageLogsByFilter(ctx context.Context, f UsageLogFilter) ([]*UsageLog, error) {
 	where, args := db.buildUsageLogWhere(f)
 	where += ` ORDER BY u.created_at DESC`
@@ -6763,11 +6763,11 @@ func (db *DB) ListUsageLogsByFilter(ctx context.Context, f UsageLogFilter) ([]*U
 	return logs, rows.Err()
 }
 
-// ClearUsageLogs 清空所有使用日志（先快照累计值到基线表）
+// ClearUsageLogs clears all usage logs (first snapshots the cumulative values into the baseline table)
 func (db *DB) ClearUsageLogs(ctx context.Context) error {
-	// 先校验增量汇总是否与明细日志同步。这也兼容测试、手工 SQL 等绕过正常写入队列的场景。
+	// First verify that the incremental summary is in sync with the detail logs. This also covers tests, manual SQL and other cases that bypass the normal write queue.
 	if _, err := db.loadUsageStatsRollup(ctx, ""); err != nil {
-		return fmt.Errorf("读取清理前完整累计失败: %w", err)
+		return fmt.Errorf("read full cumulative totals before clearing failed: %w", err)
 	}
 	tx, err := db.conn.BeginTx(ctx, nil)
 	if err != nil {
@@ -6775,7 +6775,7 @@ func (db *DB) ClearUsageLogs(ctx context.Context) error {
 	}
 	defer tx.Rollback()
 	if !db.isSQLite() {
-		// 先锁明细表，等待正在写入的批次完整提交；之后的新写入在清理事务结束前不会插入。
+		// Lock the detail table first and wait for the batches being written to commit fully; new writes after this point are not inserted until the clear transaction ends.
 		if _, err := tx.ExecContext(ctx, `LOCK TABLE usage_logs IN ACCESS EXCLUSIVE MODE`); err != nil {
 			return err
 		}
@@ -6786,7 +6786,7 @@ func (db *DB) ClearUsageLogs(ctx context.Context) error {
 		FROM usage_stats_rollup WHERE channel=''`).Scan(&rollup.TotalRequests, &rollup.TotalTokens,
 		&rollup.PromptTokens, &rollup.CompletionTokens, &rollup.CachedTokens, &rollup.CacheHitRequests,
 		&rollup.FirstTokenMsSum, &rollup.FirstTokenSamples, &rollup.TotalAccountBilled, &rollup.TotalUserBilled); err != nil {
-		return fmt.Errorf("锁定后读取完整累计失败: %w", err)
+		return fmt.Errorf("read full cumulative totals after locking failed: %w", err)
 	}
 	if _, err := tx.ExecContext(ctx, `UPDATE usage_stats_baseline SET
 		total_requests=$1, total_tokens=$2, prompt_tokens=$3, completion_tokens=$4,
@@ -6794,7 +6794,7 @@ func (db *DB) ClearUsageLogs(ctx context.Context) error {
 		account_billed=$9, user_billed=$10 WHERE id=1`, rollup.TotalRequests, rollup.TotalTokens,
 		rollup.PromptTokens, rollup.CompletionTokens, rollup.CachedTokens, rollup.CacheHitRequests,
 		rollup.FirstTokenMsSum, rollup.FirstTokenSamples, rollup.TotalAccountBilled, rollup.TotalUserBilled); err != nil {
-		return fmt.Errorf("快照统计基线失败: %w", err)
+		return fmt.Errorf("snapshot statistics baseline failed: %w", err)
 	}
 	if db.isSQLite() {
 		if _, err = tx.ExecContext(ctx, `DELETE FROM usage_logs`); err != nil {
@@ -6818,17 +6818,17 @@ func (db *DB) ClearUsageLogs(ctx context.Context) error {
 	return tx.Commit()
 }
 
-// Ping 检查 PostgreSQL 连通性
+// Ping checks PostgreSQL connectivity
 func (db *DB) Ping(ctx context.Context) error {
 	return db.conn.PingContext(ctx)
 }
 
-// Stats 返回 PostgreSQL 连接池状态
+// Stats returns the PostgreSQL connection pool status
 func (db *DB) Stats() sql.DBStats {
 	return db.conn.Stats()
 }
 
-// AccountRequestCount 每个账号的请求统计
+// AccountRequestCount is the request statistics of each account
 type AccountRequestCount struct {
 	AccountID             int64
 	SuccessCount          int64
@@ -6844,7 +6844,7 @@ type AccountRequestCount struct {
 	SuccessModelCounts map[string]int64
 }
 
-// AccountTimeRangeUsage 每个账号在指定时间窗口内的真实请求/token 统计。
+// AccountTimeRangeUsage is the actual request/token statistics of each account within a given time window.
 type AccountTimeRangeUsage struct {
 	AccountID     int64
 	Requests      int64
@@ -6853,7 +6853,7 @@ type AccountTimeRangeUsage struct {
 	UserBilled    float64
 }
 
-// AccountModelCount 某个模型在指定窗口内的请求数、成功数与平均首字时长。
+// AccountModelCount holds the request count, success count and average time to first token of a model within a given window.
 type AccountModelCount struct {
 	Requests        int64
 	Success         int64
@@ -6887,7 +6887,7 @@ func (db *DB) currentAccountUsageGenerationPredicate() string {
 		usage_logs.credential_generation = COALESCE((SELECT accounts.credential_generation FROM accounts WHERE accounts.id = usage_logs.account_id), usage_logs.credential_generation))`
 }
 
-// GetAccountRequestCounts 按 account_id 聚合近 7 天成功/失败请求数，499 客户端取消不计失败。
+// GetAccountRequestCounts aggregates the success/failure request counts over the last 7 days by account_id; 499 client cancellations are not counted as failures.
 func (db *DB) GetAccountRequestCounts(ctx context.Context) (map[int64]*AccountRequestCount, error) {
 	since := time.Now().AddDate(0, 0, -7)
 	retryFalse := "COALESCE(is_retry_attempt, false) = false"
@@ -6932,7 +6932,7 @@ func (db *DB) GetAccountRequestCounts(ctx context.Context) (map[int64]*AccountRe
 	return result, nil
 }
 
-// GetAccountTimeRangeUsage 按 account_id 聚合 since 之后的请求数和 token 数。
+// GetAccountTimeRangeUsage aggregates the request and token counts after since by account_id.
 func (db *DB) GetAccountTimeRangeUsage(ctx context.Context, since time.Time) (map[int64]*AccountTimeRangeUsage, error) {
 	query := fmt.Sprintf(`
 	SELECT account_id,
@@ -6961,8 +6961,8 @@ func (db *DB) GetAccountTimeRangeUsage(ctx context.Context, since time.Time) (ma
 	return result, rows.Err()
 }
 
-// GetAccountUsageWindows 在一次 7 天索引扫描内同时计算短窗口和长窗口，
-// 避免账号列表刷新时对 usage_logs 连续做两次大范围 GROUP BY。
+// GetAccountUsageWindows computes the short and long windows in a single 7-day index scan,
+// to avoid two consecutive large-range GROUP BY queries on usage_logs when the account list refreshes.
 func (db *DB) GetAccountUsageWindows(ctx context.Context, shortSince, longSince time.Time) (map[int64]*AccountTimeRangeUsage, map[int64]*AccountTimeRangeUsage, error) {
 	if shortSince.Before(longSince) {
 		shortSince, longSince = longSince, shortSince
@@ -7000,7 +7000,7 @@ func (db *DB) GetAccountUsageWindows(ctx context.Context, shortSince, longSince 
 	return shortWindow, longWindow, nil
 }
 
-// GetAccountBilledSince 返回指定时间戳以来 account_billed 的总和
+// GetAccountBilledSince returns the sum of account_billed since the given timestamp
 func (db *DB) GetAccountBilledSince(ctx context.Context, accountID int64, since time.Time) (float64, error) {
 	var billed float64
 	err := db.conn.QueryRowContext(ctx,
@@ -7010,7 +7010,7 @@ func (db *DB) GetAccountBilledSince(ctx context.Context, accountID int64, since 
 	return billed, err
 }
 
-// GetAccountsBilledSince 批量返回每个账号在各自 since 之后的 account_billed 总和。
+// GetAccountsBilledSince returns in bulk the sum of account_billed for each account after its own since.
 func (db *DB) GetAccountsBilledSince(ctx context.Context, windows map[int64]time.Time) (map[int64]float64, error) {
 	result := make(map[int64]float64, len(windows))
 	if len(windows) == 0 {
@@ -7094,12 +7094,12 @@ func (db *DB) getAccountsBilledSinceChunk(ctx context.Context, ids []int64, wind
 
 // ==================== Accounts ====================
 
-// ListActive 获取所有未删除账号。
+// ListActive returns all accounts that are not deleted.
 func (db *DB) ListActive(ctx context.Context) ([]*AccountRow, error) {
 	return db.ListActiveByChannel(ctx, "")
 }
 
-// ListActiveByChannel 返回未删除账号。现在只剩 Codex 一个渠道，所有账号都是 Codex 账号，channel 参数保留给调用方。
+// ListActiveByChannel returns accounts that are not deleted. Only the Codex channel is left now, and all accounts are Codex accounts; the channel parameter is kept for callers.
 func (db *DB) ListActiveByChannel(ctx context.Context, channel string) ([]*AccountRow, error) {
 	where := `status <> 'deleted' AND COALESCE(error_message, '') <> 'deleted'`
 
@@ -7111,7 +7111,7 @@ func (db *DB) ListActiveByChannel(ctx context.Context, channel string) ([]*Accou
 	`
 	rows, err := db.conn.QueryContext(ctx, query)
 	if err != nil {
-		return nil, fmt.Errorf("查询账号失败: %w", err)
+		return nil, fmt.Errorf("query accounts failed: %w", err)
 	}
 	defer rows.Close()
 
@@ -7148,21 +7148,21 @@ func (db *DB) ListActiveByChannel(ctx context.Context, channel string) ([]*Accou
 			&a.CredentialGeneration,
 			&a.CredentialFamilyID,
 		); err != nil {
-			return nil, fmt.Errorf("扫描账号行失败: %w", err)
+			return nil, fmt.Errorf("scan account row failed: %w", err)
 		}
 		a.Credentials = decodeCredentials(credRaw)
 		a.Tags = decodeTagsValue(tagsRaw)
 		a.CooldownUntil, err = parseDBNullTimeValue(cooldownUntilRaw)
 		if err != nil {
-			return nil, fmt.Errorf("解析 cooldown_until 失败: %w", err)
+			return nil, fmt.Errorf("parse cooldown_until failed: %w", err)
 		}
 		a.CreatedAt, err = parseDBTimeValue(createdAtRaw)
 		if err != nil {
-			return nil, fmt.Errorf("解析 created_at 失败: %w", err)
+			return nil, fmt.Errorf("parse created_at failed: %w", err)
 		}
 		a.UpdatedAt, err = parseDBTimeValue(updatedAtRaw)
 		if err != nil {
-			return nil, fmt.Errorf("解析 updated_at 失败: %w", err)
+			return nil, fmt.Errorf("parse updated_at failed: %w", err)
 		}
 		accounts = append(accounts, a)
 	}
@@ -7177,7 +7177,7 @@ func (db *DB) ListActiveModelCooldowns(ctx context.Context) ([]*AccountModelCool
 		ORDER BY account_id, model
 	`, db.timeArg(time.Now()))
 	if err != nil {
-		return nil, fmt.Errorf("查询模型冷却失败: %w", err)
+		return nil, fmt.Errorf("query model cooldowns failed: %w", err)
 	}
 	defer rows.Close()
 
@@ -7192,11 +7192,11 @@ func (db *DB) ListActiveModelCooldowns(ctx context.Context) ([]*AccountModelCool
 		var parseErr error
 		row.ResetAt, parseErr = parseDBTimeValue(resetRaw)
 		if parseErr != nil {
-			return nil, fmt.Errorf("解析模型冷却 reset_at 失败: %w", parseErr)
+			return nil, fmt.Errorf("parse model cooldown reset_at failed: %w", parseErr)
 		}
 		row.UpdatedAt, parseErr = parseDBTimeValue(updatedRaw)
 		if parseErr != nil {
-			return nil, fmt.Errorf("解析模型冷却 updated_at 失败: %w", parseErr)
+			return nil, fmt.Errorf("parse model cooldown updated_at failed: %w", parseErr)
 		}
 		result = append(result, row)
 	}
@@ -7242,7 +7242,7 @@ func (db *DB) ListActiveModelCooldownsForAccounts(ctx context.Context, accountID
 		ORDER BY account_id, model
 	`, args...)
 	if err != nil {
-		return nil, fmt.Errorf("批量查询账号模型冷却失败: %w", err)
+		return nil, fmt.Errorf("batch query account model cooldowns failed: %w", err)
 	}
 	defer rows.Close()
 
@@ -7255,11 +7255,11 @@ func (db *DB) ListActiveModelCooldownsForAccounts(ctx context.Context, accountID
 		}
 		row.ResetAt, err = parseDBTimeValue(resetRaw)
 		if err != nil {
-			return nil, fmt.Errorf("解析模型冷却 reset_at 失败: %w", err)
+			return nil, fmt.Errorf("parse model cooldown reset_at failed: %w", err)
 		}
 		row.UpdatedAt, err = parseDBTimeValue(updatedRaw)
 		if err != nil {
-			return nil, fmt.Errorf("解析模型冷却 updated_at 失败: %w", err)
+			return nil, fmt.Errorf("parse model cooldown updated_at failed: %w", err)
 		}
 		result = append(result, row)
 	}
@@ -7319,13 +7319,13 @@ func (db *DB) ClearExpiredModelCooldowns(ctx context.Context) error {
 	return err
 }
 
-// GetAccountByID 获取未删除账号的完整数据库行。
+// GetAccountByID returns the full database row of an account that is not deleted.
 func (db *DB) GetAccountByID(ctx context.Context, id int64) (*AccountRow, error) {
 	return db.getAccountByID(ctx, id, false)
 }
 
-// GetAccountByIDIncludingDeleted 获取账号（包含回收站中的已删除账号），
-// 用于回收站测试连接等不依赖运行时池的场景。
+// GetAccountByIDIncludingDeleted returns an account, including deleted accounts in the recycle bin,
+// for cases such as testing a connection from the recycle bin that do not depend on the runtime pool.
 func (db *DB) GetAccountByIDIncludingDeleted(ctx context.Context, id int64) (*AccountRow, error) {
 	return db.getAccountByID(ctx, id, true)
 }
@@ -7376,26 +7376,26 @@ func (db *DB) getAccountByID(ctx context.Context, id int64, includeDeleted bool)
 		if errors.Is(err, sql.ErrNoRows) {
 			return nil, sql.ErrNoRows
 		}
-		return nil, fmt.Errorf("查询账号失败: %w", err)
+		return nil, fmt.Errorf("query accounts failed: %w", err)
 	}
 	a.Credentials = decodeCredentials(credRaw)
 	a.Tags = decodeTagsValue(tagsRaw)
 	a.CooldownUntil, err = parseDBNullTimeValue(cooldownUntilRaw)
 	if err != nil {
-		return nil, fmt.Errorf("解析 cooldown_until 失败: %w", err)
+		return nil, fmt.Errorf("parse cooldown_until failed: %w", err)
 	}
 	a.CreatedAt, err = parseDBTimeValue(createdAtRaw)
 	if err != nil {
-		return nil, fmt.Errorf("解析 created_at 失败: %w", err)
+		return nil, fmt.Errorf("parse created_at failed: %w", err)
 	}
 	a.UpdatedAt, err = parseDBTimeValue(updatedAtRaw)
 	if err != nil {
-		return nil, fmt.Errorf("解析 updated_at 失败: %w", err)
+		return nil, fmt.Errorf("parse updated_at failed: %w", err)
 	}
 	return a, nil
 }
 
-// UpdateAccountSchedulerConfig 更新账号调度配置。
+// UpdateAccountSchedulerConfig updates the account scheduling configuration.
 func (db *DB) UpdateAccountSchedulerConfig(ctx context.Context, id int64, scoreBiasOverride OptionalNullInt64, baseConcurrencyOverride OptionalNullInt64, allowedAPIKeyIDs OptionalInt64Slice) error {
 	tx, err := db.conn.BeginTx(ctx, nil)
 	if err != nil {
@@ -7469,7 +7469,7 @@ func (db *DB) UpdateAccountSchedulerConfig(ctx context.Context, id int64, scoreB
 		})
 		credJSON, err := json.Marshal(encryptSensitiveCredentials(merged))
 		if err != nil {
-			return fmt.Errorf("序列化 credentials 失败: %w", err)
+			return fmt.Errorf("serialize credentials failed: %w", err)
 		}
 
 		updateQuery := `UPDATE accounts SET credentials = $1, updated_at = CURRENT_TIMESTAMP WHERE id = $2`
@@ -7556,7 +7556,7 @@ func (db *DB) UpdateAccountSchedulerMetadata(ctx context.Context, id int64, scor
 			identityChanged := codexIdentityCredentialChanged(current, merged)
 			credJSON, err := json.Marshal(encryptSensitiveCredentials(merged))
 			if err != nil {
-				return fmt.Errorf("序列化 credentials 失败: %w", err)
+				return fmt.Errorf("serialize credentials failed: %w", err)
 			}
 			if db.isSQLite() {
 				add("credentials", credJSON)
@@ -7784,7 +7784,7 @@ func (db *DB) batchUpdateAccountCredentials(ctx context.Context, tx *sql.Tx, cur
 		identityChanged := codexIdentityCredentialChanged(credentials, merged)
 		credJSON, err := json.Marshal(encryptSensitiveCredentials(merged))
 		if err != nil {
-			return fmt.Errorf("序列化 credentials 失败: %w", err)
+			return fmt.Errorf("serialize credentials failed: %w", err)
 		}
 		updateQuery := query
 		if identityChanged {
@@ -7852,7 +7852,7 @@ func nullableInt64Value(v sql.NullInt64) interface{} {
 	return v.Int64
 }
 
-// SetAccountEnabled 设置账号是否参与调度选择
+// SetAccountEnabled sets whether the account takes part in scheduling selection
 func (db *DB) SetAccountEnabled(ctx context.Context, id int64, enabled bool) error {
 	return db.withWriteTx(ctx, func(tx *sql.Tx) error {
 		if err := db.intelligenceManualMutationTx(ctx, tx, []int64{id}, true); err != nil {
@@ -7873,13 +7873,13 @@ func (db *DB) SetAccountEnabled(ctx context.Context, id int64, enabled bool) err
 	})
 }
 
-// SetAccountLocked 设置账号的锁定状态
+// SetAccountLocked sets the locked state of the account
 func (db *DB) SetAccountLocked(ctx context.Context, id int64, locked bool) error {
 	_, err := db.conn.ExecContext(ctx, `UPDATE accounts SET locked = $1 WHERE id = $2`, locked, id)
 	return err
 }
 
-// UpdateAccountNote 设置账号备注（通用标识字段，如自助提交联系人）。
+// UpdateAccountNote sets the account note (a generic identifier field, such as the contact submitted through self-service).
 func (db *DB) UpdateAccountNote(ctx context.Context, id int64, note string) error {
 	res, err := db.conn.ExecContext(ctx, `UPDATE accounts SET note = $1, updated_at = CURRENT_TIMESTAMP WHERE id = $2`, note, id)
 	if err != nil {
@@ -7895,7 +7895,7 @@ func (db *DB) UpdateAccountNote(ctx context.Context, id int64, note string) erro
 	return nil
 }
 
-// SetAccountTags 覆盖设置账号标签（JSON 数组），dialect 安全。
+// SetAccountTags overwrites the account tags (a JSON array), dialect safe.
 func (db *DB) SetAccountTags(ctx context.Context, id int64, tags []string) error {
 	encoded := encodeTagsJSON(tags)
 	var query string
@@ -7908,8 +7908,8 @@ func (db *DB) SetAccountTags(ctx context.Context, id int64, tags []string) error
 	return err
 }
 
-// UpdateAccountCredit 更新账号的信用设置（credit_enabled / credit_skip_usage_window）
-// 传入 nil 表示不修改该字段，仅 SET 非 nil 的列。
+// UpdateAccountCredit updates the account credit settings (credit_enabled / credit_skip_usage_window)
+// Passing nil leaves that field unchanged; only non-nil columns are SET.
 func (db *DB) UpdateAccountCredit(ctx context.Context, id int64, creditEnabled, creditSkipUsageWindow *bool) error {
 	var setClauses []string
 	var args []interface{}
@@ -7927,7 +7927,7 @@ func (db *DB) UpdateAccountCredit(ctx context.Context, id int64, creditEnabled, 
 	}
 
 	if len(setClauses) == 0 {
-		return nil // 没有要更新的字段
+		return nil // no fields to update
 	}
 
 	setClauses = append(setClauses, "updated_at = CURRENT_TIMESTAMP")
@@ -7948,8 +7948,8 @@ func (db *DB) UpdateAccountCredit(ctx context.Context, id int64, creditEnabled, 
 	return nil
 }
 
-// UpdateCredentials 原子合并更新账号的 credentials（JSONB || 运算符，不覆盖已有字段）
-// 解决并发刷新时一个进程覆盖另一个进程写入的字段的问题
+// UpdateCredentials atomically merges the account credentials (JSONB || operator, does not overwrite existing fields)
+// This fixes the problem of one process overwriting fields that another process wrote during concurrent refreshes.
 func (db *DB) UpdateCredentials(ctx context.Context, id int64, credentials map[string]interface{}) error {
 	if db.isSQLite() {
 		return db.updateCredentialsSQLite(ctx, id, credentials)
@@ -7976,7 +7976,7 @@ func (db *DB) updateCredentialsReadMerge(ctx context.Context, id int64, credenti
 	identityChanged := codexIdentityCredentialChanged(decodeCredentials(currentRaw), merged)
 	credJSON, err := json.Marshal(encryptSensitiveCredentials(merged))
 	if err != nil {
-		return fmt.Errorf("序列化 credentials 失败: %w", err)
+		return fmt.Errorf("serialize credentials failed: %w", err)
 	}
 
 	generationUpdate := ""
@@ -8014,7 +8014,7 @@ func (db *DB) updateCredentialsSQLite(ctx context.Context, id int64, credentials
 			if !sqliteJSONSetKeySupported(key) {
 				return db.updateCredentialsReadMergeSQLiteUnlocked(ctx, id, credentials)
 			}
-			// SQLite 逐键写:敏感字段在此处按键加密(密钥未设时 no-op)。
+			// SQLite writes key by key: sensitive fields are encrypted per key here (a no-op when no key is set).
 			if _, sensitive := sensitiveCredentialKeys[key]; sensitive {
 				if s, isStr := value.(string); isStr {
 					value = encryptCredentialValue(key, s)
@@ -8022,7 +8022,7 @@ func (db *DB) updateCredentialsSQLite(ctx context.Context, id int64, credentials
 			}
 			valueJSON, err := json.Marshal(value)
 			if err != nil {
-				return fmt.Errorf("序列化 credentials 失败: %w", err)
+				return fmt.Errorf("serialize credentials failed: %w", err)
 			}
 			jsonSetArgs = append(jsonSetArgs, fmt.Sprintf("$%d, json($%d)", argIdx, argIdx+1))
 			args = append(args, "$."+key, string(valueJSON))
@@ -8072,7 +8072,7 @@ func (db *DB) updateCredentialsReadMergeSQLiteUnlocked(ctx context.Context, id i
 	identityChanged := codexIdentityCredentialChanged(current, merged)
 	credJSON, err := json.Marshal(encryptSensitiveCredentials(merged))
 	if err != nil {
-		return fmt.Errorf("序列化 credentials 失败: %w", err)
+		return fmt.Errorf("serialize credentials failed: %w", err)
 	}
 	generationUpdate := ""
 	if identityChanged {
@@ -8137,7 +8137,7 @@ func (db *DB) UpdateOAuthAccountCredentials(ctx context.Context, id int64, crede
 	merged := mergeCredentialMaps(decodeCredentials(currentRaw), credentials)
 	credJSON, err := json.Marshal(encryptSensitiveCredentials(merged))
 	if err != nil {
-		return fmt.Errorf("序列化 credentials 失败: %w", err)
+		return fmt.Errorf("serialize credentials failed: %w", err)
 	}
 
 	updateQuery := `UPDATE accounts SET credentials = $1, proxy_url = $2, platform = 'openai', type = 'oauth', updated_at = CURRENT_TIMESTAMP WHERE id = $3`
@@ -8161,7 +8161,7 @@ func (db *DB) UpdateOAuthAccountCredentials(ctx context.Context, id int64, crede
 	return tx.Commit()
 }
 
-// UpdateUsageSnapshot 持久化账号用量快照（7d + 5h）
+// UpdateUsageSnapshot persists the account usage snapshot (7d + 5h)
 func (db *DB) UpdateUsageSnapshot(ctx context.Context, id int64, pct7d float64, updatedAt time.Time) error {
 	return db.UpdateCredentials(ctx, id, map[string]interface{}{
 		"codex_7d_used_percent":  pct7d,
@@ -8169,7 +8169,7 @@ func (db *DB) UpdateUsageSnapshot(ctx context.Context, id int64, pct7d float64, 
 	})
 }
 
-// UpdateUsageSnapshotFull 持久化完整用量快照（5h + 7d + 重置时间）
+// UpdateUsageSnapshotFull persists the full usage snapshot (5h + 7d + reset time)
 func (db *DB) UpdateUsageSnapshotFull(ctx context.Context, id int64, pct7d float64, reset7dAt time.Time, pct5h float64, reset5hAt time.Time, updatedAt7d time.Time, updatedAt5h time.Time) error {
 	fields := map[string]interface{}{
 		"codex_7d_used_percent":     pct7d,
@@ -8182,7 +8182,7 @@ func (db *DB) UpdateUsageSnapshotFull(ctx context.Context, id int64, pct7d float
 	return db.UpdateCredentials(ctx, id, fields)
 }
 
-// SetError 标记账号错误状态
+// SetError marks the account error state
 func (db *DB) SetError(ctx context.Context, id int64, errorMsg string) error {
 	return db.withSQLiteWriteLock(ctx, func() error {
 		query := `UPDATE accounts SET status = 'error', error_message = $1, cooldown_reason = '', cooldown_until = NULL, updated_at = CURRENT_TIMESTAMP WHERE id = $2`
@@ -8191,7 +8191,7 @@ func (db *DB) SetError(ctx context.Context, id int64, errorMsg string) error {
 	})
 }
 
-// BatchSetError 批量标记账号错误状态，分批执行避免 SQL 参数过多
+// BatchSetError marks the error state of accounts in bulk, executed in batches to avoid too many SQL parameters
 func (db *DB) BatchSetError(ctx context.Context, ids []int64, errorMsg string) error {
 	const batchSize = 500
 	for i := 0; i < len(ids); i += batchSize {
@@ -8201,7 +8201,7 @@ func (db *DB) BatchSetError(ctx context.Context, ids []int64, errorMsg string) e
 		}
 		batch := ids[i:end]
 
-		// 构建 $2, $3, ... 占位符（$1 留给 errorMsg）
+		// Build $2, $3, ... placeholders ($1 is reserved for errorMsg)
 		placeholders := make([]string, len(batch))
 		args := make([]interface{}, 0, len(batch)+1)
 		args = append(args, errorMsg)
@@ -8221,7 +8221,7 @@ func (db *DB) BatchSetError(ctx context.Context, ids []int64, errorMsg string) e
 	return nil
 }
 
-// SoftDeleteAccount 将账号标记为 deleted，保留数据用于审计和事件追溯。
+// SoftDeleteAccount marks the account as deleted and keeps the data for audit and event tracing.
 func (db *DB) SoftDeleteAccount(ctx context.Context, id int64) error {
 	return db.withSQLiteWriteLock(ctx, func() error {
 		tx, err := db.conn.BeginTx(ctx, nil)
@@ -8259,7 +8259,7 @@ func (db *DB) SoftDeleteAccount(ctx context.Context, id int64) error {
 	})
 }
 
-// ListDeleted 获取回收站中的账号（被软删除、尚未彻底清除的账号）。
+// ListDeleted returns the accounts in the recycle bin (soft-deleted and not yet fully purged).
 func (db *DB) ListDeleted(ctx context.Context) ([]*AccountRow, error) {
 	query := `
 		SELECT id, name, platform, type, credentials, proxy_url, status, cooldown_reason, cooldown_until, error_message, COALESCE(enabled, true), COALESCE(locked, false), COALESCE(credit_enabled, false), COALESCE(credit_skip_usage_window, false), COALESCE(skip_warm_tier, false), score_bias_override, base_concurrency_override, COALESCE(tags, '[]'), COALESCE(note, ''), created_at, updated_at, deleted_at, COALESCE(credential_generation, 1), COALESCE(credential_family_id, '')
@@ -8269,7 +8269,7 @@ func (db *DB) ListDeleted(ctx context.Context) ([]*AccountRow, error) {
 	`
 	rows, err := db.conn.QueryContext(ctx, query)
 	if err != nil {
-		return nil, fmt.Errorf("查询回收站账号失败: %w", err)
+		return nil, fmt.Errorf("query recycle bin accounts failed: %w", err)
 	}
 	defer rows.Close()
 
@@ -8308,32 +8308,32 @@ func (db *DB) ListDeleted(ctx context.Context) ([]*AccountRow, error) {
 			&a.CredentialGeneration,
 			&a.CredentialFamilyID,
 		); err != nil {
-			return nil, fmt.Errorf("扫描回收站账号行失败: %w", err)
+			return nil, fmt.Errorf("scan recycle bin account row failed: %w", err)
 		}
 		a.Credentials = decodeCredentials(credRaw)
 		a.Tags = decodeTagsValue(tagsRaw)
 		a.CooldownUntil, err = parseDBNullTimeValue(cooldownUntilRaw)
 		if err != nil {
-			return nil, fmt.Errorf("解析 cooldown_until 失败: %w", err)
+			return nil, fmt.Errorf("parse cooldown_until failed: %w", err)
 		}
 		a.CreatedAt, err = parseDBTimeValue(createdAtRaw)
 		if err != nil {
-			return nil, fmt.Errorf("解析 created_at 失败: %w", err)
+			return nil, fmt.Errorf("parse created_at failed: %w", err)
 		}
 		a.UpdatedAt, err = parseDBTimeValue(updatedAtRaw)
 		if err != nil {
-			return nil, fmt.Errorf("解析 updated_at 失败: %w", err)
+			return nil, fmt.Errorf("parse updated_at failed: %w", err)
 		}
 		a.DeletedAt, err = parseDBNullTimeValue(deletedAtRaw)
 		if err != nil {
-			return nil, fmt.Errorf("解析 deleted_at 失败: %w", err)
+			return nil, fmt.Errorf("parse deleted_at failed: %w", err)
 		}
 		accounts = append(accounts, a)
 	}
 	return accounts, rows.Err()
 }
 
-// RestoreAccount 将回收站中的账号恢复为 active 状态。
+// RestoreAccount restores an account in the recycle bin to active state.
 func (db *DB) RestoreAccount(ctx context.Context, id int64) error {
 	query := `
 		UPDATE accounts
@@ -8359,7 +8359,7 @@ func (db *DB) RestoreAccount(ctx context.Context, id int64) error {
 	return nil
 }
 
-// PurgeAccount 从回收站彻底删除账号（物理删除，不可恢复）。
+// PurgeAccount permanently deletes an account from the recycle bin (physical delete, not recoverable).
 func (db *DB) PurgeAccount(ctx context.Context, id int64) error {
 	tx, err := db.conn.BeginTx(ctx, nil)
 	if err != nil {
@@ -8387,7 +8387,7 @@ func (db *DB) PurgeAccount(ctx context.Context, id int64) error {
 	return tx.Commit()
 }
 
-// PurgeDeletedAccounts 清空回收站，返回被彻底删除的账号数量。
+// PurgeDeletedAccounts empties the recycle bin and returns the number of accounts permanently deleted.
 func (db *DB) PurgeDeletedAccounts(ctx context.Context) (int64, error) {
 	tx, err := db.conn.BeginTx(ctx, nil)
 	if err != nil {
@@ -8418,7 +8418,7 @@ func (db *DB) PurgeDeletedAccounts(ctx context.Context) (int64, error) {
 	return count, nil
 }
 
-// BatchSoftDeleteAccounts 批量软删除账号，分批执行避免 SQL 参数过多。
+// BatchSoftDeleteAccounts soft-deletes accounts in bulk, executed in batches to avoid too many SQL parameters.
 func (db *DB) BatchSoftDeleteAccounts(ctx context.Context, ids []int64) error {
 	return db.withSQLiteWriteLock(ctx, func() error {
 		const batchSize = 500
@@ -8455,7 +8455,7 @@ func (db *DB) BatchSoftDeleteAccounts(ctx context.Context, ids []int64) error {
 	})
 }
 
-// BatchInsertAccountEvents 批量插入账号事件。
+// BatchInsertAccountEvents inserts account events in bulk.
 func (db *DB) BatchInsertAccountEvents(ctx context.Context, ids []int64, eventType string, source string) error {
 	if len(ids) == 0 {
 		return nil
@@ -8468,7 +8468,7 @@ func (db *DB) BatchInsertAccountEvents(ctx context.Context, ids []int64, eventTy
 		}
 		batch := ids[i:end]
 
-		// 构建 VALUES ($1,$2,$3), ($4,$2,$3), ...
+		// Build VALUES ($1,$2,$3), ($4,$2,$3), ...
 		placeholders := make([]string, len(batch))
 		args := make([]interface{}, 0, len(batch)+2)
 		args = append(args, eventType, source) // $1=eventType, $2=source
@@ -8483,13 +8483,13 @@ func (db *DB) BatchInsertAccountEvents(ctx context.Context, ids []int64, eventTy
 			strings.Join(placeholders, ","),
 		)
 		if _, err := db.conn.ExecContext(ctx, query, args...); err != nil {
-			return fmt.Errorf("批量插入账号事件 (%d 条): %w", len(batch), err)
+			return fmt.Errorf("batch insert account events (%d): %w", len(batch), err)
 		}
 	}
 	return nil
 }
 
-// BatchInsertAccountEventsAsync 批量异步插入账号事件。
+// BatchInsertAccountEventsAsync inserts account events in bulk asynchronously.
 func (db *DB) BatchInsertAccountEventsAsync(ids []int64, eventType string, source string) {
 	if len(ids) == 0 {
 		return
@@ -8499,12 +8499,12 @@ func (db *DB) BatchInsertAccountEventsAsync(ids []int64, eventType string, sourc
 		ctx, cancel := context.WithTimeout(parent, 30*time.Second)
 		defer cancel()
 		if err := db.BatchInsertAccountEvents(ctx, ids, eventType, source); err != nil {
-			log.Printf("[账号事件] %v", err)
+			log.Printf("[account event] %v", err)
 		}
 	})
 }
 
-// ClearError 清除账号错误状态
+// ClearError clears the account error state
 func (db *DB) ClearError(ctx context.Context, id int64) error {
 	return db.withSQLiteWriteLock(ctx, func() error {
 		query := `UPDATE accounts SET status = 'active', error_message = '', cooldown_reason = '', cooldown_until = NULL, updated_at = CURRENT_TIMESTAMP WHERE id = $1`
@@ -8513,7 +8513,7 @@ func (db *DB) ClearError(ctx context.Context, id int64) error {
 	})
 }
 
-// SetCooldown 持久化账号冷却状态
+// SetCooldown persists the account cooldown state
 func (db *DB) SetCooldown(ctx context.Context, id int64, reason string, until time.Time) error {
 	return db.withSQLiteWriteLock(ctx, func() error {
 		query := `UPDATE accounts SET cooldown_reason = $1, cooldown_until = $2, updated_at = CURRENT_TIMESTAMP WHERE id = $3`
@@ -8522,7 +8522,7 @@ func (db *DB) SetCooldown(ctx context.Context, id int64, reason string, until ti
 	})
 }
 
-// SetCooldownWithError 持久化账号冷却状态，并保留本次错误详情。
+// SetCooldownWithError persists the account cooldown state and keeps the details of this error.
 func (db *DB) SetCooldownWithError(ctx context.Context, id int64, reason string, until time.Time, errorMsg string) error {
 	return db.withSQLiteWriteLock(ctx, func() error {
 		query := `UPDATE accounts SET cooldown_reason = $1, cooldown_until = $2, error_message = $3, updated_at = CURRENT_TIMESTAMP WHERE id = $4`
@@ -8531,7 +8531,7 @@ func (db *DB) SetCooldownWithError(ctx context.Context, id int64, reason string,
 	})
 }
 
-// ClearCooldown 清除账号冷却状态
+// ClearCooldown clears the account cooldown state
 func (db *DB) ClearCooldown(ctx context.Context, id int64) error {
 	return db.withSQLiteWriteLock(ctx, func() error {
 		query := `UPDATE accounts SET cooldown_reason = '', cooldown_until = NULL, updated_at = CURRENT_TIMESTAMP WHERE id = $1`
@@ -8540,7 +8540,7 @@ func (db *DB) ClearCooldown(ctx context.Context, id int64) error {
 	})
 }
 
-// InsertAccount 插入新账号
+// InsertAccount inserts a new account
 func (db *DB) InsertAccount(ctx context.Context, name string, refreshToken string, proxyURL string) (int64, error) {
 	credentials := map[string]interface{}{
 		"refresh_token": refreshToken,
@@ -8557,14 +8557,14 @@ func (db *DB) InsertAccount(ctx context.Context, name string, refreshToken strin
 	)
 }
 
-// CountAll 获取账号总数
+// CountAll returns the total number of accounts
 func (db *DB) CountAll(ctx context.Context) (int, error) {
 	var count int
 	err := db.conn.QueryRowContext(ctx, `SELECT COUNT(*) FROM accounts`).Scan(&count)
 	return count, err
 }
 
-// GetAllRefreshTokens 获取所有已存在的 refresh_token（用于导入去重，排除已删除账号）
+// GetAllRefreshTokens returns all existing refresh_token values (used to deduplicate imports, excluding deleted accounts)
 func (db *DB) GetAllRefreshTokens(ctx context.Context) (map[string]bool, error) {
 	rows, err := db.conn.QueryContext(ctx, `SELECT credentials FROM accounts WHERE status <> 'deleted' AND COALESCE(error_message, '') <> 'deleted'`)
 	if err != nil {
@@ -8586,7 +8586,7 @@ func (db *DB) GetAllRefreshTokens(ctx context.Context) (map[string]bool, error) 
 	return result, rows.Err()
 }
 
-// InsertATAccount 插入 AT-only 账号（无 refresh_token）
+// InsertATAccount inserts an AT-only account (no refresh_token)
 func (db *DB) InsertATAccount(ctx context.Context, name string, accessToken string, proxyURL string) (int64, error) {
 	credentials := map[string]interface{}{
 		"access_token": accessToken,
@@ -8603,7 +8603,7 @@ func (db *DB) InsertATAccount(ctx context.Context, name string, accessToken stri
 	)
 }
 
-// InsertAccountWithCredentials 插入带完整 credentials 的账号。
+// InsertAccountWithCredentials inserts an account with full credentials.
 func (db *DB) InsertAccountWithCredentials(ctx context.Context, name string, credentials map[string]interface{}, proxyURL string) (int64, error) {
 	if credentials == nil {
 		credentials = map[string]interface{}{}
@@ -8639,7 +8639,7 @@ func (db *DB) InsertPendingAccountWithCredentials(ctx context.Context, name stri
 	)
 }
 
-// InsertAccountWithUpstream 插入一个指定 platform / type 的账号，credentials 全量入库。
+// InsertAccountWithUpstream inserts an account with a given platform / type; the credentials are stored in full.
 func (db *DB) InsertAccountWithUpstream(ctx context.Context, name, platform, accountType string, credentials map[string]interface{}, proxyURL string) (int64, error) {
 	if credentials == nil {
 		credentials = map[string]interface{}{}
@@ -8698,7 +8698,7 @@ func (db *DB) insertAccountRowWithFamily(ctx context.Context, postgresQuery, sql
 	return returnID, nil
 }
 
-// UpdateAccountName 仅更新账号名称。
+// UpdateAccountName updates only the account name.
 func (db *DB) UpdateAccountName(ctx context.Context, id int64, name string) error {
 	res, err := db.conn.ExecContext(ctx,
 		`UPDATE accounts SET name = $1, updated_at = CURRENT_TIMESTAMP WHERE id = $2`, name, id)
@@ -8715,7 +8715,7 @@ func (db *DB) UpdateAccountName(ctx context.Context, id int64, name string) erro
 	return nil
 }
 
-// GetAllAccessTokens 获取所有已存在的 access_token（用于 AT 导入去重，排除已删除账号）
+// GetAllAccessTokens returns all existing access_token values (used to deduplicate AT imports, excluding deleted accounts)
 func (db *DB) GetAllAccessTokens(ctx context.Context) (map[string]bool, error) {
 	rows, err := db.conn.QueryContext(ctx, `SELECT credentials FROM accounts WHERE status <> 'deleted' AND COALESCE(error_message, '') <> 'deleted'`)
 	if err != nil {
@@ -8737,8 +8737,8 @@ func (db *DB) GetAllAccessTokens(ctx context.Context) (map[string]bool, error) {
 	return result, rows.Err()
 }
 
-// GetAllChatGPTAccountIDs 获取所有已存在的 chatgpt_account_id（用于导入去重，排除已删除账号）。
-// 兼容历史字段名：account_id / chatgpt_account_id。
+// GetAllChatGPTAccountIDs returns all existing chatgpt_account_id values (used to deduplicate imports, excluding deleted accounts).
+// Compatible with the historical field names: account_id / chatgpt_account_id.
 func (db *DB) GetAllChatGPTAccountIDs(ctx context.Context) (map[string]bool, error) {
 	rows, err := db.conn.QueryContext(ctx, `SELECT credentials FROM accounts WHERE status <> 'deleted' AND COALESCE(error_message, '') <> 'deleted'`)
 	if err != nil {
@@ -8879,7 +8879,7 @@ func (db *DB) FindActiveAccountByOAuthRouteIdentity(ctx context.Context, email, 
 	return 0, sql.ErrNoRows
 }
 
-// GetAllSessionTokens 获取所有已存在的 session_token（用于导入去重，排除已删除账号）
+// GetAllSessionTokens returns all existing session_token values (used to deduplicate imports, excluding deleted accounts)
 func (db *DB) GetAllSessionTokens(ctx context.Context) (map[string]bool, error) {
 	rows, err := db.conn.QueryContext(ctx, `SELECT credentials FROM accounts WHERE status <> 'deleted' AND COALESCE(error_message, '') <> 'deleted'`)
 	if err != nil {
@@ -8901,9 +8901,9 @@ func (db *DB) GetAllSessionTokens(ctx context.Context) (map[string]bool, error) 
 	return result, rows.Err()
 }
 
-// ==================== 账号事件 ====================
+// ==================== account events ====================
 
-// InsertAccountEvent 插入一条账号事件记录
+// InsertAccountEvent inserts one account event record
 func (db *DB) InsertAccountEvent(ctx context.Context, accountID int64, eventType string, source string) error {
 	_, err := db.conn.ExecContext(ctx,
 		`INSERT INTO account_events (account_id, event_type, source) VALUES ($1, $2, $3)`,
@@ -8912,7 +8912,7 @@ func (db *DB) InsertAccountEvent(ctx context.Context, accountID int64, eventType
 	return err
 }
 
-// InsertAccountEventAsync 异步插入账号事件（不阻塞调用方，SQLite 下带重试）
+// InsertAccountEventAsync inserts an account event asynchronously (does not block the caller; retries on SQLite)
 func (db *DB) InsertAccountEventAsync(accountID int64, eventType string, source string) {
 	db.RunBackgroundTask(func(ctx context.Context) {
 		var err error
@@ -8930,12 +8930,12 @@ func (db *DB) InsertAccountEventAsync(accountID int64, eventType string, source 
 			}
 		}
 		if err != nil {
-			log.Printf("[账号事件] 记录失败（已重试3次）: account=%d type=%s source=%s err=%v", accountID, eventType, source, err)
+			log.Printf("[account event] failed to record (retried 3 times): account=%d type=%s source=%s err=%v", accountID, eventType, source, err)
 		}
 	})
 }
 
-// GetAccountEventTrend 按时间桶聚合账号增删事件
+// GetAccountEventTrend aggregates account add/delete events by time bucket
 func (db *DB) GetAccountEventTrend(ctx context.Context, start, end time.Time, bucketMinutes int) ([]AccountEventPoint, error) {
 	if db.isSQLite() {
 		return db.getAccountEventTrendSQLite(ctx, start, end, bucketMinutes)

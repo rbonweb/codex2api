@@ -11,7 +11,7 @@ func TestAccountDailyUsageUpsertOverwritesSameDay(t *testing.T) {
 	ctx := context.Background()
 	day := time.Now().UTC().Format("2006-01-02")
 
-	// 第一轮:当天尚未结算,上游不返回 token 明细。
+	// Round 1: the day is not yet settled, so upstream returns no token details.
 	if err := db.UpsertAccountDailyUsage(ctx, AccountDailyUsageInput{
 		AccountID: 7, Day: day, Credits: 100, Turns: 5, Settled: false,
 		ClientsJSON: `[{"client_id":"CODEX_CLI"}]`,
@@ -19,7 +19,7 @@ func TestAccountDailyUsageUpsertOverwritesSameDay(t *testing.T) {
 		t.Fatalf("first upsert: %v", err)
 	}
 
-	// 第二轮:同一天结算完成,必须整行覆盖而不是累加,否则 credits 会翻倍。
+	// Round 2: the same day is now settled. The row must be fully overwritten, not accumulated, otherwise credits would double.
 	if err := db.UpsertAccountDailyUsage(ctx, AccountDailyUsageInput{
 		AccountID: 7, Day: day, Credits: 250, Turns: 12, TotalTokens: 99, Settled: true,
 		ClientsJSON: `[{"client_id":"CODEX_CLI"},{"client_id":"CODEX_UNKNOWN_DEFAULT"}]`,
@@ -59,7 +59,7 @@ func TestAccountDailyUsageSumAndPrune(t *testing.T) {
 		}
 	}
 
-	// 汇总窗口是 7 天,400 天前那条不能被算进来。
+	// The summary window is 7 days, so the row from 400 days ago must not be counted.
 	totals, err := db.SumAccountDailyUsage(ctx, []int64{1, 2}, 7)
 	if err != nil {
 		t.Fatalf("SumAccountDailyUsage: %v", err)
@@ -84,7 +84,7 @@ func TestAccountDailyUsageSumAndPrune(t *testing.T) {
 		t.Fatalf("account 2 totals = %#v", got)
 	}
 
-	// 未传入的账号不能出现在结果里,避免调用方误用。
+	// Accounts not passed in must not appear in the result, to avoid callers misusing it.
 	if _, ok := totals[3]; ok {
 		t.Fatal("unrequested account leaked into totals")
 	}
@@ -103,8 +103,8 @@ func TestAccountDailyUsageSumAndPrune(t *testing.T) {
 	}
 }
 
-// 拆分与 counts 来自两个上游端点、分别落库：谁先到谁建行，后到的只写自己的列，
-// 互不覆盖。否则拆分先到时 counts 的 credits 会被清零，或反过来。
+// The breakdown and counts come from two upstream endpoints and are stored separately: whichever arrives first creates the row, and the later one writes only its own columns,
+// without overwriting each other. Otherwise, if the breakdown arrives first, counts' credits would be zeroed, or the reverse.
 func TestAccountDailyBreakdownUpsertKeepsCountsColumns(t *testing.T) {
 	db := newPromptPolicySQLiteTestDB(t)
 	ctx := context.Background()
@@ -114,7 +114,7 @@ func TestAccountDailyBreakdownUpsertKeepsCountsColumns(t *testing.T) {
 		t.Fatalf("fresh account must have no coverage: %+v err=%v", cov, err)
 	}
 
-	// 拆分先到：以零 counts 建行。
+	// Breakdown arrives first: create the row with zero counts.
 	if err := db.UpsertAccountDailyBreakdown(ctx, AccountDailyBreakdownInput{
 		AccountID: 9, Day: day, Percent: 4,
 		Models:   []AccountDailyBreakdownModel{{Model: "gpt-5.6-sol", Speed: "fast", Percent: 3}, {Model: "gpt-5.6-luna", Speed: "standard", Percent: 1}},
@@ -122,8 +122,8 @@ func TestAccountDailyBreakdownUpsertKeepsCountsColumns(t *testing.T) {
 	}); err != nil {
 		t.Fatalf("breakdown upsert: %v", err)
 	}
-	// 拆分先到的行只算拆分覆盖，不算 counts 覆盖，也不进汇总：否则 counts 首轮失败后
-	// 深回补被永久跳过，列表还会把这个账号显示成 $0 的真实快照。
+	// A row created by the breakdown first counts only as breakdown coverage, not counts coverage, and is not included in totals: otherwise, after counts fails in round one,
+	// deep backfill would be skipped forever, and the list would still show this account as a real $0 snapshot.
 	if cov, err := db.GetAccountDailyUsageCoverage(ctx, 9); err != nil || cov.CountsOldestDay != "" || cov.BreakdownOldestDay != day {
 		t.Fatalf("breakdown-only row must count only as breakdown coverage: %+v err=%v", cov, err)
 	}
@@ -134,7 +134,7 @@ func TestAccountDailyBreakdownUpsertKeepsCountsColumns(t *testing.T) {
 		t.Fatalf("breakdown-only row must report HasCounts=false: rows=%d err=%v", len(rows), err)
 	}
 
-	// counts 后到：不能清掉拆分列。
+	// Counts arrive later: they must not clear the breakdown columns.
 	if err := db.UpsertAccountDailyUsage(ctx, AccountDailyUsageInput{
 		AccountID: 9, Day: day, Credits: 200, Turns: 3, Settled: true, ClientsJSON: "[]", ModelsJSON: "[]",
 	}); err != nil {
@@ -162,7 +162,7 @@ func TestAccountDailyBreakdownUpsertKeepsCountsColumns(t *testing.T) {
 		t.Fatalf("surfaces = %#v", surfaces)
 	}
 
-	// 拆分再到（下一轮同步，另一套归一化尺度）：覆盖拆分列，counts 不动。
+	// Breakdown arrives again (next sync round, a different normalization scale): overwrite the breakdown columns, counts untouched.
 	if err := db.UpsertAccountDailyBreakdown(ctx, AccountDailyBreakdownInput{
 		AccountID: 9, Day: day, Percent: 10,
 		Models: []AccountDailyBreakdownModel{{Model: "gpt-5.6-luna", Speed: "standard", Percent: 10}},

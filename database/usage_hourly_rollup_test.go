@@ -107,7 +107,7 @@ func generateHourlyTestLogs(now time.Time, keyIDs []int64, count int) []hourlyTe
 	pick := func(values ...string) string { return values[rng.Intn(len(values))] }
 	logs := make([]hourlyTestLog, 0, count+8)
 	for i := 0; i < count; i++ {
-		// 落在 [now-45d, now-2min],整秒;同时故意制造一些整点与窗口边界附近的记录。
+		// Falls within [now-45d, now-2min], whole seconds; also deliberately creates some records near whole hours and window boundaries.
 		at := now.Add(-time.Duration(2*60+rng.Int63n(45*24*3600)) * time.Second)
 		switch i % 50 {
 		case 0:
@@ -150,7 +150,7 @@ func generateHourlyTestLogs(now time.Time, keyIDs []int64, count int) []hourlyTe
 			duration: rng.Intn(3) * rng.Intn(9000), firstToken: rng.Intn(3) * rng.Intn(3000),
 			imageCount: rng.Intn(10) / 9, attempt: 1 + rng.Intn(4)/3,
 			accountBilled: rng.Float64() * 0.37, userBilled: rng.Float64() * 0.73,
-			// 成功状态也可能带错误信息(流中断等),这类行算进"仅错误"。
+			// A successful status can also carry an error message (stream interrupted, etc.); rows like this count as "errors only".
 			errorMessage: pick("", "", "", "", "context deadline exceeded", "upstream reset"),
 			errorKind:    pick("", "", "", "", "timeout", "server_error"),
 			retryAttempt: rng.Intn(6) == 0,
@@ -159,7 +159,7 @@ func generateHourlyTestLogs(now time.Time, keyIDs []int64, count int) []hourlyTe
 	return logs
 }
 
-// approxEqualJSON 比较两个结构的 JSON 形态:浮点按相对误差 1e-9 比较(汇总与明细的求和顺序不同)。
+// approxEqualJSON compares the JSON shapes of two structs: floats are compared with a relative error of 1e-9 (the rollup and the details sum in different orders).
 func approxEqualJSON(t *testing.T, label string, want, got interface{}) {
 	t.Helper()
 	var wantTree, gotTree interface{}
@@ -251,7 +251,7 @@ func TestUsageHourlyRollupMatchesRawLogsPostgres(t *testing.T) {
 	if err := db.ClearUsageLogs(context.Background()); err != nil {
 		t.Fatal(err)
 	}
-	// 共用测试库:跑完清掉本测试写入的日志,不影响同包其它 PostgreSQL 用例。
+	// Shared test database: after the run, clear the logs this test wrote, so other PostgreSQL cases in the same package are not affected.
 	defer db.ClearUsageLogs(context.Background())
 	runUsageHourlyEquivalence(t, db)
 }
@@ -272,7 +272,7 @@ func runUsageHourlyEquivalence(t *testing.T, db *DB) {
 			_ = db.DeleteAPIKey(ctx, id)
 		}
 	}()
-	// 手动重置让 5h/7d 窗口从重置时刻起算,也作为一个不在整点上的分段边界。
+	// A manual reset makes the 5h/7d windows count from the reset time, and also serves as a segment boundary that is not on a whole hour.
 	if _, err := db.conn.ExecContext(ctx, `UPDATE api_keys SET last_reset_at = $1 WHERE id = $2`,
 		db.timeArg(now.Add(-3*time.Hour-17*time.Minute)), keyIDs[1]); err != nil {
 		t.Fatal(err)
@@ -361,7 +361,7 @@ func runUsageHourlyEquivalence(t *testing.T, db *DB) {
 			if err != nil {
 				return nil, fmt.Errorf("stats %s: %w", c.name, err)
 			}
-			stats.RPM, stats.TPM = 0, 0 // 依赖真实"一分钟前",两次调用之间可能跨秒
+			stats.RPM, stats.TPM = 0, 0 // depends on the real "one minute ago", the two calls may cross a second boundary
 			out["stats/"+c.name] = stats
 		}
 		for ri, r := range logRanges {
@@ -415,8 +415,8 @@ func runUsageHourlyEquivalence(t *testing.T, db *DB) {
 	}
 }
 
-// 正常写入路径(批量落库)在同一事务里维护汇总:每个小时的请求数与明细一致,
-// last_log_id 跟上 MAX(id),查询可以直接读汇总。
+// The normal write path (batch persistence) maintains the rollup in the same transaction: each hour's request count matches the details,
+// last_log_id keeps up with MAX(id), so queries can read the rollup directly.
 func TestUsageHourlyRollupMaintainedByLogFlush(t *testing.T) {
 	db, err := New("sqlite", filepath.Join(t.TempDir(), "hourly-flush.db"))
 	if err != nil {
@@ -445,7 +445,7 @@ func TestUsageHourlyRollupMaintainedByLogFlushPostgres(t *testing.T) {
 
 func runUsageHourlyFlushMaintenance(t *testing.T, db *DB) {
 	ctx := context.Background()
-	// 两次落库命中同一批汇总行,第二次走 ON CONFLICT 累加。
+	// Two writes hit the same batch of rollup rows; the second one accumulates via ON CONFLICT.
 	for round := 0; round < 2; round++ {
 		for i := 0; i < 25; i++ {
 			if err := db.InsertUsageLog(ctx, &UsageLogInput{
@@ -515,8 +515,8 @@ func assertUsageHourlyMatchesLogs(t *testing.T, db *DB) {
 	approxEqualJSON(t, "hourly totals", logs, rolled)
 }
 
-// 升级场景:库里已有历史日志但没有汇总,启动时登记回填边界,后台分块回填后与明细一致;
-// 回填期间查询照旧扫明细。
+// Upgrade scenario: the database already has historical logs but no rollup, so on startup the backfill boundary is registered; after background chunked backfill it matches the details;
+// queries keep scanning the details during backfill.
 func TestUsageHourlyRollupBackfillsExistingHistory(t *testing.T) {
 	db, err := New("sqlite", filepath.Join(t.TempDir(), "hourly-backfill.db"))
 	if err != nil {
@@ -559,8 +559,8 @@ func TestUsageHourlyRollupBackfillsExistingHistory(t *testing.T) {
 	}
 }
 
-// 绕过写入队列插入的行:查询前比对 MAX(id) 发现后改扫明细,修复后重新可用;
-// 定时核对按小时行数发现被改坏的汇总并重算。
+// Rows inserted outside the write queue: the MAX(id) check before a query finds them and switches to scanning the details; once repaired, the rollup is usable again;
+// the scheduled check compares hourly row counts, finds a corrupted rollup, and recalculates it.
 func TestUsageHourlyRollupRepairsOutOfBandRows(t *testing.T) {
 	db, err := New("sqlite", filepath.Join(t.TempDir(), "hourly-repair.db"))
 	if err != nil {
@@ -582,7 +582,7 @@ func TestUsageHourlyRollupRepairsOutOfBandRows(t *testing.T) {
 	recent := now.Truncate(time.Hour).Add(-2 * time.Hour).Add(10 * time.Minute)
 	insertHourlyTestLogs(t, db, []hourlyTestLog{{at: recent, apiKeyID: 2, status: 200, userBilled: 2}})
 	db.repairUsageHourly(ctx)
-	// 模拟没进汇总的行:直接改小汇总的请求数,MAX(id) 比对发现不了。
+	// Simulate a row not in the rollup: directly lower the rollup's request count; the MAX(id) check cannot detect this.
 	if _, err := db.conn.ExecContext(ctx, `UPDATE usage_log_hourly SET requests = requests + 5 WHERE bucket = $1`,
 		db.timeArg(recent.Truncate(time.Hour))); err != nil {
 		t.Fatal(err)
@@ -591,7 +591,7 @@ func TestUsageHourlyRollupRepairsOutOfBandRows(t *testing.T) {
 	assertUsageHourlyMatchesLogs(t, db)
 }
 
-// 删除了已登记的行(MAX(id) 倒退)时汇总无从对账,整表重建。
+// When a registered row is deleted (MAX(id) goes backwards), the rollup cannot be reconciled, so the whole table is rebuilt.
 func TestUsageHourlyRollupRebuildsAfterDeletedRows(t *testing.T) {
 	db, err := New("sqlite", filepath.Join(t.TempDir(), "hourly-deleted.db"))
 	if err != nil {

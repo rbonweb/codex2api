@@ -5,7 +5,7 @@ const (
 	MaxCodexWSDownstreamKeepaliveSlots     = 32
 )
 
-// NormalizeCodexWSDownstreamKeepaliveSlots 归一化空闲聊天连接保留上限，0 表示不保留。
+// NormalizeCodexWSDownstreamKeepaliveSlots normalizes the idle chat connection retention cap; 0 means no connections are retained.
 func NormalizeCodexWSDownstreamKeepaliveSlots(slots int) int {
 	if slots < 0 {
 		return DefaultCodexWSDownstreamKeepaliveSlots

@@ -82,7 +82,7 @@ func TestOutputGuardSettingsExplicitFalseTriStateAndRestart(t *testing.T) {
 	}
 	_ = db.Close()
 
-	// 重新打开数据库，断言显式 false 得到正确持久化恢复
+	// Reopen the database and assert that an explicit false is persisted and restored correctly
 	restartedDB, err := New("sqlite", dbPath)
 	if err != nil {
 		t.Fatalf("reopen error = %v", err)

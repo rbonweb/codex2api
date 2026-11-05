@@ -13,18 +13,18 @@ func TestGetAPIKeyAccountWindowUsageSplitsByAccount(t *testing.T) {
 	dbPath := filepath.Join(t.TempDir(), "codex2api.db")
 	db, err := New("sqlite", dbPath)
 	if err != nil {
-		t.Fatalf("New(sqlite) 返回错误: %v", err)
+		t.Fatalf("New(sqlite) returned error: %v", err)
 	}
 	defer db.Close()
 
 	ctx := context.Background()
 	keyID, err := db.InsertAPIKey(ctx, "scoped", "sk-scope-usage-a-1234567890")
 	if err != nil {
-		t.Fatalf("InsertAPIKey 返回错误: %v", err)
+		t.Fatalf("InsertAPIKey returned error: %v", err)
 	}
 	otherKeyID, err := db.InsertAPIKey(ctx, "other", "sk-scope-usage-b-1234567890")
 	if err != nil {
-		t.Fatalf("InsertAPIKey 返回错误: %v", err)
+		t.Fatalf("InsertAPIKey returned error: %v", err)
 	}
 
 	insert := func(apiKeyID, accountID int64, statusCode, totalTokens int, userBilled float64, at time.Time) {
@@ -41,13 +41,13 @@ func TestGetAPIKeyAccountWindowUsageSplitsByAccount(t *testing.T) {
 	insert(keyID, 1, 200, 100, 0.10, now)
 	insert(keyID, 1, 500, 50, 0.05, now)
 	insert(keyID, 2, 200, 300, 0.30, now)
-	insert(keyID, 1, 499, 900, 9.99, now)                   // 客户端取消不计入
-	insert(keyID, 1, 200, 700, 7.00, now.Add(-8*time.Hour)) // 窗口外
-	insert(otherKeyID, 1, 200, 400, 0.40, now)              // 另一个 Key 不串
+	insert(keyID, 1, 499, 900, 9.99, now)                   // client cancellation is not counted
+	insert(keyID, 1, 200, 700, 7.00, now.Add(-8*time.Hour)) // outside the window
+	insert(otherKeyID, 1, 200, 400, 0.40, now)              // another key does not leak in
 
 	usage, err := db.GetAPIKeyAccountWindowUsage(ctx, keyID, 5*time.Hour)
 	if err != nil {
-		t.Fatalf("GetAPIKeyAccountWindowUsage 返回错误: %v", err)
+		t.Fatalf("GetAPIKeyAccountWindowUsage returned error: %v", err)
 	}
 	if len(usage) != 2 {
 		t.Fatalf("usage covered %d accounts, want 2: %+v", len(usage), usage)
@@ -59,10 +59,10 @@ func TestGetAPIKeyAccountWindowUsageSplitsByAccount(t *testing.T) {
 		t.Fatalf("account 2 usage = %+v, want 1 request / 300 tokens", got)
 	}
 
-	// 更长的窗口把之前的用量也纳进来。
+	// A longer window also pulls in earlier usage.
 	usage, err = db.GetAPIKeyAccountWindowUsage(ctx, keyID, 24*time.Hour)
 	if err != nil {
-		t.Fatalf("GetAPIKeyAccountWindowUsage(1d) 返回错误: %v", err)
+		t.Fatalf("GetAPIKeyAccountWindowUsage(1d) returned error: %v", err)
 	}
 	if got := usage[1]; got.Requests != 3 || got.Tokens != 850 {
 		t.Fatalf("account 1 usage over 1d = %+v, want 3 requests / 850 tokens", got)
@@ -70,7 +70,7 @@ func TestGetAPIKeyAccountWindowUsageSplitsByAccount(t *testing.T) {
 
 	allWindows, err := db.GetAPIKeyAccountWindowsUsage(ctx, keyID)
 	if err != nil {
-		t.Fatalf("GetAPIKeyAccountWindowsUsage 返回错误: %v", err)
+		t.Fatalf("GetAPIKeyAccountWindowsUsage returned error: %v", err)
 	}
 	if got := allWindows["5h"][1]; got.Requests != 2 || got.Tokens != 150 {
 		t.Fatalf("5h account 1 usage = %+v, want 2 requests / 150 tokens", got)
@@ -84,7 +84,7 @@ func TestGetAPIKeyAccountWindowUsageSplitsByAccount(t *testing.T) {
 
 	accounts, err := db.ListAPIKeyAccountStats(ctx, keyID, now.Add(-24*time.Hour), now.Add(time.Minute))
 	if err != nil {
-		t.Fatalf("ListAPIKeyAccountStats 返回错误: %v", err)
+		t.Fatalf("ListAPIKeyAccountStats returned error: %v", err)
 	}
 	if len(accounts) != 2 || accounts[0].AccountID != 1 || accounts[0].Requests != 3 || accounts[0].TotalTokens != 850 {
 		t.Fatalf("account stats = %+v, want account 1 first with 3 requests / 850 tokens", accounts)
@@ -95,14 +95,14 @@ func TestAPIKeyAccountStatsKeepsDeletedAccountLastGroup(t *testing.T) {
 	dbPath := filepath.Join(t.TempDir(), "codex2api.db")
 	db, err := New("sqlite", dbPath)
 	if err != nil {
-		t.Fatalf("New(sqlite) 返回错误: %v", err)
+		t.Fatalf("New(sqlite) returned error: %v", err)
 	}
 	defer db.Close()
 
 	ctx := context.Background()
 	groupID, err := db.CreateAccountGroup(ctx, "historical", "", "#123456", 0, 0, sql.NullInt64{})
 	if err != nil {
-		t.Fatalf("CreateAccountGroup 返回错误: %v", err)
+		t.Fatalf("CreateAccountGroup returned error: %v", err)
 	}
 	accountResult, err := db.conn.ExecContext(ctx, `
 		INSERT INTO accounts (name, credentials, status) VALUES ('deleted-account', '{}', 'active')
@@ -182,18 +182,18 @@ func TestDeleteAccountGroupPrunesScopeLimits(t *testing.T) {
 	dbPath := filepath.Join(t.TempDir(), "codex2api.db")
 	db, err := New("sqlite", dbPath)
 	if err != nil {
-		t.Fatalf("New(sqlite) 返回错误: %v", err)
+		t.Fatalf("New(sqlite) returned error: %v", err)
 	}
 	defer db.Close()
 
 	ctx := context.Background()
 	keptID, err := db.CreateAccountGroup(ctx, "kept", "", "", 0, 0, sql.NullInt64{})
 	if err != nil {
-		t.Fatalf("CreateAccountGroup 返回错误: %v", err)
+		t.Fatalf("CreateAccountGroup returned error: %v", err)
 	}
 	doomedID, err := db.CreateAccountGroup(ctx, "doomed", "", "", 0, 0, sql.NullInt64{})
 	if err != nil {
-		t.Fatalf("CreateAccountGroup 返回错误: %v", err)
+		t.Fatalf("CreateAccountGroup returned error: %v", err)
 	}
 
 	keyID, err := db.InsertAPIKeyWithOptions(ctx, APIKeyInput{
@@ -207,16 +207,16 @@ func TestDeleteAccountGroupPrunesScopeLimits(t *testing.T) {
 		}},
 	})
 	if err != nil {
-		t.Fatalf("InsertAPIKeyWithOptions 返回错误: %v", err)
+		t.Fatalf("InsertAPIKeyWithOptions returned error: %v", err)
 	}
 
 	if err := db.DeleteAccountGroup(ctx, doomedID); err != nil {
-		t.Fatalf("DeleteAccountGroup 返回错误: %v", err)
+		t.Fatalf("DeleteAccountGroup returned error: %v", err)
 	}
 
 	row, err := db.GetAPIKeyByID(ctx, keyID)
 	if err != nil {
-		t.Fatalf("GetAPIKeyByID 返回错误: %v", err)
+		t.Fatalf("GetAPIKeyByID returned error: %v", err)
 	}
 	if len(row.Limits.ScopeLimits) != 2 {
 		t.Fatalf("scope limits = %+v, want the deleted group entry pruned", row.Limits.ScopeLimits)
@@ -226,7 +226,7 @@ func TestDeleteAccountGroupPrunesScopeLimits(t *testing.T) {
 			t.Fatalf("deleted group scope survived: %+v", row.Limits.ScopeLimits)
 		}
 	}
-	// 同 ID 的账号维度条目不能被顺带删掉。
+	// An account-dimension entry with the same ID must not be deleted along the way.
 	foundAccountScope := false
 	for _, scope := range row.Limits.ScopeLimits {
 		if scope.ResolveScopeType() == APIKeyScopeTypeAccount && scope.ScopeID == doomedID {
@@ -242,7 +242,7 @@ func TestScopeCountersAccumulateAcrossGroupAndAccount(t *testing.T) {
 	dbPath := filepath.Join(t.TempDir(), "codex2api.db")
 	db, err := New("sqlite", dbPath)
 	if err != nil {
-		t.Fatalf("New(sqlite) 返回错误: %v", err)
+		t.Fatalf("New(sqlite) returned error: %v", err)
 	}
 	defer db.Close()
 
@@ -297,13 +297,13 @@ func TestScopeCountersAccumulateAcrossGroupAndAccount(t *testing.T) {
 	if group.UsedCost <= 0 {
 		t.Fatalf("group counter cost = %v, want the same figure user_billed got", group.UsedCost)
 	}
-	// 账号维度同时记账：同一笔消耗既算在分组上，也算在账号上。
+	// The account dimension is booked at the same time: the same usage counts toward both the group and the account.
 	account := counters[APIKeyScopeCounterKey{ScopeType: APIKeyScopeTypeAccount, ScopeID: accountID}]
 	if account.UsedRequests != 2 || account.UsedTokens != 150 {
 		t.Fatalf("account counter = %+v, want 2 requests / 150 tokens", account)
 	}
 
-	// 重置只清零目标那一条，并记一次重置。
+	// A reset clears only that one target and records one reset.
 	if err := db.ResetAPIKeyScopeCounter(ctx, keyID, APIKeyScopeTypeGroup, groupID); err != nil {
 		t.Fatalf("ResetAPIKeyScopeCounter: %v", err)
 	}
@@ -327,12 +327,12 @@ func TestScopeCountersSkipKeysWithoutCumulativeQuota(t *testing.T) {
 	dbPath := filepath.Join(t.TempDir(), "codex2api.db")
 	db, err := New("sqlite", dbPath)
 	if err != nil {
-		t.Fatalf("New(sqlite) 返回错误: %v", err)
+		t.Fatalf("New(sqlite) returned error: %v", err)
 	}
 	defer db.Close()
 
 	ctx := context.Background()
-	// 只配滑动窗口、没配累计额度的 Key 不该产生计数器行（落库热路径的成本要为零）。
+	// A key with only a sliding window and no cumulative quota must not produce a counter row (the hot write path must have zero cost).
 	keyID, err := db.InsertAPIKeyWithOptions(ctx, APIKeyInput{
 		Name: "windows-only",
 		Key:  "sk-scope-windows-1234567890",
@@ -364,7 +364,7 @@ func TestDeleteAPIKeyRemovesScopeCounters(t *testing.T) {
 	dbPath := filepath.Join(t.TempDir(), "codex2api.db")
 	db, err := New("sqlite", dbPath)
 	if err != nil {
-		t.Fatalf("New(sqlite) 返回错误: %v", err)
+		t.Fatalf("New(sqlite) returned error: %v", err)
 	}
 	defer db.Close()
 

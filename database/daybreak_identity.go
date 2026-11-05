@@ -18,7 +18,7 @@ type DaybreakPrincipal struct {
 	Headers   map[string]string
 }
 
-// 权限绑定主体与工作区；正常 AT/RT 轮换不改变主体，未知主体保守绑定令牌。
+// The permission binding subject is the workspace; normal AT/RT rotation does not change the subject, and an unknown subject is conservatively bound to the token.
 func DaybreakIdentityOf(principal DaybreakPrincipal) string {
 	subject := daybreakTokenSubject(principal.Token)
 	if subject == "" {
