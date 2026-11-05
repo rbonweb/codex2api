@@ -16,16 +16,13 @@ const (
 )
 
 type OfficialPricingSyncConfig struct {
-	Enabled         bool `json:"enabled"`
-	IntervalMinutes int  `json:"interval_minutes"`
-	IncludeOpenAI   bool `json:"include_openai"`
-	// IncludeGrok and IncludeClaude are no longer stored or read; they stay only until their remaining callers are removed.
-	IncludeGrok   bool         `json:"include_grok"`
-	IncludeClaude bool         `json:"include_claude"`
-	LastAttemptAt sql.NullTime `json:"-"`
-	LastSuccessAt sql.NullTime `json:"-"`
-	LastError     string       `json:"last_error,omitempty"`
-	LastWarning   string       `json:"last_warning,omitempty"`
+	Enabled         bool         `json:"enabled"`
+	IntervalMinutes int          `json:"interval_minutes"`
+	IncludeOpenAI   bool         `json:"include_openai"`
+	LastAttemptAt   sql.NullTime `json:"-"`
+	LastSuccessAt   sql.NullTime `json:"-"`
+	LastError       string       `json:"last_error,omitempty"`
+	LastWarning     string       `json:"last_warning,omitempty"`
 }
 
 var (

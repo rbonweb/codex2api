@@ -7,7 +7,7 @@ import (
 )
 
 func TestAccountHealthBucketsExcludeInternalCapabilityProbe(t *testing.T) {
-	db := newGrokStateTestDB(t)
+	db := newSQLiteTestDB(t)
 	ctx := context.Background()
 	now := time.Now().UTC().Truncate(time.Second)
 	insert := func(statusCode int, reason string) {
@@ -19,8 +19,8 @@ func TestAccountHealthBucketsExcludeInternalCapabilityProbe(t *testing.T) {
 		}
 	}
 	insert(200, "")
-	insert(200, "grok_capability_probe")
-	insert(500, "grok_capability_probe")
+	insert(200, "maintenance_probe")
+	insert(500, "maintenance_probe")
 
 	buckets, err := db.GetAccountsHealthBuckets(ctx, now, 20, 10*time.Minute)
 	if err != nil {

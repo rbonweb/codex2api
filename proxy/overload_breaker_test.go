@@ -102,15 +102,15 @@ func TestNoteOverloadOutcomePausesAccountAndResetsWindow(t *testing.T) {
 		t.Fatalf("cooldown reason = %q, want %q", reason, overloadPauseReason)
 	}
 
-	// Grok 渠道与未启用开关都不参与统计。
+	// 非 Codex 渠道与未启用开关都不参与统计。
 	globalOverloadBreaker.reset(9101)
-	grokLog := &database.UsageLogInput{AccountID: 9101, StatusCode: 503, Channel: database.UpstreamChannelGrok,
+	otherLog := &database.UsageLogInput{AccountID: 9101, StatusCode: 503, Channel: "other",
 		ErrorMessage: "server_is_overloaded"}
 	for i := 0; i < 10; i++ {
-		handler.noteOverloadOutcome(grokLog)
+		handler.noteOverloadOutcome(otherLog)
 	}
 	if total, _ := globalOverloadBreaker.record(9101, false, 5, time.Now()); total != 1 {
-		t.Fatalf("grok logs leaked into codex overload window: total=%d", total)
+		t.Fatalf("non-codex logs leaked into codex overload window: total=%d", total)
 	}
 }
 

@@ -25,12 +25,8 @@ import (
 
 const usageStatsRollupInitTimeout = 5 * time.Minute
 
-const grokStateBackfillInitTimeout = 5 * time.Minute
-
 // AccountRow 数据库中的账号行
 type AccountRow struct {
-	GrokPlanDisplay         *GrokPlanDisplay
-	GrokModels              *GrokModelSummary
 	ID                      int64
 	CredentialGeneration    int64
 	CredentialFamilyID      string
@@ -474,7 +470,7 @@ func New(driver string, dsn string, schema ...string) (*DB, error) {
 		if err := db.ensureQualityTestSchema(ctx); err != nil {
 			return nil, fmt.Errorf("初始化检测记录表失败: %w", err)
 		}
-		// Fill empty credential family ids (the family phase of the retired Grok backfill); Codex reads and token refresh rely on it.
+		// Fill empty credential family ids; Codex reads and token refresh rely on it.
 		familyCtx, familyCancel := context.WithTimeout(context.WithoutCancel(ctx), dataMigrationTimeout)
 		familyErr := db.ensureCredentialFamilyBackfill(familyCtx)
 		familyCancel()
@@ -718,13 +714,6 @@ type usageStatsRollup struct {
 // without weakening normal request or database-operation timeouts.
 func usageStatsRollupStartupContext(parent context.Context) (context.Context, context.CancelFunc) {
 	return context.WithTimeout(context.WithoutCancel(parent), usageStatsRollupInitTimeout)
-}
-
-// grokStateStartupContext detaches the one-time historical account backfill
-// from the shared ten-second schema deadline while preserving startup values.
-// A bounded deadline still prevents a stuck migration from hanging forever.
-func grokStateStartupContext(parent context.Context) (context.Context, context.CancelFunc) {
-	return context.WithTimeout(context.WithoutCancel(parent), grokStateBackfillInitTimeout)
 }
 
 func (db *DB) ensureUsageStatsRollup(ctx context.Context) error {
@@ -1312,7 +1301,7 @@ func (db *DB) migrate(ctx context.Context) error {
 	-- 生产最大表，非 CONCURRENTLY 建索引会持锁阻塞写入，且本批次运行在 10 秒启动
 	-- 超时的单个隐式事务里，大表下会超时回滚导致启动崩溃循环。改由
 	-- ensureUsageLogsGenerationIndex 在启动后用 CREATE INDEX CONCURRENTLY 在线构建。
-	-- 上游渠道（codex/grok），写入时按调度账号固化，供仪表盘/用量分渠道聚合
+	-- 上游渠道（codex），写入时按调度账号固化，供仪表盘/用量分渠道聚合
 	ALTER TABLE usage_logs ADD COLUMN IF NOT EXISTS channel VARCHAR(16) DEFAULT '';
 	ALTER TABLE usage_logs ALTER COLUMN reasoning_effort TYPE VARCHAR(100);
 	ALTER TABLE usage_logs ALTER COLUMN service_tier TYPE VARCHAR(100);
@@ -1894,10 +1883,7 @@ type APIKeyLimits struct {
 	AllowLive bool `json:"allow_live,omitempty"`
 	// UpstreamChannel 限定该 Key 的请求只调度到指定上游渠道的账号：
 	//   - ""/auto: 不限（默认，按模型路由）
-	//   - codex:   仅 Codex OAuth / OpenAI Responses 中转账号
-	//   - grok:    仅 Grok 账号（此时不再要求账号声明模型，直接透传请求模型）
-	//   - antigravity: Antigravity 管理渠道
-	//   - claude:      仅 Claude OAuth / Anthropic Messages 账号
+	//   - codex:   仅 Codex 账号（现在是唯一渠道）
 	UpstreamChannel string `json:"upstream_channel,omitempty"`
 	// ScopeLimits 是「该 Key × 某账号分组 / 某账号」维度的用量上限（issue #439）。
 	// 与上面的 Cost/Token 限额不同，它只统计该 Key 打到对应 scope 的用量，超额后默认
@@ -1918,11 +1904,8 @@ const (
 
 // 上游渠道限定取值。
 const (
-	UpstreamChannelAuto        = ""
-	UpstreamChannelCodex       = "codex"
-	UpstreamChannelGrok        = "grok"
-	UpstreamChannelAntigravity = "antigravity"
-	UpstreamChannelClaude      = "claude"
+	UpstreamChannelAuto  = ""
+	UpstreamChannelCodex = "codex"
 )
 
 // ResolveUpstreamChannel 归一 Key 的上游渠道限定；未知值一律视为不限（auto）。
@@ -1930,32 +1913,8 @@ func (l APIKeyLimits) ResolveUpstreamChannel() string {
 	switch strings.ToLower(strings.TrimSpace(l.UpstreamChannel)) {
 	case UpstreamChannelCodex:
 		return UpstreamChannelCodex
-	case UpstreamChannelGrok:
-		return UpstreamChannelGrok
-	case UpstreamChannelAntigravity:
-		return UpstreamChannelAntigravity
-	case UpstreamChannelClaude:
-		return UpstreamChannelClaude
 	}
 	return UpstreamChannelAuto
-}
-
-// accountChannelFilterSQL returns the shared account-provider predicate used by
-// both full account reads and the sanitized admin-list projection.
-func accountChannelFilterSQL(channel, upstreamTypeExpr string) string {
-	switch strings.ToLower(strings.TrimSpace(channel)) {
-	case UpstreamChannelGrok:
-		return ` AND ` + upstreamTypeExpr + ` = 'grok'`
-	case UpstreamChannelAntigravity:
-		return ` AND ` + upstreamTypeExpr + ` = 'antigravity'`
-	case UpstreamChannelClaude:
-		return ` AND ` + upstreamTypeExpr + ` = 'claude'`
-	case UpstreamChannelCodex:
-		// Blank legacy rows and OpenAI Responses relays remain in the Codex view.
-		return ` AND ` + upstreamTypeExpr + ` NOT IN ('grok', 'antigravity', 'claude')`
-	default:
-		return ""
-	}
 }
 
 // ResolveImageGenerationPolicy 归一 Key 的图片工具策略，统一新旧两种配置来源：
@@ -2403,8 +2362,6 @@ type SystemSettings struct {
 	SiteName                           string
 	SiteLogo                           string
 	BackgroundConfig                   string // JSON: {"image":"...","opacity":18,"blur":0}
-	GrokConfig                         string // JSON: {"affinity_mode":"strict"}
-	ClaudeConfig                       string // JSON: {"fingerprint_mode":"preserve","default_timezone":"","session_window_limit":0}
 	MaxConcurrency                     int
 	GlobalRPM                          int
 	TestModel                          string
@@ -2724,7 +2681,6 @@ func (db *DB) GetSystemSettings(ctx context.Context) (*SystemSettings, error) {
 			       COALESCE(NULLIF(TRIM(billing_tier_policy), ''), 'actual'),
 			       COALESCE(image_storage_config, '{}'),
 		       COALESCE(background_config, '{}'),
-		       COALESCE(grok_config, '{}'),
 		       COALESCE(show_full_usage_numbers, false),
 		       COALESCE(show_upstream_model_mismatch, true),
 		       COALESCE(public_key_usage_page_enabled, true),
@@ -2780,7 +2736,6 @@ func (db *DB) GetSystemSettings(ctx context.Context) (*SystemSettings, error) {
 		       COALESCE(session_slot_buffer_seconds, 10),
 		       COALESCE(models_list_read_max_bytes, 8388608),
 		       COALESCE(auto_activate_5h_window_enabled, false),
-		       COALESCE(claude_config, '{}'),
 		       COALESCE(codex_images_main_model, ''),
 		       COALESCE(codex_telemetry_enabled, false),
 		       COALESCE(codex_turn_state_template_cache_enabled, false),
@@ -2813,7 +2768,6 @@ func (db *DB) GetSystemSettings(ctx context.Context) (*SystemSettings, error) {
 		&s.BillingTierPolicy,
 		&s.ImageStorageConfig,
 		&s.BackgroundConfig,
-		&s.GrokConfig,
 		&s.ShowFullUsageNumbers,
 		&s.ShowUpstreamModelMismatch,
 		&s.PublicKeyUsagePageEnabled,
@@ -2869,7 +2823,6 @@ func (db *DB) GetSystemSettings(ctx context.Context) (*SystemSettings, error) {
 		&s.SessionSlotBufferSeconds,
 		&s.ModelsListReadMaxBytes,
 		&s.AutoActivate5hWindowEnabled,
-		&s.ClaudeConfig,
 		&s.CodexImagesMainModel,
 		&s.CodexTelemetryEnabled,
 		&ignoredTurnStateTemplateCache,
@@ -3090,7 +3043,6 @@ func updateSystemSettingsWithExecer(ctx context.Context, execer systemSettingsEx
 				affinity_mode,
 				session_affinity_spread,
 				background_config,
-				grok_config,
 				show_full_usage_numbers,
 				show_upstream_model_mismatch,
 				public_key_usage_page_enabled,
@@ -3157,7 +3109,7 @@ func updateSystemSettingsWithExecer(ctx context.Context, execer systemSettingsEx
 					auto_reset_credits_on_exhaustion_enabled,
 					codex_ws_downstream_keepalive_slots
 					)
-						VALUES (1, $1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16, $17, $18, $19, $20, $21, $22, $23, $24, $25, $26, $27, $28, $29, $30, $31, $32, $33, $34, $35, $36, $37, $38, $39, $40, $41, $42, $43, $44, $45, $46, $47, $48, $49, $50, $51, $52, $53, $54, $55, $56, $57, $58, $59, $60, $61, $62, $63, $64, $65, $66, $67, $68, $69, $70, $71, $72, $73, $74, $75, $76, $77, $78, $79, $80, $81, $82, $83, $84, $85, $86, $87, $88, $89, $90, $91, $92, $93, $94, $95, $96, $97, $98, $99, $100, $101, $102, $103, $104, $105, $106, $107, $108, $109, $110, $111, $112, $113, $114, $115, $116, $117, $118, $119, $120, $121, $122, $123, $124, $125, $126, $127, $130)
+						VALUES (1, $1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16, $17, $18, $19, $20, $21, $22, $23, $24, $25, $26, $27, $28, $29, $30, $31, $32, $33, $34, $35, $36, $37, $38, $39, $40, $41, $42, $43, $44, $45, $46, $47, $48, $49, $50, $51, $52, $53, $54, $55, $56, $57, $58, $59, $60, $61, $62, $63, $64, $65, $66, $67, $68, $69, $70, $71, $72, $73, $74, $75, $76, $77, $78, $79, $80, $81, $82, $83, $84, $85, $86, $87, $88, $89, $90, $91, $92, $93, $94, $95, $96, $97, $98, $99, $100, $101, $102, $103, $104, $105, $106, $107, $108, $109, $110, $111, $112, $113, $114, $115, $116, $117, $118, $119, $120, $121, $122, $123, $124, $125, $126, $129)
 				ON CONFLICT (id) DO UPDATE SET
 				site_name               = EXCLUDED.site_name,
 				site_logo               = EXCLUDED.site_logo,
@@ -3197,10 +3149,10 @@ func updateSystemSettingsWithExecer(ctx context.Context, execer systemSettingsEx
 				prompt_filter_log_matches = EXCLUDED.prompt_filter_log_matches,
 				prompt_filter_max_text_length = EXCLUDED.prompt_filter_max_text_length,
 				prompt_filter_sensitive_words = EXCLUDED.prompt_filter_sensitive_words,
-				prompt_filter_custom_patterns = CASE WHEN $128 THEN system_settings.prompt_filter_custom_patterns ELSE EXCLUDED.prompt_filter_custom_patterns END,
+				prompt_filter_custom_patterns = CASE WHEN $127 THEN system_settings.prompt_filter_custom_patterns ELSE EXCLUDED.prompt_filter_custom_patterns END,
 				prompt_filter_disabled_patterns = EXCLUDED.prompt_filter_disabled_patterns,
 				prompt_filter_review_enabled = EXCLUDED.prompt_filter_review_enabled,
-				prompt_filter_review_api_key = CASE WHEN $129 THEN system_settings.prompt_filter_review_api_key ELSE EXCLUDED.prompt_filter_review_api_key END,
+				prompt_filter_review_api_key = CASE WHEN $128 THEN system_settings.prompt_filter_review_api_key ELSE EXCLUDED.prompt_filter_review_api_key END,
 				prompt_filter_review_base_url = EXCLUDED.prompt_filter_review_base_url,
 				prompt_filter_review_model = EXCLUDED.prompt_filter_review_model,
 				prompt_filter_review_timeout_seconds = EXCLUDED.prompt_filter_review_timeout_seconds,
@@ -3222,7 +3174,6 @@ func updateSystemSettingsWithExecer(ctx context.Context, execer systemSettingsEx
 				affinity_mode = EXCLUDED.affinity_mode,
 				session_affinity_spread = EXCLUDED.session_affinity_spread,
 				background_config = EXCLUDED.background_config,
-				grok_config = EXCLUDED.grok_config,
 				show_full_usage_numbers = EXCLUDED.show_full_usage_numbers,
 				show_upstream_model_mismatch = EXCLUDED.show_upstream_model_mismatch,
 				public_key_usage_page_enabled = EXCLUDED.public_key_usage_page_enabled,
@@ -3297,7 +3248,7 @@ func updateSystemSettingsWithExecer(ctx context.Context, execer systemSettingsEx
 		s.PromptFilterReviewModel, s.PromptFilterReviewTimeoutSeconds, s.PromptFilterReviewFailClosed,
 		s.ClientCompatMode, s.CodexMinCLIVersion, codexUserAgentConfig, s.UsageLogMode, s.UsageLogBatchSize,
 		s.UsageLogFlushIntervalSeconds, s.StreamFlushPolicy, s.StreamFlushIntervalMS,
-		s.FirstTokenTimeoutSeconds, firstTokenMode, billingTierPolicy, s.ImageStorageConfig, s.SchedulerMode, normalizeAffinityMode(s.AffinityMode), s.SessionAffinitySpread, s.BackgroundConfig, normalizeGrokConfig(s.GrokConfig), s.ShowFullUsageNumbers, s.ShowUpstreamModelMismatch, s.PublicKeyUsagePageEnabled, s.PublicImageStudioPageEnabled, reasoningEffortModels,
+		s.FirstTokenTimeoutSeconds, firstTokenMode, billingTierPolicy, s.ImageStorageConfig, s.SchedulerMode, normalizeAffinityMode(s.AffinityMode), s.SessionAffinitySpread, s.BackgroundConfig, s.ShowFullUsageNumbers, s.ShowUpstreamModelMismatch, s.PublicKeyUsagePageEnabled, s.PublicImageStudioPageEnabled, reasoningEffortModels,
 		s.CodexForceWebsocket, s.CodexWSKeepaliveEnabled, normalizeCodexWSKeepaliveInterval(s.CodexWSKeepaliveIntervalSec),
 		s.CodexWSHideUpstreamErrors, s.CodexWSSilentRetryEnabled, normalizeCodexWSSilentMaxRetries(s.CodexWSSilentMaxRetries),
 		s.AutoPause5hThreshold, s.AutoPause7dThreshold, s.AutoPause5hGuardBandPercent, s.AutoPause5hGuardConcurrency,
@@ -3570,38 +3521,6 @@ func normalizeAffinityMode(mode string) string {
 	default:
 		return "bounded"
 	}
-}
-
-// normalizeClaudeConfig 校验 claude_config JSON,非法或空则回落到默认 {}。
-func normalizeClaudeConfig(raw string) string {
-	raw = strings.TrimSpace(raw)
-	if raw == "" || !json.Valid([]byte(raw)) {
-		return "{}"
-	}
-	return raw
-}
-
-// UpdateClaudeConfig 定向更新 claude_config 单列(不回写整行设置,避免触碰大 UPSERT)。
-func (db *DB) UpdateClaudeConfig(ctx context.Context, raw string) error {
-	value := normalizeClaudeConfig(raw)
-	return db.withSQLiteWriteLock(ctx, func() error {
-		_, err := db.conn.ExecContext(ctx, `
-			INSERT INTO system_settings (id, claude_config) VALUES (1, $1)
-			ON CONFLICT (id) DO UPDATE SET claude_config = EXCLUDED.claude_config`, value)
-		return err
-	})
-}
-
-// normalizeGrokConfig 校验 grok_config JSON,非法或空则回落到默认 {}。
-func normalizeGrokConfig(raw string) string {
-	raw = strings.TrimSpace(raw)
-	if raw == "" {
-		return "{}"
-	}
-	if !json.Valid([]byte(raw)) {
-		return "{}"
-	}
-	return raw
 }
 
 // DeleteAPIKey 删除 API 密钥
@@ -4585,10 +4504,10 @@ type UsageLogInput struct {
 	InjectedTurnState string
 	UpstreamTurnState string
 	AccountID         int64
-	// CredentialGeneration attributes internally-generated Grok traffic to the
+	// CredentialGeneration attributes internally-generated traffic to the
 	// credential snapshot that issued it. Zero is legacy/unscoped traffic.
 	CredentialGeneration int64
-	// Channel 是处理该请求的上游渠道（codex/grok），写入时固化，空值表示未知。
+	// Channel 是处理该请求的上游渠道（codex），写入时固化，空值表示未知。
 	Channel              string
 	ClientIP             string
 	ClientUserAgent      string
@@ -4643,11 +4562,11 @@ type UsageLogInput struct {
 	ImageBytes             int
 	ImageFormat            string
 	ImageSize              string
-	// VideoCount / VideoSeconds 只在 Grok 生视频结算行填写:成功交付的视频数与
+	// VideoCount / VideoSeconds 只在媒体生视频结算行填写:成功交付的视频数与
 	// 上游生成时长(秒,计费依据,与 HTTP 耗时 DurationMs 无关)。
 	VideoCount   int
 	VideoSeconds int
-	// UpstreamCostUSD 是上游自报的本次成本(xAI usage.cost_in_usd_ticks 折算),0 表示未自报。
+	// UpstreamCostUSD 是上游自报的本次成本(上游 usage 成本折算),0 表示未自报。
 	UpstreamCostUSD        float64
 	IsRetryAttempt         bool
 	AttemptIndex           int
@@ -5265,7 +5184,7 @@ type TrafficSnapshot struct {
 // 当 rangeStart 为零值时回落到"今日"(本地 0 点起),与历史行为一致;
 // 当传入显式区间时,today_* 字段语义变为"该区间内的统计",total_* 字段始终是全量累计。
 // rangeEnd 为零值表示"至今"。
-// GetUsageStats 聚合用量统计。channel 非空（codex/grok/antigravity/claude）时按渠道过滤；
+// GetUsageStats 聚合用量统计。channel 非空（codex）时按渠道过滤；
 // 渠道视图下的「累计」只覆盖现存 usage_logs（清空日志前的 baseline 无渠道维度，不计入）。
 func (db *DB) GetUsageStats(ctx context.Context, rangeStart, rangeEnd time.Time, channel string) (*UsageStats, error) {
 	return db.getUsageStats(ctx, rangeStart, rangeEnd, channel, true, UsageLogFilter{})
@@ -6322,7 +6241,7 @@ type UsageLogFilter struct {
 	StatusFamily          string
 	ErrorKind             string
 	Query                 string
-	Channel               string // 上游渠道（codex/grok），空=全部
+	Channel               string // 上游渠道（codex），空=全部
 	RetryOnly             *bool  // nil=全部, true=仅重试请求, false=仅首次请求
 	ViaWebsocketOnly      *bool  // nil=全部, true=仅 WebSocket, false=仅 HTTP
 	UltraOnly             *bool  // nil=全部, true=仅 Codex Ultra 档, false=仅非 Ultra
@@ -6973,7 +6892,7 @@ func (db *DB) endUserUsageLogPredicate() string {
 }
 
 // currentAccountUsageGenerationPredicate keeps generation-scoped internal
-// traffic (currently Grok capability probes) attached to the credential
+// traffic (maintenance probes) attached to the credential
 // identity that issued it. Legacy and ordinary request rows use generation 0
 // and remain visible. The correlated account lookup also makes a buffered old
 // probe harmless if credentials rotate after the probe's final pre-write CAS.
@@ -7194,15 +7113,9 @@ func (db *DB) ListActive(ctx context.Context) ([]*AccountRow, error) {
 	return db.ListActiveByChannel(ctx, "")
 }
 
-// ListActiveByChannel 返回未删除账号；channel 为空返回全部，其他已知渠道
-// 按 credentials.upstream_type 显式隔离。缺省 upstream_type 的历史账号归 Codex。
+// ListActiveByChannel 返回未删除账号。现在只剩 Codex 一个渠道，所有账号都是 Codex 账号，channel 参数保留给调用方。
 func (db *DB) ListActiveByChannel(ctx context.Context, channel string) ([]*AccountRow, error) {
 	where := `status <> 'deleted' AND COALESCE(error_message, '') <> 'deleted'`
-	upstreamTypeExpr := `LOWER(COALESCE(credentials->>'upstream_type', ''))`
-	if db.isSQLite() {
-		upstreamTypeExpr = `LOWER(COALESCE(json_extract(credentials, '$.upstream_type'), ''))`
-	}
-	where += accountChannelFilterSQL(channel, upstreamTypeExpr)
 
 	query := `
 		SELECT id, name, platform, type, credentials, proxy_url, status, cooldown_reason, cooldown_until, error_message, COALESCE(enabled, true), COALESCE(locked, false), COALESCE(credit_enabled, false), COALESCE(credit_skip_usage_window, false), COALESCE(skip_warm_tier, false), score_bias_override, base_concurrency_override, COALESCE(tags, '[]'), COALESCE(note, ''), created_at, updated_at, COALESCE(credential_generation, 1), COALESCE(credential_family_id, '')
@@ -7654,7 +7567,7 @@ func (db *DB) UpdateAccountSchedulerMetadata(ctx context.Context, id int64, scor
 		if len(credentialUpdates) > 0 {
 			current := decodeCredentials(currentRaw)
 			merged := mergeCredentialMaps(cloneCredentialUpdates(current), credentialUpdates)
-			identityChanged := grokIdentityCredentialChanged(current, merged) || codexIdentityCredentialChanged(current, merged)
+			identityChanged := codexIdentityCredentialChanged(current, merged)
 			credJSON, err := json.Marshal(encryptSensitiveCredentials(merged))
 			if err != nil {
 				return fmt.Errorf("序列化 credentials 失败: %w", err)
@@ -7882,7 +7795,7 @@ func (db *DB) batchUpdateAccountCredentials(ctx context.Context, tx *sql.Tx, cur
 		// so an idempotent update for one row does not inherit another row's
 		// generation bump.
 		merged := mergeCredentialMaps(cloneCredentialUpdates(credentials), updates)
-		identityChanged := grokIdentityCredentialChanged(credentials, merged) || codexIdentityCredentialChanged(credentials, merged)
+		identityChanged := codexIdentityCredentialChanged(credentials, merged)
 		credJSON, err := json.Marshal(encryptSensitiveCredentials(merged))
 		if err != nil {
 			return fmt.Errorf("序列化 credentials 失败: %w", err)
@@ -8074,7 +7987,7 @@ func (db *DB) updateCredentialsReadMerge(ctx context.Context, id int64, credenti
 	}
 
 	merged := mergeCredentialMaps(decodeCredentials(currentRaw), credentials)
-	identityChanged := grokIdentityCredentialChanged(decodeCredentials(currentRaw), merged) || codexIdentityCredentialChanged(decodeCredentials(currentRaw), merged)
+	identityChanged := codexIdentityCredentialChanged(decodeCredentials(currentRaw), merged)
 	credJSON, err := json.Marshal(encryptSensitiveCredentials(merged))
 	if err != nil {
 		return fmt.Errorf("序列化 credentials 失败: %w", err)
@@ -8104,7 +8017,7 @@ func (db *DB) updateCredentialsSQLite(ctx context.Context, id int64, credentials
 		}
 		_, hasEmail := credentials["email"]
 		_, hasHeaders := credentials["custom_headers"]
-		if grokIdentityUpdateKeysPresent(credentials) || hasEmail || hasHeaders {
+		if identityUpdateKeysPresent(credentials) || hasEmail || hasHeaders {
 			return db.updateCredentialsReadMergeSQLiteUnlocked(ctx, id, credentials)
 		}
 
@@ -8170,7 +8083,7 @@ func (db *DB) updateCredentialsReadMergeSQLiteUnlocked(ctx context.Context, id i
 
 	current := decodeCredentials(currentRaw)
 	merged := mergeCredentialMaps(decodeCredentials(currentRaw), credentials)
-	identityChanged := grokIdentityCredentialChanged(current, merged) || codexIdentityCredentialChanged(current, merged)
+	identityChanged := codexIdentityCredentialChanged(current, merged)
 	credJSON, err := json.Marshal(encryptSensitiveCredentials(merged))
 	if err != nil {
 		return fmt.Errorf("序列化 credentials 失败: %w", err)
@@ -8188,45 +8101,21 @@ func (db *DB) updateCredentialsReadMergeSQLiteUnlocked(ctx context.Context, id i
 	return tx.Commit()
 }
 
-var grokIdentityCredentialKeys = map[string]struct{}{
+var identityCredentialKeys = map[string]struct{}{
 	"access_token": {}, "refresh_token": {}, "api_key": {}, "upstream_type": {},
-	"base_url": {}, "grok_client_id": {}, "grok_token_endpoint": {},
-	"grok_oidc_issuer": {}, "grok_principal_type": {}, "grok_principal_id": {},
-	"account_id": {},
+	"base_url": {}, "account_id": {},
 }
 
-func grokIdentityUpdateKeysPresent(updates map[string]interface{}) bool {
+func identityUpdateKeysPresent(updates map[string]interface{}) bool {
 	if _, ok := updates["session_token"]; ok {
 		return true
 	}
 	for key := range updates {
-		if _, ok := grokIdentityCredentialKeys[key]; ok {
+		if _, ok := identityCredentialKeys[key]; ok {
 			return true
 		}
 	}
 	return false
-}
-
-func grokIdentityCredentialChanged(before, after map[string]interface{}) bool {
-	if !strings.EqualFold(strings.TrimSpace(credentialStringFromMap(after, "upstream_type")), "grok") {
-		return false
-	}
-	for key := range grokIdentityCredentialKeys {
-		if strings.TrimSpace(credentialStringFromMap(before, key)) != strings.TrimSpace(credentialStringFromMap(after, key)) {
-			return true
-		}
-	}
-	return false
-}
-
-func openAIResponsesIdentityCredentialChanged(before, after map[string]interface{}) bool {
-	if !strings.EqualFold(strings.TrimSpace(credentialStringFromMap(after, "upstream_type")), "openai_responses") {
-		return false
-	}
-	return strings.TrimRight(strings.TrimSpace(credentialStringFromMap(before, "base_url")), "/") !=
-		strings.TrimRight(strings.TrimSpace(credentialStringFromMap(after, "base_url")), "/") ||
-		strings.TrimSpace(credentialStringFromMap(before, "api_key")) !=
-			strings.TrimSpace(credentialStringFromMap(after, "api_key"))
 }
 
 func sqliteJSONSetKeySupported(key string) bool {
@@ -8240,58 +8129,6 @@ func sqliteJSONSetKeySupported(key string) bool {
 		return false
 	}
 	return true
-}
-
-func (db *DB) UpdateOpenAIResponsesAccount(ctx context.Context, id int64, name string, credentials map[string]interface{}, proxyURL string) error {
-	tx, err := db.conn.BeginTx(ctx, nil)
-	if err != nil {
-		return err
-	}
-	defer tx.Rollback()
-
-	selectQuery := `SELECT credentials FROM accounts WHERE id = $1 AND status <> 'deleted' AND COALESCE(error_message, '') <> 'deleted'`
-	if !db.isSQLite() {
-		selectQuery += ` FOR UPDATE`
-	}
-
-	var currentRaw interface{}
-	if err := tx.QueryRowContext(ctx, selectQuery, id).Scan(&currentRaw); err != nil {
-		return err
-	}
-
-	current := decodeCredentials(currentRaw)
-	merged := mergeCredentialMaps(cloneCredentialUpdates(current), credentials)
-	identityChanged := openAIResponsesIdentityCredentialChanged(current, merged)
-	credJSON, err := json.Marshal(encryptSensitiveCredentials(merged))
-	if err != nil {
-		return fmt.Errorf("序列化 credentials 失败: %w", err)
-	}
-
-	identityUpdate := ""
-	if identityChanged {
-		identityUpdate = ", credential_generation = credential_generation + 1, status = 'active', error_message = '', cooldown_reason = '', cooldown_until = NULL"
-	}
-	updateQuery := `UPDATE accounts SET name = $1, credentials = $2, proxy_url = $3, platform = 'openai', type = 'responses_api'` + identityUpdate + `, updated_at = CURRENT_TIMESTAMP WHERE id = $4`
-	if !db.isSQLite() {
-		updateQuery = `UPDATE accounts SET name = $1, credentials = $2::jsonb, proxy_url = $3, platform = 'openai', type = 'responses_api'` + identityUpdate + `, updated_at = CURRENT_TIMESTAMP WHERE id = $4`
-	}
-	res, err := tx.ExecContext(ctx, updateQuery, name, credJSON, proxyURL, id)
-	if err != nil {
-		return err
-	}
-	affected, err := res.RowsAffected()
-	if err != nil {
-		return err
-	}
-	if affected == 0 {
-		return sql.ErrNoRows
-	}
-	if identityChanged {
-		if _, err := tx.ExecContext(ctx, `DELETE FROM account_model_cooldowns WHERE account_id = $1`, id); err != nil {
-			return err
-		}
-	}
-	return tx.Commit()
 }
 
 func (db *DB) UpdateOAuthAccountCredentials(ctx context.Context, id int64, credentials map[string]interface{}, proxyURL string) error {
@@ -8816,31 +8653,13 @@ func (db *DB) InsertPendingAccountWithCredentials(ctx context.Context, name stri
 	)
 }
 
-func (db *DB) InsertOpenAIResponsesAccount(ctx context.Context, name string, credentials map[string]interface{}, proxyURL string) (int64, error) {
-	if credentials == nil {
-		credentials = map[string]interface{}{}
-	}
-	credJSON, err := json.Marshal(encryptSensitiveCredentials(credentials))
-	if err != nil {
-		return 0, err
-	}
-
-	return db.insertAccountRowWithFamily(ctx,
-		`INSERT INTO accounts (name, platform, type, credentials, proxy_url) VALUES ($1, 'openai', 'responses_api', $2, $3) RETURNING id`,
-		`INSERT INTO accounts (name, platform, type, credentials, proxy_url) VALUES ($1, 'openai', 'responses_api', $2, $3)`,
-		credentials,
-		name, credJSON, proxyURL,
-	)
-}
-
-// InsertAccountWithUpstream 插入一个指定 platform / type 的账号（用于 Grok 等
-// 非 Codex 上游），credentials 全量入库。
+// InsertAccountWithUpstream 插入一个指定 platform / type 的账号，credentials 全量入库。
 func (db *DB) InsertAccountWithUpstream(ctx context.Context, name, platform, accountType string, credentials map[string]interface{}, proxyURL string) (int64, error) {
 	if credentials == nil {
 		credentials = map[string]interface{}{}
 	}
 	if strings.TrimSpace(platform) == "" {
-		platform = "xai"
+		platform = "openai"
 	}
 	if strings.TrimSpace(accountType) == "" {
 		accountType = "api"
@@ -9072,28 +8891,6 @@ func (db *DB) FindActiveAccountByOAuthRouteIdentity(ctx context.Context, email, 
 		return 0, err
 	}
 	return 0, sql.ErrNoRows
-}
-
-func (db *DB) GetAllOpenAIAPIKeys(ctx context.Context) (map[string]bool, error) {
-	rows, err := db.conn.QueryContext(ctx, `SELECT credentials FROM accounts WHERE status <> 'deleted' AND COALESCE(error_message, '') <> 'deleted'`)
-	if err != nil {
-		return nil, err
-	}
-	defer rows.Close()
-
-	result := make(map[string]bool)
-	for rows.Next() {
-		var raw interface{}
-		if err := rows.Scan(&raw); err != nil {
-			return nil, err
-		}
-		apiKey := strings.TrimSpace(credentialString(raw, "api_key"))
-		upstreamType := strings.TrimSpace(credentialString(raw, "upstream_type"))
-		if apiKey != "" && upstreamType == "openai_responses" {
-			result[apiKey] = true
-		}
-	}
-	return result, rows.Err()
 }
 
 // GetAllSessionTokens 获取所有已存在的 session_token（用于导入去重，排除已删除账号）
