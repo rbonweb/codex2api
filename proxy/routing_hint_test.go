@@ -8,16 +8,8 @@ import (
 )
 
 func codexAccount() *auth.Account {
-	// 空 UpstreamType 的账号即官方 Codex 账号（非中转、非 Grok）。
+	// 空 UpstreamType 的账号即官方 Codex 账号。
 	return &auth.Account{AccountID: "acc-1"}
-}
-
-func relayAccount() *auth.Account {
-	return &auth.Account{
-		UpstreamType: auth.UpstreamOpenAIResponses,
-		BaseURL:      "https://relay.example.com/v1",
-		APIKey:       "sk-relay",
-	}
 }
 
 func TestBuildCodexRoutingHint(t *testing.T) {
@@ -49,7 +41,7 @@ func TestBuildCodexRoutingHint(t *testing.T) {
 	}
 }
 
-func TestApplyCodexRoutingHintOnlyForOfficialCodex(t *testing.T) {
+func TestApplyCodexRoutingHintForCodexAndNilAccount(t *testing.T) {
 	body := []byte(`{"model":"gpt-5.6-codex","service_tier":"fast"}`)
 
 	// 官方 Codex 账号:合成 hint。
@@ -57,13 +49,6 @@ func TestApplyCodexRoutingHintOnlyForOfficialCodex(t *testing.T) {
 	ApplyCodexRoutingHint(h, codexAccount(), body)
 	if got := h.Get("X-Codex-Routing-Hint"); got != "model=gpt-5.6-codex;tier=priority" {
 		t.Fatalf("codex account hint = %q, want priority hint", got)
-	}
-
-	// 中转账号:只剥不发。
-	h = http.Header{}
-	ApplyCodexRoutingHint(h, relayAccount(), body)
-	if got := h.Get("X-Codex-Routing-Hint"); got != "" {
-		t.Fatalf("relay account hint = %q, want empty", got)
 	}
 
 	// nil 账号:不发。
@@ -86,15 +71,6 @@ func TestApplyCodexRoutingHintStripsSpoofedHeaders(t *testing.T) {
 	values := h.Values("X-Codex-Routing-Hint")
 	if len(values) != 1 || values[0] != "model=gpt-5.6" {
 		t.Fatalf("hint values = %v, want single gateway value [model=gpt-5.6]", values)
-	}
-
-	// 中转账号伪造:同样被剥离且不重建。
-	h = http.Header{"x-codex-routing-hint": []string{"model=evil"}}
-	ApplyCodexRoutingHint(h, relayAccount(), body)
-	for key := range h {
-		if len(h[key]) > 0 && h.Get("X-Codex-Routing-Hint") != "" {
-			t.Fatalf("relay account left spoofed hint: %v", h)
-		}
 	}
 }
 

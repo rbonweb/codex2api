@@ -65,7 +65,7 @@ func TestNativeOAuthRoutesWithLegacyCredentials(t *testing.T) {
 		t.Fatal(err)
 	}
 	account := store.FindByID(id)
-	if account == nil || account.IsRelayStyle() || account.IsCodexAgentIdentity() {
+	if account == nil || account.IsCodexAgentIdentity() {
 		t.Fatal("legacy OAuth fixture did not load as a native account")
 	}
 
@@ -181,8 +181,6 @@ func TestNativeOAuthRoutesWithLegacyCredentials(t *testing.T) {
 		{"compact", "/v1/responses/compact", `{"model":"gpt-5.5","input":"hello"}`, "output.0.encrypted_content", "native-compact", ""},
 		{"chat_json", "/v1/chat/completions", `{"model":"gpt-5.5","stream":false,"messages":[{"role":"user","content":"hello"}]}`, "choices.0.message.content", "native-ok", ""},
 		{"chat_stream", "/v1/chat/completions", `{"model":"gpt-5.5","stream":true,"messages":[{"role":"user","content":"hello"}]}`, "", "native-ok", "[DONE]"},
-		{"messages_json", "/v1/messages", `{"model":"gpt-5.5","stream":false,"max_tokens":64,"messages":[{"role":"user","content":"hello"}]}`, "content.0.text", "native-ok", ""},
-		{"messages_stream", "/v1/messages", `{"model":"gpt-5.5","stream":true,"max_tokens":64,"messages":[{"role":"user","content":"hello"}]}`, "", "native-ok", "message_stop"},
 	}
 	for _, test := range tests {
 		t.Run(test.name, func(t *testing.T) {
