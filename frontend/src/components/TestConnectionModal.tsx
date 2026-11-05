@@ -179,7 +179,7 @@ export default function TestConnectionModal({
     return () => {
       active = false;
     };
-  }, []);
+  }, [account.model_mapping, account.models]);
 
   useEffect(() => () => abortRef.current?.abort(), []);
 
