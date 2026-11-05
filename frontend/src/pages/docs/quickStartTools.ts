@@ -132,7 +132,7 @@ export function resolveTemplate(
     params.set("resource", "provider");
     params.set("app", "codex");
     params.set("name", "Codex2API");
-    params.set("endpoint", address);
+    params.set("endpoint", `${address}/v1`);
     params.set("apiKey", key);
     params.set("model", "gpt-5.5");
     params.set("homepage", address);
