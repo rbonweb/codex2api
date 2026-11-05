@@ -17,17 +17,19 @@ RUN VITE_APP_VERSION=${BUILD_VERSION} npm run build
 
 # ============================================================
 # Stage 2: 构建 Go 后端
-# 使用 BUILDPLATFORM 原生运行 + TARGETARCH 交叉编译
+# Runs natively on each target platform (QEMU under buildx for arm64) because the real-time audio bridge links libopus through cgo, which a plain Go cross-compile cannot do.
+# The tag golang:1.26.10-alpine is on Alpine 3.24, so the runtime stage uses alpine:3.24 as well to keep musl and libopus identical to what the binary was linked against.
 # ============================================================
-FROM --platform=$BUILDPLATFORM golang:1.26.10-alpine AS go-builder
+FROM golang:1.26.10-alpine AS go-builder
 
-ARG TARGETARCH
 ARG BUILD_VERSION=dev
 
 # 国内构建走 goproxy.cn，避免直连 proxy.golang.org 断流（unexpected EOF）
 ENV GOPROXY=https://goproxy.cn,direct
 
 WORKDIR /app
+RUN apk add --no-cache build-base opus-dev
+
 COPY go.mod go.sum ./
 RUN --mount=type=cache,target=/go/pkg/mod \
     go mod download
@@ -37,14 +39,14 @@ COPY --from=frontend-builder /frontend/dist ./frontend/dist
 
 RUN --mount=type=cache,target=/go/pkg/mod \
     --mount=type=cache,target=/root/.cache/go-build \
-    CGO_ENABLED=0 GOOS=linux GOARCH=${TARGETARCH} go build -ldflags="-s -w -X github.com/codex2api/internal/version.Version=${BUILD_VERSION}" -o /codex2api .
+    CGO_ENABLED=1 go build -tags opus -ldflags="-s -w -X github.com/codex2api/internal/version.Version=${BUILD_VERSION}" -o /codex2api .
 
 # ============================================================
 # Stage 3: 最终运行镜像
 # ============================================================
-FROM alpine:3.19
+FROM alpine:3.24
 
-RUN apk --no-cache add ca-certificates tzdata
+RUN apk --no-cache add ca-certificates tzdata opus
 
 COPY --from=go-builder /codex2api /usr/local/bin/codex2api
 
