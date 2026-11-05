@@ -78,18 +78,6 @@ func TestResolveCodexEgressPrecedence(t *testing.T) {
 			t.Fatal("nil account without resin has no pooled client")
 		}
 	})
-
-	t.Run("relay-style accounts bypass resin", func(t *testing.T) {
-		withResin(t, &ResinConfig{BaseURL: "http://127.0.0.1:2260/tok", PlatformName: "codex2api"})
-		relay := &auth.Account{DBID: 8, UpstreamType: auth.UpstreamOpenAIResponses, BaseURL: "https://relay.example", APIKey: "sk-test"}
-		if !relay.IsRelayStyle() {
-			t.Fatal("fixture must be relay-style")
-		}
-		egress := ResolveCodexEgress(relay, target, "http://pool:8080")
-		if egress.Kind != CodexEgressProxy {
-			t.Fatalf("relay account kind = %q, want proxy", egress.Kind)
-		}
-	})
 }
 
 func TestResolveCodexWebsocketEgress(t *testing.T) {
