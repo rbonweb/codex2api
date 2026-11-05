@@ -47,122 +47,62 @@ const SETUP_SERVICE_URL_KEY = 'codex2api:first_setup_service_url'
 const SETUP_REVIEW_DONE_KEY = 'codex2api:first_setup_review_done_v1'
 
 const COPY = {
-  zh: {
-    bootstrapTitle: '首次配置',
-    bootstrapSubtitle: '完成入口、管理密钥、数据与请求监控配置后再进入后台。',
-    reviewSubtitle: '管理密钥已配置，确认入口、数据与请求监控设置后进入后台。',
-    serviceTitle: '服务地址',
-    serviceLabel: '客户端 Base URL',
-    serviceDesc: '用于 OpenAI / Anthropic 兼容客户端连接。',
-    adminEntry: '后台入口',
-    apiEntry: 'API 入口',
-    secretTitle: '管理密钥',
-    configuredSecret: '已通过当前管理密钥登录',
-    bootstrapHint: `至少 ${MIN_SECRET_LEN} 位，保存后用于登录后台和调用 /api/admin/*。`,
-    tokenLabel: '初始化令牌',
-    tokenHint: '服务启动时打印在日志中，用于确认操作者是部署者本人；重启服务会生成新令牌。Docker 部署可执行：',
-    secretLabel: '管理密钥',
-    confirmLabel: '再次输入确认',
-    dataTitle: '数据目录',
-    databaseLabel: '数据库',
-    cacheLabel: '缓存',
-    imageDirLabel: '图片目录',
-    monitorTitle: '请求监控',
-    monitorEnabled: '记录全部请求',
-    monitorDisabled: '关闭请求日志',
-    monitorDesc: '开启后写入 usage_logs，用于趋势、成本、API Key 和错误分析。',
-    submit: '保存并检测',
-    reviewAction: '确认并检测',
-    submitting: '正在保存…',
-    completeTitle: '检测结果',
-    completeSubtitle: '以下结果来自刚刚保存后的运行状态。',
-    enterAdmin: '进入后台',
-    checkAgain: '重新检测',
-    checkService: '服务地址',
-    checkSecret: '管理密钥',
-    checkSettings: '系统设置',
-    checkHealth: '服务健康',
-    checkData: '数据目录',
-    checkMonitoring: '请求监控',
-    saved: '已保存',
-    healthOk: '服务可用，账号池 {{available}}/{{total}} 可用',
-    healthWarn: '健康接口返回异常',
-    settingsSaved: '系统设置已应用',
-    dataReady: '数据位置已识别',
-    monitoringFull: '已开启完整请求日志',
-    monitoringOff: '已关闭请求日志',
-    monitoringErrors: '仅记录错误请求',
-    unknown: '未检测到',
-    errTokenEmpty: '请填写服务日志中的初始化令牌',
-    errEmpty: '管理密钥不能为空',
-    errTooShort: `管理密钥至少 ${MIN_SECRET_LEN} 位`,
-    errTooLong: `管理密钥不可超过 ${MAX_SECRET_LEN} 个字符`,
-    errMismatch: '两次输入不一致',
-    errServer: '初始化失败，请稍后再试',
-    loginSubtitle: '请输入管理密钥登录',
-    loginPlaceholder: '请输入 ADMIN_SECRET',
-    loginError: '密钥错误，请重新输入',
-    loginButton: '登录',
-    loadingText: '加载中…',
-  },
-  en: {
-    bootstrapTitle: 'First-run setup',
-    bootstrapSubtitle: 'Set the entry URL, admin secret, data paths, and request monitoring before opening the dashboard.',
-    reviewSubtitle: 'The admin secret is already configured. Confirm the entry URL, data paths, and request monitoring before opening the dashboard.',
-    serviceTitle: 'Service URL',
-    serviceLabel: 'Client base URL',
-    serviceDesc: 'Used by OpenAI / Anthropic compatible clients.',
-    adminEntry: 'Admin entry',
-    apiEntry: 'API entry',
-    secretTitle: 'Admin secret',
-    configuredSecret: 'Signed in with the current admin secret',
-    bootstrapHint: `At least ${MIN_SECRET_LEN} characters. Used for dashboard login and /api/admin/* calls.`,
-    tokenLabel: 'Bootstrap token',
-    tokenHint: 'Printed in the service log at startup to prove you operate this deployment; restarting the service issues a new one. For Docker deployments run:',
-    secretLabel: 'Admin secret',
-    confirmLabel: 'Confirm secret',
-    dataTitle: 'Data paths',
-    databaseLabel: 'Database',
-    cacheLabel: 'Cache',
-    imageDirLabel: 'Image directory',
-    monitorTitle: 'Request monitoring',
-    monitorEnabled: 'Record all requests',
-    monitorDisabled: 'Disable request logs',
-    monitorDesc: 'When enabled, usage_logs powers trends, cost, API key, and error analysis.',
-    submit: 'Save and check',
-    reviewAction: 'Confirm and check',
-    submitting: 'Saving…',
-    completeTitle: 'Check results',
-    completeSubtitle: 'These results came from the saved runtime state.',
-    enterAdmin: 'Open dashboard',
-    checkAgain: 'Run checks again',
-    checkService: 'Service URL',
-    checkSecret: 'Admin secret',
-    checkSettings: 'System settings',
-    checkHealth: 'Service health',
-    checkData: 'Data paths',
-    checkMonitoring: 'Request monitoring',
-    saved: 'Saved',
-    healthOk: 'Service reachable, {{available}}/{{total}} accounts available',
-    healthWarn: 'Health endpoint returned an unexpected state',
-    settingsSaved: 'System settings applied',
-    dataReady: 'Data locations detected',
-    monitoringFull: 'Full request logging is enabled',
-    monitoringOff: 'Request logging is disabled',
-    monitoringErrors: 'Only failed requests are recorded',
-    unknown: 'Not detected',
-    errTokenEmpty: 'Enter the bootstrap token from the service log',
-    errEmpty: 'Admin secret cannot be empty',
-    errTooShort: `Admin secret must be at least ${MIN_SECRET_LEN} characters`,
-    errTooLong: `Admin secret must not exceed ${MAX_SECRET_LEN} characters`,
-    errMismatch: 'The two entries do not match',
-    errServer: 'Initialization failed, please retry',
-    loginSubtitle: 'Enter your admin secret to sign in',
-    loginPlaceholder: 'Enter ADMIN_SECRET',
-    loginError: 'Invalid secret, please try again',
-    loginButton: 'Sign in',
-    loadingText: 'Loading…',
-  },
+  bootstrapTitle: 'First-run setup',
+  bootstrapSubtitle: 'Set the entry URL, admin secret, data paths, and request monitoring before opening the dashboard.',
+  reviewSubtitle: 'The admin secret is already configured. Confirm the entry URL, data paths, and request monitoring before opening the dashboard.',
+  serviceTitle: 'Service URL',
+  serviceLabel: 'Client base URL',
+  serviceDesc: 'Used by OpenAI / Anthropic compatible clients.',
+  adminEntry: 'Admin entry',
+  apiEntry: 'API entry',
+  secretTitle: 'Admin secret',
+  configuredSecret: 'Signed in with the current admin secret',
+  bootstrapHint: `At least ${MIN_SECRET_LEN} characters. Used for dashboard login and /api/admin/* calls.`,
+  tokenLabel: 'Bootstrap token',
+  tokenHint: 'Printed in the service log at startup to prove you operate this deployment; restarting the service issues a new one. For Docker deployments run:',
+  secretLabel: 'Admin secret',
+  confirmLabel: 'Confirm secret',
+  dataTitle: 'Data paths',
+  databaseLabel: 'Database',
+  cacheLabel: 'Cache',
+  imageDirLabel: 'Image directory',
+  monitorTitle: 'Request monitoring',
+  monitorEnabled: 'Record all requests',
+  monitorDisabled: 'Disable request logs',
+  monitorDesc: 'When enabled, usage_logs powers trends, cost, API key, and error analysis.',
+  submit: 'Save and check',
+  reviewAction: 'Confirm and check',
+  submitting: 'Saving…',
+  completeTitle: 'Check results',
+  completeSubtitle: 'These results came from the saved runtime state.',
+  enterAdmin: 'Open dashboard',
+  checkAgain: 'Run checks again',
+  checkService: 'Service URL',
+  checkSecret: 'Admin secret',
+  checkSettings: 'System settings',
+  checkHealth: 'Service health',
+  checkData: 'Data paths',
+  checkMonitoring: 'Request monitoring',
+  saved: 'Saved',
+  healthOk: 'Service reachable, {{available}}/{{total}} accounts available',
+  healthWarn: 'Health endpoint returned an unexpected state',
+  settingsSaved: 'System settings applied',
+  dataReady: 'Data locations detected',
+  monitoringFull: 'Full request logging is enabled',
+  monitoringOff: 'Request logging is disabled',
+  monitoringErrors: 'Only failed requests are recorded',
+  unknown: 'Not detected',
+  errTokenEmpty: 'Enter the bootstrap token from the service log',
+  errEmpty: 'Admin secret cannot be empty',
+  errTooShort: `Admin secret must be at least ${MIN_SECRET_LEN} characters`,
+  errTooLong: `Admin secret must not exceed ${MAX_SECRET_LEN} characters`,
+  errMismatch: 'The two entries do not match',
+  errServer: 'Initialization failed, please retry',
+  loginSubtitle: 'Enter your admin secret to sign in',
+  loginPlaceholder: 'Enter ADMIN_SECRET',
+  loginError: 'Invalid secret, please try again',
+  loginButton: 'Sign in',
+  loadingText: 'Loading…',
 } as const
 
 function browserOrigin() {
@@ -313,9 +253,8 @@ function CheckRow({ check }: { check: SetupCheck }) {
 }
 
 export default function AuthGate({ children }: PropsWithChildren) {
-  const { t, i18n } = useTranslation()
-  const lang = (i18n.language || 'zh').startsWith('zh') ? 'zh' : 'en'
-  const copy = COPY[lang]
+  const { t } = useTranslation()
+  const copy = COPY
   const { siteName, siteLogo } = useBranding()
   const logoSrc = siteLogo || DEFAULT_SITE_LOGO
 
@@ -373,15 +312,15 @@ export default function AuthGate({ children }: PropsWithChildren) {
       if (key) headers['X-Admin-Key'] = key
       const res = await fetch('/api/admin/health', { headers })
       if (res.status === 401) {
-        // 仅 401 才代表密钥确实无效，此时才清除并要求重新登录
+        // Only a 401 means the secret is really invalid; only then clear it and require a new login
         setAdminKey('')
         setStatus('need_login')
       } else if (res.status === 503) {
         setStatus('need_bootstrap')
       } else if (!res.ok) {
-        // 5xx/网关错误等多为服务重启或反代瞬时故障，保留密钥不强制登出；
-        // 有密钥时乐观地维持登录态（下一轮轮询若返回 401 会纠正），
-        // 无密钥则停留在登录页。
+        // 5xx and gateway errors are usually a service restart or a transient reverse-proxy failure: keep the secret and do not force a logout.
+        // With a secret, optimistically keep the logged-in state (a 401 on the next poll will correct it);
+        // without one, stay on the login page.
         if (key) {
           setStatus('authenticated')
         } else {
@@ -395,8 +334,8 @@ export default function AuthGate({ children }: PropsWithChildren) {
         }
       }
     } catch {
-      // 网络异常（断网、连接中断、标签页休眠唤醒等）不应清除密钥；
-      // 有密钥时乐观维持登录态，无密钥则停留登录页。
+      // Network errors (offline, dropped connection, a tab waking from sleep, etc.) must not clear the secret;
+      // with a secret, optimistically keep the logged-in state; without one, stay on the login page.
       if (getAdminKey()) {
         setStatus('authenticated')
       } else {
