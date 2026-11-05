@@ -43,6 +43,7 @@ Run it as a single container against an external PostgreSQL such as Neon, as a s
 | ![Usage Guide](docs/screenshots/guide.png) | ![API Reference](docs/screenshots/api-reference.png) |
 
 </details>
+
 ---
 
 ## Contents
@@ -84,13 +85,13 @@ Gateway only, with an external PostgreSQL such as Neon:
 git clone https://github.com/rbonweb/codex2api.git
 cd codex2api
 cp .env.example .env
-# edit .env: set DATABASE_URL, ADMIN_SECRET and the other values you need
+# edit .env: set DATABASE_URL, CACHE_DRIVER=memory and ADMIN_SECRET
 docker compose pull
 docker compose up -d
 docker compose logs -f codex2api
 ```
 
-Gateway only, with SQLite (no external database): in `.env`, set `DATABASE_DRIVER=sqlite`, `DATABASE_PATH=/data/codex2api.db` and `CACHE_DRIVER=memory` (copy `.env.sqlite.example` for these values), then run the same `docker compose` commands. The database lives in the `/data` volume.
+Gateway only, with SQLite (no external database): run `cp .env.sqlite.example .env` (it sets `DATABASE_DRIVER=sqlite`, `DATABASE_PATH=/data/codex2api.db` and `CACHE_DRIVER=memory`) instead of copying `.env.example`, then run the same `docker compose pull`, `up -d` and `logs` commands. The database lives in the `/data` volume.
 
 Full stack with bundled PostgreSQL and Redis:
 
@@ -115,7 +116,7 @@ Notes:
 
 ### Render
 
-Create a Render `Web Service`, choose `Existing Image`, and use `ghcr.io/rbonweb/codex2api:latest`. Set `DATABASE_URL` to your PostgreSQL connection string, plus `ADMIN_SECRET` and `CODEX_PORT=10000`. The image is public, so no registry credentials are needed. Add a Render deploy hook as the repository secret `RENDER_DEPLOY_HOOK_URL` to redeploy automatically after every image build. See [DEPLOYMENT.md](docs/DEPLOYMENT.md) for the full walkthrough.
+Create a Render `Web Service`, choose `Existing Image`, and use `ghcr.io/rbonweb/codex2api:latest`. Set `DATABASE_URL` to your PostgreSQL connection string, `CACHE_DRIVER=memory`, `ADMIN_SECRET` and `CODEX_PORT=10000`. The image is public, so no registry credentials are needed. Add a Render deploy hook as the repository secret `RENDER_DEPLOY_HOOK_URL` to redeploy automatically after every image build. See [DEPLOYMENT.md](docs/DEPLOYMENT.md) for the full walkthrough.
 
 ---
 
@@ -124,7 +125,7 @@ Create a Render `Web Service`, choose `Existing Image`, and use `ghcr.io/rbonweb
 Every push to `main` is released automatically:
 
 1. `.github/workflows/fork-release.yml` tags the next patch version `vX.Y.Z`. It takes the higher of the newest `vX.Y.Z` tag and the newest version in `CHANGELOG.md`, then adds one to the patch number. Pushes that only change `docs/` or Markdown files do not release.
-2. `.github/workflows/docker-image.yml` builds the public multi-arch image (`linux/amd64`, `linux/arm64`) and pushes `ghcr.io/rbonweb/codex2api` with the tags `X.Y.Z`, `X.Y` and `latest`.
+2. `.github/workflows/docker-image.yml` builds the public multi-arch image (`linux/amd64`, `linux/arm64`) and pushes `ghcr.io/rbonweb/codex2api` with the tags `X.Y.Z`, `vX.Y.Z`, `X.Y` and `latest`.
 3. `.github/workflows/release.yml` publishes a GitHub release with binaries for Linux, macOS and Windows.
 4. The last step of the image build triggers the Render deploy hook, when `RENDER_DEPLOY_HOOK_URL` is configured. `.github/workflows/render-deploy.yml` redeploys the current image by hand.
 
@@ -187,6 +188,7 @@ cd frontend && npm ci && npm run dev
 ```
 
 Vite proxies `/api` and `/health` to the backend. During development, open `http://localhost:5173/admin/`.
+
 ---
 
 ## Configuration
@@ -254,6 +256,7 @@ Each successful budget change receives a read-only generation and is polled by e
   - Otherwise, the database `AdminSecret` value is used.
   - If neither is set, `/admin` opens the first-run setup page. It requires the one-time bootstrap token printed in the service log (`docker compose logs codex2api | grep "bootstrap token"`); the token is per-process, regenerated on restart, and revoked once setup succeeds.
   - After login, the frontend sends `X-Admin-Key` when calling `/api/admin/*`.
+
 ---
 
 ## Public API
@@ -357,6 +360,7 @@ curl -X POST http://localhost:8080/api/admin/oauth/exchange-code \
 ```
 
 See [API.md](docs/API.md) for the full OAuth flow and all admin endpoints.
+
 ---
 
 ## Admin Dashboard
@@ -378,6 +382,7 @@ Open `/admin/` in a browser.
 | Settings | `/admin/settings` | Runtime parameters, response-context cache budgets, and admin secret settings |
 | Usage Guide | `/admin/docs` | Codex CLI and OpenAI SDK integration examples |
 | API Reference | `/admin/api-reference` | OpenAI-style endpoints and admin API reference |
+
 ---
 
 ## Core Capabilities
@@ -472,6 +477,7 @@ When an account has a credit-based billing model instead of a usage-based Free/P
 | `credit_skip_usage_window` | bool | When true, skip 7d/5h usage-window penalties for this account |
 
 **Windowed USD cost**: The accounts table displays per-account billed cost over two windows -- the past 5 hours and the past 7 days -- aligned with each account's usage reset boundaries. This shows actual spending per account rather than estimated token costs.
+
 ---
 
 ## Project Structure
