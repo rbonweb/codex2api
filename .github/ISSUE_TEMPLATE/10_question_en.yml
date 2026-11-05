@@ -6,7 +6,7 @@ body:
   - type: markdown
     attributes:
       value: |
-        Before asking, take a look at the [README](https://github.com/james-6-23/codex2api#documentation) and the `docs/` directory —
+        Before asking, take a look at the [README](https://github.com/rbonweb/codex2api#documentation) and the `docs/` directory —
         many common questions are already answered there.
 
   - type: checkboxes
@@ -16,7 +16,7 @@ body:
       options:
         - label: I checked the relevant sections of README and `docs/` and couldn't find the answer
           required: true
-        - label: I searched [existing issues](https://github.com/james-6-23/codex2api/issues?q=is%3Aissue) and didn't find a discussion
+        - label: I searched [existing issues](https://github.com/rbonweb/codex2api/issues?q=is%3Aissue) and didn't find a discussion
           required: true
 
   - type: textarea
@@ -24,7 +24,7 @@ body:
     attributes:
       label: What's my question?
       placeholder: |
-        e.g. How do I restrict an API key to only call /v1/messages?
+        e.g. How do I restrict an API key to only call /v1/responses?
         How should I choose between round_robin and remaining_quota?
         How do I migrate an existing account pool to a new machine?
     validations:

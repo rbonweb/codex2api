@@ -40,8 +40,8 @@ jobs:
       - name: Create frontend dist placeholder
         run: mkdir -p frontend/dist && touch frontend/dist/placeholder
 
-      # PR/push 钉死扫描器版本,避免工具本身行为漂移。漏洞库仍是实时的。
-      # 周一定时任务改用 @latest,专门抓新 advisory。
+      # PRs and pushes pin the scanner version so the tool itself does not drift. The vulnerability database is still live.
+      # The Monday scheduled run uses @latest to catch new advisories.
       - name: Run govulncheck
         run: |
           set -euo pipefail
@@ -72,6 +72,6 @@ jobs:
 
       - name: Run npm audit
         working-directory: frontend
-        # 等价于 npm audit --omit=dev --audit-level=high,额外支持逐条 advisory
-        # 的例外白名单(理由与复查时间写在脚本里)。
+        # Equivalent to npm audit --omit=dev --audit-level=high, plus a per-advisory exception allowlist
+        # (the reason and review date are recorded in the script).
         run: node scripts/audit-gate.mjs

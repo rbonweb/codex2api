@@ -157,9 +157,7 @@ jobs:
       - name: Create frontend dist placeholder
         run: mkdir -p frontend/dist && touch frontend/dist/placeholder
 
-      # 重包各占一台 2 核 runner,避免互相抢核。分片大小见 go-race-packages.sh:
-      # 测试建库走 SQLite schema 模板(database.PrepareSQLiteSchemaTemplate)后,
-      # admin/database 整包 -race 都在 1 分钟量级;proxy 是最重的包,按测试名首字母拆两片。
+      # Each heavy package gets its own 2-core runner so they do not compete for cores; shard sizes are in go-race-packages.sh. Once test databases are built from the SQLite schema template (database.PrepareSQLiteSchemaTemplate), the whole admin/database package under -race runs in about a minute; proxy is the heaviest package, split into two shards by the first letter of the test name.
       - name: Run Go tests with race detector
         run: |
           set -euo pipefail
