@@ -23,9 +23,6 @@ func (sync *officialPricingSync) fetchReferences(ctx context.Context, proxyURL s
 			sync.result.Warnings = append(sync.result.Warnings, fmt.Sprintf("%s 参考价格读取失败: %v", source.name, err))
 			continue
 		}
-		for model, price := range projectClaudeOfficialPricing(missing, parsed) {
-			parsed[model] = price
-		}
 		if imported := sync.importPricing(parsed); imported > 0 {
 			sync.recordFallbacks(missing, source.url)
 			sync.result.Sources = append(sync.result.Sources, source.url)

@@ -16,7 +16,7 @@ func (db *DB) ListScheduledConnectionTestConfigs(ctx context.Context) ([]Schedul
 		expr = "json_extract(credentials,'$.scheduled_connection_tests')"
 		upstream = "LOWER(COALESCE(json_extract(credentials,'$.upstream_type'),''))"
 	}
-	rows, err := db.conn.QueryContext(ctx, "SELECT id,"+expr+" FROM accounts WHERE status<>'deleted' AND COALESCE(error_message,'')<>'deleted' AND COALESCE(enabled,true) AND "+upstream+" IN ('','codex','openai_responses') AND COALESCE("+expr+",'')<>'' ORDER BY id")
+	rows, err := db.conn.QueryContext(ctx, "SELECT id,"+expr+" FROM accounts WHERE status<>'deleted' AND COALESCE(error_message,'')<>'deleted' AND COALESCE(enabled,true) AND "+upstream+" IN ('','codex') AND COALESCE("+expr+",'')<>'' ORDER BY id")
 	if err != nil {
 		return nil, err
 	}

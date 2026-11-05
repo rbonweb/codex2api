@@ -34,11 +34,6 @@ const entries = [
 ];
 
 test("existing client anchors retain the correct client after moving sections", () => {
-  assert.deepEqual(resolveDocsTarget("#client-claude", entries), {
-    id: "qs-tools",
-    section: "quick-start",
-    client: "claude-code",
-  });
   assert.equal(resolveDocsTarget("#client-config", entries).id, "qs-tools");
   assert.equal(resolveDocsTarget("#client-codex", entries).client, "codex-cli");
   assert.equal(

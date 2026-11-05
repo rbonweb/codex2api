@@ -51,7 +51,7 @@ export function ProxyUrlInput({
   );
 }
 
-// ProxyField 是四个渠道(Codex/Grok/Claude/Antigravity)账号表单里唯一的代理选择字段:
+// ProxyField 是账号表单里唯一的代理选择字段:
 //   第一行:手动填写代理 URL + 「测试」按钮(调 /proxies/test 验证连通与落地地点)
 //   第二行:从代理池下拉选择(含地点/绑定数/空闲优先;池为空时给禁用占位与引导)
 //   第三行:当前值命中池内节点时给一句关联提示——账号与节点按 URL 关联,

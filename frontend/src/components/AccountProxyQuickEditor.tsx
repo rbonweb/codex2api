@@ -36,7 +36,7 @@ export interface ProxyQuickEditorAccount {
 
 interface AccountProxyQuickEditorProps {
   account: ProxyQuickEditorAccount | null;
-  /** 账号显示名由各页自己的命名规则决定（Codex 用邮箱、Grok/Responses 用名称）。 */
+  /** 账号显示名由各页自己的命名规则决定（Codex 用邮箱）。 */
   accountLabel: string;
   proxies: ProxyRow[];
   ctx: ProxyBindingContext;

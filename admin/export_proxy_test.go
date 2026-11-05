@@ -8,7 +8,6 @@ import (
 	"path/filepath"
 	"testing"
 
-	"github.com/codex2api/auth"
 	"github.com/codex2api/database"
 	"github.com/gin-gonic/gin"
 )
@@ -20,8 +19,8 @@ func exportRequestContext(t *testing.T, target string) *gin.Context {
 	return c
 }
 
-// include_proxy 缺省时取渠道默认值,显式传入时压过默认值——Antigravity 默认导出
-// 代理(保持既有往返能力),Codex/Grok 默认不导出(代理 URL 常含明文口令)。
+// include_proxy 缺省时取渠道默认值,显式传入时压过默认值——Codex 默认不导出
+// 代理(代理 URL 常含明文口令)。
 func TestExportIncludeProxyParsing(t *testing.T) {
 	cases := []struct {
 		target       string
@@ -92,7 +91,7 @@ func codexExportRow() *database.AccountRow {
 	}
 }
 
-// 三个渠道的导出条目在开关关闭时都不得泄漏代理 URL。
+// 导出条目在开关关闭时都不得泄漏代理 URL。
 func TestAccountRowToExportEntryOmitsProxyByDefault(t *testing.T) {
 	codex, ok := accountRowToCPAExportEntry(codexExportRow(), exportProxyResolver{})
 	if !ok {
@@ -102,32 +101,9 @@ func TestAccountRowToExportEntryOmitsProxyByDefault(t *testing.T) {
 		t.Fatalf("codex entry carried proxy while disabled: %+v", codex)
 	}
 
-	grokRow := grokOAuthRow()
-	grokRow.ProxyURL = "http://127.0.0.1:8080"
-	grokEntry, ok := grokAccountRowToExportEntry(grokRow, exportProxyResolver{})
-	if !ok {
-		t.Fatal("grok export entry not produced")
-	}
-	if grokEntry.ProxyURL != "" || grokEntry.ProxyLabel != "" || grokEntry.ProxyEnabled != nil {
-		t.Fatalf("grok entry carried proxy while disabled: %+v", grokEntry)
-	}
-
-	antigravityEntry, ok := antigravityAccountRowToExportEntry(&database.AccountRow{
-		ID: 12, Platform: "google", Enabled: true, ProxyURL: "http://127.0.0.1:8080",
-		Credentials: map[string]any{
-			"upstream_type": auth.UpstreamAntigravity, "email": "ag@example.com",
-			"access_token": "at", "refresh_token": "rt",
-		},
-	}, exportProxyResolver{})
-	if !ok {
-		t.Fatal("antigravity export entry not produced")
-	}
-	if antigravityEntry.ProxyURL != "" || antigravityEntry.ProxyLabel != "" || antigravityEntry.ProxyEnabled != nil {
-		t.Fatalf("antigravity entry carried proxy while disabled: %+v", antigravityEntry)
-	}
 }
 
-// 开启后 Codex / Grok 条目都补上 URL + label + enabled。
+// 开启后 Codex 条目补上 URL + label + enabled。
 func TestAccountRowToExportEntryCarriesProxyWhenEnabled(t *testing.T) {
 	resolver := exportProxyResolver{include: true, byURL: map[string]*database.ProxyRow{
 		"http://127.0.0.1:8080": {URL: "http://127.0.0.1:8080", Label: "hk-1", Enabled: true},
@@ -149,18 +125,6 @@ func TestAccountRowToExportEntryCarriesProxyWhenEnabled(t *testing.T) {
 		t.Fatalf("codex proxy_enabled = %v, want explicit true", codex.ProxyEnabled)
 	}
 
-	grokRow := grokOAuthRow()
-	grokRow.ProxyURL = "http://127.0.0.1:8080"
-	grokEntry, ok := grokAccountRowToExportEntry(grokRow, resolver)
-	if !ok {
-		t.Fatal("grok export entry not produced")
-	}
-	if grokEntry.ProxyURL != "http://127.0.0.1:8080" || grokEntry.ProxyLabel != "hk-1" {
-		t.Fatalf("grok proxy = (%q, %q), want (http://127.0.0.1:8080, hk-1)", grokEntry.ProxyURL, grokEntry.ProxyLabel)
-	}
-	if grokEntry.ProxyEnabled == nil || !*grokEntry.ProxyEnabled {
-		t.Fatalf("grok proxy_enabled = %v, want explicit true", grokEntry.ProxyEnabled)
-	}
 }
 
 // 代理表读失败不该让整次导出失败:降级成只带 URL。

@@ -50,7 +50,7 @@ export function mergeAccountLiveState<T extends AccountLiveMergeable>(
       ? live.base_concurrency_effective
       : account.base_concurrency_effective
     // Usage/status fields follow the same contract: undefined keeps the row,
-    // null clears it. The list API omits some fields for Antigravity rows.
+    // null clears it. The list API omits some fields.
     const status = live.status === undefined ? account.status : live.status
     const usingCredits = live.using_credits === undefined
       ? account.using_credits

@@ -106,20 +106,15 @@ func TestIntelligenceCheckTargetCompatibilityPreflight(t *testing.T) {
 	ctx := context.Background()
 	now := time.Now().UTC()
 	codex := intelligenceAccount(t, db)
-	claude, e := db.InsertAccountWithUpstream(ctx, "claude", "anthropic", "oauth", map[string]interface{}{"upstream_type": "claude"}, "")
-	if e != nil {
-		t.Fatal(e)
-	}
 	target, e := db.CreateAccountGroup(ctx, "codex", "", "", 0, 0, sql.NullInt64{})
 	if e != nil {
 		t.Fatal(e)
 	}
-	bad, e := db.CreateAccountGroup(ctx, "grok", "", "", 0, 0, sql.NullInt64{})
+	bad, e := db.CreateAccountGroup(ctx, "unsupported", "", "", 0, 0, sql.NullInt64{})
 	if e != nil {
 		t.Fatal(e)
 	}
-	grok := "grok"
-	if e = db.UpdateAccountGroup(ctx, bad, nil, nil, nil, &UpdateAccountGroupOpts{Channel: &grok}); e != nil {
+	if _, e = db.conn.ExecContext(ctx, `UPDATE account_groups SET channel='unsupported' WHERE id=$1`, bad); e != nil {
 		t.Fatal(e)
 	}
 	s, _ := db.GetIntelligenceCheckSettings(ctx)
@@ -129,12 +124,6 @@ func TestIntelligenceCheckTargetCompatibilityPreflight(t *testing.T) {
 		t.Fatal("accepted unsupported target channel")
 	}
 	s.TargetGroupID = target
-	if _, e = db.SaveIntelligenceCheckSettings(ctx, s); e == nil {
-		t.Fatal("accepted target incompatible with enabled Claude detector")
-	}
-	if e = db.SetIntelligenceCheckEnabled(ctx, []int64{claude}, false); e != nil {
-		t.Fatal(e)
-	}
 	s.Enabled = true
 	s, e = db.SaveIntelligenceCheckSettings(ctx, s)
 	if e != nil {
@@ -143,24 +132,18 @@ func TestIntelligenceCheckTargetCompatibilityPreflight(t *testing.T) {
 	if e = db.ValidateIntelligenceCheckAccountSettings(ctx, s, "codex"); e != nil {
 		t.Fatal(e)
 	}
-	if e = db.ValidateIntelligenceCheckAccountSettings(ctx, s, "claude"); e == nil {
-		t.Fatal("Claude preflight accepted Codex target")
+	if e = db.ValidateIntelligenceCheckAccountSettings(ctx, s, "unsupported"); e == nil {
+		t.Fatal("preflight accepted an account channel that differs from the target")
 	}
-	if e = db.SetIntelligenceCheckEnabled(ctx, []int64{claude}, true); e == nil {
-		t.Fatal("enabled incompatible detector")
-	}
-	if _, e = db.EnqueueIntelligenceChecks(ctx, []int64{claude}, now); e == nil {
-		t.Fatal("enqueued incompatible manual task")
-	}
-	if _, e = db.InsertAccountWithUpstream(ctx, "new claude", "anthropic", "oauth", map[string]interface{}{"upstream_type": "claude"}, ""); e != nil {
+	if _, e = db.InsertAccountWithUpstream(ctx, "new codex", "openai", "oauth", nil, ""); e != nil {
 		t.Fatal(e)
 	}
-	if n, e := db.EnqueueDueIntelligenceChecks(ctx, now, 50); e != nil || n != 1 {
-		t.Fatal("incompatible new account blocked compatible automatic tasks", n, e)
+	if n, e := db.EnqueueDueIntelligenceChecks(ctx, now, 50); e != nil || n != 2 {
+		t.Fatal("new account blocked automatic tasks", n, e)
 	}
-	states, _, e := db.ListIntelligenceCheckAccounts(ctx, IntelligenceCheckAccountFilter{Channel: "claude"})
-	if e != nil || len(states) != 2 || states[0].ConfigError != "" || states[1].ConfigError != "" || states[1].Enabled {
-		t.Fatal("new incompatible account opted into detection", states, e)
+	states, _, e := db.ListIntelligenceCheckAccounts(ctx, IntelligenceCheckAccountFilter{Channel: "codex"})
+	if e != nil || len(states) != 2 || states[0].ConfigError != "" || states[1].ConfigError != "" {
+		t.Fatal("new account was not enrolled cleanly", states, e)
 	}
 	r, e := db.ClaimIntelligenceCheck(ctx, "worker", now, time.Minute)
 	if e != nil || r == nil || r.AccountID != codex {
@@ -171,22 +154,6 @@ func TestIntelligenceCheckTargetCompatibilityPreflight(t *testing.T) {
 	}
 	if e = db.ValidateIntelligenceCheckAccountSettings(ctx, s, "codex"); e == nil {
 		t.Fatal("deleted target passed preflight")
-	}
-}
-func TestIntelligenceCheckClaudeSnapshotEffort(t *testing.T) {
-	db := intelligenceDB(t)
-	ctx := context.Background()
-	id, e := db.InsertAccountWithUpstream(ctx, "claude", "anthropic", "oauth", map[string]interface{}{"upstream_type": "claude"}, "")
-	if e != nil {
-		t.Fatal(e)
-	}
-	ids, e := db.EnqueueIntelligenceChecks(ctx, []int64{id}, time.Now())
-	if e != nil {
-		t.Fatal(e)
-	}
-	run, e := db.GetIntelligenceCheckRun(ctx, ids[0])
-	if e != nil || run.ReasoningEffort != "" || run.Settings.ReasoningEffort != "high" {
-		t.Fatal(run, e)
 	}
 }
 func TestIntelligenceCheckQuestionRotationAfterDisablingEarlierQuestion(t *testing.T) {
@@ -227,36 +194,6 @@ func TestIntelligenceCheckQuestionRotationAfterDisablingEarlierQuestion(t *testi
 	third := intelligenceRun(t, db, id, now.Add(2*time.Minute), "21")
 	if third.Question.ID != "C" {
 		t.Fatal(third.Question)
-	}
-}
-func TestIntelligenceCheckRestoreSkipsChangedGroupChannel(t *testing.T) {
-	db := intelligenceDB(t)
-	ctx := context.Background()
-	now := time.Now().UTC()
-	id := intelligenceAccount(t, db)
-	old, _ := db.CreateAccountGroup(ctx, "old", "", "", 0, 0, sql.NullInt64{})
-	target, _ := db.CreateAccountGroup(ctx, "target", "", "", 0, 0, sql.NullInt64{})
-	db.SetAccountGroups(ctx, id, []int64{old})
-	s, _ := db.GetIntelligenceCheckSettings(ctx)
-	s.Action = "switch_group"
-	s.TargetGroupID = target
-	s.DegradeThreshold = 1
-	if _, e := db.SaveIntelligenceCheckSettings(ctx, s); e != nil {
-		t.Fatal(e)
-	}
-	intelligenceRun(t, db, id, now, "29")
-	grok := "grok"
-	if e := db.UpdateAccountGroup(ctx, old, nil, nil, nil, &UpdateAccountGroupOpts{Channel: &grok}); e != nil {
-		t.Fatal(e)
-	}
-	run := intelligenceRun(t, db, id, now.Add(time.Minute), "21")
-	groups, e := db.GetAccountGroupIDs(ctx, id)
-	if e != nil || len(groups) != 0 {
-		t.Fatal("restored incompatible original group", groups, e)
-	}
-	stored, e := db.GetIntelligenceCheckRun(ctx, run.ID)
-	if e != nil || !strings.Contains(stored.ActionMessage, "incompatible") {
-		t.Fatal(stored.ActionMessage, e)
 	}
 }
 func TestIntelligenceCheckPendingRecoveryIgnoresNewTargetRemoval(t *testing.T) {
@@ -330,38 +267,6 @@ func TestIntelligenceCheckClaimRejectsRemovedTargetBeforeSending(t *testing.T) {
 	stored, e := db.GetIntelligenceCheckRun(ctx, ids[0])
 	if e != nil || stored.Status != "interrupted" || !strings.Contains(stored.Error, "target") {
 		t.Fatal(stored.Status, stored.Error, e)
-	}
-}
-func TestIntelligenceCheckRestorePreservesUnchangedLegacyMixedGroup(t *testing.T) {
-	db := intelligenceDB(t)
-	ctx := context.Background()
-	now := time.Now().UTC()
-	id, e := db.InsertAccountWithUpstream(ctx, "legacy claude", "anthropic", "oauth", map[string]interface{}{"upstream_type": "claude"}, "")
-	if e != nil {
-		t.Fatal(e)
-	}
-	original, _ := db.CreateAccountGroup(ctx, "legacy mixed", "", "", 0, 0, sql.NullInt64{})
-	target, _ := db.CreateAccountGroup(ctx, "claude target", "", "", 0, 0, sql.NullInt64{})
-	claude := "claude"
-	if e = db.UpdateAccountGroup(ctx, target, nil, nil, nil, &UpdateAccountGroupOpts{Channel: &claude}); e != nil {
-		t.Fatal(e)
-	}
-	// Existing provider migration intentionally preserves these mixed memberships.
-	if e = db.SetAccountGroups(ctx, id, []int64{original}); e != nil {
-		t.Fatal(e)
-	}
-	s, _ := db.GetIntelligenceCheckSettings(ctx)
-	s.Action = "switch_group"
-	s.TargetGroupID = target
-	s.DegradeThreshold = 1
-	if _, e = db.SaveIntelligenceCheckSettings(ctx, s); e != nil {
-		t.Fatal(e)
-	}
-	intelligenceRun(t, db, id, now, "29")
-	intelligenceRun(t, db, id, now.Add(time.Minute), "21")
-	groups, e := db.GetAccountGroupIDs(ctx, id)
-	if e != nil || len(groups) != 1 || groups[0] != original {
-		t.Fatal("unchanged legacy membership was dropped", groups, e)
 	}
 }
 func TestIntelligenceCheckRunSnapshotOmitsUnrelatedQuestionBank(t *testing.T) {

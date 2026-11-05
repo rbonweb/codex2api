@@ -299,17 +299,11 @@ func (db *DB) SaveIntelligenceCheckSettings(ctx context.Context, s ic.Settings) 
 	})
 	return ic.AdaptiveDefaults(s), err
 }
-func (db *DB) intelligenceUpstreamExpr() string {
-	if db.isSQLite() {
-		return `LOWER(COALESCE(json_extract(a.credentials,'$.upstream_type'),''))`
-	}
-	return `LOWER(COALESCE(a.credentials->>'upstream_type',''))`
-}
 func (db *DB) intelligenceChannelExpr() string {
-	return `CASE WHEN ` + db.intelligenceUpstreamExpr() + `='claude' OR LOWER(COALESCE(a.platform,'')) IN ('anthropic','claude') THEN 'claude' ELSE 'codex' END`
+	return `CAST('codex' AS TEXT)`
 }
 func (db *DB) intelligenceEligibleSQL() string {
-	return `a.status<>'deleted' AND COALESCE(a.error_message,'')<>'deleted' AND ` + db.intelligenceUpstreamExpr() + ` NOT IN ('grok','antigravity') AND LOWER(COALESCE(a.platform,'openai')) NOT IN ('xai','grok','antigravity','google')`
+	return `a.status<>'deleted' AND COALESCE(a.error_message,'')<>'deleted'`
 }
 
 // intelligenceAutomaticSQL admits scheduled checks only for accounts that opted
@@ -533,8 +527,8 @@ func intelligenceTargetGroupChannel(ctx context.Context, q intelligenceQueryRowe
 		return "", err
 	}
 	channel = strings.ToLower(strings.TrimSpace(channel))
-	if channel != "codex" && channel != "claude" {
-		return "", fmt.Errorf("%w: target must belong to Codex or Claude", ErrIntelligenceCheckTargetGroup)
+	if channel != "codex" {
+		return "", fmt.Errorf("%w: target must belong to Codex", ErrIntelligenceCheckTargetGroup)
 	}
 	return channel, nil
 }

@@ -30,9 +30,6 @@ func newChatStreamServeTestHandler(t *testing.T, serve func(w http.ResponseWrite
 	t.Helper()
 	gin.SetMode(gin.TestMode)
 
-	previousResin := resinCfg.Load()
-	t.Cleanup(func() { resinCfg.Store(previousResin) })
-
 	var calls atomic.Int32
 	upstream := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
 		calls.Add(1)
@@ -40,7 +37,7 @@ func newChatStreamServeTestHandler(t *testing.T, serve func(w http.ResponseWrite
 		serve(w)
 	}))
 	t.Cleanup(upstream.Close)
-	SetResinConfig(&ResinConfig{BaseURL: upstream.URL, PlatformName: "test"})
+	useResinForTest(t, upstream.URL, "test")
 
 	store := auth.NewStore(nil, nil, &database.SystemSettings{MaxConcurrency: 1, TestConcurrency: 1, TestModel: "gpt-5.5", MaxRetries: 1})
 	t.Cleanup(store.Stop)
@@ -182,8 +179,6 @@ func TestChatCompletionsCatchAllDiscardsOutputFromFailedAttempt(t *testing.T) {
 	gin.SetMode(gin.TestMode)
 	enableCatchAllContinuousRetry(t)
 
-	previousResin := resinCfg.Load()
-	t.Cleanup(func() { resinCfg.Store(previousResin) })
 	upstream, calls := newAttemptSequenceSSEServer(t, [][]string{
 		{
 			`{"type":"response.created","response":{"id":"resp_failed"}}`,
@@ -195,7 +190,7 @@ func TestChatCompletionsCatchAllDiscardsOutputFromFailedAttempt(t *testing.T) {
 			`{"type":"response.completed","response":{"id":"resp_success","status":"completed","usage":{"input_tokens":1,"output_tokens":1,"total_tokens":2}}}`,
 		},
 	})
-	SetResinConfig(&ResinConfig{BaseURL: upstream.URL, PlatformName: "test"})
+	useResinForTest(t, upstream.URL, "test")
 
 	store := auth.NewStore(nil, nil, &database.SystemSettings{
 		MaxConcurrency: 1, TestConcurrency: 1, TestModel: "gpt-5.5", MaxRetries: 0,
@@ -221,8 +216,6 @@ func TestChatCompletionsCatchAllDiscardsExplicitErrorEventAfterPartialOutput(t *
 	gin.SetMode(gin.TestMode)
 	enableCatchAllContinuousRetry(t)
 
-	previousResin := resinCfg.Load()
-	t.Cleanup(func() { resinCfg.Store(previousResin) })
 	upstream, calls := newAttemptSequenceRawSSEServer(t, [][]string{
 		{
 			"data: {\"type\":\"response.output_text.delta\",\"delta\":\"failed-chat-error-partial\"}\n\n",
@@ -233,7 +226,7 @@ func TestChatCompletionsCatchAllDiscardsExplicitErrorEventAfterPartialOutput(t *
 			"data: {\"type\":\"response.completed\",\"response\":{\"id\":\"resp_success\",\"status\":\"completed\",\"usage\":{\"input_tokens\":1,\"output_tokens\":1,\"total_tokens\":2}}}\n\n",
 		},
 	})
-	SetResinConfig(&ResinConfig{BaseURL: upstream.URL, PlatformName: "test"})
+	useResinForTest(t, upstream.URL, "test")
 
 	store := auth.NewStore(nil, nil, &database.SystemSettings{
 		MaxConcurrency: 1, TestConcurrency: 1, TestModel: "gpt-5.5", MaxRetries: 0,

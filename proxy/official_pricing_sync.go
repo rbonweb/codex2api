@@ -13,20 +13,15 @@ import (
 )
 
 const (
-	OfficialOpenAIPricingURL    = "https://developers.openai.com/api/docs/pricing"
-	OfficialXAIPricingURL       = "https://docs.x.ai/developers/pricing"
-	OfficialXAIModelsURL        = "https://docs.x.ai/developers/models"
-	OfficialAnthropicPricingURL = "https://platform.claude.com/docs/en/about-claude/pricing"
-	officialPricingTimeout      = 20 * time.Second
-	officialPricingBodyLimit    = 4 << 20
+	OfficialOpenAIPricingURL = "https://developers.openai.com/api/docs/pricing"
+	officialPricingTimeout   = 20 * time.Second
+	officialPricingBodyLimit = 4 << 20
 )
 
 // OfficialPricingSyncOptions 指定本轮同步的模型和官方来源。
 type OfficialPricingSyncOptions struct {
 	Models        []string
 	IncludeOpenAI bool
-	IncludeGrok   bool
-	IncludeClaude bool
 }
 
 // OfficialPricingSyncResult 包含有效价格数、覆盖更新数、缺价模型及参考来源。
@@ -95,8 +90,6 @@ func SyncOfficialModelPricing(ctx context.Context, db *database.DB, proxyURL str
 func (sync *officialPricingSync) fetch(ctx context.Context, client *http.Client) {
 	sources := []officialPricingSource{
 		{"OpenAI", OfficialOpenAIPricingURL, sync.options.IncludeOpenAI, ParseOpenAIOfficialPricingHTML},
-		{"xAI", OfficialXAIPricingURL, sync.options.IncludeGrok && sync.hasGrokModels(), ParseXAIOfficialPricingHTML},
-		{"Anthropic", OfficialAnthropicPricingURL, sync.options.IncludeClaude, ParseAnthropicOfficialPricingHTML},
 	}
 	for _, source := range sources {
 		if !source.enabled {
@@ -116,9 +109,6 @@ func (sync *officialPricingSync) fetch(ctx context.Context, client *http.Client)
 			if err := openAIPriceData(parsed).supplementContext(ctx, client, body); err != nil {
 				sync.result.Warnings = append(sync.result.Warnings, fmt.Sprintf("读取 OpenAI 长上下文价格失败: %v", err))
 			}
-		}
-		if source.url == OfficialAnthropicPricingURL {
-			parsed = projectClaudeOfficialPricing(sync.allowed, parsed)
 		}
 		if sync.importPricing(parsed) > 0 {
 			sync.result.Sources = append(sync.result.Sources, source.url)
@@ -149,16 +139,6 @@ func (sync *officialPricingSync) importPricing(parsed map[string]database.ModelP
 	return imported
 }
 
-// hasGrokModels 避免没有 Grok 模型时请求 xAI 价目。
-func (sync *officialPricingSync) hasGrokModels() bool {
-	for model := range sync.allowed {
-		if strings.HasPrefix(model, "grok-") {
-			return true
-		}
-	}
-	return false
-}
-
 // findMissing 只对本轮启用来源的模型收集缺价信息。
 func (sync *officialPricingSync) findMissing() {
 	for model := range sync.allowed {
@@ -171,15 +151,8 @@ func (sync *officialPricingSync) findMissing() {
 }
 
 // officialPricingModelEnabled 判断模型是否属于本轮启用的官方来源。
-func officialPricingModelEnabled(model string, options OfficialPricingSyncOptions) bool {
-	switch {
-	case strings.HasPrefix(model, "grok-"):
-		return options.IncludeGrok
-	case isClaudeBillingModel(model):
-		return options.IncludeClaude
-	default:
-		return options.IncludeOpenAI
-	}
+func officialPricingModelEnabled(_ string, options OfficialPricingSyncOptions) bool {
+	return options.IncludeOpenAI
 }
 
 // apply 清除缺价模型的旧同步覆盖，让内置规则和别名继承规则重新生效。

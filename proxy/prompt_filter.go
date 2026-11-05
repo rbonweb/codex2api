@@ -140,39 +140,6 @@ func (h *Handler) inspectPromptFilterTextOpenAI(c *gin.Context, text string, end
 	return true
 }
 
-func (h *Handler) inspectPromptFilterAnthropic(c *gin.Context, rawBody []byte, endpoint string, model string) bool {
-	if h == nil || h.store == nil {
-		return false
-	}
-	cfg := h.promptFilterConfigForRequest(c)
-	signedBody := ingressRequestBody(c, rawBody)
-	if apiErr := h.requiredNewAPIIdentityError(c, cfg.Advanced.NewAPI, signedBody); apiErr != nil {
-		sendAnthropicError(c, http.StatusUnauthorized, "authentication_error", apiErr.Message)
-		return true
-	}
-	if h.rejectLockedPromptConversation(c, cfg, signedBody, rawBody, endpoint, model) {
-		return true
-	}
-	if !promptfilter.RequiresRequestText(cfg) {
-		return false
-	}
-	evaluation := h.evaluatePromptGuardWithConfig(c, cfg, rawBody, signedBody, endpoint, model, promptfilter.TransportHTTP)
-	verdict := evaluation.Verdict
-	h.logPromptGuardEvaluation(c, endpoint, model, "local_filter", "", evaluation)
-	if verdict.Action == promptfilter.ActionWarn {
-		c.Header("X-Prompt-Filter-Warning", promptFilterWarningMessage(evaluation))
-	}
-	if verdict.Action == promptfilter.ActionBlock {
-		h.lockPromptConversationOnLocalBlock(c, cfg, signedBody, endpoint, model, evaluation.Decision, verdict)
-		if h.sendNewAPIPolicyDecision(c, cfg, evaluation.Decision, verdict, rawBody, endpoint, model, signedBody) {
-			return true
-		}
-		sendAnthropicError(c, http.StatusBadRequest, "invalid_request_error", localPromptBlockMessage(cfg))
-		return true
-	}
-	return false
-}
-
 func promptFilterWarningMessage(evaluation promptGuardEvaluation) string {
 	if reason := strings.TrimSpace(evaluation.Verdict.Reason); reason != "" {
 		return reason

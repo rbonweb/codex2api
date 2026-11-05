@@ -96,14 +96,6 @@ func TestSingleMachineFingerprintMissingIdentityAndBodyFallback(t *testing.T) {
 	if got := ApplyCodexFingerprintToBody([]byte(`{"input":"hello"}`), a, prepared); string(got) != `{"input":"hello"}` {
 		t.Fatal("invented metadata")
 	}
-	for _, mode := range []string{auth.CodexFingerprintModeSingleMachineMultiWindow} {
-		for _, provider := range []string{auth.UpstreamOpenAIResponses, auth.UpstreamGrok} {
-			relay := &auth.Account{DBID: 1, UpstreamType: provider, BaseURL: "https://relay.example.test", APIKey: "relay-key", CodexFingerprintMode: mode}
-			if resolveCodexFingerprintIDs(relay, prepared) != nil {
-				t.Fatalf("relay %s rewritten", provider)
-			}
-		}
-	}
 }
 
 func TestSingleMachineFingerprintPoolIdentityIsolation(t *testing.T) {
@@ -149,9 +141,7 @@ func TestSingleMachineFingerprintHTTPAndCompactWire(t *testing.T) {
 				fmt.Fprint(w, `{}`)
 			}))
 			defer server.Close()
-			previous := resinCfg.Load()
-			t.Cleanup(func() { resinCfg.Store(previous) })
-			SetResinConfig(&ResinConfig{BaseURL: server.URL, PlatformName: "test"})
+			useResinForTest(t, server.URL, "test")
 			clientPool.Delete(fmt.Sprintf("resin|%d", a.ID()))
 			var resp *http.Response
 			var err error

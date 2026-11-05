@@ -1485,31 +1485,6 @@ func TestStreamImagesResponseDoesNotReplayAfterPartialImage(t *testing.T) {
 	}
 }
 
-// TestNextImageAccountSkipsNonCodexAccounts 生图上游目前只有 Codex 官方账号支持:
-// Grok/中转账号被调度到会对上游 401,还把自己误标 unauthorized(issue #477 实测发现)。
-func TestNextImageAccountSkipsNonCodexAccounts(t *testing.T) {
-	store := auth.NewStore(nil, nil, &database.SystemSettings{MaxConcurrency: 2, TestConcurrency: 1, TestModel: "gpt-5.4"})
-	store.AddAccount(&auth.Account{DBID: 1, AccessToken: "grok-token", UpstreamType: auth.UpstreamGrok, PlanType: "plus"})
-	store.AddAccount(&auth.Account{DBID: 2, AccessToken: "codex-token", PlanType: "free"})
-	handler := &Handler{store: store}
-	c, _ := gin.CreateTestContext(httptest.NewRecorder())
-
-	// Grok 账号是 plus、Codex 账号只是 free:preferred 档也不许把 plus 的 Grok 号放进来。
-	account, _ := handler.nextImageAccount(c, 0, nil, "gpt-image-2-2k", requestSessionIdentity{})
-	if account == nil || account.DBID != 2 {
-		t.Fatalf("nextImageAccount should pick the codex account, got %+v", account)
-	}
-	store.Release(account)
-
-	// 池里只有 Grok 账号时宁可拿不到账号,也不能把生图请求派给 Grok。
-	grokOnly := auth.NewStore(nil, nil, &database.SystemSettings{MaxConcurrency: 2, TestConcurrency: 1, TestModel: "gpt-5.4"})
-	grokOnly.AddAccount(&auth.Account{DBID: 3, AccessToken: "grok-token", UpstreamType: auth.UpstreamGrok, PlanType: "plus"})
-	handler = &Handler{store: grokOnly}
-	if account, _ := handler.nextImageAccount(c, 0, nil, "gpt-image-2-2k", requestSessionIdentity{}); account != nil {
-		t.Fatalf("nextImageAccount must not return a Grok account, got DBID=%d", account.DBID)
-	}
-}
-
 // TestNextImageAccountHonorsNoAffinitySplit 生图也要守分流：无指纹的生图请求只能落到
 // 分流组，带指纹的必须避开分流组——否则 store 层放宽了授权，生图流量会两个方向都走反。
 func TestNextImageAccountHonorsNoAffinitySplit(t *testing.T) {

@@ -520,10 +520,7 @@ func (h *Handler) nextRetryAccountForContinuation(ctx context.Context, affinityK
 }
 
 // nextRetryAccountForContinuationWithSelection 是续链（preserveBinding=true）重试的
-// SelectionOptions 变体：续链虽然只认已绑定的账号，但选号实现仍需要 Provider / Policy
-// 才能走对渠道分支。传 policy-only 的 SelectionOptions 会让 auto 渠道下的 Antigravity
-// 续链请求丢掉加权避险上下文。候选池已显式排除 Antigravity 的入口（compact 执行器 /
-// native remote compaction）例外，见 selectionOptionsForCandidatePool。
+// SelectionOptions 变体：续链虽然只认已绑定的账号，但选号实现仍需要 Policy。
 func (h *Handler) nextRetryAccountForContinuationWithSelection(ctx context.Context, affinityKey string, apiKeyID int64, exclusions *retryAccountExclusions, filter auth.AccountFilter, opts auth.SelectionOptions) (*auth.Account, string, error) {
 	account, proxyURL, _, err := h.nextRetryAccountWithGuard(ctx, affinityKey, apiKeyID, exclusions, filter, true, opts)
 	return account, proxyURL, err
@@ -554,8 +551,7 @@ func selectionFilterWithContext(ctx context.Context, filter auth.AccountFilter) 
 // nextRetryAccountWithGuard 是重试选号的底层实现：先在 accountSelectionTimeout 预算内
 // 做一次同步选号（过滤器同时受该预算约束），失败后触发调度状态对账并排队等待。阻塞者
 // 只剩本次请求自身的软 / 暂态排除项时跳过等待直接重置，硬排除、账号冷却与过滤器始终
-// 生效；预算耗尽返回上下文错误，队列准入被拒时上抛准入错误；候选集合全部因 Antigravity
-// 配额硬门禁被阻断时跳过排队等待，直接上抛类型化的配额阻断错误。
+// 生效；预算耗尽返回上下文错误，队列准入被拒时上抛准入错误。
 func (h *Handler) nextRetryAccountWithGuard(ctx context.Context, affinityKey string, apiKeyID int64, exclusions *retryAccountExclusions, filter auth.AccountFilter, preserveBinding bool, opts auth.SelectionOptions) (*auth.Account, string, auth.SessionAffinityGuard, error) {
 	if ctx == nil {
 		ctx = context.Background()
@@ -576,8 +572,7 @@ func (h *Handler) nextRetryAccountWithGuard(ctx context.Context, affinityKey str
 		var stickyProxyURL string
 		var guard auth.SessionAffinityGuard
 		if preserveBinding {
-			// 续链同样带上 SelectionOptions：Provider 为空时与 policy-only 行为一致，
-			// 携带渠道时底层选号（含容量借用 / 首次绑定分支）不会丢掉加权避险上下文。
+			// 续链同样带上 SelectionOptions，底层选号（含容量借用 / 首次绑定分支）不会丢掉 Policy。
 			account, stickyProxyURL = h.store.NextForContinuationWithDispatchForProvider(opts, affinityKey, apiKeyID, exclude, filter)
 		} else {
 			account, stickyProxyURL, guard = h.nextAccountForSessionWithDispatchGuard(affinityKey, apiKeyID, exclude, filter, opts)
@@ -591,15 +586,6 @@ func (h *Handler) nextRetryAccountWithGuard(ctx context.Context, affinityKey str
 		}
 		if ctx.Err() != nil {
 			return nil, "", auth.SessionAffinityGuard{}, ctx.Err()
-		}
-		// 配额硬门禁（Spec §6.2 #2、验收 #38）：候选集合全部因 Antigravity 配额耗尽被
-		// 阻断时，以类型化原因直接上浮，交给 schedulerSelectionAPIError 映射 429 +
-		// Retry-After。可信 resetAt 常在数小时之后，进入
-		// waitForRetryAccountAvailableWithGuard 的排队等待只会白耗本次请求的重试预算。
-		// 混合原因（部分配额、部分容量 / 冷却 / 鉴权）不满足「全部因配额阻断」，
-		// 仍走既有排队与 503 路径。
-		if quotaErr := h.store.AntigravityQuotaGateExhaustion(affinityKey, apiKeyID, exclude, filter, preserveBinding, opts.Model); quotaErr != nil {
-			return nil, "", auth.SessionAffinityGuard{}, quotaErr
 		}
 		h.store.TriggerDispatchStateReconcileAsync()
 		// When this request's own soft/transient exclusions are all that stand

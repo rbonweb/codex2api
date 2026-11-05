@@ -53,9 +53,6 @@ export function needsUsageReload(account: {
   status?: string
   usage_percent_5h?: number | null
   usage_percent_7d?: number | null
-  claude_api?: boolean
-  claude_usage_probe_at?: string | null
-  claude_usage_probe_error?: string | null
 }): boolean {
   if (account.status !== 'active' && account.status !== 'ready') return false
 
@@ -63,43 +60,18 @@ export function needsUsageReload(account: {
     account.usage_percent_5h !== null && account.usage_percent_5h !== undefined
   const has7d =
     account.usage_percent_7d !== null && account.usage_percent_7d !== undefined
-  // Claude's native Messages probe can legitimately return no quota headers.
-  // A successful probe is still a completed sample and must not trigger an
-  // endless page refresh loop.
-  if (hasSuccessfulClaudeProbe(account)) return false
   return !has5h && !has7d
 }
 
 type AccountStatusSource = {
   status?: string | null
-  openai_responses_api?: boolean
-  grok_api?: boolean
-  antigravity_api?: boolean
-  claude_api?: boolean
-  claude_usage_probe_at?: string | null
-  claude_usage_probe_error?: string | null
   usage_percent_5h?: number | null
   usage_percent_7d?: number | null
 }
 
-function hasSuccessfulClaudeProbe(account: AccountStatusSource): boolean {
-  return Boolean(
-    account.claude_api &&
-      account.claude_usage_probe_at?.trim() &&
-      !account.claude_usage_probe_error?.trim(),
-  )
-}
-
 export function isUnsampledQuotaAccount(account: AccountStatusSource): boolean {
   const status = (account.status || '').toLowerCase()
-  if (
-    status === 'unauthorized' ||
-    status === 'error' ||
-    account.openai_responses_api ||
-    account.grok_api ||
-    // Antigravity 的额度来自控制面配额快照,没有 5h/7d 采样窗口(与后端口径一致)。
-    account.antigravity_api
-  ) {
+  if (status === 'unauthorized' || status === 'error') {
     return false
   }
   // k12 等 team 型工作区可能只返回 5h 窗口：任一窗口有数据即算已采样。
@@ -109,7 +81,6 @@ export function isUnsampledQuotaAccount(account: AccountStatusSource): boolean {
   const has5h =
     typeof account.usage_percent_5h === 'number' &&
     Number.isFinite(account.usage_percent_5h)
-  if (hasSuccessfulClaudeProbe(account)) return false
   return !has7d && !has5h
 }
 
@@ -147,13 +118,7 @@ export function supportsOfficialUsage(account: {
   access_token_type?: string | null
   chatgpt_account_id?: string | null
   effective_workspace_id?: string | null
-  openai_responses_api?: boolean
-  grok_api?: boolean
-  claude_api?: boolean
-  antigravity_api?: boolean
 }): boolean {
-  // wham 只属于 ChatGPT 渠道：中转 / Grok / Claude / Antigravity（Google）账号没有官方统计。
-  if (account.openai_responses_api || account.grok_api || account.claude_api || account.antigravity_api) return false
   const isAT = (account.access_token_type || '').trim().toLowerCase() === 'codex_at'
   if (!isAT) return true
   // codex_at 账号如果具备工作区 ID（whoami 补全或自定义头覆盖），则支持官方用量统计。
@@ -172,16 +137,13 @@ export function officialUsdValue(account: {
 }
 
 // Codex OAuth 账号的官方结算成本来自本地快照。列表打开时快照经常还是空的，
-// 需要重拉 page-stats 直到回补完成；codex_at、中转和 Grok 没有该链路，不要空转。
+// 需要重拉 page-stats 直到回补完成；codex_at 没有该链路，不要空转。
 // official_usage_synced 表示后端已成功同步过但上游没有数据（官方统计有
 // 滞后），这时继续重拉也不会有结果，交给后台小时级探针即可。
 export function needsOfficialCostReload(account: {
   status?: string | null
   created_at?: string | null
   access_token_type?: string | null
-  openai_responses_api?: boolean
-  grok_api?: boolean
-  claude_api?: boolean
   official_usd?: number | null
   official_usd_7d?: number | null
   official_usage_synced?: boolean

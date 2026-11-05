@@ -2,7 +2,7 @@ import { Check, Hourglass, X } from "lucide-react";
 import { useTranslation } from "react-i18next";
 import type { OperationProgressState } from "../hooks/useOperationProgress";
 
-// 批量操作进度浮层（右上角）。Codex / Grok 账号页共用，保证两处视觉一致。
+// 批量操作进度浮层（右上角）。账号页批量操作共用。
 export default function OperationProgressToast({
   progress,
   onClose,
@@ -37,7 +37,7 @@ export default function OperationProgressToast({
             tone: "text-red-600 dark:text-red-400",
           },
         ]
-      : progress.action === "batch_refresh" || progress.action === "grok_import"
+      : progress.action === "batch_refresh"
         ? [
             {
               label: t("accounts.operationProgressSuccess"),

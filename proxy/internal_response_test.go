@@ -6,92 +6,9 @@ import (
 	"testing"
 
 	"github.com/codex2api/api"
-	"github.com/codex2api/auth"
 	"github.com/codex2api/database"
 	"github.com/gin-gonic/gin"
 )
-
-func TestApplyUpstreamChannelFilterAntigravityFailsClosed(t *testing.T) {
-	gin.SetMode(gin.TestMode)
-	c, _ := gin.CreateTestContext(httptest.NewRecorder())
-	c.Set(contextAPIKeyRow, &database.APIKeyRow{Limits: database.APIKeyLimits{UpstreamChannel: database.UpstreamChannelAntigravity}})
-	filter := (&Handler{}).applyUpstreamChannelFilter(c, "gpt-5.4", func(*auth.Account) bool { return true })
-
-	for _, account := range []*auth.Account{
-		{DBID: 1, AccessToken: "codex"},
-		{DBID: 2, UpstreamType: auth.UpstreamGrok, APIKey: "xai"},
-		{DBID: 3, UpstreamType: auth.UpstreamOpenAIResponses, APIKey: "relay", BaseURL: "https://relay.example/v1"},
-	} {
-		if filter(account) {
-			t.Fatalf("antigravity channel admitted runtime account %+v", account)
-		}
-	}
-}
-
-func TestApplyUpstreamChannelFilterClaudeIsolatesProvider(t *testing.T) {
-	gin.SetMode(gin.TestMode)
-	c, _ := gin.CreateTestContext(httptest.NewRecorder())
-	c.Set(contextAPIKeyRow, &database.APIKeyRow{Limits: database.APIKeyLimits{UpstreamChannel: database.UpstreamChannelClaude}})
-	filter := (&Handler{}).applyUpstreamChannelFilter(c, "claude-sonnet-4-5", func(*auth.Account) bool { return true })
-	claude := &auth.Account{DBID: 1, UpstreamType: auth.UpstreamClaude, AccessToken: "claude", Models: []string{"claude-sonnet-4-5"}}
-	codex := &auth.Account{DBID: 2, AccessToken: "codex"}
-	if !filter(claude) {
-		t.Fatal("Claude channel rejected Claude account")
-	}
-	if filter(codex) {
-		t.Fatal("Claude channel admitted Codex account")
-	}
-}
-
-func TestResponsesFilterRejectsClaudeProtocol(t *testing.T) {
-	claude := &auth.Account{DBID: 3, UpstreamType: auth.UpstreamClaude, AccessToken: "claude", Models: []string{"claude-sonnet-4-5"}}
-	filter := excludeClaudeAccountsFilter(accountFilterForResponsesModel("claude-sonnet-4-5", true))
-	if filter(claude) {
-		t.Fatal("Responses protocol admitted Claude account")
-	}
-}
-
-func TestResponsesCompactFilterRejectsClaudeProtocol(t *testing.T) {
-	claude := &auth.Account{DBID: 6, UpstreamType: auth.UpstreamClaude, AccessToken: "claude", Models: []string{"claude-sonnet-4-5"}}
-	filter := accountFilterForCompactResponsesModelWithOriginal("claude-sonnet-4-5", "claude-sonnet-4-5", true)
-	if filter(claude) {
-		t.Fatal("Responses Compact admitted Claude native Messages account")
-	}
-}
-
-func TestResponsesFilterAdmitsAntigravityInLazyMode(t *testing.T) {
-	account := &auth.Account{
-		DBID: 4, UpstreamType: auth.UpstreamAntigravity, AccessToken: "google-token",
-		Models: []string{"gemini-3.7-flash-tiered"},
-	}
-	filter := accountFilterForResponsesModel("gemini-3.7-flash-medium", true)
-	if !filter(account) {
-		t.Fatal("responses filter rejected a configured Antigravity account")
-	}
-	if !relayAccountSupportsModel(account, "gemini-3.7-flash-medium") {
-		t.Fatal("relay model admission rejected Antigravity model")
-	}
-}
-
-func TestApplyCooldownForModelSkipsAntigravityUnauthorizedBan(t *testing.T) {
-	account := &auth.Account{
-		DBID:         5,
-		UpstreamType: auth.UpstreamAntigravity,
-		AccessToken:  "google-token",
-		RefreshToken: "google-refresh",
-		HealthTier:   auth.HealthTierHealthy,
-		Status:       auth.StatusReady,
-	}
-	store := auth.NewStore(nil, nil, nil)
-	handler := &Handler{store: store}
-	decision := handler.applyCooldownForModel(account, http.StatusUnauthorized, []byte(`{"error":"invalid_grant"}`), &http.Response{Header: make(http.Header)}, "gemini-2.5-flash")
-	if decision.Reason != "" {
-		t.Fatalf("applyCooldownForModel decision = %+v, want empty for Antigravity", decision)
-	}
-	if account.IsBanned() || account.HasActiveCooldown() {
-		t.Fatal("Codex unauthorized cooldown must not ban an Antigravity account")
-	}
-}
 
 func TestInternalResponseAttributionPreservesParentAuditIdentity(t *testing.T) {
 	gin.SetMode(gin.TestMode)
@@ -105,7 +22,7 @@ func TestInternalResponseAttributionPreservesParentAuditIdentity(t *testing.T) {
 		Limits: database.APIKeyLimits{
 			AutoCompactOnOverflow: true,
 			ModelAllow:            []string{"gpt-5.4"},
-			UpstreamChannel:       database.UpstreamChannelGrok,
+			UpstreamChannel:       database.UpstreamChannelCodex,
 		},
 	}
 	parent.Set(contextAPIKeyID, row.ID)
@@ -149,8 +66,8 @@ func TestInternalResponseAttributionPreservesParentAuditIdentity(t *testing.T) {
 	if autoCompactOverflowEnabled(child) {
 		t.Fatal("attributed summary request must not recursively auto-compact")
 	}
-	if got := requestUpstreamChannel(child); got != database.UpstreamChannelGrok {
-		t.Fatalf("child upstream channel = %q, want grok", got)
+	if childRow := apiKeyRowFromContext(child); childRow == nil || childRow.Limits.ResolveUpstreamChannel() != database.UpstreamChannelCodex {
+		t.Fatalf("child API key row = %+v, want the parent row with the codex channel", childRow)
 	}
 	if status, _ := (&Handler{}).enforceAPIKeyLimits(child, "gpt-other"); status != http.StatusForbidden {
 		t.Fatalf("child model restriction status = %d, want 403", status)

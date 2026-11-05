@@ -17,7 +17,6 @@ import (
 	"github.com/codex2api/auth"
 	"github.com/codex2api/database"
 	"github.com/gin-gonic/gin"
-	"github.com/tidwall/gjson"
 )
 
 func TestShouldRetryHTTPStatusUnlimitedBudgets(t *testing.T) {
@@ -335,12 +334,6 @@ func TestImageRetryCapOnlyYieldsToSelectedContinuousPolicy(t *testing.T) {
 	if !shouldRetryImageStreamError(streamErr, &generalRetries, 0, maxImageAttempts-1, maxImageAttempts, policy) {
 		t.Fatal("selected continuous image failure did not bypass the ordinary attempt cap")
 	}
-	if !retryAllowedByEndpointCap(maxGrokMediaAttempts-1, maxGrokMediaAttempts, true) {
-		t.Fatal("selected continuous Grok media failure did not bypass the ordinary attempt cap")
-	}
-	if retryAllowedByEndpointCap(maxGrokMediaAttempts-1, maxGrokMediaAttempts, false) {
-		t.Fatal("ordinary Grok media retry bypassed the endpoint attempt cap")
-	}
 }
 
 func TestUnlimitedResponseFailedSuppressionBoundaries(t *testing.T) {
@@ -409,7 +402,7 @@ func TestResponsesContinuousRetryCyclesSingleAccountAfter503(t *testing.T) {
 	})
 
 	var calls atomic.Int32
-	upstream := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+	upstream := codexRestoredMainRequestServer(t, http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
 		if calls.Add(1) == 1 {
 			w.Header().Set("Content-Type", "application/json")
 			w.WriteHeader(http.StatusServiceUnavailable)
@@ -429,14 +422,8 @@ func TestResponsesContinuousRetryCyclesSingleAccountAfter503(t *testing.T) {
 		MaxRateLimitRetries: 0,
 	})
 	t.Cleanup(store.Stop)
-	store.AddAccount(&auth.Account{
-		DBID:         1,
-		UpstreamType: auth.UpstreamOpenAIResponses,
-		BaseURL:      upstream.URL,
-		APIKey:       "test-relay-key",
-		Models:       []string{"gpt-5.5"},
-		PlanType:     "api",
-	})
+	codexRestoredUseResin(t, upstream.URL)
+	store.AddAccount(&auth.Account{DBID: 1, AccessToken: "at-1", AccountID: "acct-1", PlanType: "pro"})
 	handler := NewHandler(store, nil, nil, nil)
 
 	recorder := httptest.NewRecorder()
@@ -476,7 +463,7 @@ func TestResponsesContinuousRetryCatchAllRotatesAndRepeatsPool(t *testing.T) {
 
 	var requestMu sync.Mutex
 	var authorizationHeaders []string
-	upstream := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+	upstream := codexRestoredMainRequestServer(t, http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		requestMu.Lock()
 		authorizationHeaders = append(authorizationHeaders, r.Header.Get("Authorization"))
 		attempt := len(authorizationHeaders)
@@ -507,21 +494,15 @@ func TestResponsesContinuousRetryCatchAllRotatesAndRepeatsPool(t *testing.T) {
 		MaxRateLimitRetries: 0,
 	})
 	t.Cleanup(store.Stop)
+	codexRestoredUseResin(t, upstream.URL)
 	for _, account := range []struct {
-		id  int64
-		key string
+		id    int64
+		token string
 	}{
-		{id: 1, key: "catch-all-account-one"},
-		{id: 2, key: "catch-all-account-two"},
+		{id: 1, token: "catch-all-account-one"},
+		{id: 2, token: "catch-all-account-two"},
 	} {
-		store.AddAccount(&auth.Account{
-			DBID:         account.id,
-			UpstreamType: auth.UpstreamOpenAIResponses,
-			BaseURL:      upstream.URL,
-			APIKey:       account.key,
-			Models:       []string{"gpt-5.5"},
-			PlanType:     "api",
-		})
+		store.AddAccount(&auth.Account{DBID: account.id, AccessToken: account.token, AccountID: fmt.Sprintf("acct-%d", account.id), PlanType: "pro"})
 	}
 	handler := NewHandler(store, nil, nil, nil)
 
@@ -572,22 +553,15 @@ func TestContinuousRetryCatchAllDoesNotReplaySuccessfulNonStreamingResponses(t *
 		body   string
 		invoke func(*Handler, *gin.Context)
 	}{
-		{name: "responses", path: "/v1/responses", body: `{"model":"gpt-4.1-direct","input":"hello","stream":false}`, invoke: (*Handler).Responses},
-		{name: "chat completions", path: "/v1/chat/completions", body: `{"model":"gpt-4.1-direct","messages":[{"role":"user","content":"hello"}]}`, invoke: (*Handler).ChatCompletions},
-		{name: "anthropic messages", path: "/v1/messages", body: `{"model":"gpt-4.1-direct","max_tokens":128,"messages":[{"role":"user","content":"hello"}]}`, invoke: (*Handler).Messages},
+		{name: "responses", path: "/v1/responses", body: `{"model":"gpt-5.5","input":"hello","stream":false}`, invoke: (*Handler).Responses},
+		{name: "chat completions", path: "/v1/chat/completions", body: `{"model":"gpt-5.5","messages":[{"role":"user","content":"hello"}]}`, invoke: (*Handler).ChatCompletions},
 	}
 
 	for _, tc := range tests {
 		t.Run(tc.name, func(t *testing.T) {
 			var calls atomic.Int32
-			upstream := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+			upstream := codexRestoredMainRequestServer(t, http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 				calls.Add(1)
-				requestBody, _ := io.ReadAll(r.Body)
-				if !gjson.GetBytes(requestBody, "stream").Bool() {
-					w.Header().Set("Content-Type", "application/json")
-					_, _ = io.WriteString(w, `{"id":"resp_success_once","object":"response","status":"completed","output":[{"type":"message","role":"assistant","content":[{"type":"output_text","text":"OK"}]}],"usage":{"input_tokens":1,"output_tokens":1,"total_tokens":2}}`)
-					return
-				}
 				w.Header().Set("Content-Type", "text/event-stream")
 				for _, event := range []string{
 					`{"type":"response.created","response":{"id":"resp_success_once"}}`,
@@ -601,8 +575,7 @@ func TestContinuousRetryCatchAllDoesNotReplaySuccessfulNonStreamingResponses(t *
 			}))
 			t.Cleanup(upstream.Close)
 
-			store := newOpenAIResponsesRelayStore(upstream.URL)
-			t.Cleanup(store.Stop)
+			store := newRetryCodexStore(t, upstream.URL)
 			handler := NewHandler(store, nil, nil, nil)
 			recorder := httptest.NewRecorder()
 			ctx, _ := gin.CreateTestContext(recorder)
@@ -633,25 +606,19 @@ func TestContinuousRetryNonStreamingErrorEventCannotBeOverriddenByCompleted(t *t
 		body   string
 		invoke func(*Handler, *gin.Context)
 	}{
-		{name: "responses", path: "/v1/responses", body: `{"model":"gpt-4.1-direct","input":"hello","stream":false}`, invoke: (*Handler).Responses},
-		{name: "chat completions", path: "/v1/chat/completions", body: `{"model":"gpt-4.1-direct","messages":[{"role":"user","content":"hello"}]}`, invoke: (*Handler).ChatCompletions},
-		{name: "anthropic messages", path: "/v1/messages", body: `{"model":"gpt-4.1-direct","max_tokens":128,"messages":[{"role":"user","content":"hello"}]}`, invoke: (*Handler).Messages},
+		{name: "responses", path: "/v1/responses", body: `{"model":"gpt-5.5","input":"hello","stream":false}`, invoke: (*Handler).Responses},
+		{name: "chat completions", path: "/v1/chat/completions", body: `{"model":"gpt-5.5","messages":[{"role":"user","content":"hello"}]}`, invoke: (*Handler).ChatCompletions},
 	}
 
 	for _, tc := range tests {
 		t.Run(tc.name, func(t *testing.T) {
 			var calls atomic.Int32
-			upstream := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+			upstream := codexRestoredMainRequestServer(t, http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
 				attempt := calls.Add(1)
 				w.Header().Set("Content-Type", "text/event-stream")
 				if attempt == 1 {
 					_, _ = io.WriteString(w, "event: error\ndata: {\"error\":{\"code\":\"future_failure\",\"message\":\"must stay upstream\"}}\n\n")
 					_, _ = io.WriteString(w, "data: {\"type\":\"response.completed\",\"response\":{\"id\":\"resp_poisoned\",\"status\":\"completed\",\"output\":[{\"type\":\"message\",\"role\":\"assistant\",\"content\":[{\"type\":\"output_text\",\"text\":\"poisoned-success\"}]}],\"usage\":{\"input_tokens\":1,\"output_tokens\":1,\"total_tokens\":2}}}\n\n")
-					return
-				}
-				if tc.name == "responses" {
-					w.Header().Set("Content-Type", "application/json")
-					_, _ = io.WriteString(w, `{"id":"resp_real","status":"completed","output":[{"type":"message","role":"assistant","content":[{"type":"output_text","text":"real-success"}]}],"usage":{"input_tokens":1,"output_tokens":1,"total_tokens":2}}`)
 					return
 				}
 				for _, event := range []string{
@@ -665,8 +632,7 @@ func TestContinuousRetryNonStreamingErrorEventCannotBeOverriddenByCompleted(t *t
 			}))
 			t.Cleanup(upstream.Close)
 
-			store := newOpenAIResponsesRelayStore(upstream.URL)
-			t.Cleanup(store.Stop)
+			store := newRetryCodexStore(t, upstream.URL)
 			handler := NewHandler(store, nil, nil, nil)
 			recorder := httptest.NewRecorder()
 			ctx, _ := gin.CreateTestContext(recorder)
@@ -707,7 +673,7 @@ func TestContinuousRetryCatchAllStopsAtCYBAndRetainsPolicyDecision(t *testing.T)
 	continuousRetryKeepaliveInterval = time.Hour
 
 	var calls atomic.Int32
-	upstream := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+	upstream := codexRestoredMainRequestServer(t, http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
 		attempt := calls.Add(1)
 		w.Header().Set("Content-Type", "text/event-stream")
 		if attempt == 1 {
@@ -721,13 +687,13 @@ func TestContinuousRetryCatchAllStopsAtCYBAndRetainsPolicyDecision(t *testing.T)
 
 	handler, _ := newPromptConversationLockTestHandler(t)
 	t.Cleanup(handler.store.Stop)
+	codexRestoredUseResin(t, upstream.URL)
 	for id := int64(1); id <= 2; id++ {
 		handler.store.AddAccount(&auth.Account{
-			DBID: id, UpstreamType: auth.UpstreamOpenAIResponses, BaseURL: upstream.URL,
-			APIKey: fmt.Sprintf("policy-retry-%d", id), Models: []string{"gpt-4.1-direct"}, PlanType: "api",
+			DBID: id, AccessToken: fmt.Sprintf("policy-retry-%d", id), AccountID: fmt.Sprintf("acct-%d", id), PlanType: "pro",
 		})
 	}
-	body := []byte(`{"model":"gpt-4.1-direct","input":"ordinary request","stream":true}`)
+	body := []byte(`{"model":"gpt-5.5","input":"ordinary request","stream":true}`)
 	c, recorder := signedBoundPromptConversationContextWithRecorder(t, "policy-retry-request", newAPIIdentity{
 		UserID: "42", ClientIP: "203.0.113.8",
 	}, body, "0123456789abcdef0123456789abcdef")
@@ -751,7 +717,7 @@ func TestResponsesContinuousRetrySelectedDeterministicStatuses(t *testing.T) {
 	for _, statusCode := range []int{http.StatusForbidden, http.StatusNotFound, http.StatusNotImplemented} {
 		t.Run(http.StatusText(statusCode), func(t *testing.T) {
 			var calls atomic.Int32
-			upstream := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+			upstream := codexRestoredMainRequestServer(t, http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
 				if calls.Add(1) == 1 {
 					w.Header().Set("Content-Type", "application/json")
 					w.WriteHeader(statusCode)
@@ -784,15 +750,9 @@ func TestResponsesContinuousRetrySelectedDeterministicStatuses(t *testing.T) {
 				MaxRateLimitRetries: 0,
 			})
 			t.Cleanup(store.Stop)
+			codexRestoredUseResin(t, upstream.URL)
 			for _, id := range []int64{1, 2} {
-				store.AddAccount(&auth.Account{
-					DBID:         id,
-					UpstreamType: auth.UpstreamOpenAIResponses,
-					BaseURL:      upstream.URL,
-					APIKey:       fmt.Sprintf("test-relay-key-%d", id),
-					Models:       []string{"gpt-5.5"},
-					PlanType:     "api",
-				})
+				store.AddAccount(&auth.Account{DBID: id, AccessToken: fmt.Sprintf("test-token-%d", id), AccountID: fmt.Sprintf("acct-%d", id), PlanType: "pro"})
 			}
 			handler := NewHandler(store, nil, nil, nil)
 
@@ -833,7 +793,7 @@ func TestResponsesCompactContinuousRetryCyclesSingleAccountAfter503(t *testing.T
 	})
 
 	var calls atomic.Int32
-	upstream := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+	upstream := codexRestoredMainRequestServer(t, http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
 		if calls.Add(1) == 1 {
 			w.Header().Set("Content-Type", "application/json")
 			w.WriteHeader(http.StatusServiceUnavailable)
@@ -853,14 +813,8 @@ func TestResponsesCompactContinuousRetryCyclesSingleAccountAfter503(t *testing.T
 		MaxRateLimitRetries: 0,
 	})
 	t.Cleanup(store.Stop)
-	store.AddAccount(&auth.Account{
-		DBID:         1,
-		UpstreamType: auth.UpstreamOpenAIResponses,
-		BaseURL:      upstream.URL,
-		APIKey:       "test-relay-key",
-		Models:       []string{"gpt-5.5"},
-		PlanType:     "api",
-	})
+	codexRestoredUseResin(t, upstream.URL)
+	store.AddAccount(&auth.Account{DBID: 1, AccessToken: "at-1", AccountID: "acct-1", PlanType: "pro"})
 	handler := NewHandler(store, nil, nil, nil)
 
 	recorder := httptest.NewRecorder()
@@ -886,10 +840,8 @@ func TestResponsesCompactContinuousRetryCyclesSingleAccountAfter503(t *testing.T
 func TestResponsesCompactContinuousRetrySelectsResponseFailedEvent(t *testing.T) {
 	gin.SetMode(gin.TestMode)
 	previousRuntime := CurrentRuntimeSettings()
-	previousResin := resinCfg.Load()
 	t.Cleanup(func() {
 		UpdateRuntimeSettings(func(RuntimeSettings) RuntimeSettings { return previousRuntime })
-		resinCfg.Store(previousResin)
 	})
 	UpdateRuntimeSettings(func(current RuntimeSettings) RuntimeSettings {
 		current.CompactViaResponses = true
@@ -901,7 +853,7 @@ func TestResponsesCompactContinuousRetrySelectsResponseFailedEvent(t *testing.T)
 	})
 
 	var calls atomic.Int32
-	upstream := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+	upstream := codexRestoredMainRequestServer(t, http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		if !strings.HasSuffix(r.URL.Path, "/backend-api/codex/responses") {
 			t.Fatalf("upstream path = %q, want Resin path ending /backend-api/codex/responses", r.URL.Path)
 		}
@@ -913,7 +865,7 @@ func TestResponsesCompactContinuousRetrySelectsResponseFailedEvent(t *testing.T)
 		_, _ = io.WriteString(w, `data: {"type":"response.completed","response":{"id":"resp_compact_recovered","status":"completed","output":[],"usage":{"input_tokens":3,"output_tokens":2,"total_tokens":5}}}`+"\n\n")
 	}))
 	t.Cleanup(upstream.Close)
-	SetResinConfig(&ResinConfig{BaseURL: upstream.URL, PlatformName: "test"})
+	codexRestoredUseResin(t, upstream.URL)
 
 	store := auth.NewStore(nil, nil, &database.SystemSettings{
 		MaxConcurrency:      1,

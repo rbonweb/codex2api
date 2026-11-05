@@ -64,19 +64,19 @@ func TestAccountRequestCountsExcludeClientCanceledAndKeepRawUsage(t *testing.T) 
 	t.Cleanup(func() { _ = db.Close() })
 	ctx := context.Background()
 	logs := []*UsageLogInput{
-		{AccountID: 41, Channel: "claude", StatusCode: 200},
-		{AccountID: 41, Channel: "claude", StatusCode: 500},
-		{AccountID: 41, Channel: "claude", StatusCode: 429},
-		{AccountID: 41, Channel: "claude", StatusCode: 429, IsRetryAttempt: true},
-		{AccountID: 41, Channel: "claude", StatusCode: 499},
-		{AccountID: 41, Channel: "claude", StatusCode: 499, IsRetryAttempt: true},
-		{AccountID: 41, Channel: "claude", StatusCode: 500, InternalReason: "test_probe"},
-		{AccountID: 42, Channel: "claude", StatusCode: 499},
+		{AccountID: 41, Channel: "codex", StatusCode: 200},
+		{AccountID: 41, Channel: "codex", StatusCode: 500},
+		{AccountID: 41, Channel: "codex", StatusCode: 429},
+		{AccountID: 41, Channel: "codex", StatusCode: 429, IsRetryAttempt: true},
+		{AccountID: 41, Channel: "codex", StatusCode: 499},
+		{AccountID: 41, Channel: "codex", StatusCode: 499, IsRetryAttempt: true},
+		{AccountID: 41, Channel: "codex", StatusCode: 500, InternalReason: "test_probe"},
+		{AccountID: 42, Channel: "codex", StatusCode: 499},
 		{AccountID: 43, Channel: "codex", StatusCode: 499},
 	}
 	for _, entry := range logs {
-		entry.Endpoint = "/v1/messages"
-		entry.Model = "claude-sonnet-4-6"
+		entry.Endpoint = "/v1/responses"
+		entry.Model = "gpt-5.4"
 		entry.AttemptIndex = 1
 		if entry.StatusCode == 499 {
 			entry.InputTokens, entry.OutputTokens, entry.TotalTokens = 11, 7, 18

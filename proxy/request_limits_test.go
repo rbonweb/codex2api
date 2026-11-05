@@ -17,7 +17,7 @@ func TestResponsesCompactRejectsAmbiguousAndExcessiveInput(t *testing.T) {
 	var calls atomic.Int32
 	upstream := newCompactionAffinityCompactRelay(t, &calls)
 	defer upstream.Close()
-	account := &auth.Account{DBID: 1, UpstreamType: auth.UpstreamOpenAIResponses, BaseURL: upstream.URL, APIKey: "test", Models: []string{"gpt-4.1-direct"}}
+	account := &auth.Account{DBID: 1, AccessToken: "test", Models: []string{"gpt-4.1-direct"}}
 	h := NewHandler(newCompactionAffinityStore(account), nil, nil, nil)
 	many := strings.TrimSuffix(strings.Repeat(`{},`, maxResponsesInputItems+1), ",")
 	for _, input := range []string{

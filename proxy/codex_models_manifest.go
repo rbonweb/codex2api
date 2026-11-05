@@ -25,17 +25,10 @@ import (
 //
 // 有可调度的 ChatGPT OAuth 账号时，使用官方清单并按当前账号池的能力交集收窄。
 // 客户端缓存使用网关表示的 ETag，避免上游 304 绕过账号范围/凭据变化。
-// Antigravity / 仅中转号池没有 ChatGPT 账号：把与 Cockpit 相同的 /v1/models
-// 目录改写成 Codex 期望的 {"models":[{"slug":...}]}，避免客户端 503 后静默
-// 冻结在本地缓存（选单不全、模型信息联不通）。
+// 没有 ChatGPT 账号时：把与 Cockpit 相同的 /v1/models 目录改写成 Codex 期望的
+// {"models":[{"slug":...}]}，避免客户端 503 后静默冻结在本地缓存（选单不全、模型信息联不通）。
 func (h *Handler) CodexModelsManifestHandler(c *gin.Context) {
 	row := apiKeyRowFromContext(c)
-	if h.preferScopedCodexManifest(c) {
-		if !h.serveScopedCodexManifest(c, row) {
-			api.SendError(c, api.ErrServiceUnavailable)
-		}
-		return
-	}
 	account := h.scopedCodexManifestAccount(row)
 	if account == nil {
 		if !h.serveScopedCodexManifest(c, row) {
@@ -44,7 +37,7 @@ func (h *Handler) CodexModelsManifestHandler(c *gin.Context) {
 		return
 	}
 	restrictManifest := codexManifestNeedsFiltering(row, account)
-	extraModels := h.extraRelayManifestModels(c.Request.Context(), row)
+	extraModels := h.extraDaybreakManifestModels(c.Request.Context(), row)
 	// Capability intersections can change when account scope or credentials
 	// change, even if the source descriptor is unchanged. Always fetch a body
 	// and compare the client's validator against the final gateway descriptor.
@@ -100,10 +93,6 @@ func (h *Handler) CodexModelsManifestHandler(c *gin.Context) {
 	h.writeMergedCodexManifest(c, manifest.Body, manifest.ETag, extraModels)
 }
 
-func (h *Handler) preferScopedCodexManifest(c *gin.Context) bool {
-	return requestUpstreamChannel(c) == database.UpstreamChannelAntigravity
-}
-
 func (h *Handler) serveScopedCodexManifest(c *gin.Context, row *database.APIKeyRow) bool {
 	if h == nil || c == nil || row == nil {
 		return false
@@ -127,7 +116,7 @@ func (h *Handler) writeMergedCodexManifest(c *gin.Context, body []byte, upstream
 	if len(extras) > 0 {
 		next, err := mergeCodexManifestModels(body, extras)
 		if err != nil {
-			log.Printf("merge relay models into Codex manifest: %v", err)
+			log.Printf("merge Daybreak models into Codex manifest: %v", err)
 		} else {
 			merged = next
 		}
@@ -140,7 +129,7 @@ func (h *Handler) writeMergedCodexManifest(c *gin.Context, body []byte, upstream
 	h.writeCodexManifest(c, merged, etag)
 }
 
-func (h *Handler) extraRelayManifestModels(ctx context.Context, row *database.APIKeyRow) []api.Model {
+func (h *Handler) extraDaybreakManifestModels(ctx context.Context, row *database.APIKeyRow) []api.Model {
 	if h == nil || row == nil {
 		return nil
 	}
@@ -151,7 +140,7 @@ func (h *Handler) extraRelayManifestModels(ctx context.Context, row *database.AP
 			continue
 		}
 		_, daybreak := auth.ParseDaybreakAlias(record.id)
-		if record.backing&(modelBackingRelay|modelBackingGrok|modelBackingAntigravity) == 0 && daybreak == "" {
+		if daybreak == "" {
 			continue
 		}
 		extras = append(extras, api.Model{ID: record.id, Object: "model", OwnedBy: scopedModelOwner(record)})
@@ -202,14 +191,10 @@ type scopedCodexManifestItem struct {
 }
 
 func buildScopedCodexManifest(models []api.Model) ([]byte, error) {
-	fold, levels := antigravityModelChoiceGroups(models)
 	items := make([]scopedCodexManifestItem, 0, len(models))
 	seen := make(map[string]struct{}, len(models))
 	for _, model := range models {
 		slug := strings.TrimSpace(model.ID)
-		if base, ok := fold[strings.ToLower(slug)]; ok {
-			slug = base
-		}
 		if slug == "" {
 			continue
 		}
@@ -236,22 +221,6 @@ func buildScopedCodexManifest(models []api.Model) ([]byte, error) {
 		}
 		if strings.Contains(key, "image") {
 			item.InputModalities = []string{"text", "image"}
-		}
-		// Antigravity's reasoning metadata is provider-specific. Never infer
-		// levels from names such as "thinking" or "reason": Claude Opus
-		// `*-thinking` is not a Gemini reasoning-control model.
-		if available := levels[slug]; len(available) > 0 {
-			for _, level := range available {
-				item.SupportedReasoningLevels = append(item.SupportedReasoningLevels, codexReasoningLevel{Effort: level, Description: "Antigravity " + level + " reasoning"})
-			}
-			item.DefaultReasoningLevel = antigravityModelChoiceDefaultLevel(slug, available)
-			item.SupportsReasoningSummaries = true
-		}
-		if slug == "gemini-3.8-flash" || (slug == "gemini-4-argon" && len(levels[slug]) > 0) {
-			item.ContextWindow = 1048576
-			// The current OAuth adapter accepts text parts only, even though the
-			// upstream model itself has vision. Advertise the gateway contract.
-			item.InputModalities = []string{"text"}
 		}
 		items = append(items, item)
 	}
@@ -292,32 +261,6 @@ func mergeCodexManifestModels(body []byte, extras []api.Model) ([]byte, error) {
 	if err := json.Unmarshal(rawModels, &models); err != nil {
 		return nil, err
 	}
-	// Locally routed Antigravity variants are authoritative for their base
-	// model. An upstream manifest can contain stale capabilities or fixed
-	// effort aliases; keeping those by slug would discard the current scoped
-	// contract (including a key restricted to a single effort).
-	_, localLevels := antigravityModelChoiceGroups(extras)
-	replacedSlugs := make(map[string]bool)
-	for _, definition := range antigravityLogicalCompatibilityCatalog {
-		if len(localLevels[definition.id]) == 0 {
-			continue
-		}
-		replacedSlugs[definition.id] = true
-		for _, variant := range definition.variants {
-			replacedSlugs[definition.id+"-"+variant.level] = true
-		}
-	}
-	retained := models[:0]
-	for _, raw := range models {
-		var item struct {
-			Slug string `json:"slug"`
-		}
-		if json.Unmarshal(raw, &item) == nil && replacedSlugs[strings.ToLower(strings.TrimSpace(item.Slug))] {
-			continue
-		}
-		retained = append(retained, raw)
-	}
-	models = retained
 	seen := make(map[string]struct{}, len(models)+len(extraRoot.Models))
 	for _, raw := range models {
 		var item struct {

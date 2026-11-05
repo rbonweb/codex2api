@@ -21,30 +21,18 @@ type AccountGroup struct {
 	// ProxyURLs 是组级代理列表(issue #479):组内账号未配置自身代理时按
 	// 账号 ID 粘性使用其中一条;空列表表示不设置,回退到全局代理链。
 	ProxyURLs []string
-	// Channel 是分组渠道(codex/grok/antigravity,issue #487):分组按渠道隔离,
-	// 成员写入路径会校验账号平台与组渠道一致。
+	// Channel 是分组渠道(现仅 codex):成员写入路径会校验账号平台与组渠道一致。
 	Channel   string
 	CreatedAt time.Time
 	UpdatedAt time.Time
 }
 
 const (
-	AccountGroupChannelCodex       = "codex"
-	AccountGroupChannelGrok        = "grok"
-	AccountGroupChannelAntigravity = "antigravity"
-	AccountGroupChannelClaude      = "claude"
+	AccountGroupChannelCodex = "codex"
 )
 
-// NormalizeAccountGroupChannel 归一分组渠道,空/非法一律按 codex。
+// NormalizeAccountGroupChannel 归一分组渠道:只剩 codex 一个渠道,任何输入都按 codex。
 func NormalizeAccountGroupChannel(channel string) string {
-	switch strings.ToLower(strings.TrimSpace(channel)) {
-	case AccountGroupChannelGrok:
-		return AccountGroupChannelGrok
-	case AccountGroupChannelAntigravity:
-		return AccountGroupChannelAntigravity
-	case AccountGroupChannelClaude:
-		return AccountGroupChannelClaude
-	}
 	return AccountGroupChannelCodex
 }
 

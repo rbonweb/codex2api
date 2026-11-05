@@ -38,7 +38,6 @@ export interface AccountOperationResultsState {
   results: AccountOperationResult[];
 }
 
-export type AccountOperationChannel = "codex" | "grok";
 export type AccountOperationResultFilter =
   | "all"
   | "success"
@@ -177,28 +176,4 @@ export function paginateAccountOperationResults(
     page: normalizedPage,
     totalPages,
   };
-}
-
-export function resolveChannelBatchTestAccountIDs(
-  accounts: Array<{ id: number; grok_api?: boolean }>,
-  channel: AccountOperationChannel,
-  requestedIDs?: number[],
-): number[] {
-  const allowedIDs = new Set(
-    accounts
-      .filter((account) =>
-        channel === "grok" ? Boolean(account.grok_api) : !account.grok_api,
-      )
-      .map((account) => account.id),
-  );
-  const candidates = requestedIDs ?? Array.from(allowedIDs);
-  const seen = new Set<number>();
-  const scopedIDs: number[] = [];
-
-  for (const id of candidates) {
-    if (!allowedIDs.has(id) || seen.has(id)) continue;
-    seen.add(id);
-    scopedIDs.push(id);
-  }
-  return scopedIDs;
 }

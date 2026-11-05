@@ -5,7 +5,6 @@ import {
   collectAccountOperationResult,
   filterAccountOperationResults,
   paginateAccountOperationResults,
-  resolveChannelBatchTestAccountIDs,
   snapshotAccountOperationResults,
   summarizeAccountOperationResults,
 } from "./accountOperationResults.ts";
@@ -182,23 +181,6 @@ test("paginateAccountOperationResults pages large result sets on the client", ()
   assert.equal(lastPage.results.length, 50);
   assert.equal(lastPage.results[0].accountId, 951);
   assert.equal(lastPage.results[49].accountId, 1000);
-});
-
-test("resolveChannelBatchTestAccountIDs keeps Codex and Grok tests isolated", () => {
-  const accounts = [
-    { id: 1 },
-    { id: 2, grok_api: false },
-    { id: 3, grok_api: true },
-  ];
-
-  assert.deepEqual(resolveChannelBatchTestAccountIDs(accounts, "codex"), [
-    1, 2,
-  ]);
-  assert.deepEqual(resolveChannelBatchTestAccountIDs(accounts, "grok"), [3]);
-  assert.deepEqual(
-    resolveChannelBatchTestAccountIDs(accounts, "codex", [3, 2, 2, 99, 1]),
-    [2, 1],
-  );
 });
 
 test("usage refresh results retain both refreshed and failed accounts", () => {

@@ -18,7 +18,7 @@ const automaticModelDiscoveryTimeout = 30 * time.Second
 func (h *Handler) runAutomaticModelPricingSync(ctx context.Context, cfg *database.OfficialPricingSyncConfig) (*proxy.OfficialPricingSyncResult, error) {
 	warnings := h.discoverModelsForPricing(ctx, cfg)
 	return h.runOfficialPricingSyncWithWarnings(ctx, proxy.OfficialPricingSyncOptions{
-		IncludeOpenAI: cfg.IncludeOpenAI, IncludeGrok: cfg.IncludeGrok, IncludeClaude: cfg.IncludeClaude,
+		IncludeOpenAI: cfg.IncludeOpenAI,
 	}, warnings)
 }
 
@@ -26,9 +26,7 @@ func (h *Handler) discoverModelsForPricing(ctx context.Context, cfg *database.Of
 	discoveryCtx, cancel := context.WithTimeout(ctx, automaticModelDiscoveryTimeout)
 	defer cancel()
 	selected := map[string]bool{
-		database.UpstreamChannelCodex:  cfg.IncludeOpenAI,
-		database.UpstreamChannelGrok:   cfg.IncludeGrok,
-		database.UpstreamChannelClaude: cfg.IncludeClaude,
+		database.UpstreamChannelCodex: cfg.IncludeOpenAI,
 	}
 	funcs := h.modelRefreshFuncs
 	if funcs == nil {

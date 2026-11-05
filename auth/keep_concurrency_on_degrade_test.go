@@ -147,9 +147,7 @@ func TestKeepConcurrencyOnDegradeLoadsFromCredentials(t *testing.T) {
 	t.Cleanup(store.Stop)
 
 	row := &database.AccountRow{ID: 1, Enabled: true, Credentials: map[string]any{
-		"upstream_type":                       UpstreamOpenAIResponses,
-		"base_url":                            "https://relay.invalid/v1",
-		"api_key":                             "relay-key",
+		"access_token":                        "at-keep",
 		"models":                              []string{"gpt-5.4"},
 		KeepConcurrencyOnDegradeCredentialKey: true,
 	}}

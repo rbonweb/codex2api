@@ -18,11 +18,11 @@ import (
 	"github.com/tidwall/gjson"
 )
 
-func TestResponsesContinuationUnavailableWaitsForRelayRouting(t *testing.T) {
+func TestResponsesContinuationUnavailableReturnsImmediate409(t *testing.T) {
 	gin.SetMode(gin.TestMode)
 	raw := []byte(`{"model":"gpt-5.5","previous_response_id":"resp_missing","input":[{"type":"function_call_output","call_id":"call_1","output":"ok"}],"stream":true}`)
 
-	t.Run("Codex only returns immediate 409", func(t *testing.T) {
+	t.Run("Codex pool returns immediate 409", func(t *testing.T) {
 		resetResponseCacheStateForTest(testResponseCacheConfig())
 		store := newContinuationCodexStore()
 		handler := NewHandler(store, nil, nil, nil)
@@ -35,52 +35,6 @@ func TestResponsesContinuationUnavailableWaitsForRelayRouting(t *testing.T) {
 		}
 		if strings.Contains(recorder.Body.String(), "resp_missing") {
 			t.Fatalf("error body echoed response ID: %s", recorder.Body.String())
-		}
-	})
-
-	t.Run("relay only preserves previous response id", func(t *testing.T) {
-		resetResponseCacheStateForTest(testResponseCacheConfig())
-		var seenBody []byte
-		upstream := newContinuationRelayUpstream(t, false, &seenBody)
-		store := newContinuationRelayStore(upstream.URL)
-		handler := NewHandler(store, nil, nil, nil)
-		recorder := invokeResponsesHandler(t, handler.Responses, raw)
-		if recorder.Code != http.StatusOK {
-			t.Fatalf("status = %d, want 200; body=%s", recorder.Code, recorder.Body.String())
-		}
-		if prev := gjson.GetBytes(seenBody, "previous_response_id").String(); prev != "resp_missing" {
-			t.Fatalf("relay previous_response_id = %q, want preserved; body=%s", prev, seenBody)
-		}
-	})
-
-	t.Run("mixed pool chooses relay", func(t *testing.T) {
-		resetResponseCacheStateForTest(testResponseCacheConfig())
-		var seenBody []byte
-		upstream := newContinuationRelayUpstream(t, false, &seenBody)
-		store := newContinuationRelayStore(upstream.URL)
-		store.AddAccount(&auth.Account{DBID: 2, AccessToken: "codex-token", PlanType: "plus", AccountID: "codex"})
-		handler := NewHandler(store, nil, nil, nil)
-		recorder := invokeResponsesHandler(t, handler.Responses, raw)
-		if recorder.Code != http.StatusOK || gjson.GetBytes(seenBody, "previous_response_id").String() != "resp_missing" {
-			t.Fatalf("mixed result status=%d upstream=%s response=%s", recorder.Code, seenBody, recorder.Body.String())
-		}
-	})
-
-	t.Run("compaction pin yields to relay fallback", func(t *testing.T) {
-		resetResponseCacheStateForTest(testResponseCacheConfig())
-		var seenBody []byte
-		upstream := newContinuationRelayUpstream(t, false, &seenBody)
-		store := newContinuationRelayStore(upstream.URL)
-		store.AddAccount(&auth.Account{DBID: 2, AccessToken: "codex-token", PlanType: "plus", AccountID: "codex"})
-		handler := NewHandler(store, nil, nil, nil)
-		compactionRaw := []byte(`{"model":"gpt-5.5","previous_response_id":"resp_missing","input":[{"type":"compaction_trigger"},{"type":"function_call_output","call_id":"call_1","output":"ok"}],"stream":true}`)
-		recorder := invokeResponsesHandler(t, handler.Responses, compactionRaw)
-		if recorder.Code != http.StatusOK || gjson.GetBytes(seenBody, "previous_response_id").String() != "resp_missing" {
-			t.Fatalf("compaction fallback status=%d upstream=%s response=%s", recorder.Code, seenBody, recorder.Body.String())
-		}
-		input := gjson.GetBytes(seenBody, "input").Array()
-		if len(input) == 0 || input[len(input)-1].Get("type").String() != "compaction_trigger" {
-			t.Fatalf("compaction trigger must be the final upstream input item: %s", seenBody)
 		}
 	})
 }
@@ -101,30 +55,6 @@ func TestResponsesContinuationBackendErrorReturns503AfterRouting(t *testing.T) {
 	recorder := invokeResponsesHandler(t, handler.Responses, raw)
 	if recorder.Code != http.StatusServiceUnavailable {
 		t.Fatalf("status = %d, want 503; body=%s", recorder.Code, recorder.Body.String())
-	}
-}
-
-func TestResponsesContinuationBackendErrorUsesRelayWhenAvailable(t *testing.T) {
-	gin.SetMode(gin.TestMode)
-	resetResponseCacheStateForTest(testResponseCacheConfig())
-	backend := newRecordingResponseContextBackend(true)
-	backend.boundedErr = errSyntheticBackend
-	SetResponseContextCache(backend)
-	t.Cleanup(func() {
-		SetResponseContextCache(nil)
-		_ = backend.TokenCache.Close()
-	})
-	var seenBody []byte
-	upstream := newContinuationRelayUpstream(t, false, &seenBody)
-	handler := NewHandler(newContinuationRelayStore(upstream.URL), nil, nil, nil)
-	raw := []byte(`{"model":"gpt-5.5","previous_response_id":"resp_missing","input":[{"type":"function_call_output","call_id":"call_1","output":"ok"}],"stream":true}`)
-
-	recorder := invokeResponsesHandler(t, handler.Responses, raw)
-	if recorder.Code != http.StatusOK {
-		t.Fatalf("status = %d, want relay success; body=%s", recorder.Code, recorder.Body.String())
-	}
-	if prev := gjson.GetBytes(seenBody, "previous_response_id").String(); prev != "resp_missing" {
-		t.Fatalf("relay previous_response_id = %q, want preserved; body=%s", prev, seenBody)
 	}
 }
 
@@ -170,30 +100,16 @@ func TestResponsesKnownLocalUnavailableReturns409(t *testing.T) {
 	}
 }
 
-func TestResponsesCompactContinuationUnavailableRelayParity(t *testing.T) {
+func TestResponsesCompactContinuationUnavailableReturns409(t *testing.T) {
 	gin.SetMode(gin.TestMode)
 	raw := []byte(`{"model":"gpt-5.5","previous_response_id":"resp_missing","input":[{"type":"function_call_output","call_id":"call_1","output":"ok"}]}`)
 
-	t.Run("Codex only 409", func(t *testing.T) {
+	t.Run("Codex pool 409", func(t *testing.T) {
 		resetResponseCacheStateForTest(testResponseCacheConfig())
 		handler := NewHandler(newContinuationCodexStore(), nil, nil, nil)
 		recorder := invokeResponsesHandler(t, handler.ResponsesCompact, raw)
 		if recorder.Code != http.StatusConflict {
 			t.Fatalf("status = %d, want 409; body=%s", recorder.Code, recorder.Body.String())
-		}
-	})
-
-	t.Run("relay preserves previous response id", func(t *testing.T) {
-		resetResponseCacheStateForTest(testResponseCacheConfig())
-		var seenBody []byte
-		upstream := newContinuationRelayUpstream(t, true, &seenBody)
-		handler := NewHandler(newContinuationRelayStore(upstream.URL), nil, nil, nil)
-		recorder := invokeResponsesHandler(t, handler.ResponsesCompact, raw)
-		if recorder.Code != http.StatusOK {
-			t.Fatalf("status = %d, want 200; body=%s", recorder.Code, recorder.Body.String())
-		}
-		if prev := gjson.GetBytes(seenBody, "previous_response_id").String(); prev != "resp_missing" {
-			t.Fatalf("compact relay previous_response_id = %q, want preserved; body=%s", prev, seenBody)
 		}
 	})
 }
@@ -226,7 +142,7 @@ func TestResponsesDependentCorruptAndTooLargeReturn409(t *testing.T) {
 	}
 }
 
-func TestResponsesContinuationScopeBudget429PrecedesCacheUnavailable(t *testing.T) {
+func TestResponsesContinuationUnavailablePrecedesScopeBudget429(t *testing.T) {
 	gin.SetMode(gin.TestMode)
 	raw := []byte(`{"model":"gpt-5.5","previous_response_id":"resp_missing","input":[{"type":"function_call_output","call_id":"call_1","output":"ok"}],"stream":true}`)
 	tests := []struct {
@@ -239,8 +155,8 @@ func TestResponsesContinuationScopeBudget429PrecedesCacheUnavailable(t *testing.
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
 			resetResponseCacheStateForTest(testResponseCacheConfig())
-			upstream := newContinuationRelayUpstream(t, tt.name == "compact", new([]byte))
-			handler := NewHandler(newContinuationRelayStore(upstream.URL), nil, nil, nil)
+			newContinuationCodexUpstream(t, tt.name == "compact", new([]byte))
+			handler := NewHandler(newContinuationCodexStore(), nil, nil, nil)
 			recorder := invokeResponsesHandlerWithContext(t, func(c *gin.Context) {
 				gate := &scopeBudgetGate{
 					blockedAccounts: map[int64]struct{}{1: {}},
@@ -251,11 +167,14 @@ func TestResponsesContinuationScopeBudget429PrecedesCacheUnavailable(t *testing.
 			}, func(c *gin.Context) {
 				tt.handler(handler, c)
 			}, raw)
-			if recorder.Code != http.StatusTooManyRequests {
-				t.Fatalf("status = %d, want scope 429 before continuation error; body=%s", recorder.Code, recorder.Body.String())
+			if recorder.Code != http.StatusConflict {
+				t.Fatalf("status = %d, want continuation 409 before scope 429; body=%s", recorder.Code, recorder.Body.String())
 			}
-			if !strings.Contains(recorder.Body.String(), "scope budget exhausted") {
-				t.Fatalf("response missing scope exhaustion reason: %s", recorder.Body.String())
+			if code := gjson.Get(recorder.Body.String(), "error.code").String(); code != string(api.ErrCodeResponseContextUnavailable) {
+				t.Fatalf("error code = %q, want previous_response_not_found; body=%s", code, recorder.Body.String())
+			}
+			if strings.Contains(recorder.Body.String(), "scope budget exhausted") {
+				t.Fatalf("continuation error leaked the scope exhaustion reason: %s", recorder.Body.String())
 			}
 		})
 	}
@@ -265,22 +184,20 @@ func TestResponsesCompactNormalRequestWaitsForTemporarilyBusyAccountBeforeScope4
 	gin.SetMode(gin.TestMode)
 	resetResponseCacheStateForTest(testResponseCacheConfig())
 	var seenBody []byte
-	upstream := newContinuationRelayUpstream(t, true, &seenBody)
-	store := newContinuationRelayStore(upstream.URL)
+	newContinuationCodexUpstream(t, true, &seenBody)
+	store := newContinuationCodexStore()
 	store.SetMaxConcurrency(1)
 	store.AddAccount(&auth.Account{
-		DBID:         2,
-		UpstreamType: auth.UpstreamOpenAIResponses,
-		BaseURL:      upstream.URL,
-		APIKey:       "relay-token-2",
-		Models:       []string{"gpt-5.5"},
-		PlanType:     "api",
+		DBID:        2,
+		AccessToken: "codex-token-2",
+		PlanType:    "plus",
+		AccountID:   "codex-2",
 	})
 	held := store.NextExcludingWithFilter(0, nil, func(account *auth.Account) bool {
 		return account != nil && account.DBID == 2
 	})
 	if held == nil {
-		t.Fatal("failed to occupy the temporarily busy relay account")
+		t.Fatal("failed to occupy the temporarily busy account")
 	}
 	released := make(chan struct{})
 	go func() {
@@ -304,7 +221,7 @@ func TestResponsesCompactNormalRequestWaitsForTemporarilyBusyAccountBeforeScope4
 		t.Fatalf("status = %d, want wait then 200; body=%s", recorder.Code, recorder.Body.String())
 	}
 	if len(seenBody) == 0 {
-		t.Fatal("temporarily busy relay account was not used after release")
+		t.Fatal("temporarily busy account was not used after release")
 	}
 }
 
@@ -340,24 +257,7 @@ func newContinuationCodexStore() *auth.Store {
 	return store
 }
 
-func newContinuationRelayStore(upstreamURL string) *auth.Store {
-	store := auth.NewStore(nil, nil, &database.SystemSettings{
-		MaxConcurrency:      2,
-		MaxRetries:          0,
-		MaxRateLimitRetries: 0,
-	})
-	store.AddAccount(&auth.Account{
-		DBID:         1,
-		UpstreamType: auth.UpstreamOpenAIResponses,
-		BaseURL:      upstreamURL,
-		APIKey:       "relay-token",
-		Models:       []string{"gpt-5.5"},
-		PlanType:     "api",
-	})
-	return store
-}
-
-func newContinuationRelayUpstream(t *testing.T, compact bool, seenBody *[]byte) *httptest.Server {
+func newContinuationCodexUpstream(t *testing.T, compact bool, seenBody *[]byte) *httptest.Server {
 	t.Helper()
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		*seenBody = readUpstreamRequestBody(r)
@@ -367,8 +267,9 @@ func newContinuationRelayUpstream(t *testing.T, compact bool, seenBody *[]byte) 
 			return
 		}
 		w.Header().Set("Content-Type", "text/event-stream")
-		_, _ = io.WriteString(w, "data: "+`{"type":"response.completed","response":{"id":"resp_relay","output":[],"usage":{"input_tokens":1,"output_tokens":1,"total_tokens":2}}}`+"\n\n")
+		_, _ = io.WriteString(w, "data: "+`{"type":"response.completed","response":{"id":"resp_codex","output":[],"usage":{"input_tokens":1,"output_tokens":1,"total_tokens":2}}}`+"\n\n")
 	}))
 	t.Cleanup(server.Close)
+	codexRestoredUseResin(t, server.URL)
 	return server
 }

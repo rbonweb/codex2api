@@ -12,7 +12,7 @@ const root = fileURLToPath(new URL('../', import.meta.url))
 let artifactDir
 let browser, script, css
 const question = { id: 'candy', name: '糖果配对', prompt: '本地演示题目，最终只恢复数字结果。', expected_answer: '21', match_mode: 'exact', max_duration_ms: 20000, enabled: true }
-const settings = { adaptive_enabled: false, pause_initial_seconds: 1800, pause_max_seconds: 172800, recovery_initial_seconds: 300, recovery_min_seconds: 120, revision: 1, enabled: false, gpt_model: 'gpt-6-astra', claude_model: 'claude-sonnet-4-6', reasoning_effort: 'high', judge_mode: 'answer', interval_seconds: 300, retry_seconds: 60, timeout_seconds: 180, concurrency: 4, retention: 200, new_accounts_enabled: true, action: 'none', degrade_threshold: 2, recover_threshold: 1, target_group_id: 0, questions: [question] }
+const settings = { adaptive_enabled: false, pause_initial_seconds: 1800, pause_max_seconds: 172800, recovery_initial_seconds: 300, recovery_min_seconds: 120, revision: 1, enabled: false, gpt_model: 'gpt-6-astra', reasoning_effort: 'high', judge_mode: 'answer', interval_seconds: 300, retry_seconds: 60, timeout_seconds: 180, concurrency: 4, retention: 200, new_accounts_enabled: true, action: 'none', degrade_threshold: 2, recover_threshold: 1, target_group_id: 0, questions: [question] }
 const accounts = [{ account_id: 1, account_name: '本地 Codex 测试账号', channel: 'codex', enabled: true, latest_status: 'degraded', failed_streak: 2, passed_streak: 0, action: 'pause', next_due_at: '2026-10-15T13:00:00Z' }]
 const run = { id: 11, account_id: 1, account_name: accounts[0].account_name, channel: 'codex', source: 'manual', status: 'degraded', config_revision: 1, model: 'gpt-6-astra', response_model: 'gpt-6-astra', reasoning_effort: 'high', judge_mode: 'answer', question, output: '29', error: '', duration_ms: 4120, input_tokens: 120, output_tokens: 10, reasoning_tokens: 8, created_at: '2026-10-15T12:00:00Z', started_at: '2026-10-15T12:00:00Z', completed_at: '2026-10-15T12:00:04Z', action: 'pause' }
 before(async () => {
@@ -28,9 +28,7 @@ before(async () => {
    if (id !== '\0intelligence-harness') return
    return `import React from 'react'; import {createRoot} from 'react-dom/client'; import {MemoryRouter} from 'react-router-dom';
    import IntelligenceCheck from ${JSON.stringify(path.join(root, 'src/pages/IntelligenceCheck.tsx'))};
-   import ClaudeAccounts from ${JSON.stringify(path.join(root, 'src/pages/ClaudeAccounts.tsx'))};
    import Accounts from ${JSON.stringify(path.join(root, 'src/pages/Accounts.tsx'))};
-   import {VisibleChannelsProvider} from ${JSON.stringify(path.join(root, 'src/visibleChannels.tsx'))};
    import AccountIntelligenceBar, {AccountIntelligenceActions} from ${JSON.stringify(path.join(root, 'src/components/AccountIntelligenceBar.tsx'))};
    import {useIntelligenceBars} from ${JSON.stringify(path.join(root, 'src/hooks/useIntelligenceBars.ts'))};
    import AccountHealthBar from ${JSON.stringify(path.join(root, 'src/components/AccountHealthBar.tsx'))};
@@ -38,7 +36,7 @@ before(async () => {
    import {ToastProvider} from ${JSON.stringify(path.join(root, 'src/components/ToastProvider.tsx'))};
    import ${JSON.stringify(path.join(root, 'src/i18n.ts'))}; import ${JSON.stringify(path.join(root, 'src/index.css'))};
    createRoot(document.getElementById('root')).render(React.createElement(MemoryRouter, {initialEntries:[window.__initialPath||'/']}, React.createElement(ToastProvider,null,
-   React.createElement('main',{style:{padding:'24px',maxWidth:'1400px',margin:'0 auto'}}, window.__showBar ? React.createElement(BarHarness) : null, window.__accountsPage ? React.createElement(VisibleChannelsProvider,null,React.createElement(window.__claudePage ? ClaudeAccounts : Accounts)) : React.createElement(IntelligenceCheck)))));`
+   React.createElement('main',{style:{padding:'24px',maxWidth:'1400px',margin:'0 auto'}}, window.__showBar ? React.createElement(BarHarness) : null, window.__accountsPage ? React.createElement(Accounts) : React.createElement(IntelligenceCheck)))));`
   },
  }], resolve: { alias: { '@': path.join(root, 'src') } }, define: { 'process.env.NODE_ENV': '"production"' }, build: { write: false, minify: false, rollupOptions: { input: 'virtual:intelligence-harness' }, lib: { entry: 'virtual:intelligence-harness', formats: ['iife'], name: 'IntelligenceHarness' } } })
  const bundle = Array.isArray(result) ? result[0] : result
@@ -54,7 +52,7 @@ async function fixture(t, options = {}) {
  await page.route('http://intelligence.test/**', route => route.fulfill({ contentType: 'text/html', body: '<!doctype html><html><head><meta name="viewport" content="width=device-width, initial-scale=1"></head><body><div id="root"></div></body></html>' }))
  await page.goto('http://intelligence.test/')
  await page.evaluate(({ settings, accounts, run, options }) => {
-  localStorage.setItem("lang", "zh"); localStorage.setItem("codex2api:accounts:page-mode", "pool"); window.__claudePage = options.claudePage; window.__accountsPage = options.accountsPage; window.__initialPath = options.initialPath; window.__calls = []; window.__config = settings; window.__showBar = options.bar
+  localStorage.setItem("lang", "zh"); localStorage.setItem("codex2api:accounts:page-mode", "pool"); window.__accountsPage = options.accountsPage; window.__initialPath = options.initialPath; window.__calls = []; window.__config = settings; window.__showBar = options.bar
   window.__bar = { enabled: options.detectionEnabled ?? true, action: 'none', records: ['normal', 'degraded', 'error', 'interrupted'].map((status, i) => ({ id: 10 + i, status, question_name: '糖果配对', duration_ms: 1200, completed_at: run.completed_at })) }
   if (options.dark) document.documentElement.classList.add('dark')
   window.__conflictActive = !!options.conflict
@@ -62,7 +60,6 @@ async function fixture(t, options = {}) {
   window.__api = async (name, args) => {
    window.__calls.push({ name, args })
    const account = { id: 1, name: '本地 Codex 测试账号', email: 'fixture@example.test', account_type: 'oauth', status: 'active', enabled: true, health_tier: 'healthy', created_at: '2026-10-15T12:00:00Z', group_ids: [], models: ['gpt-6-astra'], detail_loaded: true, usage_percent_7d: 12, active_requests: 2, dynamic_concurrency_limit: 200, ...options.accountOverrides }
-   if (name === 'getVisibleChannels') return { channels: ['codex', 'claude'] }
    if (name === 'getAccountsPage') return { accounts: [account], total: 1, page: 1, page_size: 20, facets: { tags: [], email_domains: [] }, summary: { total: 1 } }
    if (name === 'getAccount') return account
    if (name === 'getAccountHealthBars') return { buckets: {} }
@@ -74,13 +71,13 @@ async function fixture(t, options = {}) {
    if (name === 'getProxies') return { proxies: [] }
    if (name === 'getChannelMonitorBillingRates') return { rates: [] }
    if (name === 'getIntelligenceSettings') return window.__config
-   if (name === 'listAccountGroups') return { groups: [{ id: 1, name: '隔离分组', channel: 'codex' }, { id: 2, name: 'Claude 隔离', channel: 'claude' }, { id: 3, name: 'Grok 隔离', channel: 'grok' }] }
+   if (name === 'listAccountGroups') return { groups: [{ id: 1, name: '隔离分组', channel: 'codex' }] }
    if (name === 'getIntelligenceAccounts') { if (options.error) throw new Error('本地模拟读取失败'); return { items: options.empty ? [] : accounts, total: options.empty ? 0 : 1, page: 1, page_size: 20 } }
    if (name === 'getIntelligenceRuns') { if (options.error) throw new Error('本地模拟读取失败'); return { items: options.empty ? [] : (options.pagination ? [{...run,id:args[0] === 2 ? 3 : 21,source:'automatic'},run].sort((a,b)=>b.id-a.id) : [run]), total: options.empty ? 0 : options.pagination ? 22 : 1, page: args[0], page_size: 20 } }
    if (name === 'getIntelligenceRun') return { run }
    if (name === 'saveIntelligenceSettings') {
     if (options.saveError) throw new Error('配置版本冲突')
-    if (window.__conflictActive) throw Object.assign(new Error('intelligence check target group is incompatible: 1 enabled accounts belong to another channel'), {details: {code:'intelligence_check_target_conflict',target_group_id:1,target_group_channel:'codex',conflict_count:options.conflictCount || 1,conflicts:[{account_id:68876,account_name:'冲突 Claude 账号',channel:'claude'}]}})
+    if (window.__conflictActive) throw Object.assign(new Error('intelligence check target group is incompatible: 1 enabled accounts belong to another channel'), {details: {code:'intelligence_check_target_conflict',target_group_id:1,target_group_channel:'codex',conflict_count:options.conflictCount || 1,conflicts:[{account_id:68876,account_name:'冲突账号',channel:'other'}]}})
     window.__config = { ...args[0], revision: args[0].revision + 1 }; return window.__config
    }
    if (name === 'createIntelligenceRuns') { if (options.createError) throw new Error('检测提交失败'); window.__bar = {...window.__bar,active_run_id:99,active_status:'queued'}; return { runs: [{...run,id:99,status:'queued'}] } }
@@ -197,7 +194,7 @@ test('conflicting accounts can be disabled explicitly and the unsaved configurat
  await page.getByRole('button',{name:'保存配置',exact:true}).click()
  const conflict = page.getByRole('alert').filter({hasText:'配置尚未保存'})
  await conflict.waitFor()
- assert.match(await conflict.innerText(),/#68876 · 冲突 Claude 账号 · claude/)
+ assert.match(await conflict.innerText(),/#68876 · 冲突账号 · other/)
  assert.match(await conflict.innerText(),/隔离分组（codex）/)
  assert.equal(await page.evaluate(()=>window.__calls.filter(c=>c.name==='setIntelligenceAccounts').length),0)
  assert.ok(await page.evaluate(()=>document.documentElement.scrollWidth<=window.innerWidth+1))
@@ -286,18 +283,6 @@ test('account table, card and detail show their independent intelligence history
  await page.screenshot({ path: path.join(artifactDir, 'accounts-detail.png'), fullPage: true })
  assert.ok(await page.evaluate(() => window.__calls.filter(c => c.name === 'getIntelligenceBars').every(c => JSON.stringify(c.args[0])==='[1]')))
 })
-
-test('Claude account table and detail receive batch intelligence history', async t => {
- const page = await fixture(t, { accountsPage: true, claudePage: true, accountOverrides: { claude_api: true, claude_auth_kind: 'api_key' } })
- await page.getByLabel('最近 20 次降智检测，由旧到新').waitFor()
- await assertActionsFollowStatus(page)
- await assertConcurrencyInline(page)
- await page.getByRole('row').filter({ hasText: 'fixture@example.test' }).click()
- await page.getByRole('dialog').getByLabel('最近 20 次降智检测，由旧到新').waitFor()
- await assertActionsFollowStatus(page.getByRole('dialog'))
- assert.ok(await page.evaluate(() => window.__calls.filter(c => c.name === 'getIntelligenceBars').every(c => JSON.stringify(c.args[0])==='[1]')))
-})
-
 
 test('adaptive settings can be enabled and saved with an independent long cap', async t => {
  const page = await fixture(t)

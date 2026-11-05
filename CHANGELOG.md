@@ -28,6 +28,12 @@
 
 - **`/v1/models` stops listing models the upstream rejects for the key's accounts.** When the upstream answers 400 "The '<model>' model is not supported when using Codex with a ChatGPT account", the gateway already put that model on an unsupported cooldown for the account and routed around it, but the per-key model list kept showing it, so clients picked a model that could only fail. The list now skips a model for every account with an active unsupported cooldown; it stays listed while any account in the key's scope can still serve it, and rate-limit cooldowns keep the list stable as before.
 
+### Removed
+
+- **Claude, Grok/xAI, Antigravity and third-party relay accounts are removed.** The gateway now serves Codex OAuth and Agent-Identity accounts only.
+- **`/v1/messages`, `/v1/messages/count_tokens`, `/v1beta/*` and `/v1/videos*` are removed.** The OpenAI-format routes are unchanged.
+- **A startup migration deletes accounts of the removed types and resets API keys and groups on those channels to `codex`.** It runs once, keyed `20261105_codex_only_v1`, and logs the count per type before deleting.
+
 ## v3.1.3 - 2026-11-04
 
 ### Features

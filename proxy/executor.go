@@ -37,7 +37,7 @@ import (
 // 从源头剔除，请求得以在别的连接上重建，而非挂死。
 //
 // 仅作用于 HTTP/2 直连（标准 transport 与 uTLS transport）；WebSocket
-// relay 链路已有完整的 Ping/Pong 保活与复用前探活，不走这里。
+// WebSocket 链路已有完整的 Ping/Pong 保活与复用前探活，不走这里。
 // 默认值对直连是合适的；经高延迟代理或弱网出口时 15s 偏激进——一次 PING 未按时
 // 应答就会拆掉整条连接及其上全部复用中的流（表现为 "http2: client connection
 // lost"）。故允许用 CODEX_HTTP2_READ_IDLE_TIMEOUT / CODEX_HTTP2_PING_TIMEOUT
@@ -115,11 +115,6 @@ func (e *poolEntry) expiredByAge(now int64, maxAge time.Duration) bool {
 }
 
 var clientPool sync.Map // map[string]*poolEntry, key = accountID|proxyURL|transportMode
-
-// Some Codex-only Responses relays require the official client installation
-// metadata in addition to the User-Agent. Learn that capability after the
-// relay returns codex_access_restricted so generic Responses APIs stay untouched.
-var openAIResponsesCodexMetadataRequired sync.Map // map[accountID|baseURL]struct{}
 
 // clientPoolTTL 未使用超过此时间的 Client 将被淘汰
 const clientPoolTTL = 5 * time.Minute
@@ -531,10 +526,7 @@ func resolveUpstreamSessionID(apiKeyID int64, upstreamSeed, explicitSessionID st
 // useWebsocket 可选：未传时遵循全局强制 WS；传 true/false 时由调用方显式控制。
 // headers 下游请求头，用于设备指纹学习
 func ExecuteRequest(ctx context.Context, account *auth.Account, requestBody []byte, sessionID string, proxyOverride string, apiKey string, deviceCfg *DeviceProfileConfig, headers http.Header, useWebsocket ...bool) (upstreamResponse *http.Response, upstreamErr error) {
-	// Defense in depth: this executor sends account.AccessToken to ChatGPT.
-	// Relay/Grok/Antigravity credentials must never cross that provider boundary,
-	// even if a future routing regression selects the wrong account type.
-	if account == nil || account.IsRelayStyle() {
+	if account == nil {
 		return nil, ErrNoAvailableAccount()
 	}
 	if ctx == nil {
@@ -840,203 +832,6 @@ func ExecuteRequest(ctx context.Context, account *auth.Account, requestBody []by
 	return resp, nil
 }
 
-func ExecuteOpenAIResponsesRequest(ctx context.Context, account *auth.Account, requestBody []byte, proxyOverride string, headers http.Header) (upstreamResponse *http.Response, upstreamErr error) {
-	if ctx == nil {
-		ctx = context.Background()
-	}
-	resetUpstreamUserAgentAudit(ctx)
-	resetWsAcquireAudit(ctx)
-	var encryptedAttempt *encryptedContentAttempt
-	requestBody, encryptedAttempt = prepareEncryptedContentAttempt(ctx, account, requestBody, "", headers)
-	defer func() { encryptedAttempt.observeResponse(upstreamResponse, requestBody) }()
-	responsesLite := gateResponsesLiteForAccount(codexResponsesLiteRequested(requestBody, headers), requestBody, account)
-	requestBody, headers = prepareCodexResponsesLiteTransport(requestBody, headers, false, responsesLite)
-	requestBody = normalizeCompactionTriggerFinal(requestBody, false)
-
-	baseURL, apiKey := account.OpenAIResponsesCredentials()
-	account.Mu().RLock()
-	proxyURL := account.ProxyURL
-	account.Mu().RUnlock()
-	if proxyOverride != "" {
-		proxyURL = proxyOverride
-	}
-	proxyURL = requestProxyURL(ctx, proxyURL)
-	if baseURL == "" || apiKey == "" {
-		return nil, ErrNoAvailableAccount()
-	}
-
-	endpoint := auth.OpenAIResponsesEndpoint(baseURL, "/v1/responses")
-	capabilityKey := openAIResponsesCodexMetadataCapabilityKey(account, baseURL)
-	clientMetadataMode := account.OpenAIResponsesCodexClientMetadataMode()
-	relayPassthrough := codexIdentityPassthroughActive(account, headers)
-	proxyInjectedMetadata := false
-	if !relayPassthrough {
-		if clientMetadataMode == auth.CodexClientMetadataModeAlways {
-			requestBody, proxyInjectedMetadata = ensureCodexClientInstallationMetadata(requestBody, account, headers)
-		} else if clientMetadataMode == auth.CodexClientMetadataModeAuto {
-			_, required := openAIResponsesCodexMetadataRequired.Load(capabilityKey)
-			if required {
-				requestBody, proxyInjectedMetadata = ensureCodexClientInstallationMetadata(requestBody, account, headers)
-			}
-		}
-	}
-	// 账号自行打开的 Responses WebSocket。生图仍走下面的 HTTP。
-	// 握手失败由执行器返回上游状态或传输错误，这里不改回 HTTP。
-	if openAIResponsesRelayUsesUpstreamWebsocket(account, requestBody) {
-		return executeOpenAIResponsesWebsocket(ctx, account, requestBody, proxyURL, headers, baseURL, apiKey)
-	}
-	// stream_id belongs to the WebSocket envelope, including when an ingress
-	// lane falls back to HTTP. Keep nested tool/input IDs untouched.
-	requestBody = jsonbody.DeletePath(requestBody, "type")
-	requestBody = jsonbody.DeletePath(requestBody, "stream_id")
-
-	client := getRequestClient(ctx, account, proxyURL)
-	send := func(body []byte) (*http.Response, error) {
-		req, err := http.NewRequestWithContext(ctx, http.MethodPost, endpoint, bytes.NewReader(body))
-		if err != nil {
-			return nil, ErrInternalError("创建请求失败", err)
-		}
-		if err := applyOpenAIResponsesRequestHeaders(req, account, apiKey, headers); err != nil {
-			return nil, err
-		}
-		if err := ConsumeAPIKeyModelRequestQuota(ctx, gjson.GetBytes(body, "model").String()); err != nil {
-			return nil, err
-		}
-		resp, err := doTracedUpstreamRequest(client, req, account, proxyURL)
-		if err != nil {
-			if shouldRecyclePooledClient(err) {
-				recycleRequestClient(ctx, account, proxyURL)
-			}
-			return nil, ErrUpstream(0, "请求 OpenAI Responses API 失败", err)
-		}
-		return resp, nil
-	}
-
-	resp, err := send(requestBody)
-	if err != nil {
-		return nil, err
-	}
-	// 透传模式保持客户端身份原样，不参与安装标识注入/重试改写。
-	if relayPassthrough || clientMetadataMode == auth.CodexClientMetadataModeOff || clientMetadataMode == auth.CodexClientMetadataModeAlways {
-		return resp, nil
-	}
-	if proxyInjectedMetadata {
-		if resp.StatusCode >= http.StatusOK && resp.StatusCode < http.StatusMultipleChoices {
-			openAIResponsesCodexMetadataRequired.Store(capabilityKey, struct{}{})
-		}
-		return resp, nil
-	}
-	if codexClientInstallationID(requestBody) != "" {
-		// A pass-through client ID does not prove that this relay requires generated metadata.
-		return resp, nil
-	}
-	if !isCodexAccessRestrictedResponse(resp) {
-		return resp, nil
-	}
-
-	retryBody, injected := ensureCodexClientInstallationMetadata(requestBody, account, headers)
-	if !injected {
-		return resp, nil
-	}
-	_ = resp.Body.Close()
-	retryResp, err := send(retryBody)
-	if err != nil {
-		return nil, err
-	}
-	if retryResp.StatusCode >= http.StatusOK && retryResp.StatusCode < http.StatusMultipleChoices {
-		openAIResponsesCodexMetadataRequired.Store(capabilityKey, struct{}{})
-	}
-	return retryResp, nil
-}
-
-// ExecuteOpenAIResponsesBillingRequest probes the optional Sub2API-compatible
-// billing declaration exposed by a Responses relay. The probe uses the same
-// account transport, proxy and custom headers as normal Responses traffic.
-func ExecuteOpenAIResponsesBillingRequest(ctx context.Context, account *auth.Account, proxyOverride string) (*http.Response, error) {
-	if ctx == nil {
-		ctx = context.Background()
-	}
-	if account == nil || !account.IsOpenAIResponsesAPI() {
-		return nil, ErrNoAvailableAccount()
-	}
-	baseURL, apiKey := account.OpenAIResponsesCredentials()
-	account.Mu().RLock()
-	proxyURL := account.ProxyURL
-	account.Mu().RUnlock()
-	if proxyOverride != "" {
-		proxyURL = proxyOverride
-	}
-	if baseURL == "" || apiKey == "" {
-		return nil, ErrNoAvailableAccount()
-	}
-
-	endpoint := auth.OpenAIResponsesEndpoint(baseURL, "/v1/sub2api/billing")
-	req, err := http.NewRequestWithContext(ctx, http.MethodGet, endpoint, nil)
-	if err != nil {
-		return nil, ErrInternalError("创建倍率探测请求失败", err)
-	}
-	if err := applyOpenAIResponsesRequestHeaders(req, account, apiKey, nil); err != nil {
-		return nil, err
-	}
-	req.Header.Set("Accept", "application/json")
-	req.Header.Del("Content-Type")
-
-	resp, err := getPooledClient(account, proxyURL).Do(req)
-	if err != nil {
-		if shouldRecyclePooledClient(err) {
-			recyclePooledClient(account, proxyURL)
-		}
-		return nil, ErrUpstream(0, "请求上游倍率接口失败", err)
-	}
-	return resp, nil
-}
-
-func openAIResponsesCodexMetadataCapabilityKey(account *auth.Account, baseURL string) string {
-	accountID := int64(0)
-	if account != nil {
-		accountID = account.ID()
-	}
-	return fmt.Sprintf("%d|%s", accountID, strings.ToLower(strings.TrimSpace(baseURL)))
-}
-
-func codexClientInstallationID(requestBody []byte) string {
-	return strings.TrimSpace(gjson.GetBytes(requestBody, "client_metadata.x-codex-installation-id").String())
-}
-
-func ensureCodexClientInstallationMetadata(requestBody []byte, account *auth.Account, headers http.Header) ([]byte, bool) {
-	if !gjson.ValidBytes(requestBody) || codexClientInstallationID(requestBody) != "" {
-		return requestBody, false
-	}
-
-	installationID := ""
-	if account != nil {
-		// 统一身份：按中转凭据派生账号级设备标识，与模型发现请求头同值，
-		// 不再按下游 Key 分裂成多台设备（issue #774）。
-		if baseURL, apiKey := account.OpenAIResponsesCredentials(); baseURL != "" && apiKey != "" {
-			installationID = codexRelayInstallationID(baseURL, apiKey)
-		}
-	}
-	if installationID == "" {
-		seed := ""
-		if headers != nil {
-			seed = strings.TrimSpace(headers.Get("Authorization"))
-		}
-		if seed == "" && account != nil {
-			baseURL, apiKey := account.OpenAIResponsesCredentials()
-			seed = fmt.Sprintf("%d|%s|%s", account.ID(), baseURL, apiKey)
-		}
-		if seed == "" {
-			seed = "default"
-		}
-		installationID = uuid.NewSHA1(uuid.NameSpaceOID, []byte("codex2api:client-installation:"+seed)).String()
-	}
-	updatedBody, err := sjson.SetBytes(requestBody, "client_metadata.x-codex-installation-id", installationID)
-	if err != nil {
-		return requestBody, false
-	}
-	return updatedBody, true
-}
-
 func isCodexAccessRestrictedResponse(resp *http.Response) bool {
 	if resp == nil || resp.StatusCode != http.StatusForbidden || resp.Body == nil {
 		return false
@@ -1067,60 +862,9 @@ func isCodexAccessRestrictedResponse(resp *http.Response) bool {
 		strings.Contains(msg, "codex 客户端")
 }
 
-// ExecuteOpenAIResponsesCompactRequest 向中转（OpenAI Responses API）账号发送
-// /responses/compact 请求。与 ExecuteOpenAIResponsesRequest 行为一致，但命中的是
-// 上游自己的 compact 端点，从而让没有官方 Codex OAuth 账号、仅接入中转的用户也能
-// 触发上下文自动压缩（参见 issue #174）。compact 始终为非流式。
-func ExecuteOpenAIResponsesCompactRequest(ctx context.Context, account *auth.Account, requestBody []byte, proxyOverride string, headers http.Header) (upstreamResponse *http.Response, upstreamErr error) {
-	if ctx == nil {
-		ctx = context.Background()
-	}
-	resetUpstreamUserAgentAudit(ctx)
-	resetWsAcquireAudit(ctx)
-	var encryptedAttempt *encryptedContentAttempt
-	requestBody, encryptedAttempt = prepareEncryptedContentAttempt(ctx, account, requestBody, "", headers)
-	defer func() { encryptedAttempt.observeResponse(upstreamResponse, requestBody) }()
-	responsesLite := gateResponsesLiteForAccount(codexResponsesLiteRequested(requestBody, headers), requestBody, account)
-	requestBody, headers = prepareCodexResponsesLiteTransport(requestBody, headers, false, responsesLite)
-
-	baseURL, apiKey := account.OpenAIResponsesCredentials()
-	account.Mu().RLock()
-	proxyURL := account.ProxyURL
-	account.Mu().RUnlock()
-	if proxyOverride != "" {
-		proxyURL = proxyOverride
-	}
-	if baseURL == "" || apiKey == "" {
-		return nil, ErrNoAvailableAccount()
-	}
-
-	endpoint := auth.OpenAIResponsesEndpoint(baseURL, "/v1/responses/compact")
-	requestBody = jsonbody.DeletePath(requestBody, "type")
-	requestBody = jsonbody.DeletePath(requestBody, "stream_id")
-	req, err := http.NewRequestWithContext(ctx, http.MethodPost, endpoint, bytes.NewReader(requestBody))
-	if err != nil {
-		return nil, ErrInternalError("创建请求失败", err)
-	}
-	if err := applyOpenAIResponsesRequestHeaders(req, account, apiKey, headers); err != nil {
-		return nil, err
-	}
-
-	if err := ConsumeAPIKeyModelRequestQuota(ctx, gjson.GetBytes(requestBody, "model").String()); err != nil {
-		return nil, err
-	}
-	resp, err := doTracedUpstreamRequest(getPooledClient(account, proxyURL), req, account, proxyURL)
-	if err != nil {
-		if shouldRecyclePooledClient(err) {
-			recyclePooledClient(account, proxyURL)
-		}
-		return nil, ErrUpstream(0, "请求 OpenAI Responses API compact 失败", err)
-	}
-	return resp, nil
-}
-
 // ExecuteCompactRequest 向 Codex 上游发送 /responses/compact 请求（非流式压缩接口）
 func ExecuteCompactRequest(ctx context.Context, account *auth.Account, requestBody []byte, sessionID string, proxyOverride string, apiKey string, deviceCfg *DeviceProfileConfig, headers http.Header) (upstreamResponse *http.Response, upstreamErr error) {
-	if account == nil || account.IsRelayStyle() {
+	if account == nil {
 		return nil, ErrNoAvailableAccount()
 	}
 	if ctx == nil {
@@ -1341,105 +1085,6 @@ func applyCodexRequestHeaders(req *http.Request, account *auth.Account, accessTo
 	return nil
 }
 
-func applyOpenAIResponsesRequestHeaders(req *http.Request, account *auth.Account, apiKey string, headers http.Header) error {
-	if req == nil {
-		return nil
-	}
-	passthrough := codexIdentityPassthroughActive(account, headers)
-	userAgent := ""
-	version := ""
-	var usedGenerated bool
-	if passthrough {
-		// 完全透传：下游声明什么身份就用什么身份，不做生成/改写。
-		userAgent = strings.TrimSpace(headers.Get("User-Agent"))
-		version = firstNonEmptyHeader(headers, "Version", "")
-		if userAgent == "" {
-			userAgent = defaultCodexCLIUserAgent
-		}
-		if version == "" {
-			version = codexVersionFromUserAgent(userAgent, effectiveLatestCodexCLIVersion())
-		}
-	} else {
-		identity, err := ResolveCodexOutboundClientIdentity(CodexClientIdentityInput{Account: account, Headers: headers})
-		if err != nil {
-			return err
-		}
-		userAgent, version, usedGenerated = identity.UserAgent, identity.Version, identity.Generated
-	}
-	req.Header.Set("Authorization", "Bearer "+apiKey)
-	req.Header.Set("Content-Type", "application/json")
-	req.Header.Set("Accept", "application/json, text/event-stream")
-	req.Header.Set("User-Agent", userAgent)
-	if version != "" {
-		req.Header.Set("Version", version)
-		// 部分中转只放行官方 Codex 客户端，按 x-codex-app-version 判定
-		// （见 cockpit-tools issue #1892：不带该头直接 403 forbidden_error）。
-		req.Header.Set("x-codex-app-version", version)
-	}
-	// Originator 与出站 UA 的客户端前缀保持一致：生成 UA 时跟随生成结果
-	// （模拟 "Codex Desktop" 就发 "Codex Desktop"）。
-	if passthrough {
-		if originator := strings.TrimSpace(headers.Get("Originator")); originator != "" {
-			req.Header.Set("Originator", originator)
-		} else {
-			req.Header.Set("Originator", Originator)
-		}
-	} else if usedGenerated {
-		req.Header.Set("Originator", CodexOriginatorForGeneratedUserAgent(userAgent))
-	} else {
-		req.Header.Set("Originator", Originator)
-	}
-	if passthrough {
-		// 透传模式把官方客户端身份原样转发给中转：白名单 x-codex-* 头与会话头
-		// 均来自下游，sub2api 等 codex_cli_only 网关按这些指纹判定官方客户端。
-		applyCodexAllowedForwardHeaders(req, headers)
-		if strings.TrimSpace(req.Header.Get(codexBetaFeaturesHeader)) == "" {
-			req.Header.Set(codexBetaFeaturesHeader, defaultCodexBetaFeatures)
-		}
-		if v := strings.TrimSpace(headers.Get("session-id")); v != "" {
-			req.Header.Set("session-id", v)
-		}
-		if v := strings.TrimSpace(headers.Get("thread-id")); v != "" {
-			req.Header.Set("thread-id", v)
-		}
-	}
-	if headers != nil {
-		for _, key := range []string{"OpenAI-Organization", "OpenAI-Project", "Idempotency-Key", codexResponsesLiteHeader} {
-			if value := firstNonEmptyHeader(headers, key, ""); value != "" {
-				req.Header.Set(key, value)
-			}
-		}
-	}
-	applyAccountCustomHeaders(req, account)
-	RecordUpstreamUserAgent(req.Context(), req.Header.Get("User-Agent"))
-	return nil
-}
-
-// codexIdentityPassthroughActive 判断 OpenAI Responses 中转账号是否开启
-// Codex 身份透传（见 auth.CodexPassthroughMode）：
-//   - always：无论下游是谁都原样转发其身份；
-//   - auto：仅下游已携带官方 Codex 客户端身份（UA/Originator）时透传；
-//   - off：不透传，保持默认的生成/兜底身份（默认值，升级后行为不变）。
-func codexIdentityPassthroughActive(account *auth.Account, headers http.Header) bool {
-	if account == nil {
-		return false
-	}
-	mode := account.OpenAIResponsesCodexPassthroughMode()
-	if mode == auth.CodexPassthroughModeAlways {
-		return true
-	}
-	if mode != auth.CodexPassthroughModeAuto {
-		return false
-	}
-	if headers == nil {
-		return false
-	}
-	return IsCodexOfficialClientByHeaders(
-		strings.TrimSpace(headers.Get("User-Agent")),
-		strings.TrimSpace(headers.Get("Originator")),
-	)
-}
-
 const downstreamAffinityHeader = "X-Codex2API-Affinity-Key"
 
 // requestSessionIdentity keeps the local account-routing identity separate
@@ -1542,7 +1187,7 @@ func ResolveExplicitSessionID(headers http.Header, body []byte) string {
 			}
 		}
 		// opencode 等第三方 CLI 客户端用 x-session-id / x-session-affinity 标识会话
-		// （值为 ses_...，非 UUID，出站上由 claudeUpstreamSessionID 等确定性派生为
+		// （值为 ses_...，非 UUID，出站上确定性派生为
 		// UUIDv7）。优先级低于既有显式头，高于 body prompt_cache_key。
 		for _, key := range []string{"X-Session-Id", "X-Session-Affinity"} {
 			if v := strings.TrimSpace(headers.Get(key)); v != "" {

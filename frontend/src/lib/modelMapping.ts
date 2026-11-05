@@ -1,22 +1,3 @@
-export const DEFAULT_CLAUDE_MODEL_MAP: Record<string, string> = {
-  'claude-opus-4-6': 'gpt-5.5',
-  'claude-opus-4-6-20250610': 'gpt-5.5',
-  'claude-haiku-4-5-20251001': 'gpt-5.6-luna',
-  'claude-haiku-4-5': 'gpt-5.6-luna',
-  'claude-sonnet-4-6': 'gpt-5.5',
-  'claude-sonnet-4-5-20250929': 'gpt-5.5',
-  'claude-opus-4-5-20251101': 'gpt-5.5',
-  'claude-sonnet-4-5-20250514': 'gpt-5.5',
-  'claude-sonnet-4-5': 'gpt-5.5',
-  'claude-sonnet-4.5': 'gpt-5.5',
-  'claude-sonnet-4-20250514': 'gpt-5.5',
-  'claude-sonnet-4': 'gpt-5.5',
-  'claude-opus-4-20250514': 'gpt-5.5',
-  'claude-opus-4': 'gpt-5.5',
-  'claude-3-5-sonnet-20241022': 'gpt-5.5',
-  'claude-3-5-haiku-20241022': 'gpt-5.6-luna',
-}
-
 export type ModelMappingEntry = {
   from: string
   to: string

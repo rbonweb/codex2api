@@ -5,10 +5,8 @@ import "strings"
 const longContextThreshold = 272000
 
 type ModelPricing struct {
-	UserBillingMode string
-	ImageUnitPrice  float64
-	// MediaUnitCost 是媒体模型的上游单位成本(USD/张 或 USD/秒,见 MediaBillingUnit)。
-	MediaUnitCost                   float64
+	UserBillingMode                 string
+	ImageUnitPrice                  float64
 	ImageInputPricePerMToken        float64
 	CacheReadImagePricePerMToken    float64
 	InputPricePerMToken             float64
@@ -17,7 +15,7 @@ type ModelPricing struct {
 	OutputPricePerMTokenPriority    float64
 	CacheReadPricePerMToken         float64
 	CacheReadPricePerMTokenPriority float64
-	// CacheWrite* are Anthropic prompt-cache creation prices (USD / 1M tokens).
+	// CacheWrite* are prompt-cache creation prices (USD / 1M tokens).
 	// They are surfaced for transparent pricing, while cost calculation continues
 	// to use CacheReadPricePerMToken for cached input tokens.
 	CacheWrite5mPricePerMToken float64
@@ -31,8 +29,7 @@ type ModelPricing struct {
 	LongCacheReadPricePerMTokenPriority float64
 
 	// LongContextThresholdTokens 是该模型进入长上下文档位的输入 token 阈值。
-	// 留空用全局 longContextThreshold（OpenAI 的 272K）；xAI Grok 的分档线是 200K，
-	// 需在规则里单独声明，否则 200K~272K 区间会按短档少算。
+	// 留空用全局 longContextThreshold（OpenAI 的 272K）；分档线不同的模型需在规则里单独声明。
 	LongContextThresholdTokens int
 
 	// UltrafastMultiplier 是模型自有的 Ultrafast 档倍率(相对 standard 价)。
@@ -234,79 +231,6 @@ var (
 			CacheReadPricePerMToken:         0.175,
 			CacheReadPricePerMTokenPriority: 0.35,
 		}},
-		// ===== xAI Grok（USD / 1M token）=====
-		// 新型号以内置的 xAI 官方价格快照为准；官方页面未收录的老型号
-		// （grok-3-fast / grok-2）保留既有公开价，缓存价未公开的留空
-		// （留空 = 缓存 token 按输入价计）。任何一条都可在定价页覆盖。
-		// Grok 的长上下文分档线是 200K，与 OpenAI 的 272K 不同，逐条声明。
-		// grok-4.7 / grok-4.6 必须独立成条：否则会命中 grok-4 前缀被当成 $3/$15。
-		// 两代同价：短档 $2/$6、缓存 $0.50；≥200K 长档 $4/$12、缓存 $1.00（与 grok-4.5 同输入/输出，缓存更高）。
-		// grok-4.7 价格来源 models.dev xai/grok-4.7（2026-09-21 发布，上下文 500K）。
-		{model: "grok-4.7", pricing: ModelPricing{
-			InputPricePerMToken:         2.0,
-			OutputPricePerMToken:        6.0,
-			CacheReadPricePerMToken:     0.5,
-			LongInputPricePerMToken:     4.0,
-			LongOutputPricePerMToken:    12.0,
-			LongCacheReadPricePerMToken: 1.0,
-			LongContextThresholdTokens:  200000,
-		}},
-		{model: "grok-4.6", pricing: ModelPricing{
-			InputPricePerMToken:         2.0,
-			OutputPricePerMToken:        6.0,
-			CacheReadPricePerMToken:     0.5,
-			LongInputPricePerMToken:     4.0,
-			LongOutputPricePerMToken:    12.0,
-			LongCacheReadPricePerMToken: 1.0,
-			LongContextThresholdTokens:  200000,
-		}},
-		{model: "grok-4.5", pricing: ModelPricing{
-			InputPricePerMToken:         2.0,
-			OutputPricePerMToken:        6.0,
-			CacheReadPricePerMToken:     0.3,
-			LongInputPricePerMToken:     4.0,
-			LongOutputPricePerMToken:    12.0,
-			LongCacheReadPricePerMToken: 1.0,
-			LongContextThresholdTokens:  200000,
-		}},
-		{model: "grok-4.3", pricing: ModelPricing{
-			InputPricePerMToken:         1.25,
-			OutputPricePerMToken:        2.5,
-			CacheReadPricePerMToken:     0.2,
-			LongInputPricePerMToken:     2.5,
-			LongOutputPricePerMToken:    5.0,
-			LongCacheReadPricePerMToken: 0.4,
-			LongContextThresholdTokens:  200000,
-		}},
-		{model: "grok-4.20", pricing: ModelPricing{
-			InputPricePerMToken:         1.25,
-			OutputPricePerMToken:        2.5,
-			CacheReadPricePerMToken:     0.2,
-			LongInputPricePerMToken:     2.5,
-			LongOutputPricePerMToken:    5.0,
-			LongCacheReadPricePerMToken: 0.4,
-			LongContextThresholdTokens:  200000,
-		}},
-		{model: "grok-4-fast", pricing: ModelPricing{InputPricePerMToken: 0.2, OutputPricePerMToken: 0.5, CacheReadPricePerMToken: 0.05}},
-		{model: "grok-4", pricing: ModelPricing{InputPricePerMToken: 3.0, OutputPricePerMToken: 15.0, CacheReadPricePerMToken: 0.75}},
-		{model: "grok-code-fast-1", pricing: ModelPricing{InputPricePerMToken: 0.2, OutputPricePerMToken: 1.5, CacheReadPricePerMToken: 0.02}},
-		{model: "grok-3-mini", pricing: ModelPricing{InputPricePerMToken: 0.3, OutputPricePerMToken: 0.5, CacheReadPricePerMToken: 0.075}},
-		{model: "grok-3-fast", pricing: ModelPricing{InputPricePerMToken: 5.0, OutputPricePerMToken: 25.0}},
-		{model: "grok-3", pricing: ModelPricing{InputPricePerMToken: 3.0, OutputPricePerMToken: 15.0, CacheReadPricePerMToken: 0.75}},
-		{model: "grok-2", pricing: ModelPricing{InputPricePerMToken: 2.0, OutputPricePerMToken: 10.0}},
-
-		// ===== Google Gemini public API estimates (USD / 1M token) =====
-		{model: "gemini-4-argon", pricing: ModelPricing{InputPricePerMToken: 1.25, OutputPricePerMToken: 10.0, CacheReadPricePerMToken: 0.125}},
-		{model: "gemini-3.8-flash", pricing: ModelPricing{InputPricePerMToken: 0.75, OutputPricePerMToken: 3.75, CacheReadPricePerMToken: 0.075}},
-		{model: "gemini-3.7-flash", pricing: ModelPricing{InputPricePerMToken: 0.75, OutputPricePerMToken: 3.75, CacheReadPricePerMToken: 0.075}},
-		{model: "gemini-3.6-flash", pricing: ModelPricing{InputPricePerMToken: 0.75, OutputPricePerMToken: 3.75, CacheReadPricePerMToken: 0.075}},
-		{model: "gemini-3.5-flash-lite", pricing: ModelPricing{InputPricePerMToken: 0.25, OutputPricePerMToken: 1.5, CacheReadPricePerMToken: 0.025}},
-		{model: "gemini-3.1-flash-lite", pricing: ModelPricing{InputPricePerMToken: 0.25, OutputPricePerMToken: 1.5, CacheReadPricePerMToken: 0.025}},
-		{model: "gemini-3-flash", pricing: ModelPricing{InputPricePerMToken: 0.5, OutputPricePerMToken: 3.0, CacheReadPricePerMToken: 0.05}},
-		{model: "gemini-3-pro-preview", pricing: ModelPricing{InputPricePerMToken: 2.0, OutputPricePerMToken: 12.0, CacheReadPricePerMToken: 0.2}},
-		{model: "gemini-2.5-pro", pricing: ModelPricing{InputPricePerMToken: 1.25, OutputPricePerMToken: 10.0, CacheReadPricePerMToken: 0.125}},
-		{model: "gemini-2.5-flash", pricing: ModelPricing{InputPricePerMToken: 0.3, OutputPricePerMToken: 2.5, CacheReadPricePerMToken: 0.03}},
-
 		{model: "gpt-4o-mini", pricing: ModelPricing{InputPricePerMToken: 0.15, OutputPricePerMToken: 0.6}},
 		{model: "gpt-4o", pricing: ModelPricing{InputPricePerMToken: 2.5, OutputPricePerMToken: 10.0}},
 		{model: "gpt-4-turbo", pricing: ModelPricing{InputPricePerMToken: 10.0, OutputPricePerMToken: 30.0}},
@@ -371,17 +295,8 @@ func baseModelPricing(normalized, canonical string) *ModelPricing {
 	if pricing := cyberDefaultPricing(canonical); pricing != nil {
 		return pricing
 	}
-	if key := GrokMediaPricingKey(normalized); key != "" {
-		return grokMediaBasePricing(key)
-	}
 	if GPTImage25BillingModel(canonical) != "" {
 		return &gptImage25Pricing
-	}
-	if pricing := claudeFamilyPricing(normalized); pricing != nil {
-		return pricing
-	}
-	if pricing := geminiFamilyPricing(normalized); pricing != nil {
-		return pricing
 	}
 	if pricing := modelRulePricing(canonical); pricing != nil {
 		return pricing
@@ -424,7 +339,7 @@ func CalculateCostBreakdown(inputTokens, outputTokens, cachedTokens int, model s
 	return CalculateCostBreakdownWithCacheWrites(inputTokens, outputTokens, cachedTokens, 0, 0, model, serviceTier)
 }
 
-// CalculateCostBreakdownWithCacheWrites 在 CalculateCostBreakdown 的基础上计入 Anthropic
+// CalculateCostBreakdownWithCacheWrites 在 CalculateCostBreakdown 的基础上计入
 // 提示缓存写入（5 分钟 / 1 小时）。inputTokens 是总输入（未缓存 + 缓存命中 + 缓存写入），
 // 写入价缺省按输入价的 1.25 倍 / 2 倍。
 func CalculateCostBreakdownWithCacheWrites(inputTokens, outputTokens, cachedTokens, cacheWrite5mTokens, cacheWrite1hTokens int, model string, serviceTier string) CostBreakdown {
@@ -649,55 +564,6 @@ func modelMatchesRule(model string, rule string) bool {
 	default:
 		return false
 	}
-}
-
-func claudeFamilyPricing(model string) *ModelPricing {
-	switch {
-	case (strings.Contains(model, "fable-5.1") || strings.Contains(model, "fable-5-1") || strings.Contains(model, "mythos-5.1") || strings.Contains(model, "mythos-5-1")):
-		return &ModelPricing{InputPricePerMToken: 10.0, CacheReadPricePerMToken: 0.25, CacheWrite5mPricePerMToken: 12.5, CacheWrite1hPricePerMToken: 20.0, OutputPricePerMToken: 50.0}
-	case strings.Contains(model, "fable-5") || strings.Contains(model, "mythos-5"):
-		return &ModelPricing{InputPricePerMToken: 10.0, CacheReadPricePerMToken: 1.0, CacheWrite5mPricePerMToken: 12.5, CacheWrite1hPricePerMToken: 20.0, OutputPricePerMToken: 50.0}
-	case strings.Contains(model, "opus"):
-		// 传统 Opus(3 / 4 / 4.1)为 $15/$75;自 4.5 起 Opus 降至 $5/$25,更新的版本
-		// (4.6/4.7/4.8/5…)默认沿用现代档,避免新模型误套旧高价。
-		legacyOpus := strings.Contains(model, "opus-3") || strings.Contains(model, "3-opus") ||
-			strings.Contains(model, "opus-4-1") || strings.Contains(model, "opus-4.1") ||
-			strings.Contains(model, "opus-4-0") || strings.Contains(model, "opus-4-2025") ||
-			strings.HasSuffix(model, "opus-4")
-		if legacyOpus {
-			return &ModelPricing{InputPricePerMToken: 15.0, CacheReadPricePerMToken: 1.5, CacheWrite5mPricePerMToken: 18.75, CacheWrite1hPricePerMToken: 30.0, OutputPricePerMToken: 75.0}
-		}
-		return &ModelPricing{InputPricePerMToken: 5.0, CacheReadPricePerMToken: 0.5, CacheWrite5mPricePerMToken: 6.25, CacheWrite1hPricePerMToken: 10.0, OutputPricePerMToken: 25.0}
-	case strings.Contains(model, "sonnet"):
-		if strings.Contains(model, "sonnet-5") {
-			return &ModelPricing{InputPricePerMToken: 2.0, CacheReadPricePerMToken: 0.2, CacheWrite5mPricePerMToken: 2.5, CacheWrite1hPricePerMToken: 4.0, OutputPricePerMToken: 10.0}
-		}
-		return &ModelPricing{InputPricePerMToken: 3.0, CacheReadPricePerMToken: 0.3, CacheWrite5mPricePerMToken: 3.75, CacheWrite1hPricePerMToken: 6.0, OutputPricePerMToken: 15.0}
-	case strings.Contains(model, "haiku"):
-		if strings.Contains(model, "3-5") || strings.Contains(model, "3.5") {
-			return &ModelPricing{InputPricePerMToken: 0.8, CacheReadPricePerMToken: 0.08, CacheWrite5mPricePerMToken: 1.0, CacheWrite1hPricePerMToken: 1.6, OutputPricePerMToken: 4.0}
-		}
-		if strings.Contains(model, "4-5") || strings.Contains(model, "4.5") ||
-			strings.Contains(model, "4-6") || strings.Contains(model, "4.6") ||
-			strings.Contains(model, "4-7") || strings.Contains(model, "4.7") {
-			return &ModelPricing{InputPricePerMToken: 1.0, CacheReadPricePerMToken: 0.1, CacheWrite5mPricePerMToken: 1.25, CacheWrite1hPricePerMToken: 2.0, OutputPricePerMToken: 5.0}
-		}
-		return &ModelPricing{InputPricePerMToken: 0.25, OutputPricePerMToken: 1.25}
-	case strings.Contains(model, "claude"):
-		return &ModelPricing{InputPricePerMToken: 3.0, OutputPricePerMToken: 15.0}
-	default:
-		return nil
-	}
-}
-
-func geminiFamilyPricing(model string) *ModelPricing {
-	if pricing := modelRulePricing(model); pricing != nil && strings.HasPrefix(model, "gemini-") {
-		return pricing
-	}
-	if strings.Contains(model, "gemini-3.1-pro") || strings.Contains(model, "gemini-3-1-pro") {
-		return &ModelPricing{InputPricePerMToken: 2.0, OutputPricePerMToken: 12.0}
-	}
-	return nil
 }
 
 func usePriorityPricing(serviceTier string, pricing *ModelPricing) bool {

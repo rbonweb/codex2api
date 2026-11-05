@@ -8,7 +8,6 @@ import (
 	"sync/atomic"
 	"time"
 
-	"github.com/codex2api/auth"
 	"github.com/codex2api/database"
 )
 
@@ -401,7 +400,6 @@ func ApplyRuntimeSettingsFromSystem(settings *database.SystemSettings) RuntimeSe
 		if err := SetPayloadRulesJSON(settings.PayloadRules); err != nil {
 			log.Printf("payload_rules 配置解析失败，已忽略: %v", err)
 		}
-		SetGrokFollowUpEffortConfig(auth.GrokFollowUpEffortConfigFromJSON(settings.GrokConfig))
 	}
 	return storeRuntimeSettings(next)
 }

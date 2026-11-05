@@ -58,14 +58,6 @@ func (h *Handler) CreateQualityTestJob(c *gin.Context) {
 		return
 	}
 	channel := "codex"
-	switch {
-	case account.IsClaudeOAuth():
-		channel = "claude"
-	case account.IsGrokAPI():
-		channel = "grok"
-	case account.IsAntigravityAPI():
-		channel = "antigravity"
-	}
 	account.Mu().RLock()
 	name, plan := account.Email, account.PlanType
 	if name == "" {
@@ -247,16 +239,6 @@ func (h *Handler) runQualityTestJob(parent context.Context, job database.Quality
 				job.InputTokens = d.Usage.InputTokens
 				job.OutputTokens = d.Usage.OutputTokens
 				job.ReasoningTokens = d.Usage.ReasoningTokens
-			}
-		}
-		if d := event.Diagnostics; d != nil {
-			job.ResponseModel = d.ResponseModel
-			if d.FirstContentMS != nil && job.Retries == 0 {
-				job.FirstContentMS = d.FirstContentMS
-			}
-			if d.Usage != nil {
-				job.InputTokens = d.Usage.InputTokens
-				job.OutputTokens = d.Usage.OutputTokens
 			}
 		}
 		dirty = true

@@ -28,8 +28,6 @@ type officialPricingSyncConfigResponse struct {
 	Enabled         bool    `json:"enabled"`
 	IntervalMinutes int     `json:"interval_minutes"`
 	IncludeOpenAI   bool    `json:"include_openai"`
-	IncludeGrok     bool    `json:"include_grok"`
-	IncludeClaude   bool    `json:"include_claude"`
 	LastAttemptAt   *string `json:"last_attempt_at,omitempty"`
 	LastSuccessAt   *string `json:"last_success_at,omitempty"`
 	LastError       string  `json:"last_error,omitempty"`
@@ -40,8 +38,6 @@ func officialPricingConfigResponse(cfg *database.OfficialPricingSyncConfig) offi
 	response := officialPricingSyncConfigResponse{
 		IntervalMinutes: database.DefaultOfficialPricingSyncIntervalMinutes,
 		IncludeOpenAI:   true,
-		IncludeGrok:     true,
-		IncludeClaude:   true,
 	}
 	if cfg == nil {
 		return response
@@ -49,8 +45,6 @@ func officialPricingConfigResponse(cfg *database.OfficialPricingSyncConfig) offi
 	response.Enabled = cfg.Enabled
 	response.IntervalMinutes = cfg.IntervalMinutes
 	response.IncludeOpenAI = cfg.IncludeOpenAI
-	response.IncludeGrok = cfg.IncludeGrok
-	response.IncludeClaude = cfg.IncludeClaude
 	response.LastError = cfg.LastError
 	response.LastWarning = cfg.LastWarning
 	if cfg.LastAttemptAt.Valid {
@@ -66,14 +60,12 @@ func officialPricingConfigResponse(cfg *database.OfficialPricingSyncConfig) offi
 
 func (h *Handler) officialPricingModelIDs(ctx context.Context) []string {
 	models := h.codexPricingModelIDs(ctx)
-	models = append(models, h.grokBillingModelIDs()...)
-	models = append(models, h.claudeChannelModels()...)
 	return models
 }
 
-func (h *Handler) runOfficialPricingSync(ctx context.Context, includeOpenAI, includeGrok, includeClaude bool) (*proxy.OfficialPricingSyncResult, error) {
+func (h *Handler) runOfficialPricingSync(ctx context.Context, includeOpenAI bool) (*proxy.OfficialPricingSyncResult, error) {
 	return h.runOfficialPricingSyncWithWarnings(ctx, proxy.OfficialPricingSyncOptions{
-		IncludeOpenAI: includeOpenAI, IncludeGrok: includeGrok, IncludeClaude: includeClaude,
+		IncludeOpenAI: includeOpenAI,
 	}, nil)
 }
 
@@ -114,8 +106,6 @@ type updateOfficialPricingSyncConfigRequest struct {
 	Enabled         bool `json:"enabled"`
 	IntervalMinutes int  `json:"interval_minutes"`
 	IncludeOpenAI   bool `json:"include_openai"`
-	IncludeGrok     bool `json:"include_grok"`
-	IncludeClaude   bool `json:"include_claude"`
 }
 
 func (h *Handler) UpdateOfficialPricingSyncConfig(c *gin.Context) {
@@ -134,8 +124,6 @@ func (h *Handler) UpdateOfficialPricingSyncConfig(c *gin.Context) {
 		Enabled:         req.Enabled,
 		IntervalMinutes: req.IntervalMinutes,
 		IncludeOpenAI:   req.IncludeOpenAI,
-		IncludeGrok:     req.IncludeGrok,
-		IncludeClaude:   req.IncludeClaude,
 	})
 	if err != nil {
 		writeError(c, http.StatusBadRequest, err.Error())
@@ -146,8 +134,6 @@ func (h *Handler) UpdateOfficialPricingSyncConfig(c *gin.Context) {
 
 type syncOfficialPricingRequest struct {
 	IncludeOpenAI *bool `json:"include_openai"`
-	IncludeGrok   *bool `json:"include_grok"`
-	IncludeClaude *bool `json:"include_claude"`
 }
 
 func (h *Handler) SyncOfficialPricingNow(c *gin.Context) {
@@ -158,23 +144,17 @@ func (h *Handler) SyncOfficialPricingNow(c *gin.Context) {
 			return
 		}
 	}
-	includeOpenAI, includeGrok, includeClaude := true, true, true
+	includeOpenAI := true
 	if req.IncludeOpenAI != nil {
 		includeOpenAI = *req.IncludeOpenAI
 	}
-	if req.IncludeGrok != nil {
-		includeGrok = *req.IncludeGrok
-	}
-	if req.IncludeClaude != nil {
-		includeClaude = *req.IncludeClaude
-	}
-	if !includeOpenAI && !includeGrok && !includeClaude {
+	if !includeOpenAI {
 		writeError(c, http.StatusBadRequest, "至少选择一个官方价格来源")
 		return
 	}
 	ctx, cancel := context.WithTimeout(c.Request.Context(), officialPricingSyncTimeout)
 	defer cancel()
-	result, err := h.runOfficialPricingSync(ctx, includeOpenAI, includeGrok, includeClaude)
+	result, err := h.runOfficialPricingSync(ctx, includeOpenAI)
 	if err != nil {
 		writeError(c, http.StatusBadGateway, err.Error())
 		return
@@ -197,7 +177,7 @@ func (h *Handler) StartOfficialPricingSync(ctx context.Context) {
 				log.Printf("读取官方价格轮询设置失败: %v", err)
 				return
 			}
-			if cfg == nil || !cfg.Enabled || (!cfg.IncludeOpenAI && !cfg.IncludeGrok && !cfg.IncludeClaude) {
+			if cfg == nil || !cfg.Enabled || !cfg.IncludeOpenAI {
 				return
 			}
 			lastRun := time.Time{}

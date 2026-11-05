@@ -3,7 +3,6 @@ package admin
 import (
 	"bytes"
 	"context"
-	"encoding/json"
 	"errors"
 	"fmt"
 	"io"
@@ -14,7 +13,6 @@ import (
 
 	"github.com/codex2api/auth"
 	"github.com/codex2api/proxy"
-	"github.com/codex2api/security"
 	"github.com/gin-gonic/gin"
 	"github.com/tidwall/gjson"
 )
@@ -65,22 +63,6 @@ func (h *Handler) ProbeUsageSnapshot(ctx context.Context, account *auth.Account)
 	if account == nil {
 		return nil
 	}
-	// Claude Code OAuth credentials are Anthropic-only. Never send them to the
-	// ChatGPT WHAM or Responses probe: those endpoints use a different token
-	// issuer and a false 401 would incorrectly quarantine a valid account.
-	if account.IsClaudeOAuth() {
-		return h.probeUsageViaClaudeMessages(ctx, account)
-	}
-	if account.IsAntigravityAPI() {
-		return errors.New("Antigravity 账号请使用专用配额刷新，不能执行 Codex wham 探针")
-	}
-
-	// Grok 账号绝不能走 ChatGPT wham / codex responses 探针——
-	// 否则会用错误的上游把有效 token 判成 unauthorized 并封禁。
-	if account.IsGrokAPI() {
-		return h.probeUsageViaGrokBilling(ctx, account)
-	}
-
 	// Agent Identity 无 AccessToken，wham（Bearer）用不了；直接用 /responses 最小探针
 	// （ExecuteRequest 会用 AgentAssertion 动态签名），从响应头同步用量快照。
 	if account.IsCodexAgentIdentity() {
@@ -128,251 +110,6 @@ func (h *Handler) ProbeUsageSnapshot(ctx context.Context, account *auth.Account)
 
 	// 2) Fallback: 原有的 /responses 最小探针
 	return h.probeUsageViaResponses(ctx, account)
-}
-
-// selectClaudeUsageProbeModel picks a low-cost, previously unblocked Claude
-// model for the background usage probe. Model discovery is not entitlement
-// discovery: Anthropic may advertise a model such as Fable 5 while requiring
-// purchased usage credits for a particular plan. Keep such models as a last
-// resort, and never retry one while its model-level cooldown is active.
-func selectClaudeUsageProbeModel(account *auth.Account) (string, error) {
-	if account == nil {
-		return "", errors.New("Claude 用量探针缺少账号")
-	}
-	models := proxy.DefaultClaudeModelIDsForAccount(account)
-	account.Mu().RLock()
-	explicit := len(account.Models) > 0
-	account.Mu().RUnlock()
-	if len(models) == 0 {
-		if explicit {
-			return "", errors.New("Claude 账号模型白名单没有有效的 claude-* 模型")
-		}
-		models = []string{"claude-opus-4-5", "claude-sonnet-4-5", "claude-haiku-4-5"}
-	}
-
-	// Prefer the cheapest stable family, then unknown future models, and only
-	// probe Fable after every other candidate is unavailable. This prevents a
-	// credits_required Fable entry sorted first from creating a probe storm.
-	bestModel := ""
-	bestRank := 99
-	for _, candidate := range models {
-		candidate = strings.TrimSpace(candidate)
-		lower := strings.ToLower(candidate)
-		if candidate == "" || !strings.HasPrefix(lower, "claude-") || account.IsModelRateLimited(candidate) {
-			continue
-		}
-		rank := 3
-		switch {
-		case strings.Contains(lower, "haiku"):
-			rank = 0
-		case strings.Contains(lower, "sonnet"):
-			rank = 1
-		case strings.Contains(lower, "opus"):
-			rank = 2
-		case strings.Contains(lower, "fable"):
-			rank = 4
-		}
-		if rank < bestRank {
-			bestModel = candidate
-			bestRank = rank
-		}
-	}
-	if bestModel == "" {
-		return "", errors.New("Claude 用量探针跳过：所有模型均处于模型级冷却")
-	}
-	return bestModel, nil
-}
-
-// probeUsageViaClaudeMessages sends a bounded, non-streaming Anthropic Messages
-// request and records the unified 5h/7d rate-limit headers. A probe failure is
-// returned to the import queue but does not itself ban the account; a
-// credits_required response is recorded as a model-only cooldown.
-func (h *Handler) probeUsageViaClaudeMessages(ctx context.Context, account *auth.Account) (probeErr error) {
-	if account == nil || account.IsClaudeAPIKey() {
-		return nil
-	}
-	var oauthWindows []auth.ClaudeUsageWindow
-	defer func() {
-		// Count failed/metadata-free attempts for freshness as well. This is a
-		// bounded backoff marker, not a quota observation; it prevents a failed
-		// provider probe from being retried on every scheduler sweep.
-		account.MarkClaudeUsageObservation(time.Now())
-		h.recordClaudeUsageProbe(account, probeErr, oauthWindows)
-	}()
-	// Claude Code exposes a zero-spend OAuth usage endpoint with model-scoped
-	// weekly limits. Prefer it so refreshing an account never consumes a message
-	// and Fable 5/5.1's shared quota is visible. Keep the Messages probe as a
-	// compatibility fallback for older tokens/proxies that do not expose it.
-	// Tests inject the Messages executor to provide a fully isolated upstream;
-	// skip the real OAuth request in that mode instead of reaching Anthropic.
-	// Setup Token 只有 user:inference,usage 端点必 403;直接走 Messages 探针,
-	// 免得每轮采样都留一条无意义的 403 足迹。
-	if h != nil && h.executeClaudeUsageProbe == nil && !account.IsClaudeSetupToken() {
-		if windows, err := h.fetchClaudeOAuthUsage(ctx, account); err == nil && len(windows) > 0 {
-			oauthWindows = windows
-			h.applyClaudeOAuthUsage(account, windows)
-			return nil
-		} else if err != nil {
-			log.Printf("[账号 %d] Claude OAuth usage 端点不可用，回退 Messages 探针: %v", account.DBID, err)
-		}
-	}
-	model, modelErr := selectClaudeUsageProbeModel(account)
-	if modelErr != nil {
-		return modelErr
-	}
-	body := []byte(fmt.Sprintf(`{"model":%q,"max_tokens":1,"messages":[{"role":"user","content":"ping"}],"stream":false}`, model))
-	var (
-		resp *http.Response
-		err  error
-	)
-	if h != nil && h.executeClaudeUsageProbe != nil {
-		resp, err = h.executeClaudeUsageProbe(ctx, account, body)
-	} else {
-		proxyURL := ""
-		fingerprintMode := ""
-		securityConfig := auth.DefaultClaudeSecurityConfig()
-		if h != nil && h.store != nil {
-			proxyURL = h.store.ResolveProxyForAccount(account)
-			fingerprintMode = account.EffectiveClaudeFingerprintMode(h.store.ClaudeFingerprintModeDefault())
-			securityConfig = h.store.ClaudeSecurityConfig()
-		}
-		// Operator-originated probe: never apply the downstream client policy.
-		resp, err = proxy.ExecuteClaudeMessagesRequest(ctx, account, body, proxyURL, nil, fingerprintMode, securityConfig)
-	}
-	if err != nil {
-		return err
-	}
-	if resp == nil {
-		return errors.New("Claude Messages probe returned nil response")
-	}
-	defer resp.Body.Close()
-	body, readErr := io.ReadAll(io.LimitReader(resp.Body, 64<<10))
-	if readErr != nil {
-		return fmt.Errorf("读取 Claude Messages probe 响应失败: %w", readErr)
-	}
-	if h != nil && h.store != nil {
-		if proxy.HandleClaudeModelBillingRejection(h.store, account, model, resp.StatusCode, body) {
-			return fmt.Errorf("Claude 模型 %s 需要 usage credits", model)
-		}
-		// Some compatibility layers wrap a native error payload in HTTP 200.
-		// Treat credits_required the same way as the normal 429 path without
-		// feeding it into the account-level quota synchronizer.
-		if strings.EqualFold(strings.TrimSpace(gjson.GetBytes(body, "type").String()), "error") {
-			if proxy.HandleClaudeModelBillingRejection(h.store, account, model, http.StatusTooManyRequests, body) {
-				return fmt.Errorf("Claude 模型 %s 需要 usage credits", model)
-			}
-		}
-		proxy.SyncClaudeUsageState(h.store, account, resp)
-	}
-	if resp.StatusCode < 200 || resp.StatusCode >= 300 {
-		// Do not mark unauthorized here: OAuth token failures need corroboration
-		// from real Claude traffic, while rate-limit state was already synced.
-		return fmt.Errorf("Claude Messages probe returned status %d", resp.StatusCode)
-	}
-	if len(bytes.TrimSpace(body)) == 0 {
-		return fmt.Errorf("Claude Messages probe returned an empty body")
-	}
-	// Anthropic normally uses a non-2xx status for errors, but a proxy or
-	// compatibility layer may wrap a native error in HTTP 200. Do not mark
-	// such a response as a successful sample.
-	if !gjson.ValidBytes(body) {
-		return fmt.Errorf("Claude Messages probe returned an invalid JSON payload")
-	}
-	typeName := strings.ToLower(strings.TrimSpace(gjson.GetBytes(body, "type").String()))
-	if typeName == "error" {
-		return fmt.Errorf("Claude Messages probe returned an error payload")
-	}
-	if typeName != "message" {
-		return fmt.Errorf("Claude Messages probe returned an invalid message payload")
-	}
-	if h != nil && h.store != nil {
-		h.store.ReportRequestSuccess(account, 0)
-		proxy.NoteClaudeGatedModelSuccess(h.store, account, model)
-	}
-	return nil
-}
-
-// recordClaudeUsageProbe persists only the outcome metadata needed by the
-// account-management UI. It never changes account health/cooldown state and a
-// persistence failure is intentionally best-effort: sampling must not block
-// request routing or turn a valid OAuth token into an error account.
-func (h *Handler) fetchClaudeOAuthUsage(ctx context.Context, account *auth.Account) ([]auth.ClaudeUsageWindow, error) {
-	if account == nil {
-		return nil, errors.New("Claude usage 缺少账号")
-	}
-	if account.IsClaudeAPIKey() {
-		return nil, nil
-	}
-	proxyURL := ""
-	if h != nil && h.store != nil {
-		proxyURL = h.store.ResolveProxyForAccount(account)
-	}
-	return auth.NewClaudeAuth(proxyURL).FetchUsage(ctx, account.GetAccessToken())
-}
-
-func (h *Handler) applyClaudeOAuthUsage(account *auth.Account, windows []auth.ClaudeUsageWindow) {
-	if account == nil || len(windows) == 0 {
-		return
-	}
-	observedAt := time.Now()
-	var has7d, has5h bool
-	var pct7d float64
-	account.ApplyUsageObservation(observedAt, func() {
-		for _, window := range windows {
-			switch window.Name {
-			case "5h":
-				account.SetUsageSnapshot5hAt(window.Utilization, window.ResetAt, observedAt)
-				has5h = true
-			case "7d":
-				account.SetUsageSnapshot(window.Utilization, observedAt)
-				pct7d = window.Utilization
-				if !window.ResetAt.IsZero() {
-					account.SetReset7dAt(window.ResetAt)
-				}
-				has7d = true
-			}
-		}
-		if h != nil && h.store != nil {
-			if has7d {
-				h.store.PersistUsageSnapshot(account, pct7d)
-			} else if has5h {
-				h.store.PersistUsageSnapshot5hOnly(account)
-			}
-		}
-	})
-}
-
-func (h *Handler) recordClaudeUsageProbe(account *auth.Account, probeErr error, windows []auth.ClaudeUsageWindow) {
-	if h == nil || h.db == nil || account == nil || account.DBID <= 0 {
-		return
-	}
-	fields := map[string]interface{}{
-		auth.ClaudeUsageProbeAtCredentialKey:    time.Now().UTC().Format(time.RFC3339),
-		auth.ClaudeUsageProbeErrorCredentialKey: "",
-	}
-	if probeErr != nil {
-		fields[auth.ClaudeUsageProbeErrorCredentialKey] = security.SafeTruncate(security.SanitizeLog(strings.TrimSpace(probeErr.Error())), 300)
-	}
-	// Always rewrite the window snapshot together with the probe timestamp so a
-	// probe that produced no OAuth windows (fallback Messages path, endpoint
-	// unavailable) clears stale model-scoped percentages instead of showing them
-	// under a fresh timestamp. The key's presence also marks the row as probed.
-	fields[auth.ClaudeUsageWindowsCredentialKey] = "[]"
-	if len(windows) > 0 {
-		if raw, err := json.Marshal(windows); err == nil {
-			fields[auth.ClaudeUsageWindowsCredentialKey] = string(raw)
-		}
-	}
-	ctx, cancel := context.WithTimeout(context.Background(), 2*time.Second)
-	defer cancel()
-	if err := h.db.UpdateCredentials(ctx, account.DBID, fields); err != nil {
-		log.Printf("[账号 %d] 持久化 Claude 用量采样状态失败: %v", account.DBID, err)
-		return
-	}
-	// The paged account list is projection-backed and may be cached for up to
-	// 30s on large pools. Expire only the Claude snapshot so the next silent
-	// poll observes this attempt without disturbing Codex/Grok pages.
-	h.invalidateClaudeCatalogCaches()
 }
 
 // probeUsageViaWham 通过 /backend-api/wham/usage 拉取用量，
@@ -459,46 +196,6 @@ func (h *Handler) probeUsageViaWham(ctx context.Context, account *auth.Account, 
 	if !applyUsageLimitedAccountState(h.store, account, state) {
 		if state.HasUsage5h || state.HasUsage7d || state.Cleared5h {
 			h.store.ClearUsageLimitCooldownSince(account, probeStartedAt)
-		}
-	}
-	return nil
-}
-
-// probeUsageViaGrokBilling 通过 cli-chat-proxy /v1/billing 拉取套餐与周/月额度。
-// 不走 wham，401 才视作凭据失效。
-func (h *Handler) probeUsageViaGrokBilling(ctx context.Context, account *auth.Account) error {
-	if account == nil {
-		return nil
-	}
-	// API Key 账号可能没有 AT；用 bearer（api_key 或 AT）探测。
-	baseURL, bearer := account.GrokCredentials()
-	_ = baseURL
-	if strings.TrimSpace(bearer) == "" {
-		// OAuth 无 AT 时先刷一次
-		if account.GrokAuthKind() == auth.GrokAuthKindOAuth {
-			if err := h.store.RefreshSingle(ctx, account.DBID); err != nil {
-				log.Printf("[账号 %d] Grok billing 探针前刷新失败: %v", account.DBID, err)
-			}
-		}
-	}
-
-	summary, err := proxy.FetchGrokBilling(ctx, account, h.store.ResolveProxyForAccount(account))
-	if err != nil {
-		errText := err.Error()
-		if strings.Contains(strings.ToLower(errText), "unauthorized") {
-			h.store.ReportRequestFailure(account, "client", 0)
-			h.store.MarkCooldownWithError(account, 24*time.Hour, "unauthorized",
-				fmt.Sprintf("Grok billing 探针 401: %s", truncate(errText, 300)))
-			return nil
-		}
-		log.Printf("[账号 %d] Grok billing 探针失败: %v", account.DBID, err)
-		return err
-	}
-
-	credentials := proxy.ApplyGrokBilling(h.store, account, summary)
-	if h.db != nil && len(credentials) > 0 {
-		if err := h.db.UpdateCredentials(ctx, account.DBID, credentials); err != nil {
-			log.Printf("[账号 %d] Grok billing 写库失败: %v", account.DBID, err)
 		}
 	}
 	return nil

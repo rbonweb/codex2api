@@ -77,15 +77,6 @@ func TestGetAccountPageStatsBackfillsMissingOfficialUsage(t *testing.T) {
 	if err != nil {
 		t.Fatalf("insert codex: %v", err)
 	}
-	grokID, err := db.InsertAccountWithUpstream(ctx, "grok", "xai", "oauth", map[string]interface{}{
-		"upstream_type": "grok",
-		"refresh_token": "rt-grok",
-		"access_token":  "at-grok",
-		"email":         "grok@example.net",
-	}, "")
-	if err != nil {
-		t.Fatalf("insert grok: %v", err)
-	}
 
 	store := auth.NewStore(db, nil, nil)
 	store.SetLazyMode(true)
@@ -114,7 +105,7 @@ func TestGetAccountPageStatsBackfillsMissingOfficialUsage(t *testing.T) {
 		}}}, nil, nil
 	}
 
-	first := invokeAccountPageStats(t, handler, []int64{codexID, grokID})
+	first := invokeAccountPageStats(t, handler, []int64{codexID})
 	codexKey := strconv.FormatInt(codexID, 10)
 	if item := first[codexKey]; item.OfficialUSD7d != nil {
 		t.Fatalf("first page-stats official = %v, want omitted until snapshot exists", *item.OfficialUSD7d)
@@ -127,7 +118,7 @@ func TestGetAccountPageStatsBackfillsMissingOfficialUsage(t *testing.T) {
 	}
 	waitAccountDailyUsage(t, db, codexID)
 
-	second := invokeAccountPageStats(t, handler, []int64{codexID, grokID})
+	second := invokeAccountPageStats(t, handler, []int64{codexID})
 	got := second[codexKey].OfficialUSD
 	if got == nil || *got != 2 {
 		t.Fatalf("official_usd = %v, want 2 (50 credits / 25)", got)

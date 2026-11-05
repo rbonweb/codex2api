@@ -10,7 +10,7 @@ import { ACCOUNT_GROUP_COLORS } from "./AccountGroupManagerModal";
 import Modal from "./Modal";
 import { Button } from "@/components/ui/button";
 
-// 批量设置账号分组(issue #763):Grok / Antigravity / Claude 页共用,语义与 Codex
+// 批量设置账号分组(issue #763):语义与 Codex
 // 页"设置分组"一致——所选分组完整替换,留空即清空;走 batch-update,后端校验渠道。
 export default function BatchAccountGroupModal({
   show,

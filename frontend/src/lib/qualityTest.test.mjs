@@ -1,7 +1,6 @@
 import assert from 'node:assert/strict'
 import test from 'node:test'
-import { extractQualityTestHTML, qualityTestPreviewDocument, isQualityTestActive, qualityTestPlanTone, qualityTestStatusKey, clampQualityTestFrameHeight, QUALITY_TEST_SIZE_SCRIPT, qualityTestFilterQuery } from './qualityTest.ts'
-import { readClaudeTestEvents } from './claudeConnectionTest.ts'
+import { extractQualityTestHTML, qualityTestPreviewDocument, isQualityTestActive, qualityTestPlanTone, qualityTestStatusKey, clampQualityTestFrameHeight, QUALITY_TEST_SIZE_SCRIPT, qualityTestFilterQuery, readQualityTestEvents } from './qualityTest.ts'
 
 test('quality preview extracts documents and SVG without rendering explanatory prose', () => {
   const html = '<!DOCTYPE html><html><body><svg><text>鹈鹕</text></svg></body></html>'
@@ -36,7 +35,7 @@ test('quality stream preserves split Unicode, whitespace and diagnostics arrivin
   const bytes = new TextEncoder().encode(wire)
   const stream = new ReadableStream({ start(controller) { for (let i = 0; i < bytes.length; i += 2) controller.enqueue(bytes.slice(i, i + 2)); controller.close() } })
   const events = []
-  assert.equal(await readClaudeTestEvents(stream, (event) => events.push(event)), true)
+  assert.equal(await readQualityTestEvents(stream, (event) => events.push(event)), true)
   assert.equal(events.filter((event) => event.type === 'content').map((event) => event.text).join(''), html)
   assert.equal(events.at(-1).codex_diagnostics.usage.reasoning_output_tokens, 42)
 })

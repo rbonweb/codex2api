@@ -296,22 +296,6 @@ func TestCodexRefreshExpiredTokenIsPermanent(t *testing.T) {
 func TestCodexRefreshBackgroundEligibility(t *testing.T) {
 	store := NewStore(nil, nil, &database.SystemSettings{})
 	defer store.Stop()
-	claude := &Account{RefreshToken: "rt", ExpiresAt: time.Now(), UpstreamType: UpstreamClaude, Disabled: 1, HealthTier: HealthTierHealthy}
-	if !store.shouldBackgroundRefresh(claude, false) {
-		t.Fatal("Codex change altered legacy Claude refresh policy")
-	}
-	for _, tc := range []struct {
-		name             string
-		disabled, paused int32
-		want             bool
-	}{
-		{"grok enabled", 0, 0, true}, {"grok disabled", 1, 0, false}, {"grok paused", 0, 1, false},
-	} {
-		grok := &Account{RefreshToken: "rt", ExpiresAt: time.Now(), UpstreamType: UpstreamGrok, HealthTier: HealthTierHealthy, Disabled: tc.disabled, DispatchPaused: tc.paused}
-		if got := store.shouldBackgroundRefresh(grok, false); got != tc.want {
-			t.Fatalf("%s: eligible=%t, want %t", tc.name, got, tc.want)
-		}
-	}
 	for _, tc := range []struct {
 		name, upstream, reason string
 		disabled, paused       int32
@@ -319,7 +303,7 @@ func TestCodexRefreshBackgroundEligibility(t *testing.T) {
 	}{
 		{"ready", "", "", 0, 0, true}, {"quota paused", "", "rate_limited_7d", 0, 1, true},
 		{"disabled", "", "rate_limited_7d", 1, 0, false}, {"manual pause", "", "", 0, 1, false},
-		{"unauthorized", "", "unauthorized", 0, 0, false}, {"claude", "claude", "", 0, 0, false},
+		{"unauthorized", "", "unauthorized", 0, 0, false},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			account := &Account{RefreshToken: "rt", ExpiresAt: time.Now(), HealthTier: HealthTierHealthy, UpstreamType: tc.upstream, Disabled: tc.disabled, DispatchPaused: tc.paused}

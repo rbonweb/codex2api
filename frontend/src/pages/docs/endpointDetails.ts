@@ -135,43 +135,14 @@ export function addEndpointDetails(
         ),
       ),
     ],
-    "api-messages": [
-      model,
-      messages,
-      p(
-        "max_tokens",
-        "integer",
-        true,
-        c(
-          "期望最大输出长度；原生与转换路径行为不同。",
-          "Requested output limit; native and translated paths differ.",
-        ),
-      ),
-      stream,
-      p(
-        "system",
-        "string | array",
-        false,
-        c("系统提示词。", "System instructions."),
-      ),
-      p(
-        "tools",
-        "array",
-        false,
-        c(
-          "Anthropic 工具定义，参数放在 input_schema。",
-          "Anthropic tool definitions with input_schema.",
-        ),
-      ),
-    ],
     "api-images-gen": [
       p(
         "model",
         "string",
         false,
         c(
-          "gpt-image-2、gpt-image-2.5-flare/sunburst 或可用 Grok Imagine 模型。",
-          "gpt-image-2, gpt-image-2.5-flare/sunburst or an available Grok Imagine model.",
+          "gpt-image-2 或 gpt-image-2.5-flare/sunburst。",
+          "gpt-image-2 or gpt-image-2.5-flare/sunburst.",
         ),
         "gpt-image-2",
       ),
@@ -280,12 +251,7 @@ export function buildExtraEndpoints(
     quality: "high",
     n: 1,
   };
-  const videoBody = {
-    model: "grok-imagine-video-1.5",
-    prompt: "Ocean waves at sunset",
-    duration: 4,
-    resolution: "480p",
-  };
+  const inputTokensBody = { model: "gpt-5.5", input: "Hello" };
   const endpoints: EndpointSpec[] = [
     {
       id: "api-image-jobs",
@@ -389,188 +355,19 @@ export function buildExtraEndpoints(
       ],
     },
     {
-      id: "api-videos-gen",
-      category: "media",
+      id: "api-input-tokens",
+      category: "advanced",
       method: "POST",
-      path: "/v1/videos/generations",
-      title: c("创建视频任务", "Generate a video"),
+      path: "/v1/responses/input_tokens",
+      title: c("Responses Token 估算", "Estimate Responses tokens"),
       description: c(
-        "需要付费 Grok 账号。返回 request_id，随后查询任务状态。省略模型时使用 grok-imagine-video-1.5。",
-        "Requires a paid Grok account. Returns request_id for polling. An omitted model defaults to grok-imagine-video-1.5.",
+        "仅做本地字符估算，不调用上游、不消耗账号额度。用于客户端兼容探测，不是精确 tokenizer，也不是最终计费依据。",
+        "A local character-based estimate without upstream calls or account quota consumption. For compatibility probes, not an exact tokenizer or billing measurement.",
       ),
-      defaultBody: json(videoBody),
-      curl: post("/v1/videos/generations", videoBody),
-      parameters: [
-        param(
-          "model",
-          "string",
-          false,
-          "grok-imagine-video / grok-imagine-video-1.5",
-        ),
-        param(
-          "prompt",
-          "string",
-          false,
-          c("无图片输入时必填。", "Required without image input."),
-        ),
-        param(
-          "duration",
-          "integer",
-          false,
-          c("1–15 秒，默认 8 秒。", "1–15 seconds, default 8."),
-        ),
-        param(
-          "resolution",
-          "string",
-          false,
-          c(
-            "480p/720p/1080p；1080p 仅 1.5 且无参考图。",
-            "480p/720p/1080p; 1080p requires 1.5 and no reference images.",
-          ),
-        ),
-        param(
-          "image",
-          "object",
-          false,
-          c(
-            "首帧图片，格式 {url: ...}；与 reference_images 互斥。",
-            "First frame as {url: ...}; mutually exclusive with reference_images.",
-          ),
-        ),
-        param(
-          "reference_images",
-          "array",
-          false,
-          c("最多 7 张参考图。", "Up to 7 reference images."),
-        ),
-      ],
-      responses: [{ code: 200, body: json({ request_id: "YOUR_REQUEST_ID" }) }],
+      curl: post("/v1/responses/input_tokens", inputTokensBody),
+      defaultBody: json(inputTokensBody),
+      responses: [{ code: 200, body: json({ input_tokens: 32 }) }],
     },
-    ...(["edits", "extensions"] as const).map((operation): EndpointSpec => {
-      const body = {
-        model: "grok-imagine-video",
-        prompt:
-          operation === "edits"
-            ? "Change the background to a beach"
-            : "Continue the scene",
-        video: { url: "https://example.com/source.mp4" },
-      };
-      return {
-        id: `api-videos-${operation}`,
-        category: "media",
-        method: "POST",
-        path: `/v1/videos/${operation}`,
-        title:
-          operation === "edits"
-            ? c("编辑视频", "Edit a video")
-            : c("延展视频", "Extend a video"),
-        description: c(
-          "使用 grok-imagine-video；1.5 不支持该操作。返回 request_id，按视频任务流程查询和下载。",
-          "Use grok-imagine-video; 1.5 does not support this operation. Poll and download using the returned request_id.",
-        ),
-        curl: post(`/v1/videos/${operation}`, body),
-        defaultBody: json(body),
-        parameters: [
-          param(
-            "video",
-            "object",
-            true,
-            c("源视频 {url: ...}。", "Source video as {url: ...}."),
-          ),
-          param(
-            "prompt",
-            "string",
-            false,
-            c("修改或续写要求。", "Edit or continuation instructions."),
-          ),
-        ],
-        responses: [
-          { code: 200, body: json({ request_id: "YOUR_REQUEST_ID" }) },
-        ],
-      };
-    }),
-    {
-      id: "api-video-status",
-      category: "media",
-      method: "GET",
-      path: "/v1/videos/:request_id",
-      title: c("查询视频任务", "Get video status"),
-      description: c(
-        "每隔 2–5 秒查询，使用创建时的同一 API Key。状态为 pending/done/failed/expired；任务绑定有效期 24 小时。Memory 模式重启后绑定丢失。",
-        "Poll every 2–5 seconds with the creating API key. Status is pending/done/failed/expired. Bindings expire after 24 hours and are lost on restart in Memory mode.",
-      ),
-      curl: get("/v1/videos/YOUR_REQUEST_ID"),
-      responses: [
-        {
-          code: 200,
-          label: "pending",
-          body: json({ status: "pending", progress: 42 }),
-        },
-        {
-          code: 200,
-          label: "done",
-          body: json({
-            status: "done",
-            progress: 100,
-            video: {
-              url: `${baseUrl}/v1/videos/YOUR_REQUEST_ID/content`,
-              duration: 4,
-            },
-          }),
-        },
-      ],
-    },
-    {
-      id: "api-video-content",
-      category: "media",
-      method: "GET",
-      path: "/v1/videos/:request_id/content",
-      title: c("下载视频", "Download a video"),
-      description: c(
-        "任务完成后返回 video/mp4，支持 Range 部分下载。使用创建任务时的 API Key。",
-        "Returns video/mp4 after completion and supports Range downloads. Use the creating API key.",
-      ),
-      curl: `${get("/v1/videos/YOUR_REQUEST_ID/content")} \\\n  --output video.mp4`,
-      responses: [
-        {
-          code: 200,
-          label: "video/mp4",
-          lang: "text",
-          body: c(
-            "MP4 二进制内容（保存为文件）",
-            "MP4 binary data (save to a file)",
-          ),
-        },
-      ],
-    },
-    ...(["messages/count_tokens", "responses/input_tokens"] as const).map(
-      (path): EndpointSpec => {
-        const body = path.startsWith("messages")
-          ? {
-              model: "claude-sonnet-4-5",
-              messages: [{ role: "user", content: "Hello" }],
-            }
-          : { model: "gpt-5.5", input: "Hello" };
-        return {
-          id: path.startsWith("messages")
-            ? "api-count-tokens"
-            : "api-input-tokens",
-          category: "advanced",
-          method: "POST",
-          path: `/v1/${path}`,
-          title: path.startsWith("messages")
-            ? c("Messages Token 估算", "Estimate Messages tokens")
-            : c("Responses Token 估算", "Estimate Responses tokens"),
-          description: c(
-            "仅做本地字符估算，不调用上游、不消耗账号额度。用于客户端兼容探测，不是精确 tokenizer，也不是最终计费依据。",
-            "A local character-based estimate without upstream calls or account quota consumption. For compatibility probes, not an exact tokenizer or billing measurement.",
-          ),
-          curl: post(`/v1/${path}`, body),
-          defaultBody: json(body),
-          responses: [{ code: 200, body: json({ input_tokens: 32 }) }],
-        };
-      },
-    ),
     {
       id: "api-compact",
       category: "advanced",

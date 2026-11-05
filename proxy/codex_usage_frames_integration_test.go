@@ -16,8 +16,6 @@ import (
 
 func TestResponsesStreamAppliesCodexRateLimitsFrameToAccount(t *testing.T) {
 	gin.SetMode(gin.TestMode)
-	previousResin := resinCfg.Load()
-	t.Cleanup(func() { resinCfg.Store(previousResin) })
 
 	now := time.Now()
 	events := [][]string{{
@@ -29,7 +27,7 @@ func TestResponsesStreamAppliesCodexRateLimitsFrameToAccount(t *testing.T) {
 		`{"type":"response.completed","response":{"id":"resp_frame_1","status":"completed","usage":{"input_tokens":1,"output_tokens":1,"total_tokens":2}}}`,
 	}}
 	upstream, _ := newAttemptSequenceSSEServer(t, events)
-	SetResinConfig(&ResinConfig{BaseURL: upstream.URL, PlatformName: "test"})
+	useResinForTest(t, upstream.URL, "test")
 
 	store := auth.NewStore(nil, nil, &database.SystemSettings{
 		MaxConcurrency:      1,
@@ -72,8 +70,6 @@ func TestResponsesStreamAppliesCodexRateLimitsFrameToAccount(t *testing.T) {
 
 func TestResponsesNonStreamAppliesCodexRateLimitsFrameToAccount(t *testing.T) {
 	gin.SetMode(gin.TestMode)
-	previousResin := resinCfg.Load()
-	t.Cleanup(func() { resinCfg.Store(previousResin) })
 
 	now := time.Now()
 	events := [][]string{{
@@ -84,7 +80,7 @@ func TestResponsesNonStreamAppliesCodexRateLimitsFrameToAccount(t *testing.T) {
 		`{"type":"response.completed","response":{"id":"resp_nonstream_1","status":"completed","usage":{"input_tokens":1,"output_tokens":1,"total_tokens":2}}}`,
 	}}
 	upstream, _ := newAttemptSequenceSSEServer(t, events)
-	SetResinConfig(&ResinConfig{BaseURL: upstream.URL, PlatformName: "test"})
+	useResinForTest(t, upstream.URL, "test")
 
 	store := auth.NewStore(nil, nil, &database.SystemSettings{MaxConcurrency: 1})
 	t.Cleanup(store.Stop)
@@ -133,25 +129,3 @@ func TestChatCompletionsStreamAppliesCodexRateLimitsFrameToAccount(t *testing.T)
 	}
 }
 
-func TestMessagesStreamAppliesCodexRateLimitsFrameToAccount(t *testing.T) {
-	handler, _ := newAnthropicStreamFailureTestHandler(t, func(_ int32, w http.ResponseWriter) {
-		writeCodexSSE(w,
-			`{"type":"codex.rate_limits","plan_type":"plus","rate_limits":{"primary":{"used_percent":42,"window_minutes":300}}}`,
-			`{"type":"response.created","response":{"id":"resp_messages_frame"}}`,
-			`{"type":"response.output_text.delta","delta":"hello"}`,
-			`{"type":"response.completed","response":{"id":"resp_messages_frame","status":"completed","usage":{"input_tokens":1,"output_tokens":1,"total_tokens":2}}}`,
-		)
-	})
-
-	recorder := invokeAnthropicMessagesStream(t, handler)
-	if recorder.Code != http.StatusOK {
-		t.Fatalf("status = %d, body=%s", recorder.Code, recorder.Body.String())
-	}
-	account := handler.store.FindByID(1)
-	if account == nil {
-		t.Fatal("test account missing")
-	}
-	if pct, ok := account.GetUsagePercent5h(); !ok || pct != 42 {
-		t.Fatalf("5h usage = %v valid=%v, want 42 from the messages frame", pct, ok)
-	}
-}

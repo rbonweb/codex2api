@@ -172,76 +172,14 @@ export function buildEndpointSpecs(
       ],
     },
     {
-      id: "api-messages",
-      method: "POST",
-      path: "/v1/messages",
-      title: copy(locale, "创建 Messages 响应", "Create Messages output"),
-      description: copy(
-        locale,
-        "Anthropic Messages 兼容端点。支持 Claude OAuth、Setup Token 和 API Key + Base URL 原生路径；Codex 转换回退受密钥渠道、账号与路由设置约束，模型按系统设置映射。",
-        "Anthropic Messages compatible endpoint with native Claude OAuth, Setup Token and API Key + Base URL paths. Codex translation fallback depends on key channel, account and routing settings, with configured model mappings.",
-      ),
-      defaultBody: `{
-  "model": "claude-sonnet-4-5",
-  "max_tokens": 1024,
-  "messages": [{"role": "user", "content": "Hello"}]
-}`,
-      curl: `curl --request POST \\
-  --url ${baseUrl}/v1/messages \\
-  --header 'x-api-key: <token>' \\
-  --header 'Content-Type: application/json' \\
-  --header 'anthropic-version: 2023-06-01' \\
-  --data '{
-  "model": "claude-sonnet-4-5",
-  "max_tokens": 1024,
-  "messages": [{"role": "user", "content": "Hello, Claude!"}]
-}'`,
-      responses: [
-        {
-          code: 200,
-          body: `{
-  "id": "msg_abc123",
-  "type": "message",
-  "role": "assistant",
-  "model": "claude-sonnet-4-5",
-  "content": [{"type": "text", "text": "Hello! How can I assist you today?"}],
-  "stop_reason": "end_turn",
-  "stop_sequence": null,
-  "usage": {"input_tokens": 10, "output_tokens": 12, "cache_creation_input_tokens": 0, "cache_read_input_tokens": 0}
-}`,
-        },
-        {
-          code: 400,
-          body: `{
-  "type": "error",
-  "error": {"type": "invalid_request_error", "message": "model is required"}
-}`,
-        },
-        {
-          code: 401,
-          body: `{
-  "type": "error",
-  "error": {"type": "authentication_error", "message": "Invalid API key"}
-}`,
-        },
-        {
-          code: 429,
-          body: `{
-  "type": "error",
-  "error": {"type": "rate_limit_error", "message": "All accounts rate limited"}
-}`,
-        },
-      ],
-    },
-    {
       id: "api-images-gen",
       method: "POST",
       path: "/v1/images/generations",
       title: copy(locale, "生成图片", "Generate images"),
       description: copy(
         locale,
-        "支持 GPT Image 2 / 2.5 及可用 Grok Imagine 模型，按模型选择上游。GPT Image 路径的 response_format 默认 b64_json；配置 S3 兼容存储后，url 返回 1 小时预签名链接，否则返回 base64 data URL。",
-        "Supports GPT Image 2 / 2.5 and available Grok Imagine models, routed by model name. On the GPT Image path, response_format defaults to b64_json; with S3-compatible storage, url returns a 1-hour signed link, otherwise a base64 data URL.",
+        "支持 GPT Image 2 / 2.5。response_format 默认 b64_json；配置 S3 兼容存储后，url 返回 1 小时预签名链接，否则返回 base64 data URL。",
+        "Supports GPT Image 2 / 2.5. response_format defaults to b64_json; with S3-compatible storage, url returns a 1-hour signed link, otherwise a base64 data URL.",
       ),
       defaultBody: `{
   "model": "gpt-image-2",
@@ -565,21 +503,11 @@ curl --request POST \\
       title: copy(locale, "列出账号", "List accounts"),
       description: copy(
         locale,
-        "列出账号的状态、用量、标签、账号分组和基础元数据。可选 query channel=codex|grok|antigravity|claude 仅返回对应上游（Claude 管理页用 channel=claude）。",
-        "List accounts with status, usage, tags, account groups, and basic metadata. Optional query channel=codex|grok|antigravity|claude returns only that upstream (use channel=claude for the Claude admin page).",
+        "列出账号的状态、用量、标签、账号分组和基础元数据。",
+        "List accounts with status, usage, tags, account groups, and basic metadata.",
       ),
       curl: `curl --request GET \\
   --url ${baseUrl}/api/admin/accounts \\
-  --header 'X-Admin-Key: <admin_secret>'
-
-# Grok only
-curl --request GET \\
-  --url '${baseUrl}/api/admin/accounts?channel=grok' \\
-  --header 'X-Admin-Key: <admin_secret>'
-
-# Claude only
-curl --request GET \\
-  --url '${baseUrl}/api/admin/accounts?channel=claude' \\
   --header 'X-Admin-Key: <admin_secret>'`,
       responses: [
         {
@@ -668,7 +596,7 @@ curl --request GET \\
   "keys": [
     {
       "id": 1,
-      "name": "Claude Code",
+      "name": "Codex CLI",
       "key": "sk-****...abcd",
       "raw_key": "sk-live-full-key",
       "quota_limit": 10,
@@ -694,7 +622,7 @@ curl --request GET \\
         "Create a downstream API key. The key can be generated automatically; quota_limit omitted or set to 0 means unlimited; empty allowed_group_ids means all account groups are allowed.",
       ),
       defaultBody: `{
-  "name": "Claude Code",
+  "name": "Codex CLI",
   "quota_limit": 10,
   "expires_in_days": 30,
   "allowed_group_ids": [1]
@@ -704,7 +632,7 @@ curl --request GET \\
   --header 'X-Admin-Key: <admin_secret>' \\
   --header 'Content-Type: application/json' \\
   --data '{
-  "name": "Claude Code",
+  "name": "Codex CLI",
   "quota_limit": 10,
   "expires_in_days": 30,
   "allowed_group_ids": [1]
@@ -715,7 +643,7 @@ curl --request GET \\
           body: `{
   "id": 2,
   "key": "sk-...",
-  "name": "Claude Code",
+  "name": "Codex CLI",
   "quota_limit": 10,
   "quota_used": 0,
   "expires_at": "2026-06-12T00:00:00Z",

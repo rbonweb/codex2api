@@ -84,7 +84,7 @@ func (a *Account) DaybreakSnapshot() database.DaybreakSnapshot {
 }
 
 func (a *Account) SupportsDaybreak(model, program string) bool {
-	if a == nil || a.IsRelayStyle() || a.IsAntigravityAPI() || a.IsClaudeOAuth() || a.IsGrokAPI() {
+	if a == nil {
 		return false
 	}
 	for _, available := range a.DaybreakSnapshot().Models[strings.ToLower(strings.TrimSpace(model))] {
@@ -96,7 +96,7 @@ func (a *Account) SupportsDaybreak(model, program string) bool {
 }
 
 func (a *Account) DaybreakAliases() []string {
-	if a == nil || a.IsRelayStyle() || a.IsAntigravityAPI() || a.IsClaudeOAuth() || a.IsGrokAPI() {
+	if a == nil {
 		return nil
 	}
 	var aliases []string

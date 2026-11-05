@@ -5,7 +5,6 @@ import (
 	"fmt"
 	"io"
 
-	"github.com/codex2api/auth"
 	"github.com/codex2api/database"
 )
 
@@ -42,22 +41,7 @@ func readAllLimitedWithContinuousRetryKeepalive(ctx context.Context, reader io.R
 	return body, nil
 }
 
-// activateAnthropicMessagesKeepalive 在选号后应用 Messages 的 Claude 开关，
-// relay 和 Codex 路径始终启用保活。
-func (h *Handler) activateAnthropicMessagesKeepalive(ctx context.Context, account *auth.Account, stream bool) {
-	var store *auth.Store
-	if h != nil {
-		store = h.store
-	}
-	if stream && (account == nil || account.IsClaudeOAuth()) {
-		setContinuousRetryKeepaliveActive(ctx, store != nil && store.ClaudeStreamKeepaliveEnabled())
-		return
-	}
-	setContinuousRetryKeepaliveActive(ctx, true)
-}
-
-// setContinuousRetryKeepaliveActive 支持重试换号时在 relay 与 Claude OAuth
-// 的不同保活策略之间切换。
+// setContinuousRetryKeepaliveActive 在重试换号时按需启用或关闭下游保活。
 func setContinuousRetryKeepaliveActive(ctx context.Context, active bool) {
 	keepalive := continuousRetryKeepaliveForContext(ctx)
 	if keepalive == nil {

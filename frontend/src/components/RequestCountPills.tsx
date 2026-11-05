@@ -287,7 +287,7 @@ function formatAverageFirstTokenMs(value: number): string {
 
 function ModelNameIcon({ model }: { model: string }) {
   const icon = resolveLobeIconId(model);
-  const invertMono = icon.id === "openai" || icon.id === "grok";
+  const invertMono = icon.id === "openai";
   return (
     <ModelLogo
       model={model}

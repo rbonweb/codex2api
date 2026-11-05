@@ -352,19 +352,14 @@ func (s *Store) finishCodexRefresh(ctx context.Context, acc *Account, warning st
 func (s *Store) shouldBackgroundRefresh(acc *Account, codexOnly bool) bool {
 	acc.mu.RLock()
 	defer acc.mu.RUnlock()
-	codex := !acc.isRelayStyleLocked() && !acc.isCodexAgentIdentityLocked()
+	codex := !acc.isCodexAgentIdentityLocked()
 	if codex && atomic.LoadInt32(&acc.Disabled) != 0 {
-		return false
-	}
-	// Grok 的 RT 家族每次刷新都会轮换：禁用账号继续后台刷新会让已交给 Grok CLI 的
-	// 凭据失效。Grok 的 DispatchPaused 只来自 enabled=false，没有额度类自动暂停。
-	if acc.isGrokAPILocked() && (atomic.LoadInt32(&acc.Disabled) != 0 || atomic.LoadInt32(&acc.DispatchPaused) != 0) {
 		return false
 	}
 	if codexOnly && !codex {
 		return false
 	}
-	if acc.isAntigravityAPILocked() || acc.Status == StatusError || acc.healthTierLocked() == HealthTierBanned || strings.TrimSpace(acc.RefreshToken) == "" {
+	if acc.Status == StatusError || acc.healthTierLocked() == HealthTierBanned || strings.TrimSpace(acc.RefreshToken) == "" {
 		return false
 	}
 	if time.Until(acc.ExpiresAt) >= 5*time.Minute {

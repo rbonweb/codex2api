@@ -13,8 +13,7 @@ import (
 // 字符替换成 `_`、超长截断并去重，响应侧再按同一张映射把名字还原，客户端看到
 // 的仍是原名。合法名字不进映射，常规请求零开销。
 //
-// 只作用于 /v1/chat/completions 路由：原生 Responses 请求视为已按上游规范构造，
-// Grok 路由有自己的命名空间映射。
+// 只作用于 /v1/chat/completions 路由：原生 Responses 请求视为已按上游规范构造。
 const codexToolNameLimit = 64
 
 func isCodexToolNameRune(r rune) bool {

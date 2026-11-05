@@ -1080,10 +1080,7 @@ func stripResponsesInputImageTools(body []byte) []byte {
 }
 
 func validateImagesModel(model string) error {
-	if isGrokVideoModel(model) {
-		return fmt.Errorf("model %q is a video model, use /v1/videos/generations instead", strings.TrimSpace(model))
-	}
-	if !isImageOnlyModel(model) && !isGrokImageModel(model) {
+	if !isImageOnlyModel(model) {
 		return fmt.Errorf("images endpoint requires an image model, got %q", strings.TrimSpace(model))
 	}
 	return nil
@@ -1091,9 +1088,6 @@ func validateImagesModel(model string) error {
 
 // mediaOnlyModelEndpoints 返回媒体专用模型对应的下游端点提示文案。
 func mediaOnlyModelEndpoints(model string) string {
-	if isGrokVideoModel(model) {
-		return "/v1/videos/generations, /v1/videos/edits and /v1/videos/extensions"
-	}
 	return "/v1/images/generations and /v1/images/edits"
 }
 
@@ -1246,10 +1240,6 @@ func (h *Handler) ImagesGenerations(c *gin.Context) {
 	if releaseAPIKeyConcurrency != nil {
 		defer releaseAPIKeyConcurrency()
 	}
-	if isGrokImageModel(imageModel) {
-		h.forwardGrokImagesRequest(c, "/v1/images/generations", imageModel, requestModel, logEffectiveModel, promptForRequest, responseFormat, grokImagesParamsFromJSON(rawBody), nil, stream)
-		return
-	}
 	tool := []byte(`{"type":"image_generation","action":"generate","model":""}`)
 	toolModel, defaultSize := normalizeImageToolModelForPrompt(imageModel, promptForRequest)
 	tool, _ = sjson.SetBytes(tool, "model", toolModel)
@@ -1385,10 +1375,6 @@ func (h *Handler) imagesEditsFromMultipart(c *gin.Context) {
 	}
 	if releaseAPIKeyConcurrency != nil {
 		defer releaseAPIKeyConcurrency()
-	}
-	if isGrokImageModel(imageModel) {
-		h.forwardGrokImagesRequest(c, "/v1/images/edits", imageModel, requestModel, logEffectiveModel, promptForRequest, responseFormat, grokImagesParamsFromForm(c), images, stream)
-		return
 	}
 	tool := buildImagesEditToolFromForm(c, imageModel, maskDataURL)
 	requestedSize := explicitImageSize(c.PostForm("size"))
@@ -1527,10 +1513,6 @@ func (h *Handler) imagesEditsFromJSON(c *gin.Context) {
 	if releaseAPIKeyConcurrency != nil {
 		defer releaseAPIKeyConcurrency()
 	}
-	if isGrokImageModel(imageModel) {
-		h.forwardGrokImagesRequest(c, "/v1/images/edits", imageModel, requestModel, logEffectiveModel, promptForRequest, responseFormat, grokImagesParamsFromJSON(rawBody), images, stream)
-		return
-	}
 	tool := []byte(`{"type":"image_generation","action":"edit","model":""}`)
 	toolModel, defaultSize := normalizeImageToolModelForPrompt(imageModel, promptForRequest)
 	tool, _ = sjson.SetBytes(tool, "model", toolModel)
@@ -1580,10 +1562,9 @@ func buildImagesResponsesRequest(prompt string, images []string, toolJSON []byte
 	return req
 }
 
-// imageCapableAccountFilter 生图上游目前只有 Codex 官方账号支持:中转/Grok
-// 账号拿到 image_generation 请求只会对上游 401/404,还会把自己误标成 unauthorized。
+// imageCapableAccountFilter 生图上游目前只有 Codex 官方账号支持。
 func imageCapableAccountFilter(account *auth.Account) bool {
-	return account != nil && !account.IsRelayStyle()
+	return account != nil
 }
 
 func imagePreferredAccountFilter(account *auth.Account) bool {

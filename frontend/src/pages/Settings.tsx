@@ -9,17 +9,9 @@ import CodexClientVersionsPanel from '../components/CodexClientVersionsPanel'
 import StateShell from '../components/StateShell'
 import { useDataLoader } from '../hooks/useDataLoader'
 import { useToast } from '../hooks/useToast'
-import type { AntigravityOAuthClientSetting, AntigravitySettingsResponse, ChannelTestSettings, CodexClientVersionSyncResult, CodexClientVersionTarget, CodexUserAgentCatalog, CodexUserAgentPreview, HealthResponse, ModelInfo, SiteBranding, SystemSettings, UpstreamChannel } from '../types'
-import { ANTIGRAVITY_DEFAULT_MODELS, isAntigravityDisabledModel } from '../lib/antigravityModels'
+import type { CodexClientVersionSyncResult, CodexClientVersionTarget, CodexUserAgentCatalog, CodexUserAgentPreview, HealthResponse, ModelInfo, SiteBranding, SystemSettings } from '../types'
 import { countPayloadRules, PAYLOAD_RULE_GROUPS } from './PayloadRules'
 import { getErrorMessage } from '../utils/error'
-import { DEFAULT_CLAUDE_MODEL_MAP } from '../lib/modelMapping'
-import {
-  CLAUDE_TIMEZONE_CUSTOM,
-  CLAUDE_TIMEZONE_OPTIONS,
-  claudeTimezoneLabel,
-  findClaudeTimezoneOption,
-} from '../lib/claudeAccountOptions'
 import { buildWritableSettingsPayload } from '../lib/settingsPayload'
 import { resolveByteLimitCommit } from '../lib/byteLimitCommit'
 import {
@@ -134,13 +126,9 @@ import {
 } from 'lucide-react'
 import { Link, useLocation, useNavigate, useSearchParams } from 'react-router-dom'
 import ChannelLogo from '../components/ChannelLogo'
-import ChannelScopeBadges, { ALL_UPSTREAM_CHANNELS } from '../components/ChannelScopeBadges'
-import { useVisibleChannels } from '../visibleChannels'
-import { ALL_VISIBLE_CHANNEL_OPTIONS, FALLBACK_VISIBLE_CHANNEL, toggleVisibleChannel } from '../lib/visibleChannels'
 
-type ModelPanelKey = 'registry' | 'anthropic' | 'codex' | 'reasoning'
+type ModelPanelKey = 'registry' | 'codex' | 'reasoning'
 const MODEL_PANEL_FIELDS = {
-  anthropic: 'model_mapping',
   codex: 'codex_model_mapping',
   reasoning: 'reasoning_effort_models',
 } as const satisfies Partial<Record<ModelPanelKey, keyof SystemSettings>>
@@ -236,17 +224,8 @@ const DEFAULT_CODEX_UA_CONFIG: Required<CodexUserAgentConfig> = {
   pool_mix: {},
 }
 
-type SettingsTabKey = 'codex' | 'claude' | 'antigravity' | 'grok' | 'appearance' | 'general'
-// 设置项适用渠道（按后端消费点核对）：
-//   CODEX_ONLY   仅 Codex（Responses/WS、生图存储、Tier 计费、模型清单）
-//   CODEX_CLAUDE 依赖 5h/7d 用量窗口的逻辑，Codex 与 Claude 都会写该窗口
-//   STREAMING    经 handleStreamResponse 的 Chat 流式路径（Claude 原生 Messages 不经过）
-//   RELAY        中转/API Key 型账号（Grok 强制走 OAuth 策略，不在其中）
-const CHANNELS_CODEX_ONLY: readonly UpstreamChannel[] = ['codex']
-const CHANNELS_CODEX_CLAUDE: readonly UpstreamChannel[] = ['codex', 'claude']
-const CHANNELS_STREAMING: readonly UpstreamChannel[] = ['codex', 'grok', 'antigravity']
-const CHANNELS_RELAY: readonly UpstreamChannel[] = ['codex', 'antigravity']
-const SETTINGS_TAB_KEYS: readonly SettingsTabKey[] = ['codex', 'claude', 'antigravity', 'grok', 'appearance', 'general']
+type SettingsTabKey = 'codex' | 'appearance' | 'general'
+const SETTINGS_TAB_KEYS: readonly SettingsTabKey[] = ['codex', 'appearance', 'general']
 const DEFAULT_SETTINGS_TAB: SettingsTabKey = 'codex'
 const HIDDEN_IMAGE_DRIVER_MODELS = new Set(['gpt-5.3-codex-spark', 'codex-auto-review', 'gpt-reserve'])
 const isSettingsTabKey = (value: string | null): value is SettingsTabKey =>
@@ -264,9 +243,6 @@ const LEGACY_SECTION_TABS: Record<string, SettingsTabKey> = {
   'settings-codex-transport': 'codex',
   'settings-codex-client': 'codex',
   'settings-codex-images': 'codex',
-  'settings-grok': 'grok',
-  'settings-claude': 'claude',
-  'settings-antigravity': 'antigravity',
   'settings-appearance': 'appearance',
 }
 // 每个 Tab 内的分区目录：多于一个分区的 Tab 渲染侧边目录并按滚动位置高亮。
@@ -279,9 +255,6 @@ const SETTINGS_TAB_SECTION_INDEX: Record<SettingsTabKey, ReadonlyArray<{ id: str
     { id: 'settings-codex-images', labelKey: 'settings.nav.codexImages', icon: <ImageIcon /> },
     { id: 'settings-models', labelKey: 'settings.nav.models', icon: <Layers /> },
   ],
-  claude: [{ id: 'settings-claude', labelKey: 'settings.nav.claude', icon: <ChannelLogo channel="claude" size={16} /> }],
-  antigravity: [{ id: 'settings-antigravity', labelKey: 'settings.nav.antigravity', icon: <ChannelLogo channel="antigravity" size={16} /> }],
-  grok: [{ id: 'settings-grok', labelKey: 'settings.nav.grok', icon: <ChannelLogo channel="grok" size={16} /> }],
   appearance: [{ id: 'settings-appearance', labelKey: 'settings.nav.appearance', icon: <Palette /> }],
   general: [
     { id: 'settings-overview', labelKey: 'settings.nav.overview', icon: <Activity /> },
@@ -304,9 +277,6 @@ type ByteLimitField =
   | 'output_guard_max_channel_bytes'
   | 'output_guard_max_request_bytes'
   | 'models_list_read_max_bytes'
-
-const getDefaultModelMappingEntries = (): ModelMappingEntry[] =>
-  Object.entries(DEFAULT_CLAUDE_MODEL_MAP) as ModelMappingEntry[]
 
 const parseModelMappingEntries = (value: string, fallbackEntries: ModelMappingEntry[] = []): ModelMappingEntry[] => {
   try {
@@ -827,689 +797,6 @@ const SETTINGS_ROW_LIST = 'divide-y divide-border/60'
 // 卡片级双列栅格：卡片高度不一，必须顶对齐，否则矮卡被拉高留下大片空白。
 const SETTINGS_CARD_GRID_2 = 'grid gap-4 lg:grid-cols-2 lg:items-stretch'
 
-// ClaudeCodeSettingsCard 是 ClaudeCode 全局配置卡片(独立读写 /settings/claude-config)。
-// 全体 Claude 账号默认遵守;个体账号可在「账号管理 → 编辑账号」里覆盖。
-// Claude / Antigravity 渠道的连通性测试卡片:独立于全局 test_model/test_content(那是
-// Codex 语义),按渠道保存默认探测模型与测活内容;留空模型 = 按账号目录自动选。
-const CLAUDE_TEST_MODEL_CHOICES = ['claude-opus-4-6', 'claude-sonnet-4-6', 'claude-haiku-4-5', 'claude-opus-4-5', 'claude-sonnet-4-5']
-
-function ChannelConnectivityTestCard({ channel }: { channel: 'antigravity' | 'claude' }) {
-  const { t } = useTranslation()
-  const { showToast } = useToast()
-  const [settings, setSettings] = useState<ChannelTestSettings | null>(null)
-  const [defaultContent, setDefaultContent] = useState('')
-  const [defaultConcurrency, setDefaultConcurrency] = useState(0)
-  const [contentDraft, setContentDraft] = useState('')
-  const [catalogChoices, setCatalogChoices] = useState<string[]>([])
-  const [saving, setSaving] = useState(false)
-
-  useEffect(() => {
-    let active = true
-    void api.getChannelTestSettings().then((response) => {
-      if (!active) return
-      setSettings(response[channel])
-      setContentDraft(response[channel].test_content)
-      setDefaultContent(response.default_test_content)
-      setDefaultConcurrency(response.default_test_concurrency)
-      setCatalogChoices(response.model_choices?.[channel] ?? [])
-    }).catch((error) => {
-      if (!active) return
-      showToast(getErrorMessage(error), 'error')
-    })
-    return () => {
-      active = false
-    }
-  }, [channel, showToast])
-
-  const save = useCallback(async (patch: Partial<ChannelTestSettings>) => {
-    setSaving(true)
-    try {
-      const response = await api.updateChannelTestSettings({ [channel]: patch })
-      setSettings(response[channel])
-      setContentDraft(response[channel].test_content)
-      setDefaultContent(response.default_test_content)
-      setDefaultConcurrency(response.default_test_concurrency)
-      setCatalogChoices(response.model_choices?.[channel] ?? [])
-      showToast(t('settings.channelTest.saved'), 'success')
-    } catch (error) {
-      showToast(getErrorMessage(error), 'error')
-    } finally {
-      setSaving(false)
-    }
-  }, [channel, showToast, t])
-
-  // 候选优先取后端汇总的号池目录并集(Claude 多为带日期的具体 ID),读不到再回落常量。
-  const modelChoices = useMemo(() => {
-    const base = catalogChoices.length > 0
-      ? catalogChoices
-      : channel === 'antigravity' ? [...ANTIGRAVITY_DEFAULT_MODELS] : CLAUDE_TEST_MODEL_CHOICES
-    const current = settings?.test_model?.trim() ?? ''
-    const list = current && !base.includes(current) ? [current, ...base] : base
-    return [
-      { value: '', label: t('settings.channelTest.autoModel') },
-      ...list
-        .filter((model) => channel !== 'antigravity' || !isAntigravityDisabledModel(model))
-        .map((model) => ({ value: model, label: model })),
-    ]
-  }, [catalogChoices, channel, settings?.test_model, t])
-
-  return (
-    <SettingsCard
-      title={t('settings.connectivityTest')}
-      description={t(channel === 'antigravity' ? 'settings.channelTest.antigravityDesc' : 'settings.channelTest.claudeDesc')}
-      icon={<Wifi className="size-4" />}
-    >
-      <div className="space-y-4">
-        <div className={SETTINGS_FIELD_GRID}>
-          <SettingField label={t('settings.testModelLabel')} description={t('settings.channelTest.modelHint')}>
-            <Select
-              value={channel === 'antigravity' && isAntigravityDisabledModel(settings?.test_model ?? '') ? '' : settings?.test_model ?? ''}
-              onValueChange={(value) => void save({ test_model: value })}
-              options={modelChoices}
-              disabled={settings === null || saving}
-            />
-          </SettingField>
-          <SettingField
-            label={t('settings.testConcurrency')}
-            description={t('settings.channelTest.concurrencyHint', { value: defaultConcurrency || 1 })}
-          >
-            <DraftNumberInput
-              min={0}
-              max={200}
-              value={settings?.test_concurrency ?? 0}
-              placeholder={String(defaultConcurrency || 1)}
-              disabled={settings === null || saving}
-              onValueChange={(value) => {
-                if (value !== (settings?.test_concurrency ?? 0)) void save({ test_concurrency: value })
-              }}
-            />
-          </SettingField>
-        </div>
-        <SettingField label={t('settings.testContent')} description={t('settings.channelTest.contentHint')}>
-          <textarea
-            rows={3}
-            value={contentDraft}
-            placeholder={defaultContent || t('settings.testContentPlaceholder')}
-            disabled={settings === null || saving}
-            onChange={(e: ChangeEvent<HTMLTextAreaElement>) => setContentDraft(e.target.value)}
-            onBlur={(e) => {
-              const next = e.currentTarget.value.trim()
-              if (next !== (settings?.test_content ?? '')) void save({ test_content: next })
-            }}
-            className={cn(
-              'flex min-h-[88px] w-full resize-y rounded-md border border-input bg-background px-3 py-2 text-sm text-foreground shadow-xs transition-colors placeholder:text-muted-foreground focus-visible:border-ring focus-visible:outline-none focus-visible:ring-[3px] focus-visible:ring-ring/50 disabled:cursor-not-allowed disabled:opacity-50',
-            )}
-          />
-        </SettingField>
-      </div>
-    </SettingsCard>
-  )
-}
-
-// Antigravity 模型重定向:下游请求不带思考强度后缀的逻辑模型(gemini-3.8-flash)时,
-// 自动落到配置的固定档位(gemini-3.8-flash-high)。候选档位由后端按模型目录给出。
-function AntigravityModelRedirectCard() {
-  const { t } = useTranslation()
-  const { showToast } = useToast()
-  const [settings, setSettings] = useState<AntigravitySettingsResponse | null>(null)
-  const [saving, setSaving] = useState(false)
-
-  useEffect(() => {
-    let active = true
-    void api.getAntigravitySettings().then((response) => {
-      if (active) setSettings(response)
-    }).catch((error) => {
-      if (active) showToast(getErrorMessage(error), 'error')
-    })
-    return () => {
-      active = false
-    }
-  }, [showToast])
-
-  const save = useCallback(async (patch: { model_redirects?: Record<string, string>; redirect_overrides_effort?: boolean }) => {
-    setSaving(true)
-    try {
-      setSettings(await api.updateAntigravitySettings(patch))
-      showToast(t('settings.antigravityRedirect.saved'), 'success')
-    } catch (error) {
-      showToast(getErrorMessage(error), 'error')
-    } finally {
-      setSaving(false)
-    }
-  }, [showToast, t])
-
-  const setRedirect = (model: string, target: string) => {
-    if (!settings) return
-    const next = { ...settings.model_redirects }
-    if (target) next[model] = target
-    else delete next[model]
-    void save({ model_redirects: next })
-  }
-
-  return (
-    <SettingsCard
-      title={t('settings.antigravityRedirect.title')}
-      description={t('settings.antigravityRedirect.description')}
-      icon={<Shuffle className="size-4" />}
-    >
-      <div className="space-y-4">
-        <div className={SETTINGS_FIELD_GRID}>
-          {(settings?.choices ?? []).map((choice) => (
-            <SettingField
-              key={choice.model}
-              label={choice.model}
-              description={t('settings.antigravityRedirect.rowHint', { level: choice.default_level })}
-            >
-              <Select
-                value={settings?.model_redirects[choice.model] ?? ''}
-                onValueChange={(value) => setRedirect(choice.model, value)}
-                disabled={settings === null || saving}
-                options={[
-                  { value: '', label: t('settings.antigravityRedirect.noRedirect', { level: choice.default_level }) },
-                  ...choice.tiers.map((tier) => ({ value: tier, label: tier })),
-                ]}
-              />
-            </SettingField>
-          ))}
-        </div>
-        <div className="flex items-center justify-between gap-3 rounded-lg border border-border/60 px-3 py-2.5">
-          <div className="min-w-0">
-            <div className="text-sm font-medium">{t('settings.antigravityRedirect.overrideLabel')}</div>
-            <p className="mt-0.5 text-xs text-muted-foreground">{t('settings.antigravityRedirect.overrideHint')}</p>
-          </div>
-          <Switch
-            checked={settings?.redirect_overrides_effort ?? false}
-            disabled={settings === null || saving}
-            onCheckedChange={(checked) => void save({ redirect_overrides_effort: checked })}
-          />
-        </div>
-      </div>
-    </SettingsCard>
-  )
-}
-
-// Antigravity 思考内容下发:开启后 OAuth 账号的 Gemini thought 片段作为 reasoning 输出下发。
-function AntigravityThinkingCard() {
-  const { t } = useTranslation()
-  const { showToast } = useToast()
-  const [exposeThoughts, setExposeThoughts] = useState<boolean | null>(null)
-  const [saving, setSaving] = useState(false)
-
-  useEffect(() => {
-    let active = true
-    void api.getAntigravitySettings().then((response) => {
-      if (active) setExposeThoughts(response.expose_thoughts)
-    }).catch((error) => {
-      if (active) showToast(getErrorMessage(error), 'error')
-    })
-    return () => {
-      active = false
-    }
-  }, [showToast])
-
-  const save = useCallback(async (checked: boolean) => {
-    setSaving(true)
-    try {
-      const response = await api.updateAntigravitySettings({ expose_thoughts: checked })
-      setExposeThoughts(response.expose_thoughts)
-      showToast(t('settings.antigravityThinking.saved'), 'success')
-    } catch (error) {
-      showToast(getErrorMessage(error), 'error')
-    } finally {
-      setSaving(false)
-    }
-  }, [showToast, t])
-
-  return (
-    <SettingsCard
-      title={t('settings.antigravityThinking.title')}
-      description={t('settings.antigravityThinking.description')}
-      icon={<Brain className="size-4" />}
-    >
-      <div className="flex items-center justify-between gap-3 rounded-lg border border-border/60 px-3 py-2.5">
-        <div className="min-w-0">
-          <div className="text-sm font-medium">{t('settings.antigravityThinking.label')}</div>
-          <p className="mt-0.5 text-xs text-muted-foreground">{t('settings.antigravityThinking.hint')}</p>
-        </div>
-        <Switch
-          checked={exposeThoughts ?? false}
-          disabled={exposeThoughts === null || saving}
-          onCheckedChange={(checked) => void save(checked)}
-        />
-      </div>
-    </SettingsCard>
-  )
-}
-
-// Antigravity 配额自动刷新与硬门禁(Spec §8):保存走后端整 JSON CAS,
-// GET 返回生效值,PUT 缺失字段 = 保留现值,因此这里只提交本次修改的字段。
-function AntigravityQuotaSettingsCard() {
-  const { t } = useTranslation()
-  const { showToast } = useToast()
-  const [settings, setSettings] = useState<AntigravitySettingsResponse | null>(null)
-  const [saving, setSaving] = useState(false)
-
-  useEffect(() => {
-    let active = true
-    void api.getAntigravitySettings().then((response) => {
-      if (active) setSettings(response)
-    }).catch((error) => {
-      if (active) showToast(getErrorMessage(error), 'error')
-    })
-    return () => {
-      active = false
-    }
-  }, [showToast])
-
-  const save = useCallback(async (patch: Parameters<typeof api.updateAntigravitySettings>[0]) => {
-    setSaving(true)
-    try {
-      setSettings(await api.updateAntigravitySettings(patch))
-      showToast(t('antigravityQuota.saved'), 'success')
-    } catch (error) {
-      showToast(getErrorMessage(error), 'error')
-    } finally {
-      setSaving(false)
-    }
-  }, [showToast, t])
-
-  const intervalMinutes = settings?.quota_refresh_interval_minutes ?? 10
-  const expiryHorizonHours = settings?.expiry_priority_horizon_hours ?? 24
-
-  return (
-    <SettingsCard
-      title={t('antigravityQuota.cardTitle')}
-      description={t('antigravityQuota.cardDescription')}
-      icon={<Gauge className="size-4" />}
-    >
-      <div className="space-y-4">
-        <div className={SETTINGS_FIELD_GRID}>
-          <div className="flex items-center justify-between gap-3 rounded-lg border border-border/60 px-3 py-2.5">
-            <div className="min-w-0">
-              <div className="text-sm font-medium">{t('antigravityQuota.refreshEnabled')}</div>
-              <p className="mt-0.5 text-xs text-muted-foreground">{t('antigravityQuota.refreshEnabledHint')}</p>
-            </div>
-            <Switch
-              aria-label={t('antigravityQuota.refreshEnabled')}
-              checked={settings?.quota_refresh_enabled ?? false}
-              disabled={settings === null || saving}
-              onCheckedChange={(checked) => void save({ quota_refresh_enabled: checked })}
-            />
-          </div>
-          <div className="flex items-center justify-between gap-3 rounded-lg border border-border/60 px-3 py-2.5">
-            <div className="min-w-0">
-              <div className="text-sm font-medium">{t('antigravityQuota.gateEnabled')}</div>
-              <p className="mt-0.5 text-xs text-muted-foreground">{t('antigravityQuota.gateEnabledHint')}</p>
-            </div>
-            <Switch
-              aria-label={t('antigravityQuota.gateEnabled')}
-              checked={settings?.quota_gate_enabled ?? false}
-              disabled={settings === null || saving}
-              onCheckedChange={(checked) => void save({ quota_gate_enabled: checked })}
-            />
-          </div>
-          <div className="flex items-center justify-between gap-3 rounded-lg border border-border/60 px-3 py-2.5">
-            <div className="min-w-0">
-              <div className="text-sm font-medium">{t('antigravityQuota.expiryPriority')}</div>
-              <p className="mt-0.5 text-xs text-muted-foreground">{t('antigravityQuota.expiryPriorityHint')}</p>
-            </div>
-            <Switch
-              aria-label={t('antigravityQuota.expiryPriority')}
-              checked={settings?.expiry_priority_enabled ?? false}
-              disabled={settings === null || saving}
-              onCheckedChange={(checked) => void save({ expiry_priority_enabled: checked })}
-            />
-          </div>
-        </div>
-        <SettingField
-          label={t('antigravityQuota.expiryHorizon')}
-          description={t('antigravityQuota.expiryHorizonHint')}
-        >
-          <DraftNumberInput
-            aria-label={t('antigravityQuota.expiryHorizon')}
-            value={expiryHorizonHours}
-            min={1}
-            max={168}
-            integer
-            disabled={settings === null || saving || !settings?.expiry_priority_enabled}
-            className="max-w-32"
-            onValueCommit={(value) => {
-              if (value !== expiryHorizonHours) void save({ expiry_priority_horizon_hours: value })
-            }}
-            onValueChange={() => {}}
-          />
-        </SettingField>
-        <SettingField
-          label={t('antigravityQuota.refreshInterval')}
-          description={t('antigravityQuota.refreshIntervalHint')}
-        >
-          <DraftNumberInput
-            aria-label={t('antigravityQuota.refreshInterval')}
-            value={intervalMinutes}
-            min={3}
-            max={60}
-            integer
-            disabled={settings === null || saving}
-            className="max-w-32"
-            onValueCommit={(value) => {
-              if (value !== intervalMinutes) void save({ quota_refresh_interval_minutes: value })
-            }}
-            onValueChange={() => {}}
-          />
-        </SettingField>
-        <p className="text-xs text-muted-foreground">{t('antigravityQuota.hint')}</p>
-      </div>
-    </SettingsCard>
-  )
-}
-
-function ClaudeCodeSettingsCard() {
-  const { t } = useTranslation()
-  const { showToast } = useToast()
-  const [fingerprintMode, setFingerprintMode] = useState<'preserve' | 'force' | ''>('')
-  const [clientPlatform, setClientPlatform] = useState<'any' | 'claude_code_cli_only'>('any')
-  const [versionPolicy, setVersionPolicy] = useState<'passthrough' | 'fixed' | 'minimum'>('passthrough')
-  const [clientVersion, setClientVersion] = useState('')
-  const [timezone, setTimezone] = useState('')
-  const [timezoneCustom, setTimezoneCustom] = useState(false)
-  const [sessionWindow, setSessionWindow] = useState('')
-  const [allowServiceTier, setAllowServiceTier] = useState(false)
-  const [allowInferenceGeo, setAllowInferenceGeo] = useState(false)
-  const [allowSpeed, setAllowSpeed] = useState(false)
-  const [allowSafetyIdentifier, setAllowSafetyIdentifier] = useState(false)
-  const [allowedBetaHeaders, setAllowedBetaHeaders] = useState('')
-  const [maxOutputTokens, setMaxOutputTokens] = useState('0')
-  const [maxToolCount, setMaxToolCount] = useState('0')
-  const [maxToolSchemaBytes, setMaxToolSchemaBytes] = useState('0')
-  const [cliVersionSyncEnabled, setCliVersionSyncEnabled] = useState(true)
-  const [cliVersionSyncIntervalHours, setCliVersionSyncIntervalHours] = useState(12)
-  const [firstTokenTimeoutSeconds, setFirstTokenTimeoutSeconds] = useState(120)
-  const [streamKeepaliveEnabled, setStreamKeepaliveEnabled] = useState(true)
-  const [syncedCliVersion, setSyncedCliVersion] = useState('')
-  const [effectiveCliVersion, setEffectiveCliVersion] = useState('')
-  const [syncingCliVersion, setSyncingCliVersion] = useState(false)
-  const [loading, setLoading] = useState(true)
-  const [saving, setSaving] = useState(false)
-
-  useEffect(() => {
-    let cancelled = false
-    void api
-      .getClaudeConfig()
-      .then((cfg) => {
-        if (cancelled) return
-        setFingerprintMode((cfg.fingerprint_mode as 'preserve' | 'force' | '') ?? '')
-        setClientPlatform(cfg.client_platform ?? 'any')
-        setVersionPolicy(cfg.version_policy ?? 'passthrough')
-        setClientVersion(cfg.client_version ?? '')
-        setTimezone(cfg.default_timezone ?? '')
-        setTimezoneCustom(Boolean(cfg.default_timezone && !findClaudeTimezoneOption(cfg.default_timezone)))
-        setSessionWindow(cfg.session_window_limit ? String(cfg.session_window_limit) : '')
-        setAllowServiceTier(Boolean(cfg.allow_service_tier))
-        setAllowInferenceGeo(Boolean(cfg.allow_inference_geo))
-        setAllowSpeed(Boolean(cfg.allow_speed))
-        setAllowSafetyIdentifier(Boolean(cfg.allow_safety_identifier))
-        setAllowedBetaHeaders((cfg.allowed_beta_headers ?? []).join(', '))
-        setMaxOutputTokens(String(cfg.max_output_tokens ?? 0))
-        setMaxToolCount(String(cfg.max_tool_count ?? 0))
-        setMaxToolSchemaBytes(String(cfg.max_tool_schema_bytes ?? 0))
-        setCliVersionSyncEnabled(cfg.cli_version_sync_enabled ?? true)
-        setCliVersionSyncIntervalHours(cfg.cli_version_sync_interval_hours || 12)
-        setFirstTokenTimeoutSeconds(cfg.first_token_timeout_seconds ?? 120)
-        setStreamKeepaliveEnabled(cfg.stream_keepalive_enabled ?? true)
-        setSyncedCliVersion(cfg.synced_cli_version ?? '')
-        setEffectiveCliVersion(cfg.effective_cli_version ?? cfg.builtin_cli_version ?? '')
-      })
-      .catch(() => {
-        /* 读取失败保持默认空 */
-      })
-      .finally(() => {
-        if (!cancelled) setLoading(false)
-      })
-    return () => {
-      cancelled = true
-    }
-  }, [])
-
-  const save = useCallback(async () => {
-    setSaving(true)
-    try {
-      const n = Number(sessionWindow.trim())
-      const maxOutputValue = Number(maxOutputTokens.trim())
-      const maxToolValue = Number(maxToolCount.trim())
-      const maxToolSchemaValue = Number(maxToolSchemaBytes.trim())
-      await api.updateClaudeConfig({
-        fingerprint_mode: fingerprintMode,
-        client_platform: clientPlatform,
-        version_policy: versionPolicy,
-        client_version: versionPolicy === 'passthrough' ? '' : clientVersion.trim(),
-        default_timezone: timezone.trim(),
-        session_window_limit: Number.isFinite(n) && n > 0 ? Math.floor(n) : 0,
-        allow_service_tier: allowServiceTier,
-        allow_inference_geo: allowInferenceGeo,
-        allow_speed: allowSpeed,
-        allow_safety_identifier: allowSafetyIdentifier,
-        allowed_beta_headers: allowedBetaHeaders.split(',').map((item) => item.trim()).filter(Boolean),
-        max_output_tokens: Number.isFinite(maxOutputValue) && maxOutputValue >= 0 ? Math.floor(maxOutputValue) : 0,
-        max_tool_count: Number.isFinite(maxToolValue) && maxToolValue >= 0 ? Math.floor(maxToolValue) : 0,
-        max_tool_schema_bytes: Number.isFinite(maxToolSchemaValue) && maxToolSchemaValue >= 0 ? Math.floor(maxToolSchemaValue) : 0,
-        cli_version_sync_enabled: cliVersionSyncEnabled,
-        cli_version_sync_interval_hours: cliVersionSyncIntervalHours,
-        first_token_timeout_seconds: firstTokenTimeoutSeconds,
-        stream_keepalive_enabled: streamKeepaliveEnabled,
-      })
-      showToast(t('settings.claudeSaved'), 'success')
-    } catch (error) {
-      showToast(getErrorMessage(error), 'error')
-    } finally {
-      setSaving(false)
-    }
-  }, [allowInferenceGeo, allowSafetyIdentifier, allowServiceTier, allowSpeed, allowedBetaHeaders, cliVersionSyncEnabled, cliVersionSyncIntervalHours, clientPlatform, clientVersion, fingerprintMode, firstTokenTimeoutSeconds, maxOutputTokens, maxToolCount, maxToolSchemaBytes, sessionWindow, showToast, streamKeepaliveEnabled, t, timezone, versionPolicy])
-
-  const handleSyncClaudeCliVersion = useCallback(async () => {
-    setSyncingCliVersion(true)
-    try {
-      const result = await api.syncClaudeCLIVersion()
-      if (result.updated) setSyncedCliVersion(result.fetched_version)
-      setEffectiveCliVersion(result.effective_version)
-      showToast(t('settings.claudeCliVersionSyncSuccess', { version: result.effective_version, accounts: result.accounts_refreshed }), 'success')
-      if (result.warning) {
-        showToast(t('settings.claudeCliVersionSyncWarning', { version: result.effective_version, message: result.warning }), 'warning')
-      }
-    } catch (error) {
-      showToast(`${t('settings.claudeCliVersionSyncFailed')}: ${getErrorMessage(error)}`, 'error')
-    } finally {
-      setSyncingCliVersion(false)
-    }
-  }, [showToast, t])
-
-  return (
-    <SettingsCard
-      title={t('settings.claudeSettingsTitle')}
-      description={t('settings.claudeSettingsDesc')}
-      icon={<ChannelLogo channel="claude" size={16} />}
-      footer={
-        <div className="flex justify-end">
-          <Button onClick={() => void save()} disabled={loading || saving}>
-            {t('common.save')}
-          </Button>
-        </div>
-      }
-    >
-      <div className={SETTINGS_FIELD_GRID_3}>
-        <SettingField label={t('settings.claudeSessionWindow')} description={t('settings.claudeSessionWindowDesc')}>
-          <Input
-            value={sessionWindow}
-            onChange={(e) => setSessionWindow(e.target.value)}
-            placeholder={t('settings.claudeFollowGlobal')}
-            inputMode="numeric"
-          />
-        </SettingField>
-        <SettingField label={t('settings.claudeFingerprintMode')} description={t('settings.claudeFingerprintModeDesc')}>
-          <Select
-            value={fingerprintMode}
-            onValueChange={(value) => setFingerprintMode(value as 'preserve' | 'force' | '')}
-            options={[
-              { value: '', label: t('settings.claudeFpPreserve') },
-              { value: 'preserve', label: t('settings.claudeFpPreserveExplicit') },
-              { value: 'force', label: t('settings.claudeFpForce') },
-            ]}
-          />
-        </SettingField>
-        <SettingField label={t('settings.claudeClientPlatform')} description={t('settings.claudeClientPlatformDesc')}>
-          <Select
-            value={clientPlatform}
-            onValueChange={(value) => setClientPlatform(value as 'any' | 'claude_code_cli_only')}
-            options={[
-              { value: 'any', label: t('settings.claudeClientPlatformAny') },
-              { value: 'claude_code_cli_only', label: t('settings.claudeClientPlatformCLIOnly') },
-            ]}
-          />
-        </SettingField>
-        <SettingField label={t('settings.claudeVersionPolicy')} description={t('settings.claudeVersionPolicyDesc')}>
-          <div className="space-y-1.5">
-            <Select
-              value={versionPolicy}
-              onValueChange={(value) => setVersionPolicy(value as 'passthrough' | 'fixed' | 'minimum')}
-              options={[
-                { value: 'passthrough', label: t('settings.claudeVersionPolicyPassthrough') },
-                { value: 'fixed', label: t('settings.claudeVersionPolicyFixed') },
-                { value: 'minimum', label: t('settings.claudeVersionPolicyMinimum') },
-              ]}
-            />
-            {versionPolicy !== 'passthrough' ? <Input value={clientVersion} onChange={(e) => setClientVersion(e.target.value)} placeholder="2.1.251" /> : null}
-          </div>
-        </SettingField>
-        <SettingField label={t('settings.claudeDefaultTimezone')} description={t('settings.claudeDefaultTimezoneDesc')}>
-          <div className="space-y-1.5">
-            <Select
-              value={timezoneCustom ? CLAUDE_TIMEZONE_CUSTOM : (findClaudeTimezoneOption(timezone)?.value ?? (timezone ? CLAUDE_TIMEZONE_CUSTOM : ''))}
-              onValueChange={(value) => {
-                if (value === CLAUDE_TIMEZONE_CUSTOM) {
-                  setTimezoneCustom(true)
-                  if (findClaudeTimezoneOption(timezone)) setTimezone('')
-                  return
-                }
-                setTimezoneCustom(false)
-                setTimezone(value)
-              }}
-              options={[
-                { value: '', label: t('settings.claudeTimezoneUnset') },
-                ...CLAUDE_TIMEZONE_OPTIONS,
-                { value: CLAUDE_TIMEZONE_CUSTOM, label: t('settings.claudeTimezoneCustom') },
-              ]}
-            />
-            {timezoneCustom ? <Input value={timezone} onChange={(e) => setTimezone(e.target.value)} placeholder="Asia/Shanghai" /> : null}
-            {timezone ? <p className="text-[10px] text-muted-foreground">{claudeTimezoneLabel(timezone)}</p> : null}
-          </div>
-        </SettingField>
-        <SettingField label={t('settings.claudeCliVersionSync')} description={t('settings.claudeCliVersionSyncDesc')}>
-          <div className="flex items-center gap-2">
-            <Button size="sm" variant="outline" onClick={() => void handleSyncClaudeCliVersion()} disabled={syncingCliVersion}>
-              <RefreshCw className={cn('size-3.5', syncingCliVersion && 'animate-spin')} />
-              {syncingCliVersion ? t('settings.claudeCliVersionSyncing') : t('settings.claudeCliVersionSyncNow')}
-            </Button>
-            {effectiveCliVersion ? (
-              <span className="font-mono text-xs text-muted-foreground">
-                {effectiveCliVersion}
-                {!syncedCliVersion ? ` · ${t('settings.claudeCliVersionBuiltin')}` : ''}
-              </span>
-            ) : null}
-          </div>
-        </SettingField>
-        {/* 自动同步开关 + 间隔成对横排，与 Codex 运行时优化保持同一布局 */}
-        <div className="sm:col-span-2 grid gap-0 overflow-hidden rounded-lg border border-border/60 bg-muted/15 sm:grid-cols-2 sm:divide-x sm:divide-border/60">
-          <div className="flex min-h-[48px] items-center justify-between gap-3 px-3 py-2.5">
-            <div className="flex min-w-0 items-center gap-1.5">
-              <span className="text-[13px] font-medium leading-snug text-foreground sm:text-sm">{t('settings.claudeCliVersionAutoSync')}</span>
-              <SettingHelp text={t('settings.claudeCliVersionAutoSyncDesc')} />
-            </div>
-            <Switch checked={cliVersionSyncEnabled} onCheckedChange={setCliVersionSyncEnabled} />
-          </div>
-          <div className={cn('flex min-h-[48px] items-center justify-between gap-3 border-t border-border/60 px-3 py-2.5 sm:border-t-0', !cliVersionSyncEnabled && 'opacity-60')}>
-            <div className="flex min-w-0 items-center gap-1.5">
-              <span className="text-[13px] font-medium leading-snug text-foreground sm:text-sm">{t('settings.claudeCliVersionSyncInterval')}</span>
-              <SettingHelp text={t('settings.claudeCliVersionSyncIntervalDesc')} />
-            </div>
-            <div className="relative w-[7.25rem] shrink-0">
-              <DraftNumberInput
-                min={1}
-                max={720}
-                className="h-9 pr-10 tabular-nums"
-                disabled={!cliVersionSyncEnabled}
-                value={cliVersionSyncIntervalHours}
-                onValueChange={setCliVersionSyncIntervalHours}
-              />
-              <span className="pointer-events-none absolute inset-y-0 right-3 flex items-center text-xs text-muted-foreground">h</span>
-            </div>
-          </div>
-        </div>
-        {/* 首字超时 + 首字前保活成对横排：两者都只作用于 Claude OAuth 路径 */}
-        <div className="sm:col-span-2 grid gap-0 overflow-hidden rounded-lg border border-border/60 bg-muted/15 sm:grid-cols-2 sm:divide-x sm:divide-border/60">
-          <div className="flex min-h-[48px] items-center justify-between gap-3 px-3 py-2.5">
-            <div className="flex min-w-0 items-center gap-1.5">
-              <span className="text-[13px] font-medium leading-snug text-foreground sm:text-sm">{t('settings.claudeFirstTokenTimeout')}</span>
-              <SettingHelp text={t('settings.claudeFirstTokenTimeoutDesc')} />
-            </div>
-            <div className="relative w-[7.25rem] shrink-0">
-              <DraftNumberInput
-                min={0}
-                max={600}
-                className="h-9 pr-10 tabular-nums"
-                value={firstTokenTimeoutSeconds}
-                onValueChange={setFirstTokenTimeoutSeconds}
-              />
-              <span className="pointer-events-none absolute inset-y-0 right-3 flex items-center text-xs text-muted-foreground">s</span>
-            </div>
-          </div>
-          <div className="flex min-h-[48px] items-center justify-between gap-3 border-t border-border/60 px-3 py-2.5 sm:border-t-0">
-            <div className="flex min-w-0 items-center gap-1.5">
-              <span className="text-[13px] font-medium leading-snug text-foreground sm:text-sm">{t('settings.claudeStreamKeepalive')}</span>
-              <SettingHelp text={t('settings.claudeStreamKeepaliveDesc')} />
-            </div>
-            <Switch checked={streamKeepaliveEnabled} onCheckedChange={setStreamKeepaliveEnabled} />
-          </div>
-        </div>
-      </div>
-      <details className="mt-4 rounded-lg border border-primary/20 bg-primary/5">
-        <summary className="cursor-pointer px-3 py-2.5 text-sm font-semibold text-foreground">
-          {t('settings.claudeSecurityTitle')}
-        </summary>
-        <div className="space-y-4 border-t border-primary/10 px-3 pb-3 pt-3">
-          <p className="text-xs leading-relaxed text-muted-foreground">{t('settings.claudeSecurityDesc')}</p>
-          <div className={SETTINGS_SWITCH_GRID}>
-            <SettingField label={t('settings.claudeAllowServiceTier')} description={t('settings.claudeAllowServiceTierDesc')} layout="switch">
-              <Switch checked={allowServiceTier} onCheckedChange={setAllowServiceTier} />
-            </SettingField>
-            <SettingField label={t('settings.claudeAllowInferenceGeo')} description={t('settings.claudeAllowInferenceGeoDesc')} layout="switch">
-              <Switch checked={allowInferenceGeo} onCheckedChange={setAllowInferenceGeo} />
-            </SettingField>
-            <SettingField label={t('settings.claudeAllowSpeed')} description={t('settings.claudeAllowSpeedDesc')} layout="switch">
-              <Switch checked={allowSpeed} onCheckedChange={setAllowSpeed} />
-            </SettingField>
-            <SettingField label={t('settings.claudeAllowSafetyIdentifier')} description={t('settings.claudeAllowSafetyIdentifierDesc')} layout="switch">
-              <Switch checked={allowSafetyIdentifier} onCheckedChange={setAllowSafetyIdentifier} />
-            </SettingField>
-          </div>
-          <div className={SETTINGS_FIELD_GRID}>
-            <SettingField label={t('settings.claudeAllowedBetaHeaders')} description={t('settings.claudeAllowedBetaHeadersDesc')}>
-              <Input value={allowedBetaHeaders} onChange={(event) => setAllowedBetaHeaders(event.target.value)} placeholder="token-efficient-tools-2025-02-19" />
-            </SettingField>
-            <SettingField label={t('settings.claudeMaxOutputTokens')} description={t('settings.claudeMaxOutputTokensDesc')}>
-              <Input value={maxOutputTokens} onChange={(event) => setMaxOutputTokens(event.target.value)} inputMode="numeric" min={0} type="number" placeholder={t('settings.claudeUnlimitedPlaceholder')} />
-            </SettingField>
-            <SettingField label={t('settings.claudeMaxToolCount')} description={t('settings.claudeMaxToolCountDesc')}>
-              <Input value={maxToolCount} onChange={(event) => setMaxToolCount(event.target.value)} inputMode="numeric" min={0} type="number" />
-            </SettingField>
-            <SettingField label={t('settings.claudeMaxToolSchemaBytes')} description={t('settings.claudeMaxToolSchemaBytesDesc')}>
-              <Input value={maxToolSchemaBytes} onChange={(event) => setMaxToolSchemaBytes(event.target.value)} inputMode="numeric" min={0} type="number" />
-            </SettingField>
-          </div>
-        </div>
-      </details>
-    </SettingsCard>
-  )
-}
-
 function SettingsCard({
   title,
   description,
@@ -1519,7 +806,6 @@ function SettingsCard({
   footer,
   icon,
   badge,
-  channels,
   tone = 'default',
 }: {
   title: string
@@ -1530,7 +816,6 @@ function SettingsCard({
   footer?: ReactNode
   icon?: ReactNode
   badge?: ReactNode
-  channels?: readonly UpstreamChannel[]
   tone?: 'default' | 'danger'
 }) {
   return (
@@ -1562,7 +847,6 @@ function SettingsCard({
                 {title}
               </h3>
               {badge}
-              {channels && channels.length > 0 ? <ChannelScopeBadges channels={channels} /> : null}
             </div>
             {description ? (
               <p className="mt-1 text-xs leading-relaxed text-muted-foreground/90">{description}</p>
@@ -1641,7 +925,6 @@ function SettingField({
   className,
   layout = 'stack',
   suffix,
-  channels,
   stretch = false,
 }: {
   label: string
@@ -1655,9 +938,7 @@ function SettingField({
   className?: string
   layout?: 'stack' | 'switch' | 'row'
   suffix?: string
-  channels?: readonly UpstreamChannel[]
 }) {
-  const scope = channels && channels.length > 0 ? <ChannelScopeBadges channels={channels} size="xs" /> : null
   const control = suffix ? (
     <div className="relative min-w-0">
       <div className="[&_[data-slot=input]]:pr-11 [&_[data-slot=select-trigger]]:pr-11 [&_input]:pr-11">
@@ -1678,7 +959,6 @@ function SettingField({
           <div className="flex flex-wrap items-center gap-1.5">
             <label className="text-[13px] font-semibold leading-snug text-foreground sm:text-sm">{label}</label>
             {help ? <SettingHelp text={help} /> : null}
-            {scope}
           </div>
           {description ? (
             <p className="max-w-3xl text-xs leading-relaxed text-muted-foreground">{description}</p>
@@ -1708,7 +988,6 @@ function SettingField({
               {label}
             </label>
             {tooltip ? <SettingHelp text={tooltip} /> : null}
-            {scope}
           </div>
           {warning ? (
             <p className="text-[11px] leading-relaxed text-amber-600 dark:text-amber-400 sm:text-xs">
@@ -1728,7 +1007,6 @@ function SettingField({
           {label}
         </label>
         {tooltip ? <SettingHelp text={tooltip} /> : null}
-        {scope}
       </div>
       <div className={cn('min-w-0', stretch && 'flex flex-1 flex-col [&>*]:flex-1')}>{control}</div>
       {warning ? (
@@ -2335,72 +1613,6 @@ function SettingsSectionIndex({
   )
 }
 
-const VISIBLE_CHANNEL_LABELS: Record<UpstreamChannel, string> = {
-  codex: 'Codex',
-  claude: 'Claude',
-  antigravity: 'Antigravity',
-  grok: 'Grok',
-}
-
-// 供应商显示选择器：一排可多选的胶囊，点一下即保存；兜底渠道锁定在选中态。
-function VisibleChannelsPicker() {
-  const { t } = useTranslation()
-  const { showToast } = useToast()
-  const { channels, saveChannels } = useVisibleChannels()
-  const [saving, setSaving] = useState(false)
-  const toggle = async (channel: UpstreamChannel) => {
-    if (channel === FALLBACK_VISIBLE_CHANNEL || saving) return
-    setSaving(true)
-    try {
-      await saveChannels(toggleVisibleChannel(channels, channel))
-      showToast(t('settings.autoSaved'), 'success', AUTO_SAVE_TOAST_MS)
-    } catch (error) {
-      showToast(`${t('settings.visibleChannelsSaveFailed')}: ${getErrorMessage(error)}`, 'error')
-    } finally {
-      setSaving(false)
-    }
-  }
-  return (
-    <div className="space-y-2.5">
-      <div
-        role="group"
-        aria-label={t('settings.visibleChannelsTitle')}
-        className="flex flex-wrap items-center gap-1.5 rounded-xl border border-border/70 bg-muted/35 p-1.5"
-      >
-        {ALL_VISIBLE_CHANNEL_OPTIONS.map((channel) => {
-          const selected = channels.includes(channel)
-          const locked = channel === FALLBACK_VISIBLE_CHANNEL
-          return (
-            <button
-              key={channel}
-              type="button"
-              aria-pressed={selected}
-              aria-disabled={locked || undefined}
-              disabled={saving}
-              title={locked ? t('settings.visibleChannelsFallbackHint') : undefined}
-              onClick={() => void toggle(channel)}
-              className={cn(
-                'inline-flex items-center gap-2 rounded-lg px-3.5 py-2 text-sm font-semibold transition-colors duration-200',
-                selected
-                  ? 'bg-primary text-primary-foreground shadow-2xs'
-                  : 'text-muted-foreground hover:bg-muted/70 hover:text-foreground',
-                locked && 'cursor-default',
-                saving && 'opacity-70',
-              )}
-            >
-              <span className={cn('inline-flex shrink-0', !selected && 'opacity-75 grayscale')}>
-                <ChannelLogo channel={channel} size={16} />
-              </span>
-              {VISIBLE_CHANNEL_LABELS[channel]}
-            </button>
-          )
-        })}
-      </div>
-      <p className="text-xs leading-relaxed text-muted-foreground">{t('settings.visibleChannelsFallbackHint')}</p>
-    </div>
-  )
-}
-
 // 页头保存状态：自动保存进行中 > 手动字段未保存 > 自动保存失败 > 已保存。
 function SaveStatusPill({
   autoSaveStatus,
@@ -2598,7 +1810,6 @@ export default function Settings() {
   const { t } = useTranslation()
   const navigate = useNavigate()
   const { applyBranding } = useBranding()
-  const defaultClaudeModelMappingEntries = useMemo(() => getDefaultModelMappingEntries(), [])
   const schedulerModeOptions = [
     { label: t('settings.schedulerModeRoundRobin'), value: 'round_robin' },
     { label: t('settings.schedulerModeRemainingQuota'), value: 'remaining_quota' },
@@ -2637,7 +1848,7 @@ export default function Settings() {
     { label: t('settings.continuousRetryCategory4xx'), value: 'http_4xx' },
     { label: t('settings.continuousRetryCategory5xx'), value: 'http_5xx' },
     { label: t('settings.continuousRetryCategoryStream'), value: 'stream_error' },
-    { label: t('settings.continuousRetryCategoryResponseFailed'), value: 'response_failed', channels: CHANNELS_CODEX_ONLY },
+    { label: t('settings.continuousRetryCategoryResponseFailed'), value: 'response_failed' },
     { label: t('settings.continuousRetryCategoryContext'), value: 'context_error' },
   ]
   const codexFingerprintDefaultModeOptions = [
@@ -2660,21 +1871,6 @@ export default function Settings() {
     { label: t('settings.affinityModeBounded'), value: 'bounded' },
     { label: t('settings.affinityModeOff'), value: 'off' },
     { label: t('settings.affinityModeStrict'), value: 'strict' },
-  ]
-  const grokAffinityModeOptions = [
-    { label: t('settings.grokAffinityModeStrict'), value: 'strict' },
-    { label: t('settings.grokAffinityModeFollow'), value: 'follow' },
-    { label: t('settings.affinityModeBounded'), value: 'bounded' },
-    { label: t('settings.affinityModeOff'), value: 'off' },
-  ]
-  const grokFollowUpEffortOptions = [
-    { label: t('settings.grokFollowUpEffortLow'), value: 'low' },
-    { label: t('settings.grokFollowUpEffortMedium'), value: 'medium' },
-    { label: t('settings.grokFollowUpEffortHigh'), value: 'high' },
-  ]
-  const grokQualityGuardOnExhaustedOptions = [
-    { label: t('settings.grokQualityGuardFailClosed'), value: 'fail_closed' },
-    { label: t('settings.grokQualityGuardFailOpen'), value: 'fail_open' },
   ]
   const clientCompatOptions = [
     { label: t('settings.clientCompatPreserve'), value: 'preserve' },
@@ -2789,19 +1985,6 @@ export default function Settings() {
     session_affinity_spread: false,
     session_slot_buffer_enabled: false,
     session_slot_buffer_seconds: 10,
-    grok_affinity_mode: 'strict',
-    grok_probe_enabled: false,
-    grok_probe_interval_minutes: 30,
-    grok_max_rate_limit_retries: 0,
-    grok_follow_up_effort_enabled: false,
-    grok_follow_up_tool_effort: 'medium',
-    grok_follow_up_small_effort: 'low',
-    grok_quality_guard_enabled: false,
-    grok_quality_guard_max_attempts: 6,
-    grok_quality_guard_hold_timeout_sec: 30,
-    grok_quality_guard_on_exhausted: 'fail_closed',
-    grok_quality_guard_account_cooldown_hours: 12,
-    grok_oauth_client_id: '',
     max_retries: 2,
     max_rate_limit_retries: 1,
     retry_interval_ms: 0,
@@ -2829,6 +2012,7 @@ export default function Settings() {
     output_guard_max_channel_bytes: 2097152,
     output_guard_max_request_bytes: 4194304,
     output_guard_config_generation: 0,
+    // The settings type still carries the relay cooldown fields until the final cleanup slice removes them.
     relay_model_cooldown_mode: 'off',
     relay_model_cooldown_seconds: 2,
     relay_model_cooldown_backoff_enabled: false,
@@ -3197,63 +2381,6 @@ export default function Settings() {
     } as Partial<SystemSettings>)
   }, [autoSaveSettingsPatch])
 
-  // ===== Antigravity OAuth client 配置(草稿态 + 显式保存;secret 不回显,留空 = 沿用已保存值) =====
-  const [agOAuthDraft, setAgOAuthDraft] = useState<{ rows: AntigravityOAuthClientSetting[]; activeKey: string } | null>(null)
-  const [agOAuthSaving, setAgOAuthSaving] = useState(false)
-  const agOAuthServer = useMemo(() => ({
-    rows: (settingsForm.antigravity_oauth_clients ?? []).map(client => ({ ...client, client_secret: '' })),
-    activeKey: settingsForm.antigravity_oauth_client_key ?? '',
-  }), [settingsForm.antigravity_oauth_clients, settingsForm.antigravity_oauth_client_key])
-  const agOAuth = agOAuthDraft ?? agOAuthServer
-  const agOAuthDirty = agOAuthDraft !== null
-  const updateAgOAuthRow = (index: number, patch: Partial<AntigravityOAuthClientSetting>) => {
-    setAgOAuthDraft({
-      ...agOAuth,
-      rows: agOAuth.rows.map((row, i) => (i === index ? { ...row, ...patch } : row)),
-    })
-  }
-  const removeAgOAuthRow = (index: number) => {
-    setAgOAuthDraft({ ...agOAuth, rows: agOAuth.rows.filter((_, i) => i !== index) })
-  }
-  const addAgOAuthRow = () => {
-    setAgOAuthDraft({
-      ...agOAuth,
-      rows: [...agOAuth.rows, { key: '', client_id: '', client_secret: '', has_secret: false }],
-    })
-  }
-  const saveAgOAuth = async () => {
-    setAgOAuthSaving(true)
-    try {
-      const activeKey = agOAuth.activeKey.trim().toLowerCase()
-      const updated = await api.updateSettings({
-        antigravity_oauth_clients: agOAuth.rows.map(row => ({
-          key: row.key.trim().toLowerCase(),
-          client_id: row.client_id.trim(),
-          client_secret: (row.client_secret ?? '').trim(),
-        })),
-        // 活跃 key 指向的条目被删掉时自动回落「第一个」,避免整次保存被后端校验拒绝。
-        antigravity_oauth_client_key: agOAuth.rows.some(row => row.key.trim().toLowerCase() === activeKey) ? activeKey : '',
-      })
-      const agOAuthPatch: Partial<SystemSettings> = {
-        antigravity_oauth_clients: updated.antigravity_oauth_clients,
-        antigravity_oauth_client_key: updated.antigravity_oauth_client_key,
-        antigravity_oauth_env_clients: updated.antigravity_oauth_env_clients,
-        antigravity_oauth_client_key_env_override: updated.antigravity_oauth_client_key_env_override,
-        antigravity_oauth_active_key_effective: updated.antigravity_oauth_active_key_effective,
-        antigravity_oauth_using_builtin: updated.antigravity_oauth_using_builtin,
-        antigravity_oauth_builtin_client: updated.antigravity_oauth_builtin_client,
-      }
-      commitSettingsForm({ ...settingsFormRef.current, ...agOAuthPatch })
-      markPersisted(agOAuthPatch)
-      setAgOAuthDraft(null)
-      showToast(t('settings.antigravityOAuth.saved'), 'success')
-    } catch (error) {
-      showToast(`${t('settings.antigravityOAuth.saveFailed')}: ${getErrorMessage(error)}`, 'error')
-    } finally {
-      setAgOAuthSaving(false)
-    }
-  }
-
   const updateResponseCacheBudget = (
     field: keyof ResponseCacheBudgetMiB,
     value: number,
@@ -3596,10 +2723,6 @@ export default function Settings() {
   }
   const modelsLastSyncedLabel = modelsLastSyncedAt ? formatBeijingTime(modelsLastSyncedAt) : t('settings.modelsNeverSynced')
   const modelsSourceLabel = modelsSourceURL || 'https://developers.openai.com/codex/models'
-  const anthropicMappingEntries = useMemo(
-    () => parseModelMappingEntries(settingsForm.model_mapping, defaultClaudeModelMappingEntries),
-    [defaultClaudeModelMappingEntries, settingsForm.model_mapping],
-  )
   const codexMappingEntries = useMemo(
     () => parseModelMappingEntries(settingsForm.codex_model_mapping),
     [settingsForm.codex_model_mapping],
@@ -3837,9 +2960,6 @@ export default function Settings() {
     () =>
       [
         { id: 'codex', label: t('settings.nav.codex'), icon: <ChannelLogo channel="codex" size={16} /> },
-        { id: 'claude', label: t('settings.nav.claude'), icon: <ChannelLogo channel="claude" size={16} /> },
-        { id: 'antigravity', label: t('settings.nav.antigravity'), icon: <ChannelLogo channel="antigravity" size={16} /> },
-        { id: 'grok', label: t('settings.nav.grok'), icon: <ChannelLogo channel="grok" size={16} /> },
         { id: 'appearance', label: t('settings.nav.appearance'), icon: <Palette className="size-4" /> },
         { id: 'general', label: t('settings.nav.general'), icon: <SlidersHorizontal className="size-4" /> },
       ] as const satisfies ReadonlyArray<{ id: SettingsTabKey; label: string; icon: ReactNode }>,
@@ -3854,8 +2974,6 @@ export default function Settings() {
     switch (modelPanel) {
       case 'registry':
         return { title: t('settings.modelRegistry'), description: t('settings.modelRegistryDesc'), icon: <Layers />, count: visibleModelItems.length }
-      case 'anthropic':
-        return { title: t('settings2.anthropicModelMapping'), description: t('settings2.anthropicModelMappingDesc'), icon: <ChannelLogo channel="claude" size={16} />, count: anthropicMappingEntries.length }
       case 'codex':
         return { title: t('settings2.codexModelMapping'), description: t('settings2.codexModelMappingDesc'), icon: <Shuffle />, count: codexMappingEntries.length }
       case 'reasoning':
@@ -4213,7 +3331,7 @@ export default function Settings() {
                 </SettingField>
               </SettingsCard>
 
-              <SettingsCard title={t('settings.globalAutoPauseTitle')} description={t('settings.globalAutoPauseDesc')} icon={<Activity className="size-4" />} channels={CHANNELS_CODEX_CLAUDE}>
+              <SettingsCard title={t('settings.globalAutoPauseTitle')} description={t('settings.globalAutoPauseDesc')} icon={<Activity className="size-4" />}>
                 <div className="space-y-4">
                   <div className={SETTINGS_FIELD_GRID_3}>
                     <SettingField label={t('settings.globalAutoPause5h')} description={t('settings.globalAutoPauseHint')}>
@@ -5194,15 +4312,6 @@ export default function Settings() {
                   </div>
                   <div className="grid gap-3 sm:grid-cols-2">
                     <ModelRuleCard
-                      icon={<ChannelLogo channel="claude" size={16} />}
-                      title={t('settings2.anthropicModelMapping')}
-                      description={t('settings2.anthropicModelMappingDesc')}
-                      count={anthropicMappingEntries.length}
-                      preview={<ModelMappingPreview entries={anthropicMappingEntries} />}
-                      dirty={dirtyKeySet.has(MODEL_PANEL_FIELDS.anthropic)}
-                      onOpen={() => setModelPanel('anthropic')}
-                    />
-                    <ModelRuleCard
                       icon={<Shuffle />}
                       title={t('settings2.codexModelMapping')}
                       description={t('settings2.codexModelMappingDesc')}
@@ -5264,17 +4373,6 @@ export default function Settings() {
                           lastSyncedLabel={modelsLastSyncedLabel}
                           syncing={syncingModels}
                           onSync={() => void handleSyncModels()}
-                        />
-                      ) : null}
-                      {modelPanel === 'anthropic' ? (
-                        <ModelMappingEditor
-                          value={settingsForm.model_mapping}
-                          onChange={(v) => setSettingsForm((f) => ({ ...f, model_mapping: v }))}
-                          fallbackEntries={defaultClaudeModelMappingEntries}
-                          sourceLabel={t('settings2.anthropicModel')}
-                          targetLabel={t('settings2.codexModel')}
-                          sourcePlaceholder="claude-opus-4-6"
-                          targetPlaceholder="gpt-5.5"
                         />
                       ) : null}
                       {modelPanel === 'codex' ? (
@@ -5342,338 +4440,6 @@ export default function Settings() {
                     ) : null}
                   </SheetContent>
                 </Sheet>
-              </SettingsSection>
-            </>
-          ) : null}
-
-          {activeTab === 'claude' ? (
-            <>
-              <SettingsSection id="settings-claude" title={t('settings.nav.claude')} description={t('settings.nav.claudeDesc')} icon={<ChannelLogo channel="claude" size={16} />}>
-                <ChannelConnectivityTestCard channel="claude" />
-                <ClaudeCodeSettingsCard />
-              </SettingsSection>
-            </>
-          ) : null}
-
-          {activeTab === 'antigravity' ? (
-            <>
-              <SettingsSection id="settings-antigravity" title={t('settings.nav.antigravity')} description={t('settings.nav.antigravityDesc')} icon={<ChannelLogo channel="antigravity" size={16} />}>
-              <ChannelConnectivityTestCard channel="antigravity" />
-              <AntigravityModelRedirectCard />
-              <AntigravityThinkingCard />
-              <AntigravityQuotaSettingsCard />
-              <SettingsCard
-                title={t('settings.antigravityOAuth.title')}
-                description={t('settings.antigravityOAuth.description')}
-                icon={<Shield className="size-4" />}
-              >
-                <div className="space-y-4">
-                  {(settingsForm.antigravity_oauth_env_clients?.length ?? 0) > 0 && (
-                    <div className="space-y-1.5 rounded-md border border-dashed border-border/70 p-3 text-xs text-muted-foreground">
-                      <div>{t('settings.antigravityOAuth.envClientsHint')}</div>
-                      {settingsForm.antigravity_oauth_env_clients?.map(client => (
-                        <div key={client.key} className="flex items-center gap-2 font-mono">
-                          <Badge variant="outline" className="text-[11px]">{client.key}</Badge>
-                          <span className="truncate">{client.client_id}</span>
-                        </div>
-                      ))}
-                    </div>
-                  )}
-                  {settingsForm.antigravity_oauth_using_builtin && settingsForm.antigravity_oauth_builtin_client && (
-                    <div className="space-y-1.5 rounded-md border border-dashed border-border/70 p-3 text-xs text-muted-foreground">
-                      <div>{t('settings.antigravityOAuth.builtinHint')}</div>
-                      <div className="flex items-center gap-2 font-mono">
-                        <Badge variant="outline" className="text-[11px]">{settingsForm.antigravity_oauth_builtin_client.key}</Badge>
-                        <span className="truncate">{settingsForm.antigravity_oauth_builtin_client.client_id}</span>
-                      </div>
-                    </div>
-                  )}
-                  {agOAuth.rows.length === 0 ? (
-                    <div className="text-sm text-muted-foreground">{t('settings.antigravityOAuth.empty')}</div>
-                  ) : (
-                    <div className="space-y-2">
-                      <div className="hidden gap-2 text-xs text-muted-foreground sm:grid sm:grid-cols-[minmax(0,1fr)_minmax(0,2fr)_minmax(0,2fr)_2rem]">
-                        <span>{t('settings.antigravityOAuth.key')}</span>
-                        <span>{t('settings.antigravityOAuth.clientId')}</span>
-                        <span>{t('settings.antigravityOAuth.clientSecret')}</span>
-                        <span />
-                      </div>
-                      {agOAuth.rows.map((row, index) => (
-                        <div key={index} className="grid items-center gap-2 sm:grid-cols-[minmax(0,1fr)_minmax(0,2fr)_minmax(0,2fr)_2rem]">
-                          <Input
-                            value={row.key}
-                            placeholder={t('settings.antigravityOAuth.keyPlaceholder')}
-                            onChange={(e: ChangeEvent<HTMLInputElement>) => updateAgOAuthRow(index, { key: e.target.value })}
-                          />
-                          <Input
-                            value={row.client_id}
-                            placeholder={t('settings.antigravityOAuth.clientIdPlaceholder')}
-                            onChange={(e: ChangeEvent<HTMLInputElement>) => updateAgOAuthRow(index, { client_id: e.target.value })}
-                          />
-                          <Input
-                            type="password"
-                            autoComplete="new-password"
-                            value={row.client_secret ?? ''}
-                            placeholder={row.has_secret ? t('settings.antigravityOAuth.secretKeepPlaceholder') : t('settings.antigravityOAuth.secretRequiredPlaceholder')}
-                            onChange={(e: ChangeEvent<HTMLInputElement>) => updateAgOAuthRow(index, { client_secret: e.target.value })}
-                          />
-                          <Button
-                            variant="ghost"
-                            size="icon"
-                            aria-label={t('common.delete')}
-                            onClick={() => removeAgOAuthRow(index)}
-                          >
-                            <Trash2 className="size-4" />
-                          </Button>
-                        </div>
-                      ))}
-                    </div>
-                  )}
-                  <Button variant="outline" size="sm" onClick={addAgOAuthRow}>
-                    {t('settings.antigravityOAuth.addClient')}
-                  </Button>
-                  <div className={SETTINGS_FIELD_GRID_3}>
-                    <SettingField
-                      label={t('settings.antigravityOAuth.activeKey')}
-                      description={
-                        settingsForm.antigravity_oauth_client_key_env_override
-                          ? t('settings.antigravityOAuth.activeKeyEnvOverride', {
-                              value: settingsForm.antigravity_oauth_active_key_effective || '',
-                            })
-                          : t('settings.antigravityOAuth.activeKeyDesc')
-                      }
-                    >
-                      <Select
-                        value={agOAuth.activeKey}
-                        disabled={settingsForm.antigravity_oauth_client_key_env_override}
-                        onValueChange={(value: string) => setAgOAuthDraft({ ...agOAuth, activeKey: value })}
-                        options={[
-                          { label: t('settings.antigravityOAuth.activeKeyAuto'), value: '' },
-                          ...agOAuth.rows
-                            .map(row => row.key.trim().toLowerCase())
-                            .filter(key => key !== '')
-                            .map(key => ({ label: key, value: key })),
-                        ]}
-                      />
-                    </SettingField>
-                  </div>
-                  <div className="flex items-center gap-2">
-                    <Button size="sm" onClick={() => void saveAgOAuth()} disabled={!agOAuthDirty || agOAuthSaving}>
-                      {agOAuthSaving ? t('common.saving') : t('common.save')}
-                    </Button>
-                    {agOAuthDirty && !agOAuthSaving && (
-                      <Button variant="ghost" size="sm" onClick={() => setAgOAuthDraft(null)}>
-                        {t('common.cancel')}
-                      </Button>
-                    )}
-                  </div>
-                </div>
-              </SettingsCard>
-              </SettingsSection>
-            </>
-          ) : null}
-
-          {activeTab === 'grok' ? (
-            <>
-              <SettingsSection id="settings-grok" title={t('settings.nav.grok')} description={t('settings.nav.grokDesc')} icon={<ChannelLogo channel="grok" size={16} />}>
-              <SettingsCard title={t('settings.grokSettingsTitle')} description={t('settings.grokSettingsDesc')} icon={<ChannelLogo channel="grok" size={16} />}>
-                {/* 与「探测调度」一致：表单控件同宽网格，开关单独一行，避免 switch 卡片与 input 混排导致高低宽不一致。 */}
-                <div className="space-y-4">
-                  <div className={SETTINGS_FIELD_GRID_3}>
-                    <SettingField label={t('settings.grokAffinityMode')} description={t('settings.grokAffinityModeDesc')}>
-                      <Select
-                        value={settingsForm.grok_affinity_mode || 'strict'}
-                        onValueChange={(value) => autoSaveStringField('grok_affinity_mode', value)}
-                        options={grokAffinityModeOptions}
-                      />
-                    </SettingField>
-                    <SettingField
-                      label={t('settings.grokProbeInterval')}
-                      description={t('settings.grokProbeIntervalDesc')}
-                      suffix={t('settings.unit.min')}
-                    >
-                      <DraftNumberInput
-                        min={5}
-                        max={1440}
-                        step={5}
-                        integer
-                        emptyValue={30}
-                        disabled={!settingsForm.grok_probe_enabled}
-                        value={settingsForm.grok_probe_interval_minutes ?? 30}
-                        onValueChange={(value) => {
-                          setSettingsForm(f => ({ ...f, grok_probe_interval_minutes: value }))
-                        }}
-                        onValueCommit={(value) => {
-                          const v = value < 5 ? 5 : value
-                          void autoSaveSettingsPatch({ grok_probe_interval_minutes: v })
-                        }}
-                      />
-                    </SettingField>
-                    <SettingField
-                      label={t('settings.grokMaxRateLimitRetries')}
-                      description={t('settings.grokMaxRateLimitRetriesDesc')}
-                      suffix={t('settings.unit.times')}
-                    >
-                      <DraftNumberInput
-                        min={0}
-                        max={20}
-                        step={1}
-                        integer
-                        emptyValue={0}
-                        value={settingsForm.grok_max_rate_limit_retries ?? 0}
-                        onValueChange={(value) => {
-                          setSettingsForm(f => ({ ...f, grok_max_rate_limit_retries: value }))
-                        }}
-                        onValueCommit={(value) => {
-                          const v = value < 0 ? 0 : value
-                          void autoSaveSettingsPatch({ grok_max_rate_limit_retries: v })
-                        }}
-                      />
-                    </SettingField>
-                  </div>
-                  <div className={SETTINGS_SWITCH_GRID}>
-                    <SettingField label={t('settings.grokProbeEnabled')} description={t('settings.grokProbeEnabledDesc')} layout="switch">
-                      <Switch
-                        checked={settingsForm.grok_probe_enabled}
-                        onCheckedChange={(checked) => autoSaveBooleanField('grok_probe_enabled', checked)}
-                      />
-                    </SettingField>
-                    <SettingField label={t('settings.grokFollowUpEffortEnabled')} description={t('settings.grokFollowUpEffortEnabledDesc')} layout="switch">
-                      <Switch
-                        checked={settingsForm.grok_follow_up_effort_enabled}
-                        onCheckedChange={(checked) => autoSaveBooleanField('grok_follow_up_effort_enabled', checked)}
-                      />
-                    </SettingField>
-                  </div>
-                  <div className={SETTINGS_FIELD_GRID_3}>
-                    <SettingField label={t('settings.grokFollowUpToolEffort')} description={t('settings.grokFollowUpToolEffortDesc')}>
-                      <Select
-                        value={settingsForm.grok_follow_up_tool_effort || 'medium'}
-                        disabled={!settingsForm.grok_follow_up_effort_enabled}
-                        onValueChange={(value) => autoSaveStringField('grok_follow_up_tool_effort', value)}
-                        options={grokFollowUpEffortOptions}
-                      />
-                    </SettingField>
-                    <SettingField label={t('settings.grokFollowUpSmallEffort')} description={t('settings.grokFollowUpSmallEffortDesc')}>
-                      <Select
-                        value={settingsForm.grok_follow_up_small_effort || 'low'}
-                        disabled={!settingsForm.grok_follow_up_effort_enabled}
-                        onValueChange={(value) => autoSaveStringField('grok_follow_up_small_effort', value)}
-                        options={grokFollowUpEffortOptions}
-                      />
-                    </SettingField>
-                  </div>
-                  <div className={SETTINGS_SWITCH_ROW}>
-                    <SettingField label={t('settings.grokQualityGuardEnabled')} description={t('settings.grokQualityGuardEnabledDesc')} layout="switch">
-                      <Switch
-                        checked={settingsForm.grok_quality_guard_enabled}
-                        onCheckedChange={(checked) => autoSaveBooleanField('grok_quality_guard_enabled', checked)}
-                      />
-                    </SettingField>
-                  </div>
-                  <div className={SETTINGS_FIELD_GRID_3}>
-                    <SettingField
-                      label={t('settings.grokQualityGuardMaxAttempts')}
-                      description={t('settings.grokQualityGuardMaxAttemptsDesc')}
-                      suffix={t('settings.unit.times')}
-                    >
-                      <DraftNumberInput
-                        min={1}
-                        max={20}
-                        step={1}
-                        integer
-                        emptyValue={6}
-                        disabled={!settingsForm.grok_quality_guard_enabled}
-                        value={settingsForm.grok_quality_guard_max_attempts ?? 6}
-                        onValueChange={(value) => {
-                          setSettingsForm(f => ({ ...f, grok_quality_guard_max_attempts: value }))
-                        }}
-                        onValueCommit={(value) => {
-                          const v = value < 1 ? 1 : value
-                          void autoSaveSettingsPatch({ grok_quality_guard_max_attempts: v })
-                        }}
-                      />
-                    </SettingField>
-                    <SettingField
-                      label={t('settings.grokQualityGuardHoldTimeout')}
-                      description={t('settings.grokQualityGuardHoldTimeoutDesc')}
-                      suffix={t('settings.unit.sec')}
-                    >
-                      <DraftNumberInput
-                        min={5}
-                        max={300}
-                        step={5}
-                        integer
-                        emptyValue={30}
-                        disabled={!settingsForm.grok_quality_guard_enabled}
-                        value={settingsForm.grok_quality_guard_hold_timeout_sec ?? 30}
-                        onValueChange={(value) => {
-                          setSettingsForm(f => ({ ...f, grok_quality_guard_hold_timeout_sec: value }))
-                        }}
-                        onValueCommit={(value) => {
-                          const v = value < 5 ? 5 : value
-                          void autoSaveSettingsPatch({ grok_quality_guard_hold_timeout_sec: v })
-                        }}
-                      />
-                    </SettingField>
-                    <SettingField
-                      label={t('settings.grokQualityGuardCooldownHours')}
-                      description={t('settings.grokQualityGuardCooldownHoursDesc')}
-                      suffix={t('settings.unit.hour')}
-                    >
-                      <DraftNumberInput
-                        min={1}
-                        max={168}
-                        step={1}
-                        integer
-                        emptyValue={12}
-                        disabled={!settingsForm.grok_quality_guard_enabled}
-                        value={settingsForm.grok_quality_guard_account_cooldown_hours ?? 12}
-                        onValueChange={(value) => {
-                          setSettingsForm(f => ({ ...f, grok_quality_guard_account_cooldown_hours: value }))
-                        }}
-                        onValueCommit={(value) => {
-                          const v = value < 1 ? 1 : value
-                          void autoSaveSettingsPatch({ grok_quality_guard_account_cooldown_hours: v })
-                        }}
-                      />
-                    </SettingField>
-                    <SettingField label={t('settings.grokQualityGuardOnExhausted')} description={t('settings.grokQualityGuardOnExhaustedDesc')}>
-                      <Select
-                        value={settingsForm.grok_quality_guard_on_exhausted || 'fail_closed'}
-                        disabled={!settingsForm.grok_quality_guard_enabled}
-                        onValueChange={(value) => autoSaveStringField('grok_quality_guard_on_exhausted', value)}
-                        options={grokQualityGuardOnExhaustedOptions}
-                      />
-                    </SettingField>
-                  </div>
-                  <div className={SETTINGS_FIELD_GRID_3}>
-                    {/* client_id 同时可由环境变量 GROK_OAUTH_CLIENT_ID 指定，且环境变量优先级更高；
-                        被覆盖时这里禁用输入并说明当前生效值，避免用户以为改了却不起作用。 */}
-                    <SettingField
-                      className="sm:col-span-2 xl:col-span-3"
-                      label={t('settings.grokOAuthClientId')}
-                      description={
-                        settingsForm.grok_oauth_client_id_env_override
-                          ? t('settings.grokOAuthClientIdEnvOverride', {
-                              value: settingsForm.grok_oauth_client_id_effective || '',
-                            })
-                          : t('settings.grokOAuthClientIdDesc')
-                      }
-                    >
-                      <Input
-                        value={settingsForm.grok_oauth_client_id ?? ''}
-                        disabled={settingsForm.grok_oauth_client_id_env_override}
-                        placeholder={t('settings.grokOAuthClientIdPlaceholder')}
-                        onChange={(e: ChangeEvent<HTMLInputElement>) =>
-                          setSettingsForm(f => ({ ...f, grok_oauth_client_id: e.target.value }))
-                        }
-                        onBlur={(e) => autoSaveStringField('grok_oauth_client_id', e.currentTarget.value.trim())}
-                      />
-                    </SettingField>
-                  </div>
-                </div>
-              </SettingsCard>
               </SettingsSection>
             </>
           ) : null}
@@ -5925,13 +4691,10 @@ export default function Settings() {
                   </StatusTile>
                 </div>
               </SettingsCard>
-              <SettingsCard title={t('settings.visibleChannelsTitle')} description={t('settings.visibleChannelsDesc')} icon={<Eye className="size-4" />}>
-                <VisibleChannelsPicker />
-              </SettingsCard>
               </SettingsSection>
 
               <SettingsSection id="settings-traffic" title={t('settings.nav.traffic')} description={t('settings.nav.trafficDesc')} icon={<Gauge className="size-4" />}>
-                <SettingsCard title={t('settings.trafficProtection')} icon={<Gauge className="size-4" />} channels={ALL_UPSTREAM_CHANNELS}>
+                <SettingsCard title={t('settings.trafficProtection')} icon={<Gauge className="size-4" />}>
                   <div className={SETTINGS_FIELD_GRID}>
                     <SettingField label={t('settings.maxConcurrency')} description={t('settings.maxConcurrencyRange')} suffix={t('settings.unit.concurrency')}>
                       <DraftNumberInput
@@ -5988,7 +4751,6 @@ export default function Settings() {
 
                   <SettingsCard
                     title={t('settings.continuousRetryTitle')}
-                    channels={ALL_UPSTREAM_CHANNELS}
                     description={t('settings.continuousRetryDesc')}
                     icon={<RefreshCw className="size-4" />}
                   >
@@ -6053,7 +4815,6 @@ export default function Settings() {
                             label={option.label}
                             layout="switch"
                             className="rounded-lg border border-border/60 px-3 py-2"
-                            channels={option.channels}
                           >
                             <Switch
                               aria-label={option.label}
@@ -6114,64 +4875,14 @@ export default function Settings() {
 
               <SettingsCard
                 title={t('settings.modelCooldownTitle')}
-                channels={ALL_UPSTREAM_CHANNELS}
                 description={t('settings.modelCooldownDesc')}
                 icon={<Timer className="size-4" />}
               >
-                <div className="grid gap-4 lg:grid-cols-2">
-                  <div className="space-y-3 rounded-xl border border-emerald-500/20 bg-emerald-500/5 p-3.5">
-                    <div>
-                      <div className="flex flex-wrap items-center gap-2">
-                        <h3 className="text-sm font-semibold">{t('settings.relayModelCooldownTitle')}</h3>
-                        <ChannelScopeBadges channels={CHANNELS_RELAY} size="xs" />
-                      </div>
-                      <p className="mt-1 text-xs leading-relaxed text-muted-foreground">
-                        {t('settings.relayModelCooldownDesc')}
-                      </p>
-                    </div>
-                    <div className={SETTINGS_FIELD_GRID}>
-                      <SettingField label={t('settings.modelCooldownMode')} description={t('settings.modelCooldownModeDesc')}>
-                        <SegmentedPillGroup
-                          value={settingsForm.relay_model_cooldown_mode}
-                          onChange={(value) => autoSaveStringField('relay_model_cooldown_mode', value)}
-                          options={modelCooldownModeOptions}
-                        />
-                      </SettingField>
-                      <SettingField
-                        label={t('settings.modelCooldownSeconds')}
-                        description={t('settings.modelCooldownSecondsDesc')}
-                        suffix={t('settings.unit.sec')}
-                        className={cn(settingsForm.relay_model_cooldown_mode === 'off' && 'opacity-60')}
-                      >
-                        <DraftNumberInput
-                          min={1}
-                          max={1800}
-                          disabled={settingsForm.relay_model_cooldown_mode === 'off'}
-                          value={settingsForm.relay_model_cooldown_seconds}
-                          onValueChange={(value) => setSettingsForm(f => ({ ...f, relay_model_cooldown_seconds: value }))}
-                          onValueCommit={(value) => void autoSaveSettingsPatch({ relay_model_cooldown_seconds: value })}
-                        />
-                      </SettingField>
-                    </div>
-                    <SettingField
-                      label={t('settings.modelCooldownBackoff')}
-                      description={t('settings.modelCooldownBackoffDesc')}
-                      layout="switch"
-                      className={cn(settingsForm.relay_model_cooldown_mode !== 'adaptive' && 'opacity-60')}
-                    >
-                      <Switch
-                        checked={settingsForm.relay_model_cooldown_backoff_enabled}
-                        disabled={settingsForm.relay_model_cooldown_mode !== 'adaptive'}
-                        onCheckedChange={(checked) => autoSaveBooleanField('relay_model_cooldown_backoff_enabled', checked)}
-                      />
-                    </SettingField>
-                  </div>
-
+                <div className="grid gap-4">
                   <div className="space-y-3 rounded-xl border border-amber-500/20 bg-amber-500/5 p-3.5">
                     <div>
                       <div className="flex flex-wrap items-center gap-2">
                         <h3 className="text-sm font-semibold">{t('settings.oauthModelCooldownTitle')}</h3>
-                        <ChannelScopeBadges channels={ALL_UPSTREAM_CHANNELS} size="xs" />
                       </div>
                       <p className="mt-1 text-xs leading-relaxed text-muted-foreground">
                         {t('settings.oauthModelCooldownDesc')}
@@ -6230,7 +4941,7 @@ export default function Settings() {
                 </div>
               </SettingsCard>
 
-              <SettingsCard title={t('settings.schedulingStrategy')} icon={<Layers className="size-4" />} channels={ALL_UPSTREAM_CHANNELS}>
+              <SettingsCard title={t('settings.schedulingStrategy')} icon={<Layers className="size-4" />}>
                 <div className="grid auto-rows-min items-start gap-4 lg:grid-cols-2">
                   <div className="h-fit space-y-3 rounded-xl border border-border/60 bg-muted/10 p-3.5">
                     <div>
@@ -6345,7 +5056,7 @@ export default function Settings() {
               </SettingsSection>
 
               <SettingsSection id="settings-runtime" title={t('settings.nav.runtime')} description={t('settings.nav.runtimeDesc')} icon={<Wrench className="size-4" />}>
-              <SettingsCard title={t('settings.runtimeOptimization')} description={t('settings.runtimeOptimizationDesc')} icon={<Wrench className="size-4" />} channels={ALL_UPSTREAM_CHANNELS}>
+              <SettingsCard title={t('settings.runtimeOptimization')} description={t('settings.runtimeOptimizationDesc')} icon={<Wrench className="size-4" />}>
                 <div className="space-y-4">
                   <div className={SETTINGS_FIELD_GRID_3}>
                     <SettingField label={t('settings.usageLogMode')} description={t('settings.usageLogModeDesc')}>
@@ -6371,14 +5082,14 @@ export default function Settings() {
                         onValueChange={(value) => setSettingsForm(f => ({ ...f, usage_log_flush_interval_seconds: value }))}
                       />
                     </SettingField>
-                    <SettingField label={t('settings.billingTierPolicy')} description={t('settings.billingTierPolicyDesc')} channels={CHANNELS_CODEX_ONLY}>
+                    <SettingField label={t('settings.billingTierPolicy')} description={t('settings.billingTierPolicyDesc')}>
                       <SegmentedPillGroup
                         value={settingsForm.billing_tier_policy}
                         onChange={(value) => autoSaveStringField('billing_tier_policy', value)}
                         options={billingTierPolicyOptions}
                       />
                     </SettingField>
-                    <SettingField label={t('settings.modelsListReadMaxBytes')} description={t('settings.modelsListReadMaxBytesDesc')} channels={CHANNELS_CODEX_ONLY}>
+                    <SettingField label={t('settings.modelsListReadMaxBytes')} description={t('settings.modelsListReadMaxBytesDesc')}>
                       <div className="relative">
                         <DraftNumberInput
                           min={1}
@@ -6400,14 +5111,14 @@ export default function Settings() {
                         </span>
                       </div>
                     </SettingField>
-                    <SettingField label={t('settings.streamFlushPolicy')} description={t('settings.streamFlushPolicyDesc')} channels={CHANNELS_STREAMING}>
+                    <SettingField label={t('settings.streamFlushPolicy')} description={t('settings.streamFlushPolicyDesc')}>
                       <SegmentedPillGroup
                         value={settingsForm.stream_flush_policy}
                         onChange={(value) => autoSaveStringField('stream_flush_policy', value)}
                         options={streamFlushPolicyOptions}
                       />
                     </SettingField>
-                    <SettingField label={t('settings.streamFlushInterval')} description={t('settings.streamFlushIntervalDesc')} channels={CHANNELS_STREAMING}>
+                    <SettingField label={t('settings.streamFlushInterval')} description={t('settings.streamFlushIntervalDesc')}>
                       <DraftNumberInput
                         min={1}
                         max={1000}
@@ -6426,7 +5137,7 @@ export default function Settings() {
                     </SettingField>
                   </div>
                   <div className={SETTINGS_SWITCH_ROW}>
-                    <SettingField label={t('settings.firstTokenExcludesWsAcquire')} description={t('settings.firstTokenExcludesWsAcquireDesc')} layout="switch" channels={CHANNELS_CODEX_ONLY}>
+                    <SettingField label={t('settings.firstTokenExcludesWsAcquire')} description={t('settings.firstTokenExcludesWsAcquireDesc')} layout="switch">
                       <Switch
                         checked={settingsForm.first_token_excludes_ws_acquire}
                         onCheckedChange={(checked) => autoSaveBooleanField('first_token_excludes_ws_acquire', checked)}
@@ -6563,7 +5274,7 @@ export default function Settings() {
               </SettingsSection>
 
               <SettingsSection id="settings-storage" title={t('settings.nav.storage')} description={t('settings.nav.storageDesc')} icon={<ImageIcon className="size-4" />}>
-              <SettingsCard title={t('settings.imageStorage')} description={t('settings.imageStorageDesc')} icon={<ImageIcon className="size-4" />} channels={CHANNELS_CODEX_ONLY}>
+              <SettingsCard title={t('settings.imageStorage')} description={t('settings.imageStorageDesc')} icon={<ImageIcon className="size-4" />}>
                 <div className="space-y-4">
                   <SettingField label={t('settings.imageStorageBackend')} description={t('settings.imageStorageBackendDesc')}>
                     <SegmentedPillGroup
@@ -6647,7 +5358,7 @@ export default function Settings() {
                 ) : null}
               </SettingsCard>
 
-              <SettingsCard title={t('settings.autoCleanup')} icon={<Trash2 className="size-4" />} tone="danger" channels={ALL_UPSTREAM_CHANNELS}>
+              <SettingsCard title={t('settings.autoCleanup')} icon={<Trash2 className="size-4" />} tone="danger">
                 <div className="grid grid-cols-1 gap-3 sm:grid-cols-2 xl:grid-cols-3">
                   <SettingField label={t('settings.autoCleanUnauthorized')} description={t('settings.autoCleanUnauthorizedDesc')} layout="switch">
                     <Switch
@@ -6777,7 +5488,6 @@ export default function Settings() {
                   description="全局实时监控工具参数持续重复、细碎 delta 泛洪与通道/请求级字节预算超限"
                   icon={<ShieldAlert className="size-4" />}
                   tone={settingsForm.output_guard_enabled ? 'default' : 'danger'}
-                  channels={ALL_UPSTREAM_CHANNELS}
                   badge={
                     <Badge variant={settingsForm.output_guard_enabled ? 'outline' : 'destructive'} className="text-[11px] gap-1">
                       <span className={`size-1.5 rounded-full ${settingsForm.output_guard_enabled ? 'bg-emerald-400' : 'bg-red-500'}`} />
@@ -6938,7 +5648,6 @@ export default function Settings() {
                         {([
                           { method: 'POST', path: '/v1/chat/completions', desc: t('settings.openaiCompat'), tone: 'default' as const },
                           { method: 'POST', path: '/v1/responses', desc: t('settings.responsesApi'), tone: 'outline' as const },
-                          { method: 'POST', path: '/v1/messages', desc: t('settings2.messagesEndpoint'), tone: 'outline' as const },
                           { method: 'POST', path: '/v1/images/generations', desc: t('settings.imageGenerationApi'), tone: 'outline' as const },
                           { method: 'POST', path: '/v1/images/edits', desc: t('settings.imageEditApi'), tone: 'outline' as const },
                           { method: 'GET', path: '/v1/models', desc: t('settings.modelList'), tone: 'secondary' as const },
@@ -6980,11 +5689,6 @@ export default function Settings() {
                               <TableCell><Badge variant="outline" className="text-[12px]">POST</Badge></TableCell>
                               <TableCell className="font-mono text-[13px]">/v1/responses</TableCell>
                               <TableCell className="text-[13px] text-muted-foreground">{t('settings.responsesApi')}</TableCell>
-                            </TableRow>
-                            <TableRow>
-                              <TableCell><Badge variant="outline" className="text-[12px]">POST</Badge></TableCell>
-                              <TableCell className="font-mono text-[13px]">/v1/messages</TableCell>
-                              <TableCell className="text-[13px] text-muted-foreground">{t('settings2.messagesEndpoint')}</TableCell>
                             </TableRow>
                             <TableRow>
                               <TableCell><Badge variant="outline" className="text-[12px]">POST</Badge></TableCell>

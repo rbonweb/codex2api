@@ -13,16 +13,16 @@
   <img src="https://img.shields.io/badge/Vite-8-646CFF?style=for-the-badge&logo=vite&logoColor=white" alt="Vite">
   <img src="https://img.shields.io/badge/DB-PostgreSQL%20%7C%20SQLite-4169E1?style=for-the-badge&logo=postgresql&logoColor=white" alt="Database">
   <img src="https://img.shields.io/badge/Cache-Redis%20%7C%20Memory-DC382D?style=for-the-badge&logo=redis&logoColor=white" alt="Cache">
-  <img src="https://img.shields.io/badge/API-OpenAI%20%7C%20Anthropic-10A37F?style=for-the-badge" alt="API">
+  <img src="https://img.shields.io/badge/API-OpenAI-10A37F?style=for-the-badge" alt="API">
   <img src="https://img.shields.io/badge/Docker-Ready-2496ED?style=for-the-badge&logo=docker&logoColor=white" alt="Docker">
 </p>
 
-**把 Codex 账号池变成可观测、可调度、可运维的 OpenAI / Anthropic 兼容网关。** Codex2API 不是一个薄转发层，而是一套面向长期运行的 Codex 接入中枢：对外提供 `/v1/chat/completions`、`/v1/responses`、`/v1/messages`、Images 和 Models 等接口，对内维护 Refresh Token / Access Token 账号池、健康度评分、动态并发、限流恢复、用量统计和后台运维。
+**把 Codex 账号池变成可观测、可调度、可运维的 OpenAI 兼容网关。** Codex2API 不是一个薄转发层，而是一套面向长期运行的 Codex 接入中枢：对外提供 `/v1/responses`（HTTP、WebSocket、compact、input_tokens）、`/v1/chat/completions`、`/v1/images/generations`、`/v1/images/edits`、`/v1/models`、`/v1/realtime`、`/v1/live`、`/v1/alpha/search` 和 `/backend-api/codex/*` 等接口，对内维护 Codex OAuth（Refresh Token / Access Token）与 Agent Identity 账号池、健康度评分、动态并发、限流恢复、用量统计和后台运维。
 
-它可以跑在完整的 **PostgreSQL + Redis** 生产形态，也可以用 **SQLite + 内存缓存** 单容器轻量部署。你可以把它接到 Codex CLI、Claude Code、OpenAI SDK 或任何兼容客户端上，用一个统一 Base URL 管理多账号、代理池、API Key、Prompt 检查、生图工作台和运行时配置。
+它可以跑在完整的 **PostgreSQL + Redis** 生产形态，也可以用 **SQLite + 内存缓存** 单容器轻量部署。你可以把它接到 Codex CLI、OpenAI SDK 或任何兼容客户端上，用一个统一 Base URL 管理多账号、代理池、API Key、Prompt 检查、生图工作台和运行时配置。
 
 <table>
-<tr><td width="210"><b>统一兼容入口</b></td><td>同时覆盖 OpenAI 风格 Chat Completions / Responses / Images、Anthropic Messages、无前缀兼容路由和 Codex 原生 Responses 转发，客户端侧少改配置即可接入。</td></tr>
+<tr><td width="210"><b>统一兼容入口</b></td><td>同时覆盖 OpenAI 风格 Responses / Chat Completions / Images / Models / Realtime / Live / Search、无 <code>/v1</code> 前缀的兼容路由和 Codex 原生 <code>/backend-api/codex/*</code> 转发，客户端侧少改配置即可接入。</td></tr>
 <tr><td><b>账号池调度核心</b></td><td>围绕账号状态、健康层级、调度分、动态并发、冷却恢复和近期用量做选择，自动避开不可用账号，减少单账号打满和反复失败。支持 <code>round_robin</code> 和 <code>remaining_quota</code> 两种调度模式，以及单账号信用计费标记。</td></tr>
 <tr><td><b>可视化管理后台</b></td><td>内置 React / Vite 管理台，提供账号导入测试、API Key、代理池、生图（文生图 + 图生图）、Prompt 检查、用量统计、运维概览、调度看板和系统设置。</td></tr>
 <tr><td><b>两种部署形态</b></td><td>生产环境用 PostgreSQL + Redis，单机测试用 SQLite + Memory；Docker 镜像、源码构建、本地开发和一键交互部署脚本都已准备好。SQLite 模式默认绑定 <code>127.0.0.1</code> 以提升安全性。</td></tr>
@@ -246,17 +246,12 @@ docker compose -f docker-compose.sqlite.local.yml logs -f codex2api
 
 ---
 
-## Antigravity 渠道（API Key 路径为实验性）
-
-Antigravity 作为独立 Google 渠道管理，支持浏览器/导入 OAuth 凭据以及 Google API Key 账号。管理端提供含密钥的 JSON/ZIP 凭据导出、脱敏状态读取、显式控制面同步与有界能力探测。OAuth 请求使用 Cloud Code `v1internal` 适配器。API Key 请求指向 Generative Language `v1beta/interactions`，但普通调度默认关闭，只有显式设置 `ANTIGRAVITY_ENABLE_EXPERIMENTAL_INTERACTIONS=true` 才会放行。当前环境尚未成功运行真实上游集成测试，因此 API Key 路径仍为实验性，不能宣称已具备生产可用性。运行方法、安全风险与认证清单见 [docs/ANTIGRAVITY.md](docs/ANTIGRAVITY.md)。
-
 ## 完整文档
 
 | 文档 | 说明 | 路径 |
 |------|------|------|
 | [API 文档](docs/API.md) | 所有 API 端点、请求/响应示例、错误码说明 | `docs/API.md` |
-| [使用指南](docs/USAGE.md) | 客户端接入、SDK 示例、媒体任务与常见错误排查 | `docs/USAGE.md` |
-| [Antigravity 接入](docs/ANTIGRAVITY.md) | Google OAuth、实验性 API Key 渠道、模型、风险与协议验证状态 | `docs/ANTIGRAVITY.md` |
+| [使用指南](docs/USAGE.md) | 客户端接入、SDK 示例、图片任务与常见错误排查 | `docs/USAGE.md` |
 | [Codex Multi-Agent v2 兼容](docs/CODEX_MULTI_AGENT_V2_COMPAT.md) | 第三方子 Agent 明文字段兼容、风险、灰度与回滚 | `docs/CODEX_MULTI_AGENT_V2_COMPAT.md` |
 | [部署文档](docs/DEPLOYMENT.md) | 各种部署模式、升级指南、备份恢复 | `docs/DEPLOYMENT.md` |
 | [配置文档](docs/CONFIGURATION.md) | 环境变量、系统设置、配置优先级 | `docs/CONFIGURATION.md` |
@@ -361,7 +356,7 @@ Vite 会自动代理 `/api` 和 `/health` 到后端，开发时访问 `http://lo
 | 本地 L1 单条准入 | 8 MiB | 1-256 MiB，且不能超过总量 |
 | 后端重建 | 64 MiB | 8-512 MiB |
 
-Redis 模式下，共享上下文只要没有超过重建上限，即使大于 L1 准入预算也能直接服务本次请求，但不会提升到本地缓存。Memory 模式没有共享 response context 后备；依赖上下文被判定为超限或已淘汰时，连续请求可能返回 HTTP `409 response_context_unavailable`。共享后端暂时故障且没有可保留 `previous_response_id` 的 relay 后备账号时，依赖上下文的连续请求可能返回 HTTP `503`。
+Redis 模式下，共享上下文只要没有超过重建上限，即使大于 L1 准入预算也能直接服务本次请求，但不会提升到本地缓存。Memory 模式没有共享 response context 后备；依赖上下文被判定为超限或已淘汰时，连续请求可能返回 HTTP `409 response_context_unavailable`。共享后端暂时故障且没有可保留 `previous_response_id` 的后备账号时，依赖上下文的连续请求可能返回 HTTP `503`。
 
 每次成功修改预算都会生成只读 generation，各实例每 5 秒轮询一次并应用更新。运维页展示 effective/applied generation、同步状态、缓存逻辑字节与计数器、进程内存、Go heap 和 GC 次数。缓存逻辑字节不包含 Go/容器开销，也不是 RSS 或进程内存硬上限。滚动升级期间，新前端会兼容尚未返回这些设置或运维字段的旧后端。
 
@@ -384,8 +379,18 @@ Redis 模式下，共享上下文只要没有超过重建上限，即使大于 L
 | `POST /v1/responses`          | Responses 风格入口                                                                                       |
 | `POST /v1/images/generations` | OpenAI Images 生成入口                                                                                   |
 | `POST /v1/images/edits`       | OpenAI Images 编辑入口                                                                                   |
+| `POST /v1/images/jobs`        | 图片任务：提交、查询状态、获取输出与确认（`/v1/images/jobs/:id`、`/output`、`/ack`）                     |
+| `POST /v1/responses/compact`  | Responses 上下文压缩入口                                                                                 |
+| `POST /v1/responses/input_tokens` | Responses 输入 Token 计数                                                                            |
+| `GET /v1/responses`           | Responses WebSocket 入口                                                                                 |
+| `/v1/realtime`                | Realtime 入口                                                                                            |
+| `/v1/live`                    | Live 入口                                                                                                |
+| `POST /v1/alpha/search`       | Alpha 搜索入口                                                                                           |
+| `/backend-api/codex/*`        | Codex 原生转发入口                                                                                       |
 | `GET /v1/models`              | 返回可用模型列表（含 gpt-6-astra/sol/luna、gpt-5.6-sol/terra/luna、gpt-5.5、gpt-5.3-codex-spark、gpt-image-2 等） |
 | `GET /health`                 | 健康检查                                                                                                 |
+
+> 以上 `/v1/*` 路由同样提供不带 `/v1` 前缀的兼容路径。
 
 > **计费提示**：gpt-5.5 标准 tier 计费为 $5.00/M 输入 / $30.00/M 输出，priority tier 为 $12.50/M 输入 / $75.00/M 输出。其他模型按 billing 引擎规则计费。
 
@@ -491,7 +496,7 @@ curl -X POST http://localhost:8080/api/admin/oauth/exchange-code \
 | 运维概览 | `/admin/ops` | 运行态概览、上下文缓存逻辑指标、进程内存、Go heap 与 GC |
 | 调度看板 | `/admin/ops/scheduler` | 调度健康度、惩罚项和评分拆解 |
 | 系统设置 | `/admin/settings` | 业务运行参数、Responses 上下文缓存预算与后台密钥配置 |
-| 使用文档 | `/admin/docs` | Codex CLI / Claude Code 接入示例 |
+| 使用文档 | `/admin/docs` | Codex CLI / OpenAI SDK 接入示例 |
 | API 文档 | `/admin/api-reference` | OpenAI 风格接口与管理接口参考 |
 
 ---

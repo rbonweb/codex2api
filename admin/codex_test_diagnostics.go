@@ -106,15 +106,9 @@ func codexTestSecrets(account *auth.Account) []string {
 	if account == nil {
 		return nil
 	}
-	secrets := make([]string, 0, 2)
+	secrets := make([]string, 0, 1)
 	if token := account.GetAccessToken(); token != "" {
 		secrets = append(secrets, token)
-	}
-	account.Mu().RLock()
-	apiKey := strings.TrimSpace(account.APIKey)
-	account.Mu().RUnlock()
-	if apiKey != "" {
-		secrets = append(secrets, apiKey)
 	}
 	return secrets
 }

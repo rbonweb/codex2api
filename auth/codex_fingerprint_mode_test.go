@@ -46,35 +46,4 @@ func TestEffectiveCodexFingerprintMode(t *testing.T) {
 	if got := codex.EffectiveCodexFingerprintMode(); got != CodexFingerprintModeSession {
 		t.Errorf("codex account mode = %q, want %q", got, CodexFingerprintModeSession)
 	}
-
-	relay := &Account{
-		DBID:                 1,
-		UpstreamType:         UpstreamOpenAIResponses,
-		BaseURL:              "https://relay.example.com",
-		APIKey:               "sk-relay",
-		CodexFingerprintMode: CodexFingerprintModeSession,
-	}
-	if got := relay.EffectiveCodexFingerprintMode(); got != CodexFingerprintModeOff {
-		t.Errorf("relay account mode = %q, want %q (relays do not use the Codex outbound path)", got, CodexFingerprintModeOff)
-	}
-
-	// Grok 账号有独立的上游执行器，Codex 指纹收敛对它无意义，即使凭据里配了档位也必须为 off。
-	grokAPIKey := &Account{
-		DBID:                 1,
-		UpstreamType:         UpstreamGrok,
-		APIKey:               "xai-key",
-		CodexFingerprintMode: CodexFingerprintModeFull,
-	}
-	if got := grokAPIKey.EffectiveCodexFingerprintMode(); got != CodexFingerprintModeOff {
-		t.Errorf("grok api-key account mode = %q, want %q", got, CodexFingerprintModeOff)
-	}
-	grokOAuth := &Account{
-		DBID:                 1,
-		UpstreamType:         UpstreamGrok,
-		RefreshToken:         "grok-rt",
-		CodexFingerprintMode: CodexFingerprintModeSession,
-	}
-	if got := grokOAuth.EffectiveCodexFingerprintMode(); got != CodexFingerprintModeOff {
-		t.Errorf("grok oauth account mode = %q, want %q", got, CodexFingerprintModeOff)
-	}
 }

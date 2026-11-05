@@ -7,7 +7,7 @@ import { useToast } from "../hooks/useToast";
 import { cn } from "@/lib/utils";
 import type { SubscriptionRefreshResponse, SubscriptionStatus } from "../types";
 
-// SubscriptionBadge 订阅状态徽章(Codex/Claude 账号页共用)。
+// SubscriptionBadge 订阅状态徽章(账号页共用)。
 // 只吃服务端按业务时区算好的 subscription 对象,不再在本机按 24h 粒度推算
 // "今天到期/已过期",避免前后端时区不一致。业务状态决定文案与颜色;同步状态
 // (failed/pending)只叠加标记,不改变文案含义——所有状态都有文字,不只靠颜色。
@@ -93,7 +93,7 @@ export function describeSubscription(
       if (sub.sync_state === "pending") {
         return { label: t("accounts.subscriptionStatusPending"), tone: "blue" };
       }
-      // 从未拿到任何到期信息:只在能手动刷新的页面给一个入口,别在 Claude 等无数据源的页面刷一排"未知"。
+      // 从未拿到任何到期信息:只在能手动刷新的页面给一个入口,别在无数据源的页面刷一排"未知"。
       if (!canRefresh) return null;
       return { label: t("accounts.subscriptionStatusUnknown"), tone: "gray" };
   }

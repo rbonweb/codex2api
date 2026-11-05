@@ -4,15 +4,13 @@ import (
 	"context"
 	"database/sql"
 	"encoding/json"
-	"errors"
-	"fmt"
 	"testing"
 	"time"
 )
 
 func TestIntelligenceCheckNewAccountDefaults(t *testing.T) {
 	for _, action := range []string{"none", "pause", "switch_group"} {
-		for _, channel := range []string{"codex", "claude"} {
+		for _, channel := range []string{"codex"} {
 			for _, defaultEnabled := range []bool{false, true} {
 				name := action + "/" + channel + "/disabled"
 				if defaultEnabled {
@@ -38,8 +36,7 @@ func TestIntelligenceCheckNewAccountDefaults(t *testing.T) {
 						t.Fatal(err)
 					}
 					for _, account := range []struct{ platform, upstream, channel string }{
-						{"openai", "", "codex"}, {"AnThRoPiC", "", "claude"}, {"openai", "ClAuDe", "claude"},
-						{"xai", "grok", "grok"}, {"google", "antigravity", "antigravity"},
+						{"openai", "", "codex"},
 					} {
 						id, err := db.InsertAccountWithUpstream(ctx, "fixture", account.platform, "oauth", map[string]interface{}{"upstream_type": account.upstream}, "")
 						if err != nil {
@@ -49,7 +46,7 @@ func TestIntelligenceCheckNewAccountDefaults(t *testing.T) {
 						if err := db.conn.QueryRowContext(ctx, `SELECT enabled FROM intelligence_check_accounts WHERE account_id=$1`, id).Scan(&enabled); err != nil {
 							t.Fatal(err)
 						}
-						want := defaultEnabled && (account.channel == "codex" || account.channel == "claude") && (action != "switch_group" || account.channel == channel)
+						want := defaultEnabled && account.channel == "codex"
 						if enabled != want {
 							t.Errorf("%s/%s enabled=%v want=%v", account.platform, account.upstream, enabled, want)
 						}
@@ -98,7 +95,7 @@ func TestIntelligenceCheckDefaultTriggerUpgrade(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	legacy, err := db.InsertAccountWithUpstream(ctx, "legacy claude", "anthropic", "oauth", nil, "")
+	legacy, err := db.InsertAccountWithUpstream(ctx, "legacy codex", "openai", "oauth", nil, "")
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -117,61 +114,17 @@ func TestIntelligenceCheckDefaultTriggerUpgrade(t *testing.T) {
 	if runs, total, err := db.ListIntelligenceCheckRuns(ctx, IntelligenceCheckRunFilter{AccountID: id}); err != nil || total != 1 || runs[0].Action != "switch_group" {
 		t.Fatalf("history changed: %v %v", runs, err)
 	}
-	newID, err := db.InsertAccountWithUpstream(ctx, "new claude", "anthropic", "oauth", nil, "")
+	newID, err := db.InsertAccountWithUpstream(ctx, "new codex", "openai", "oauth", nil, "")
 	if err != nil {
 		t.Fatal(err)
 	}
-	for accountID, want := range map[int64]bool{legacy: true, newID: false, id: true} {
+	for accountID, want := range map[int64]bool{legacy: true, newID: true, id: true} {
 		var enabled bool
 		if err := db.conn.QueryRowContext(ctx, `SELECT enabled FROM intelligence_check_accounts WHERE account_id=$1`, accountID).Scan(&enabled); err != nil {
 			t.Fatal(err)
 		}
 		if enabled != want {
 			t.Fatalf("account %d enabled=%v want=%v", accountID, enabled, want)
-		}
-	}
-	_, err = db.SaveIntelligenceCheckSettings(ctx, s)
-	var conflict *IntelligenceCheckTargetConflictError
-	if !errors.As(err, &conflict) || !errors.Is(err, ErrIntelligenceCheckTargetGroup) || conflict.ConflictCount != 1 || conflict.Conflicts[0].AccountID != legacy || conflict.Conflicts[0].AccountName != "legacy claude" || conflict.Conflicts[0].Channel != "claude" || conflict.TargetGroupID != target || conflict.TargetGroupChannel != "codex" {
-		t.Fatalf("missing legacy conflict details: %+v %v", conflict, err)
-	}
-	if err := db.SetIntelligenceCheckEnabled(ctx, []int64{legacy}, false); err != nil {
-		t.Fatal(err)
-	}
-	if _, err := db.SaveIntelligenceCheckSettings(ctx, s); err != nil {
-		t.Fatal(err)
-	}
-}
-
-func TestIntelligenceCheckTargetConflictBatches(t *testing.T) {
-	db := intelligenceDB(t)
-	ctx := context.Background()
-	for i := 0; i < 201; i++ {
-		if _, err := db.InsertAccountWithUpstream(ctx, fmt.Sprintf("claude-%d", i), "anthropic", "oauth", nil, ""); err != nil {
-			t.Fatal(err)
-		}
-	}
-	target, err := db.CreateAccountGroup(ctx, "target", "", "", 0, 0, sql.NullInt64{})
-	if err != nil {
-		t.Fatal(err)
-	}
-	s, err := db.GetIntelligenceCheckSettings(ctx)
-	if err != nil {
-		t.Fatal(err)
-	}
-	s.Action, s.TargetGroupID = "switch_group", target
-	for _, want := range []int{201, 1} {
-		_, err := db.SaveIntelligenceCheckSettings(ctx, s)
-		var conflict *IntelligenceCheckTargetConflictError
-		if !errors.As(err, &conflict) || conflict.ConflictCount != want || len(conflict.Conflicts) != min(want, 200) {
-			t.Fatalf("unexpected conflict batch: %+v %v", conflict, err)
-		}
-		ids := []int64{}
-		for _, account := range conflict.Conflicts {
-			ids = append(ids, account.AccountID)
-		}
-		if err := db.SetIntelligenceCheckEnabled(ctx, ids, false); err != nil {
-			t.Fatal(err)
 		}
 	}
 	if _, err := db.SaveIntelligenceCheckSettings(ctx, s); err != nil {
@@ -232,7 +185,12 @@ func TestIntelligenceCheckNewAccountConcurrentSettings(t *testing.T) {
 		t.Fatal(err)
 	}
 	s.Revision++
-	raw, err := json.Marshal(s)
+	// Codex is the only channel, so a Codex account always fits an existing target group.
+	// Commit a switch_group policy whose target group does not exist: enrollment must follow
+	// it (account stays opted out) rather than the previous "none" policy (account opted in).
+	committed := s
+	committed.TargetGroupID = target + 1_000_000
+	raw, err := json.Marshal(committed)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -245,7 +203,7 @@ func TestIntelligenceCheckNewAccountConcurrentSettings(t *testing.T) {
 	}
 	inserted := make(chan result, 1)
 	go func() {
-		id, err := db.InsertAccountWithUpstream(ctx, "concurrent claude", "anthropic", "oauth", nil, "")
+		id, err := db.InsertAccountWithUpstream(ctx, "concurrent codex", "openai", "oauth", nil, "")
 		inserted <- result{id, err}
 	}()
 	select {

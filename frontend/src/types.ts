@@ -1,257 +1,6 @@
 export type ToastType = 'success' | 'error' | 'warning' | 'info'
 export type ISODateString = string
-export type UpstreamChannel = 'codex' | 'grok' | 'antigravity' | 'claude'
-
-export type ChannelMonitorStatus = 'unknown' | 'operational' | 'degraded' | 'failed'
-export type ChannelMonitorBillingStatus = 'unknown' | 'ok' | 'unsupported' | 'failed'
-
-export interface ChannelMonitorConfig {
-  account_id: number
-  enabled: boolean
-  interval_minutes: number
-  model: string
-  available_models: string[]
-  last_checked_at?: ISODateString
-  next_check_at?: ISODateString
-}
-
-export interface ChannelMonitorBillingData {
-  object?: string
-  schema_version?: number
-  billing_scope?: string
-  group_rate_multiplier?: number
-  user_rate_multiplier?: number
-  resolved_rate_multiplier?: number
-  peak_rate_enabled?: boolean
-  peak_start?: string
-  peak_end?: string
-  peak_rate_multiplier?: number
-  applied_peak_multiplier?: number
-  effective_rate_multiplier?: number
-  timezone?: string
-  observed_at?: ISODateString
-}
-
-export interface ChannelMonitorBillingSnapshot {
-  status: ChannelMonitorBillingStatus
-  data?: ChannelMonitorBillingData
-  message?: string
-  http_status?: number
-  checked_at?: ISODateString
-  success_at?: ISODateString
-  next_check_at?: ISODateString
-  failure_count?: number
-}
-
-export interface ChannelMonitorCheck {
-  status: ChannelMonitorStatus
-  http_status?: number
-  latency_ms: number
-  first_token_ms: number
-  checked_at: ISODateString
-}
-
-export interface ChannelMonitorCard {
-  account_id: number
-  name: string
-  base_url: string
-  model: string
-  interval_minutes: number
-  status: ChannelMonitorStatus
-  http_status?: number
-  latency_ms: number
-  first_token_ms: number
-  message?: string
-  last_checked_at?: ISODateString
-  next_check_at?: ISODateString
-  availability_7d?: number
-  checks_7d: number
-  billing: ChannelMonitorBillingSnapshot
-  recent_checks: ChannelMonitorCheck[]
-}
-
-export interface ChannelMonitorListResponse {
-  items: ChannelMonitorCard[]
-  generated_at: ISODateString
-}
-
-export interface ChannelMonitorBillingRateItem {
-  account_id: number
-  billing: ChannelMonitorBillingSnapshot
-}
-
-export interface ChannelMonitorBillingRatesResponse {
-  items: ChannelMonitorBillingRateItem[]
-  generated_at: ISODateString
-}
-
-export interface UpdateChannelMonitorConfigRequest {
-  enabled: boolean
-  interval_minutes: number
-  model: string
-}
-
-// 管理台可见渠道设置（GET/PUT /settings/visible-channels）
-export interface ChannelTestSettings {
-  test_model: string
-  test_content: string
-  // 0 = 沿用全局 test_concurrency
-  test_concurrency: number
-}
-
-export interface ChannelTestSettingsResponse {
-  antigravity: ChannelTestSettings
-  claude: ChannelTestSettings
-  default_test_content: string
-  default_test_concurrency: number
-  model_choices?: Partial<Record<'antigravity' | 'claude', string[]>>
-}
-
-export interface AntigravityRedirectChoice {
-  model: string
-  default_level: string
-  tiers: string[]
-}
-
-export interface AntigravitySettingsResponse {
-  model_redirects: Record<string, string>
-  redirect_overrides_effort: boolean
-  expose_thoughts: boolean
-  /** 配额自动刷新开关（GET 返回后端生效值；PUT 缺失 = 保留现值，null = 重置默认）。 */
-  quota_refresh_enabled?: boolean
-  /** 配额刷新间隔（分钟），允许范围 3–60。 */
-  quota_refresh_interval_minutes?: number
-  /** 配额硬门禁开关：开启后配额耗尽账号直接 429，不进入排队。 */
-  quota_gate_enabled?: boolean
-  /** 临期优先调度开关：周配额临近重置且仍有存量的账号优先承接新会话（仅 round_robin）。 */
-  expiry_priority_enabled?: boolean
-  /** 临期时间窗（小时），允许范围 1–168。 */
-  expiry_priority_horizon_hours?: number
-  /** 渠道配置 CAS 版本号（只读，后端下发）。 */
-  config_revision?: number
-  choices: AntigravityRedirectChoice[]
-}
-
-/** POST /accounts/antigravity/quota/clear 的逐项结果（运维止血）。 */
-export interface AntigravityQuotaClearItem {
-  id: number
-  ok: boolean
-  quota_epoch: number
-  error?: string
-}
-
-export interface AntigravityQuotaClearResponse {
-  cleared: number
-  failed: number
-  items: AntigravityQuotaClearItem[]
-}
-
-export interface VisibleChannelsSettings {
-  channels: UpstreamChannel[]
-  all: UpstreamChannel[]
-  fallback: UpstreamChannel
-}
-
-/** Claude 凭据形态:oauth=可刷新 OAuth;setup_token=长效 Setup Token(仅推理,1 年,无 RT)。 */
-export type ClaudeAuthKind = 'oauth' | 'setup_token' | 'api_key'
-
-/** Claude Code OAuth：第一步返回授权 URL 与 state。 */
-export interface ClaudeAuthURLResponse {
-  auth_url: string
-  state: string
-  mode?: ClaudeAuthKind
-  redirect_uri?: string
-}
-
-/** Claude sessionKey(cookie)一键换号请求。 */
-export interface ClaudeSessionKeyExchangeRequest {
-  session_key: string
-  mode?: ClaudeAuthKind
-  name?: string
-  proxy_url?: string
-  use_proxy_pool?: boolean
-  timezone?: string
-}
-
-/** Claude Setup Token 批量粘贴导入请求。 */
-export interface ClaudeSetupTokenImportRequest {
-  text?: string
-  tokens?: string[]
-  name?: string
-  proxy_url?: string
-  use_proxy_pool?: boolean
-  timezone?: string
-  group_refs?: Array<{ name: string; channel: 'claude' }>
-}
-
-/** Claude Code OAuth：第二步用 state+code 换取 token 并入库。 */
-export interface ClaudeExchangeCodeRequest {
-  state: string
-  code: string
-  name?: string
-  proxy_url?: string
-  use_proxy_pool?: boolean
-  timezone?: string
-}
-
-/** Claude Code：直接导入 cmd/claude_login 产出的 token JSON。 */
-export interface ClaudeImportTokenRequest {
-  access_token?: string
-  api_key?: string
-  auth_kind?: ClaudeAuthKind
-  base_url?: string
-  /** OAuth 凭据必填;Setup Token(auth_kind=setup_token)没有 RT。 */
-  refresh_token?: string
-  email?: string
-  account_id?: string
-  expires_at?: string
-  name?: string
-  proxy_url?: string
-  use_proxy_pool?: boolean
-  timezone?: string
-  /** API Key 账号:账号级自定义出站请求头,最后套用;网关保留头(鉴权/Content-Type/Accept 等)会被拒绝。 */
-  custom_headers?: Record<string, string> | null
-  /** API Key 账号:可选的 Claude Code 客户端身份仿真;空=透传(默认)。OAuth 账号沿用指纹替换语义。 */
-  claude_fingerprint_mode?: 'preserve' | 'force' | ''
-}
-
-/** Versioned, provider-scoped Claude OAuth export. Secret-bearing fields are
- * only returned by the administrator-only Claude export endpoint. */
-export interface ClaudeCredentialExportEntry extends ClaudeImportTokenRequest {
-  access_token: string
-  type: 'claude'
-  version: number
-  auth_kind: ClaudeAuthKind
-  plan_type?: string
-  models?: string[]
-  claude_fingerprint_mode?: 'preserve' | 'force' | ''
-  claude_user_agent?: string
-  fingerprint_headers?: Record<string, string>
-  tags?: string[]
-  group_refs?: Array<{ name: string; channel: 'claude' }>
-  enabled?: boolean
-}
-
-export interface ClaudeImportBundleItem {
-  id?: number
-  email?: string
-  ok: boolean
-  error?: string
-  warnings?: string[]
-}
-
-export interface ClaudeImportBundleResponse {
-  total: number
-  imported: number
-  failed: number
-  items: ClaudeImportBundleItem[]
-}
-
-export interface ClaudeAddAccountResponse {
-  message: string
-  id: number
-  email?: string
-}
+export type UpstreamChannel = 'codex'
 
 export interface ToastState {
   msg: string
@@ -259,11 +8,6 @@ export interface ToastState {
 }
 
 export type AccountStatus = 'active' | 'ready' | 'cooldown' | 'error' | 'refreshing' | 'paused' | 'quota_paused' | string
-export type CodexClientMetadataMode = 'auto' | 'always' | 'off'
-/** OpenAI Responses 中转账号的 Codex 身份透传档位，默认 off（不透传）。 */
-export type CodexPassthroughMode = 'off' | 'auto' | 'always'
-/** OpenAI Responses 中转账号的上游传输，默认 http。 */
-export type ResponsesUpstreamTransport = 'http' | 'websocket'
 /** Codex 官方出站请求的设备指纹收敛档位，默认 off（不收敛）。 */
 export type CodexFingerprintMode = 'off' | 'device' | 'session' | 'single_machine_multi_window' | 'full'
 export type ModelCooldownMode = 'off' | 'fixed' | 'adaptive'
@@ -284,7 +28,7 @@ export interface StatsResponse {
   rate_limited: number
   error: number
   today_requests: number
-  // 按上游渠道(codex/grok)拆分的账号与今日请求计数
+  // 按上游渠道(codex)拆分的账号与今日请求计数
   channels?: Record<string, StatsChannelCounts>
 }
 
@@ -296,61 +40,6 @@ export interface AccountUsageWindow {
   model_counts?: Record<string, number>
   model_success_counts?: Record<string, number>
   model_avg_first_token_ms?: Record<string, number>
-}
-
-/** Claude OAuth zero-spend quota bucket; model-scoped buckets include Fable. */
-export interface ClaudeUsageWindow {
-  name: string
-  label?: string
-  utilization: number
-  reset_at?: ISODateString
-  model_scoped?: boolean
-  model_family?: string
-}
-
-export interface GrokProductUsage {
-  product: string
-  usage_percent?: number | null
-}
-
-// Grok billing 完整额度视图（后端 grok_billing_detail 凭据透出）。
-export interface GrokBillingDetail {
-  plan?: string
-  weekly_percent?: number | null
-  weekly_period_start?: string
-  weekly_period_end?: string
-  product_usage?: GrokProductUsage[]
-  on_demand_cap_cents?: number | null
-  on_demand_used_cents?: number | null
-  monthly_limit_cents?: number | null
-  monthly_used_cents?: number | null
-  monthly_percent?: number | null
-  monthly_period_start?: string
-  monthly_period_end?: string
-  updated_at?: string
-}
-
-export interface GrokRateLimitSnapshot {
-  limit_tokens?: number
-  remaining_tokens?: number
-  limit_requests?: number
-  remaining_requests?: number
-  updated_at?: string
-}
-
-// 免费额度耗尽时从上游 429 错误体解析的权威用量(滚动 24h 窗口)。
-export interface GrokFreeQuotaSnapshot {
-  used_tokens: number
-  limit_tokens: number
-  model?: string
-  exhausted_at: string
-}
-
-export interface GrokPlanInfo {
-  key: string
-  display: string
-  paid: boolean
-  billing: boolean
 }
 
 export type SubscriptionBusinessStatus = 'active' | 'expiring_today' | 'expired' | 'grace_period' | 'unknown'
@@ -406,56 +95,14 @@ export interface AccountRow {
   at_only?: boolean
   access_token_type?: string
   account_type?: string
-  openai_responses_api?: boolean
-  grok_api?: boolean
-  antigravity_api?: boolean
-  claude_api?: boolean
-  /** Claude 凭据形态(仅 Claude 账号有值)。 */
-  claude_auth_kind?: ClaudeAuthKind | string
-  claude_base_url?: string
-  antigravity_auth_kind?: 'oauth' | 'api_key' | string
   agent_identity?: boolean
-  grok_auth_kind?: string
-  /** Safe, allowlisted User-Agent observed/generated for Claude upstream calls. */
-  claude_user_agent?: string
-  grok_plan?: GrokPlanInfo
-  grok_plan_display?: { plan: string; source: string; status: "fresh" | "stale" | "unknown"; observed_at?: string; expires_at?: string }
-  /** Upstream directory, separate from the editable models whitelist. */
-  grok_models?: { models: string[]; status: "fresh" | "stale" | "unknown"; updated_at?: string }
-  grok_billing?: GrokBillingDetail
-  // 上游逐请求返回的配额余量(x-ratelimit-* 头),运行时快照
-  grok_rate_limit?: GrokRateLimitSnapshot
-  grok_free_quota?: GrokFreeQuotaSnapshot
-  antigravity_project_id?: string
-  antigravity_user_project_id?: string
-  antigravity_avatar_url?: string
-  antigravity_verified_email?: boolean
   project_id?: string
   avatar_url?: string
   verified_email?: boolean
-  antigravity_quota?: AntigravityQuotaSnapshot
-  antigravity_permissions?: AntigravityPermissionsSnapshot
-  antigravity_sync_warning?: string
   base_url?: string
-  balance_query_url?: string
   models?: string[]
   model_mapping?: string
-  codex_client_metadata_mode?: CodexClientMetadataMode
-  codex_passthrough_mode?: CodexPassthroughMode
-  responses_upstream_transport?: ResponsesUpstreamTransport
   codex_fingerprint_mode?: CodexFingerprintMode
-  claude_fingerprint_mode?: 'preserve' | 'force' | ''
-  claude_client_platform?: 'any' | 'claude_code_cli_only'
-  claude_version_policy?: 'passthrough' | 'fixed' | 'minimum'
-  claude_client_version?: string
-  claude_client_platform_override?: 'any' | 'claude_code_cli_only' | ''
-  claude_version_policy_override?: 'passthrough' | 'fixed' | 'minimum' | ''
-  claude_client_version_override?: string
-  claude_usage_probe_at?: ISODateString
-  claude_usage_probe_error?: string
-  claude_usage_windows?: ClaudeUsageWindow[]
-  /** True once the OAuth usage probe has run for this row (even with no windows). */
-  claude_usage_windows_probed?: boolean
   timezone?: string
   /** 账号页跳转地址;空值回退打开 base_url(api-base)。 */
   account_href?: string
@@ -603,8 +250,6 @@ export interface AccountListSummary {
   risky: number
   oauth: number
   api_key: number
-  /** Claude 渠道:长效 Setup Token 账号数。 */
-  setup_token?: number
   subscription_unlocked: number
   unauthorized_24h: number
   rate_limited_1h: number
@@ -1022,8 +667,6 @@ export interface RecycleBinAccountRow {
   plan_type: string
   at_only?: boolean
   access_token_type?: string
-  openai_responses_api?: boolean
-  claude_api?: boolean
   base_url?: string
   models?: string[]
   created_at: ISODateString
@@ -1088,519 +731,6 @@ export interface AgentIdentityBatchImportResponse {
   items: AgentIdentityImportItem[]
 }
 
-export interface AddOpenAIResponsesAccountRequest {
-  name?: string
-  base_url: string
-  api_key: string
-  balance_query_url?: string
-  models: string[]
-  model_mapping?: string
-  codex_client_metadata_mode?: CodexClientMetadataMode
-  codex_passthrough_mode?: CodexPassthroughMode
-  responses_upstream_transport?: ResponsesUpstreamTransport
-  proxy_url: string
-  custom_headers?: Record<string, string> | null
-}
-
-export interface UpdateOpenAIResponsesAccountRequest {
-  name?: string
-  base_url: string
-  api_key?: string
-  balance_query_url?: string
-  models: string[]
-  model_mapping?: string
-  codex_client_metadata_mode?: CodexClientMetadataMode
-  codex_passthrough_mode?: CodexPassthroughMode
-  responses_upstream_transport?: ResponsesUpstreamTransport
-  proxy_url: string
-  custom_headers?: Record<string, string> | null
-}
-
-export interface FetchOpenAIResponsesModelsRequest {
-  account_id?: number
-  base_url: string
-  api_key: string
-  proxy_url?: string
-}
-
-export interface FetchOpenAIResponsesModelsResponse {
-  base_url: string
-  models: string[]
-}
-
-export interface OpenAIResponsesBalanceResponse {
-  balance: number
-  unit: string
-  source: string
-  unlimited?: boolean
-  queried_at: ISODateString
-}
-
-export type GrokAuthKind = 'oauth' | 'api_key'
-
-export interface AddGrokAccountRequest {
-  name?: string
-  auth_kind: GrokAuthKind
-  auth_json?: string
-  api_key?: string
-  base_url?: string
-  models?: string[]
-  model_mapping?: string
-  proxy_url?: string
-  /** 添加/导入时直接绑定的账号分组；命中已存在账号时不改其分组。 */
-  group_ids?: number[]
-}
-
-export type UpdateGrokAccountRequest = AddGrokAccountRequest
-
-export interface AntigravityModelQuota {
-  model?: string
-  model_id?: string
-  name?: string
-  /** V2 契约：null 表示无事实；配合 fraction_present 区分"未观测"与"观测到耗尽"。 */
-  remaining_fraction?: number | null
-  /** 上游是否观测到该配额的 remaining_fraction（true 时 0 是可信的耗尽事实）。 */
-  fraction_present?: boolean
-  remaining_percent?: number
-  reset_time?: string
-  display_name?: string
-  supports_images?: boolean
-  supports_thinking?: boolean
-  thinking_budget?: number
-  recommended?: boolean
-  max_tokens?: number
-  max_output_tokens?: number
-  supported_mime_types?: Record<string, boolean>
-}
-
-export interface AntigravityQuotaBucket {
-  bucket_id: string
-  window: string
-  /** V2 契约：null 表示无事实；配合 fraction_present 区分"未观测"与"观测到耗尽"。 */
-  remaining_fraction: number | null
-  /** 上游是否观测到该配额的 remaining_fraction（true 时 0 是可信的耗尽事实）。 */
-  fraction_present?: boolean
-  reset_time?: string
-  display_name?: string
-  description?: string
-}
-
-export interface AntigravityQuotaGroup {
-  display_name: string
-  description?: string
-  buckets: AntigravityQuotaBucket[]
-}
-
-export interface AntigravityQuotaSnapshot {
-  models: Record<string, AntigravityModelQuota> | AntigravityModelQuota[]
-  catalog_model_ids?: string[]
-  quota_groups?: AntigravityQuotaGroup[]
-  groups?: AntigravityQuotaGroup[]
-  subscription_tier?: string
-  model_forwarding_rules?: Record<string, string>
-  ai_credits?: {
-    credits: number
-    expiry_date?: string
-  }
-  forbidden?: boolean
-  updated_at: ISODateString
-}
-
-export interface AntigravityPermissionsSnapshot {
-  allowed: boolean
-  reason?: string
-  project_id?: string
-  effective_tier?: string
-  restricted?: boolean
-  allowed_tiers?: unknown[]
-  ineligible_tiers?: unknown[]
-  current_tier?: unknown
-  paid_tier?: unknown
-  updated_at: ISODateString
-}
-
-export type AntigravityAuthKind = 'oauth' | 'api_key'
-
-export interface AntigravityCapabilityObservation {
-  credential_generation: number
-  protocol: 'interactions' | 'cloud_code_v1internal' | string
-  model_id: string
-  status: string
-  verified: boolean
-  http_status?: number
-  source: string
-  observed_at: ISODateString
-  content_type?: string
-}
-
-export interface AntigravityAccountState {
-  account_id: number
-  credential_generation: number
-  credential_kind: AntigravityAuthKind
-  catalog: {
-    models: string[]
-    source: 'declared' | 'default' | 'google_control_plane' | string
-    verified: boolean
-    synchronized: boolean
-    observed_at?: ISODateString
-  }
-  identity: {
-    status: string
-    email_verified: boolean
-    subject_known: boolean
-    project_status: string
-    project_id?: string
-  }
-  permissions?: AntigravityPermissionsSnapshot
-  quota?: AntigravityQuotaSnapshot
-  capabilities: AntigravityCapabilityObservation[]
-  last_synced_at?: ISODateString
-  last_sync_attempt_at?: ISODateString
-  last_capability_probe_at?: ISODateString
-  warnings: string[]
-}
-
-export interface AntigravityStateSyncResponse {
-  message: string
-  state: AntigravityAccountState
-  remote: boolean
-  catalog_source: string
-  verified: boolean
-}
-
-export interface AntigravityCapabilityProbeResponse {
-  message: string
-  state: AntigravityAccountState
-  result: AntigravityCapabilityObservation
-  warning?: string
-}
-
-export interface AddAntigravityAccountRequest {
-  name?: string
-  auth_kind?: AntigravityAuthKind
-  auth_json?: string
-  api_key?: string
-  models?: string[]
-  model_mapping?: string
-  proxy_url?: string
-  group_ids?: number[]
-}
-
-export interface UpdateAntigravityAccountRequest {
-  name?: string
-  auth_json?: string
-  api_key?: string
-  models?: string[]
-  model_mapping?: string
-  proxy_url?: string
-  group_ids?: number[]
-  /** Caller-owned GCP project for Workspace / enterprise OAuth accounts; "" clears it. */
-  user_project_id?: string
-}
-
-export interface AntigravityImportRequest {
-  files: string[]
-  /** 每项一个 Google refresh token;与 files 一起交给后端解析器。 */
-  refresh_tokens?: string[]
-  proxy_url?: string
-  /** 把文件内携带的代理注册进代理池（该渠道一直会采用文件内代理，开关只控制是否入表）。 */
-  import_proxy?: boolean
-  group_ids?: number[]
-}
-
-export interface AntigravityImportItem {
-  index: number
-  sub_index?: number
-  id?: number
-  email?: string
-  ok: boolean
-  synced?: boolean
-  warning?: string
-  error?: string
-}
-
-export interface AntigravityImportResponse {
-  total: number
-  imported: number
-  synced?: number
-  degraded?: number
-  failed: number
-  group_ids?: number[]
-  warning?: string
-  items: AntigravityImportItem[]
-  /** 以下三项仅在 import_proxy=true 时返回。 */
-  proxies_imported?: number
-  proxies_skipped?: number
-  proxy_warning?: string
-}
-
-export interface AntigravityCreateResponse extends MessageResponse {
-  id: number
-  email?: string
-  synced: boolean
-  warning?: string
-  group_ids?: number[]
-}
-
-export interface AntigravityOAuthStartRequest {
-  name?: string
-  proxy_url?: string
-  oauth_client_key?: string
-  group_ids?: number[]
-}
-
-export interface AntigravityOAuthStartResponse {
-  session_id: string
-  auth_url: string
-  redirect_uri: string
-  expires_at: ISODateString
-}
-
-export type AntigravityOAuthStatus =
-  | 'waiting'
-  | 'processing'
-  | 'completed'
-  | 'failed'
-  | 'cancelled'
-  | string
-
-export interface AntigravityOAuthStatusResponse {
-  session_id: string
-  status: AntigravityOAuthStatus
-  account_id?: number
-  email?: string
-  warning?: string
-  error?: string
-  expires_at: ISODateString
-}
-
-export interface AntigravityOAuthCompleteRequest {
-  session_id: string
-  callback_url: string
-}
-
-export interface AntigravityOAuthCompleteResponse {
-  message: string
-  session_id: string
-}
-
-export interface BatchUpdateGrokModelsRequest {
-  ids: number[]
-  models: string[]
-}
-
-export interface BatchUpdateGrokModelsResponse {
-  message: string
-  success: number
-  failed: number
-  models: string[]
-}
-
-export interface FetchGrokModelsResponse {
-  models: string[]
-}
-
-export type GrokFactKind = 'user' | 'settings' | 'billing' | 'auto_topup'
-export type GrokProtocol = 'responses' | 'chat_completions' | 'messages'
-
-/** A sanitized control-plane observation. Token material is never included. */
-export interface GrokAccountFact {
-  account_id: number
-  kind: GrokFactKind | string
-  status: string
-  http_status?: number
-  payload?: Record<string, unknown> | null
-  field_presence?: Record<string, string>
-  credential_generation: number
-  source?: string
-  observed_at?: ISODateString
-  expires_at?: ISODateString
-  updated_at?: ISODateString
-}
-
-export interface GrokAccountIdentitySummary {
-  credential_family_id: string
-  archive_plan?: string
-  archive_plan_source?: string
-  jwt_tier?: string
-  jwt_tier_trust?: string
-}
-
-export interface GrokModelCatalogSnapshot {
-  account_id: number
-  origin: string
-  credential_generation: number
-  auth_kind?: string
-  status: string
-  http_etag?: string
-  etag_hint?: string
-  etag_hint_observed_at?: ISODateString
-  observed_at?: ISODateString
-  expires_at?: ISODateString
-  updated_at?: ISODateString
-}
-
-export interface GrokModelCatalogItem {
-  account_id: number
-  origin: string
-  model_id: string
-  display_name?: string
-  description?: string
-  base_url?: string
-  api_base_url?: string
-  api_backend?: GrokProtocol | string
-  context_window?: number
-  max_output_tokens?: number
-  reasoning?: boolean | null
-  backend_search?: boolean | null
-  stream_tool_calls?: boolean | null
-  supported_in_api?: boolean | null
-  hidden?: boolean | null
-  first_seen_at?: ISODateString
-  observed_at?: ISODateString
-}
-
-export interface GrokModelCatalog {
-  snapshot: GrokModelCatalogSnapshot
-  items: GrokModelCatalogItem[]
-}
-
-export interface GrokModelCapability {
-  account_id: number
-  model_id: string
-  origin: string
-  protocol: GrokProtocol | string
-  credential_generation: number
-  status: string
-  http_status?: number
-  provider_code?: string
-  source?: string
-  retry_after_seconds?: number | null
-  observed_at?: ISODateString
-  expires_at?: ISODateString
-  updated_at?: ISODateString
-}
-
-export interface GrokAccountState {
-  account_id: number
-  credential_generation: number
-  identity?: GrokAccountIdentitySummary | null
-  facts: Record<string, GrokAccountFact>
-  catalogs: GrokModelCatalog[]
-  capabilities: GrokModelCapability[]
-}
-
-export interface GrokStateSyncResponse {
-  message: string
-  state: GrokAccountState
-  models: string[]
-  synced_facts?: string[]
-  errors?: Record<string, string>
-}
-
-export interface GrokCapabilityProbeResult {
-  model_id: string
-  protocol: GrokProtocol | string
-  status: string
-  http_status?: number
-  provider_code?: string
-  retry_after_seconds?: number | null
-  observed_at?: ISODateString
-}
-
-export interface GrokCapabilityProbeResponse {
-  message: string
-  state: GrokAccountState
-  results: GrokCapabilityProbeResult[]
-}
-
-// Grok Device Code OAuth（与 CLIProxyAPI / Grok CLI 一致）。
-export interface GrokDeviceStartRequest {
-  proxy_url?: string
-  name?: string
-  base_url?: string
-  models?: string[]
-}
-
-export interface GrokDeviceStartResponse {
-  session_id: string
-  user_code: string
-  verification_uri?: string
-  verification_uri_complete?: string
-  verification_url: string
-  expires_in: number
-  interval: number
-}
-
-export interface GrokDevicePollRequest {
-  session_id: string
-  proxy_url?: string
-  name?: string
-}
-
-export interface GrokDevicePollResponse {
-  status: 'pending' | 'authorized' | string
-  slow_down?: boolean
-  interval?: number
-  user_code?: string
-  expires_at?: string
-  message?: string
-  id?: number
-  email?: string
-}
-
-// Grok Web SSO 批量导入：用 sso token 自动换成 Build(OAuth) 账号。
-export interface GrokSSOImportRequest {
-  tokens: string
-  base_url?: string
-  models?: string[]
-  proxy_url?: string
-  /** 添加/导入时直接绑定的账号分组；命中已存在账号时不改其分组。 */
-  group_ids?: number[]
-}
-
-export interface GrokSSOImportItem {
-  name?: string
-  email?: string
-  id?: number
-  ok: boolean
-  error?: string
-  // 命中既有凭据身份时后端合并凭据而非新建：updated=已更新，revived=回收站账号已复活。
-  updated?: boolean
-  revived?: boolean
-}
-
-export interface GrokSSOImportResponse {
-  total: number
-  imported: number
-  failed: number
-  items: GrokSSOImportItem[]
-}
-
-// Grok 凭据文件批量导入（CPA.json / auth.json）：每项是一个文件的原始 JSON 内容。
-export interface GrokBatchImportRequest {
-  files: string[]
-  base_url?: string
-  models?: string[]
-  proxy_url?: string
-  /** 采用文件内携带的代理，并把它们注册进代理池。 */
-  import_proxy?: boolean
-  /** 添加/导入时直接绑定的账号分组；命中已存在账号时不改其分组。 */
-  group_ids?: number[]
-}
-
-// 结果结构与 SSO 导入一致，复用 GrokSSOImportItem。
-export interface GrokBatchImportResponse {
-  total: number
-  imported: number
-  failed: number
-  items: GrokSSOImportItem[]
-  /** 以下三项仅在 import_proxy=true 时返回。 */
-  proxies_imported?: number
-  proxies_skipped?: number
-  proxy_warning?: string
-}
-
 export interface UpdateAccountSchedulerRequest {
   upstream_request_id_header?: string | null
   score_bias_override?: number | null
@@ -1620,10 +750,6 @@ export interface UpdateAccountSchedulerRequest {
   scheduler_priority?: number | null
   custom_headers?: Record<string, string> | null
   codex_fingerprint_mode?: CodexFingerprintMode | null
-  claude_fingerprint_mode?: 'preserve' | 'force' | '' | null
-  claude_client_platform?: 'any' | 'claude_code_cli_only' | null
-  claude_version_policy?: 'passthrough' | 'fixed' | 'minimum' | null
-  claude_client_version?: string | null
   timezone?: string | null
   account_href?: string | null
 }
@@ -2159,13 +1285,6 @@ export interface PromptFilterPatternQuarantine {
   message: string
 }
 
-/** Antigravity OAuth client 条目：GET 视图带 has_secret 不含 client_secret；PUT 提交带 client_secret（留空 = 沿用已保存值）。 */
-export interface AntigravityOAuthClientSetting {
-  key: string
-  client_id: string
-  has_secret?: boolean
-  client_secret?: string
-}
 
 /** Codex 渠道当前由谁承担出站:resin 为整层覆盖,proxy_chain 表示按 账号 > 分组 > 代理池 > 全局 > 直连 解析。 */
 export interface CodexEgressSummary {
@@ -2250,37 +1369,6 @@ export interface SystemSettings {
   session_affinity_spread?: boolean
   session_slot_buffer_enabled: boolean
   session_slot_buffer_seconds: number
-  grok_affinity_mode?: string
-  grok_probe_enabled?: boolean
-  grok_probe_interval_minutes?: number
-  grok_max_rate_limit_retries?: number
-  grok_follow_up_effort_enabled?: boolean
-  grok_follow_up_tool_effort?: string
-  grok_follow_up_small_effort?: string
-  grok_quality_guard_enabled?: boolean
-  grok_quality_guard_max_attempts?: number
-  grok_quality_guard_hold_timeout_sec?: number
-  grok_quality_guard_on_exhausted?: string
-  grok_quality_guard_account_cooldown_hours?: number
-  grok_oauth_client_id?: string
-  /** 环境变量 GROK_OAUTH_CLIENT_ID 是否正压着上面的设置（只读，后端下发）。 */
-  grok_oauth_client_id_env_override?: boolean
-  /** 实际生效的 client_id（只读，后端下发）。 */
-  grok_oauth_client_id_effective?: string
-  /** 系统设置里的 Antigravity OAuth client 列表；GET 不回显 client_secret（has_secret 标记），PUT 时 client_secret 留空表示沿用已保存值。 */
-  antigravity_oauth_clients?: AntigravityOAuthClientSetting[]
-  /** 系统设置里指定的活跃 client key（空 = 用第一个）。 */
-  antigravity_oauth_client_key?: string
-  /** 环境变量 ANTIGRAVITY_OAUTH_CLIENTS 注入的条目（只读，同 key 冲突时以环境变量为准）。 */
-  antigravity_oauth_env_clients?: AntigravityOAuthClientSetting[]
-  /** 环境变量 ANTIGRAVITY_OAUTH_CLIENT_KEY 是否正压着活跃 key 设置（只读）。 */
-  antigravity_oauth_client_key_env_override?: boolean
-  /** 实际生效的活跃 client key（只读，后端下发）。 */
-  antigravity_oauth_active_key_effective?: string
-  /** 未配置环境变量/系统设置时，当前使用内置官方 Desktop client。 */
-  antigravity_oauth_using_builtin?: boolean
-  /** 内置官方 client 的公开视图（不含 secret）。 */
-  antigravity_oauth_builtin_client?: AntigravityOAuthClientSetting
   max_retries: number
   max_rate_limit_retries: number
   retry_interval_ms: number
@@ -3385,12 +2473,6 @@ export interface ModelInfo {
 
 export interface ModelsResponse {
   models: string[]
-  // Antigravity 渠道账号模型并集/默认集
-  antigravity_models?: string[]
-  // Grok 渠道账号声明模型的并集;渠道选 grok 时模型下拉用这份
-  grok_models?: string[]
-  // Claude 渠道账号声明模型的并集;渠道选 claude 时模型下拉用这份
-  claude_models?: string[]
   items?: ModelInfo[]
   last_synced_at?: string
   source_url: string
@@ -3398,7 +2480,7 @@ export interface ModelsResponse {
 }
 
 export interface ChannelModelRefreshResult {
-  channel: 'codex' | 'claude' | 'grok' | 'antigravity' | string
+  channel: 'codex' | string
   groups?: number
   refreshed: number
   failed: number
@@ -3594,11 +2676,9 @@ export interface APIKeyAccountStatsResponse {
   membership_basis: 'current_and_deleted_last_membership'
 }
 
-export type UserBillingMode = 'token' | 'per_image' | 'per_video' | 'per_second'
+export type UserBillingMode = 'token' | 'per_image'
 
 export interface UsageLog {
-  /** Generated video duration (seconds) on Grok video settlement rows. */
-  video_seconds?: number
   user_billing_mode?: '' | UserBillingMode
   /** Unit price for unit billing modes (per image / video / second). */
   image_unit_price?: number
@@ -3614,7 +2694,7 @@ export interface UsageLog {
   upstream_turn_state?: string
   id: number
   account_id: number
-  // 上游渠道(codex/grok),写入时固化;历史行回填,可能为空
+  // 上游渠道(codex),写入时固化;历史行回填,可能为空
   channel?: string
   client_ip: string
   client_user_agent: string
@@ -3743,8 +2823,6 @@ export interface ChartAggregation {
 export interface ModelPricingOverride {
   user_billing_mode?: UserBillingMode
   image_unit_price?: number
-  /** Upstream cost per media unit (USD / image or USD / second) for Grok Imagine models. */
-  media_unit_cost?: number
   image_input?: number
   cached_image_input?: number
   source?: string
@@ -3769,8 +2847,6 @@ export interface OfficialPricingSyncConfig {
 	enabled: boolean
 	interval_minutes: number
 	include_openai: boolean
-	include_grok: boolean
-	include_claude: boolean
 	last_attempt_at?: string
 	last_success_at?: string
 	last_error?: string
@@ -4415,32 +3491,6 @@ export interface CodexUserAgentPreview {
 export interface ObservedInstructionsResponse {
   samples: ObservedInstructionsSample[]
 }
-
-// ClaudeGlobalConfig 是系统设置里的 ClaudeCode 全局配置(全体 Claude 账号默认遵守)。
-export interface ClaudeGlobalConfig {
-  fingerprint_mode: 'preserve' | 'force' | ''
-  client_platform: 'any' | 'claude_code_cli_only'
-  version_policy: 'passthrough' | 'fixed' | 'minimum'
-  client_version: string
-  default_timezone: string
-  session_window_limit: number
-  cli_version_sync_enabled: boolean
-  cli_version_sync_interval_hours: number
-  first_token_timeout_seconds: number
-  stream_keepalive_enabled: boolean
-  synced_cli_version?: string
-  builtin_cli_version?: string
-  effective_cli_version?: string
-  allow_service_tier: boolean
-  allow_inference_geo: boolean
-  allow_speed: boolean
-  allow_safety_identifier: boolean
-  allowed_beta_headers: string[]
-  max_output_tokens: number
-  max_tool_count: number
-  max_tool_schema_bytes: number
-}
-
 
 export interface ScheduledConnectionTestConfig {
   enabled: boolean

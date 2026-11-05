@@ -110,14 +110,6 @@ func TestApplyCodexTimezoneToBody_NoOpCases(t *testing.T) {
 	}
 }
 
-func TestApplyCodexTimezoneToBody_RelayAccountsIgnored(t *testing.T) {
-	acc := &auth.Account{DBID: 7, UpstreamType: auth.UpstreamOpenAIResponses, BaseURL: "https://relay.example", APIKey: "k", Timezone: "America/New_York"}
-	body := envContextBody(envContextText)
-	if got := ApplyCodexTimezoneToBody(body, acc, envContextNow); string(got) != string(body) {
-		t.Fatalf("relay-style account must not rewrite: %s", got)
-	}
-}
-
 func TestApplyCodexTimezoneToBody_StringContent(t *testing.T) {
 	body := []byte(`{"input":[{"type":"message","role":"user","content":` + quoteJSON(envContextText) + `}]}`)
 	got := ApplyCodexTimezoneToBody(body, codexTimezoneTestAccount("Europe/London"), envContextNow)

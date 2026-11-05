@@ -5,11 +5,8 @@ import (
 	"errors"
 	"fmt"
 	"hash/fnv"
-	"net/http"
 	"strings"
 	"unicode"
-
-	"github.com/codex2api/auth"
 )
 
 // ==================== 动态 User-Agent 生成 ====================
@@ -139,36 +136,6 @@ func effectiveLatestCodexCLIVersion() string {
 
 func MinimalCodexCLIUserAgentForHeaders() string {
 	return replaceCodexUserAgentVersion(defaultCodexCLIUserAgent, effectiveLatestCodexCLIVersion())
-}
-
-// ApplyCodexModelDiscoveryHeaders applies the identity headers used by Codex
-// when it discovers models. Some Responses gateways apply their official
-// client policy to GET /v1/models before any request body exists, so the
-// installation ID cannot rely on client_metadata from /v1/responses.
-//
-// account 可为空；身份解析和账号覆盖规则与对话请求保持一致。
-func ApplyCodexModelDiscoveryHeaders(headers http.Header, account *auth.Account, baseURL, apiKey string) error {
-	if headers == nil {
-		return nil
-	}
-	identity, err := ResolveCodexMaintenanceIdentity(account, nil)
-	if err != nil {
-		return err
-	}
-	identity.Apply(headers)
-	if identity.Version != "" {
-		headers.Set("Version", identity.Version)
-		headers.Set("x-codex-app-version", identity.Version)
-	}
-	headers.Set(codexInstallationIDHeader, codexRelayInstallationID(baseURL, apiKey))
-	return nil
-}
-
-// codexRelayInstallationID 为中转对话和模型发现提供同源的设备标识。
-// 真实客户端的 installation id 是 UUIDv4，与 deriveStableCodexUUID 一致。
-func codexRelayInstallationID(baseURL, apiKey string) string {
-	baseURL = strings.ToLower(strings.TrimRight(strings.TrimSpace(baseURL), "/"))
-	return deriveStableCodexUUID("codex2api:openai-responses-installation:v1:" + baseURL + "|" + strings.TrimSpace(apiKey))
 }
 
 func DefaultCodexUserAgentConfigJSON() string {

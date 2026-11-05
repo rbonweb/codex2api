@@ -4,7 +4,6 @@ import (
 	"errors"
 	"strings"
 
-	"github.com/codex2api/auth"
 	"github.com/codex2api/security/outputguard"
 )
 
@@ -25,47 +24,19 @@ func nativeGuardCoreConfig() outputguard.Config {
 	}
 }
 
-// selectNativeProjector 为原生/中转通道选择真实 upstream projector。
-// 严禁按客户端下游请求路径盲目推测上游协议：原生 Claude 永远是 Anthropic SSE，
-// Codex/Responses 中转永远是 Responses SSE，其余按上游协议名分派。
-func selectNativeProjector(protocol string, isNativeClaude bool, isCodexResponses bool) ProtocolProjector {
-	return selectNativeProjectorWithScope(protocol, isNativeClaude, isCodexResponses, "")
-}
-
-// selectNativeProjectorWithScope 为指定 attempt 作用域选择投影器，
-// 确保不同 attempt 内同名 block / part 的通道身份物理隔离。
-func selectNativeProjectorWithScope(protocol string, isNativeClaude bool, isCodexResponses bool, scope string) ProtocolProjector {
-	if isNativeClaude {
-		return NewAnthropicProjectorWithScope(scope)
-	}
+// selectNativeProjector 为上游通道选择真实 upstream projector。
+// 严禁按客户端下游请求路径盲目推测上游协议：Codex/Responses 永远是 Responses SSE，其余按上游协议名分派。
+func selectNativeProjector(protocol string, isCodexResponses bool) ProtocolProjector {
 	if isCodexResponses {
 		return NewResponsesProjector()
 	}
 	norm := strings.ToLower(strings.TrimSpace(protocol))
 	switch norm {
-	case "anthropic", "messages":
-		return NewAnthropicProjectorWithScope(scope)
-	case "gemini":
-		return NewGeminiProjectorWithScopeAndMode(scope, GeminiProjectorModeAuto)
 	case "chat", "chat_completions", "chatcompletions":
 		return NewChatProjector()
 	case "responses":
 		return NewResponsesProjector()
 	default:
 		return NewChatProjector()
-	}
-}
-
-// grokProtocolGuardName 把上游 Grok 协议映射为 04a 终止原语使用的下游协议枚举
-// （严格小写："anthropic"、"chat"、"responses"）。ChatCompletions 不能直接写成
-// "chat_completions"，否则 04a 会退化到通用 envelope。
-func grokProtocolGuardName(protocol GrokProtocol) string {
-	switch auth.NormalizeGrokProtocol(string(protocol)) {
-	case auth.GrokProtocolMessages:
-		return "anthropic"
-	case auth.GrokProtocolChatCompletions:
-		return "chat"
-	default:
-		return "responses"
 	}
 }

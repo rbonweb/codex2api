@@ -37,7 +37,7 @@ func readResponsesWSTerminalEvent(t *testing.T, conn *websocket.Conn) []byte {
 	return nil
 }
 
-func newUsageLimitedRelayStore(upstreamURL string) (*auth.Store, *auth.Account) {
+func newUsageLimitedCodexStore() (*auth.Store, *auth.Account) {
 	store := auth.NewStore(nil, nil, &database.SystemSettings{
 		MaxConcurrency:         2,
 		MaxRetries:             0,
@@ -46,10 +46,8 @@ func newUsageLimitedRelayStore(upstreamURL string) (*auth.Store, *auth.Account) 
 	})
 	account := &auth.Account{
 		DBID:                1,
-		UpstreamType:        auth.UpstreamOpenAIResponses,
-		BaseURL:             upstreamURL,
-		APIKey:              "relay-token",
-		Models:              []string{"gpt-5.5"},
+		AccessToken:         "limited-token",
+		AccountID:           "limited",
 		PlanType:            "plus",
 		UsagePercent5h:      100,
 		UsagePercent5hValid: true,
@@ -62,8 +60,8 @@ func newUsageLimitedRelayStore(upstreamURL string) (*auth.Store, *auth.Account) 
 func TestResponsesTurnStateAllowsOnlyBoundTurnPastWHAMLimit(t *testing.T) {
 	gin.SetMode(gin.TestMode)
 	var seenBody []byte
-	upstream := newContinuationRelayUpstream(t, false, &seenBody)
-	store, account := newUsageLimitedRelayStore(upstream.URL)
+	newContinuationCodexUpstream(t, false, &seenBody)
+	store, account := newUsageLimitedCodexStore()
 	handler := NewHandler(store, nil, nil, nil)
 	body := []byte(`{"model":"gpt-5.5","input":[{"role":"user","content":"continue"}],"stream":true}`)
 
@@ -102,29 +100,23 @@ func TestResponsesTurnStateExpiredBindingUsesBaselineSchedulerWhenContinuousRetr
 	ApplyRuntimeSettings(nextRuntime)
 	t.Cleanup(func() { ApplyRuntimeSettings(previousRuntime) })
 
-	newUpstream := func(hits *atomic.Int64) *httptest.Server {
-		server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
-			hits.Add(1)
-			w.Header().Set("Content-Type", "text/event-stream")
-			_, _ = io.WriteString(w, "data: "+`{"type":"response.completed","response":{"id":"resp_done","output":[],"usage":{"input_tokens":1,"output_tokens":1,"total_tokens":2}}}`+"\n\n")
-		}))
-		t.Cleanup(server.Close)
-		return server
-	}
-
 	var boundHits, fallbackHits atomic.Int64
-	boundUpstream := newUpstream(&boundHits)
-	fallbackUpstream := newUpstream(&fallbackHits)
+	upstream := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		switch r.Header.Get("Authorization") {
+		case "Bearer bound-token":
+			boundHits.Add(1)
+		case "Bearer fallback-token":
+			fallbackHits.Add(1)
+		}
+		w.Header().Set("Content-Type", "text/event-stream")
+		_, _ = io.WriteString(w, "data: "+`{"type":"response.completed","response":{"id":"resp_done","output":[],"usage":{"input_tokens":1,"output_tokens":1,"total_tokens":2}}}`+"\n\n")
+	}))
+	t.Cleanup(upstream.Close)
+	codexRestoredUseResin(t, upstream.URL)
 	store := auth.NewStore(nil, nil, &database.SystemSettings{MaxConcurrency: 2, MaxRetries: 0, MaxRateLimitRetries: 0})
 	t.Cleanup(store.Stop)
-	bound := &auth.Account{
-		DBID: 1, UpstreamType: auth.UpstreamOpenAIResponses, BaseURL: boundUpstream.URL,
-		APIKey: "bound-token", Models: []string{"gpt-5.5"}, PlanType: "api",
-	}
-	fallback := &auth.Account{
-		DBID: 2, UpstreamType: auth.UpstreamOpenAIResponses, BaseURL: fallbackUpstream.URL,
-		APIKey: "fallback-token", Models: []string{"gpt-5.5"}, PlanType: "api",
-	}
+	bound := &auth.Account{DBID: 1, AccessToken: "bound-token", AccountID: "bound", PlanType: "plus"}
+	fallback := &auth.Account{DBID: 2, AccessToken: "fallback-token", AccountID: "fallback", PlanType: "plus"}
 	fallback.SetSchedulerPriority(20)
 	store.AddAccount(bound)
 	store.AddAccount(fallback)
@@ -159,15 +151,14 @@ func TestResponsesTurnStateReroutesFullContextAfterAuthoritativeLimit(t *testing
 		_, _ = io.WriteString(w, "data: "+`{"type":"response.completed","response":{"id":"resp_rerouted","output":[]}}`+"\n\n")
 	}))
 	t.Cleanup(upstream.Close)
+	codexRestoredUseResin(t, upstream.URL)
 
-	store, limited := newUsageLimitedRelayStore(upstream.URL)
+	store, limited := newUsageLimitedCodexStore()
 	store.AddAccount(&auth.Account{
-		DBID:         2,
-		UpstreamType: auth.UpstreamOpenAIResponses,
-		BaseURL:      upstream.URL,
-		APIKey:       "healthy-token",
-		Models:       []string{"gpt-5.5"},
-		PlanType:     "api",
+		DBID:        2,
+		AccessToken: "healthy-token",
+		AccountID:   "healthy",
+		PlanType:    "plus",
 	})
 	store.BindSessionAffinity("limited-turn", limited, "")
 	store.MarkResponsesPremium5hRateLimited(limited, time.Now().Add(time.Hour))
@@ -198,6 +189,7 @@ func TestResponsesReconcilesEndpointEnabledDirectlyInDatabase(t *testing.T) {
 		_, _ = io.WriteString(w, "data: "+`{"type":"response.completed","response":{"id":"resp_reconciled","output":[],"usage":{"input_tokens":1,"output_tokens":1,"total_tokens":2}}}`+"\n\n")
 	}))
 	t.Cleanup(upstream.Close)
+	codexRestoredUseResin(t, upstream.URL)
 
 	db, err := database.New("sqlite", filepath.Join(t.TempDir(), "responses-reconcile.db"))
 	if err != nil {
@@ -205,24 +197,26 @@ func TestResponsesReconcilesEndpointEnabledDirectlyInDatabase(t *testing.T) {
 	}
 	t.Cleanup(func() { _ = db.Close() })
 	ctx := context.Background()
-	insertDisabled := func(name, baseURL string) int64 {
+	insertDisabled := func(name string) int64 {
 		t.Helper()
-		id, err := db.InsertOpenAIResponsesAccount(ctx, name, map[string]interface{}{
-			"upstream_type": auth.UpstreamOpenAIResponses,
-			"base_url":      baseURL,
-			"api_key":       "sk-test",
-			"models":        []string{"gpt-5.5"},
-		}, "")
+		id, err := db.InsertAccount(ctx, name, "refresh-"+name, "")
 		if err != nil {
-			t.Fatalf("InsertOpenAIResponsesAccount(%s): %v", name, err)
+			t.Fatalf("InsertAccount(%s): %v", name, err)
+		}
+		if err := db.UpdateCredentials(ctx, id, map[string]interface{}{
+			"access_token": "at-" + name,
+			"expires_at":   time.Now().Add(time.Hour).Format(time.RFC3339),
+			"plan_type":    "plus",
+		}); err != nil {
+			t.Fatalf("UpdateCredentials(%s): %v", name, err)
 		}
 		if err := db.SetAccountEnabled(ctx, id, false); err != nil {
 			t.Fatalf("SetAccountEnabled(%d, false): %v", id, err)
 		}
 		return id
 	}
-	insertDisabled("still-disabled", "https://disabled.example")
-	healthyID := insertDisabled("newly-enabled", upstream.URL)
+	insertDisabled("still-disabled")
+	healthyID := insertDisabled("newly-enabled")
 
 	store := auth.NewStore(db, nil, &database.SystemSettings{
 		MaxConcurrency:       1,
@@ -254,11 +248,12 @@ func TestResponsesCopiesCodexTurnStateResponseHeader(t *testing.T) {
 		hits.Add(1)
 		w.Header().Set(codexTurnStateHeader, "turn-state-upstream")
 		w.Header().Set("Content-Type", "text/event-stream")
-		_, _ = io.WriteString(w, "data: "+`{"type":"response.completed","response":{"id":"resp_relay","output":[],"usage":{"input_tokens":1,"output_tokens":1,"total_tokens":2}}}`+"\n\n")
+		_, _ = io.WriteString(w, "data: "+`{"type":"response.completed","response":{"id":"resp_codex","output":[],"usage":{"input_tokens":1,"output_tokens":1,"total_tokens":2}}}`+"\n\n")
 	}))
 	t.Cleanup(upstream.Close)
+	codexRestoredUseResin(t, upstream.URL)
 
-	store := newContinuationRelayStore(upstream.URL)
+	store := newContinuationCodexStore()
 	handler := NewHandler(store, nil, nil, nil)
 	recorder := invokeResponsesHandler(t, handler.Responses, []byte(`{"model":"gpt-5.5","input":"hello","stream":true}`))
 	if recorder.Code != http.StatusOK {

@@ -8,14 +8,13 @@ import (
 	"strings"
 	"time"
 
-	"github.com/codex2api/auth"
 	"github.com/codex2api/database"
 	"github.com/codex2api/security"
 	"github.com/gin-gonic/gin"
 )
 
 // autoBalanceProxiesReq 是代理均衡绑定的请求体。
-//   - Channel: grok/codex/claude/空(全部 OAuth)。同一出口上的 OAuth 账号过多时,
+//   - Channel: codex/空(全部 OAuth)。同一出口上的 OAuth 账号过多时,
 //     均衡绑定把账号摊开,降低上游按出口聚合限流的概率。
 //   - Mode: unbound(默认,只分配未绑定账号) / all(全量重排,但尽量保留现有绑定以减少换 IP)。
 //   - MaxPerProxy: 每条代理的账号数上限,0 表示不限。
@@ -40,7 +39,7 @@ type balanceAccount struct {
 }
 
 // isOAuthProxyBalanceTarget 只允许真正可刷新的 OAuth 账号参与自动均衡。
-// API Key、中转 API、AT-only、Session Token 与 Agent Identity 账号都不应被
+// API Key、AT-only、Session Token 与 Agent Identity 账号都不应被
 // 自动改变出口；它们已有的手工绑定仍会作为 baseline 负载参与容量计算。
 func isOAuthProxyBalanceTarget(row *database.AccountRow) bool {
 	if row == nil || strings.TrimSpace(row.GetCredential("refresh_token")) == "" {
@@ -54,8 +53,6 @@ func isOAuthProxyBalanceTarget(row *database.AccountRow) bool {
 	switch upstreamType {
 	case "":
 		return strings.EqualFold(strings.TrimSpace(row.Type), "oauth")
-	case auth.UpstreamGrok, auth.UpstreamAntigravity, auth.UpstreamClaude:
-		return true
 	default:
 		return false
 	}
@@ -91,7 +88,7 @@ type balanceResult struct {
 //
 // 分配原则:
 //  1. 稳定优先:账号当前绑定仍在候选池且未超上限的保持不动
-//     (Grok 风控对换 IP 敏感,重排只动必须动的账号);
+//     (上游对换 IP 敏感,重排只动必须动的账号);
 //  2. 其余账号按账号 ID 升序,逐个放进当前负载最低的代理;
 //     并列取 URL 字典序,保证结果确定可复现;
 //  3. baseline 是各代理上不参与本次分配的既有绑定数(含其它渠道账号),
@@ -178,8 +175,8 @@ func (h *Handler) AutoBalanceProxies(c *gin.Context) {
 		return
 	}
 	channel := strings.ToLower(strings.TrimSpace(req.Channel))
-	if channel != "" && channel != database.UpstreamChannelGrok && channel != database.UpstreamChannelCodex && channel != database.UpstreamChannelAntigravity && channel != database.UpstreamChannelClaude {
-		writeError(c, http.StatusBadRequest, "channel 仅支持 grok / codex / antigravity / claude / 空")
+	if channel != "" && channel != database.UpstreamChannelCodex {
+		writeError(c, http.StatusBadRequest, "channel 仅支持 codex / 空")
 		return
 	}
 	if req.MaxPerProxy < 0 {

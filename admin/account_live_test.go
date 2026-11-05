@@ -128,7 +128,7 @@ func TestGetAccountLiveStateReturnsRuntimeUsage(t *testing.T) {
 	}
 }
 
-func TestGetAccountLiveStateSerializesNullWindowsAndSkipsAntigravityFields(t *testing.T) {
+func TestGetAccountLiveStateSerializesNullWindows(t *testing.T) {
 	gin.SetMode(gin.TestMode)
 	store := auth.NewStore(nil, nil, nil)
 	codex := &auth.Account{
@@ -137,19 +137,13 @@ func TestGetAccountLiveStateSerializesNullWindowsAndSkipsAntigravityFields(t *te
 		Status:      auth.StatusReady,
 		HealthTier:  auth.HealthTierHealthy,
 	}
-	antigravity := &auth.Account{
-		DBID:         12,
-		AccessToken:  "token",
-		UpstreamType: auth.UpstreamAntigravity,
-	}
 	store.AddAccount(codex)
-	store.AddAccount(antigravity)
 	codex.MarkUsageFrameObserved("codex.rate_limits", time.Now())
 	handler := &Handler{store: store}
 
 	recorder := httptest.NewRecorder()
 	ctx, _ := gin.CreateTestContext(recorder)
-	ctx.Request = httptest.NewRequest(http.MethodGet, "/api/admin/accounts/live?ids=11,12", nil)
+	ctx.Request = httptest.NewRequest(http.MethodGet, "/api/admin/accounts/live?ids=11", nil)
 	handler.GetAccountLiveState(ctx)
 
 	if recorder.Code != http.StatusOK {
@@ -173,14 +167,5 @@ func TestGetAccountLiveStateSerializesNullWindowsAndSkipsAntigravityFields(t *te
 	}
 	if got := string(codexItem["codex_usage_frame_at"]); got == "" || got == "null" {
 		t.Fatalf("codex frame time missing: %s", got)
-	}
-	antigravityItem := raw.Accounts["12"]
-	for _, key := range []string{"status", "using_credits", "plan_type", "credits_valid", "credits_balance", "codex_usage_frame_at", "codex_usage_frame_kind"} {
-		if value, ok := antigravityItem[key]; ok {
-			t.Fatalf("antigravity item unexpectedly carries %s=%s", key, value)
-		}
-	}
-	if got := string(antigravityItem["usage_percent_5h"]); got != "null" {
-		t.Fatalf("antigravity usage_percent_5h = %s, want null", got)
 	}
 }

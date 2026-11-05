@@ -51,7 +51,7 @@ func liteLLMFirstPartyModel(id string, entry liteLLMPricingEntry) string {
 	if json.Unmarshal(entry["litellm_provider"], &provider) != nil {
 		return ""
 	}
-	prefix := map[string]string{"openai": "", "anthropic": "claude-", "xai": "grok-"}
+	prefix := map[string]string{"openai": ""}
 	required, ok := prefix[provider]
 	if !ok {
 		return ""
@@ -89,15 +89,6 @@ func liteLLMPriceToOverride(model string, entry liteLLMPricingEntry) database.Mo
 		price.OutputLongPriority = entry.rate("output_cost_per_token" + threshold.suffix + "_priority")
 		price.LongContextThresholdTokens = threshold.tokens
 		break
-	}
-	switch database.MediaBillingUnit(model) {
-	case database.MediaUnitImage:
-		price.MediaUnitCost = entry.number("output_cost_per_image")
-		if _, exists := entry["output_cost_per_image"]; !exists {
-			price.MediaUnitCost = entry.number("input_cost_per_image")
-		}
-	case database.MediaUnitSecond:
-		price.MediaUnitCost = entry.number("output_cost_per_second")
 	}
 	return price
 }

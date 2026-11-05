@@ -21,7 +21,7 @@ func TestHandlersBoundUpstreamErrorBodies(t *testing.T) {
 		_, _ = io.WriteString(w, `{"error":{"message":"`+strings.Repeat("x", 2*maxUpstreamErrorBodyBytes)+marker+`"}}`)
 	}))
 	defer upstream.Close()
-	store := newOpenAIResponsesRelayStore(upstream.URL)
+	store := newCodexResinStore(t, upstream.URL)
 	defer store.Stop()
 	h := NewHandler(store, nil, nil, nil)
 	for _, path := range []string{"/v1/responses", "/v1/chat/completions", "/v1/responses/compact"} {

@@ -46,7 +46,7 @@ func (h *Handler) GetVisibleChannelsSettings(c *gin.Context) {
 }
 
 // UpdateVisibleChannelsSettings 保存可见渠道；未知渠道被丢弃，兜底渠道自动补回。
-// PUT /api/admin/settings/visible-channels  {"channels":["codex","grok"]}
+// PUT /api/admin/settings/visible-channels  {"channels":["codex"]}
 func (h *Handler) UpdateVisibleChannelsSettings(c *gin.Context) {
 	var req struct {
 		Channels []string `json:"channels"`

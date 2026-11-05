@@ -11,7 +11,7 @@ const TONE_STYLE: Record<CompactStatTone, { chip: string; dot: string }> = {
 
 /**
  * 可点击的账号筛选统计磁贴（数值 + 状态芯片 + 可选明细列），
- * 从 Accounts/GrokAccounts 的两份本地实现合并而来。
+ * 由账号页共用。
  * 标签排版跟随 house 磁贴规格（uppercase tracking-wider 小标签）。
  */
 export function CompactStat({

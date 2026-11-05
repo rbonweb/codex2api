@@ -55,12 +55,7 @@ func isPremium5hPlan(plan string) bool {
 	switch normalized {
 	case "plus", "pro", "team", "k12", "edu", "education", "go":
 		return true
-	case "claude", "max", "max-5x", "max-20x":
-		return true
 	default:
-		if strings.HasPrefix(normalized, "claude-") {
-			return true
-		}
 		return IsPlusOrHigherPlan(plan)
 	}
 }

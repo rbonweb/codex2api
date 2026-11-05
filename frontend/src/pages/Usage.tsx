@@ -1,5 +1,4 @@
 import { ImageBillingCost } from '../components/image-studio/ImageBillingCost'
-import { mediaBillingUnit, type MediaBillingUnit } from '../lib/imageBilling'
 import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState, type ReactNode } from 'react'
 import { useTranslation } from 'react-i18next'
 import { createPortal } from 'react-dom'
@@ -8,7 +7,6 @@ import { api } from '../api'
 import { getTimeRangeISO, type TimeRangeKey } from '../lib/timeRange'
 import PageHeader from '../components/PageHeader'
 import Pagination from '../components/Pagination'
-import ChannelFilter, { useUsageChannel } from '../components/ChannelFilter'
 import ChannelLogo from '../components/ChannelLogo'
 import CompactionBadges from '../components/CompactionBadges'
 import UsageDaybreakBadge from '../components/UsageDaybreakBadge'
@@ -312,7 +310,7 @@ function formatUsageAPIKeyLabel(name?: string, maskedKey?: string): string {
 const usageClickableFilterClass = 'cursor-pointer transition-colors hover:text-primary hover:underline underline-offset-2 decoration-dotted'
 
 function formatUsageAccountLabel(log: UsageLog): string {
-  // 邮箱优先：身份账号一律显示邮箱，账号名仅作为无邮箱账号（如 relay API-key 账号）的兜底。
+  // 邮箱优先：身份账号一律显示邮箱，账号名仅作为无邮箱账号的兜底。
   // 避免 AT 导入未命名时的占位名（at-account-N 等）盖过真实邮箱身份。
   const accountEmail = log.account_email?.trim()
   if (accountEmail) {
@@ -402,10 +400,8 @@ function formatServiceTierLabel(t: ReturnType<typeof useTranslation>['t'], tier?
 
 function UsageCostCell({ log }: { log: UsageLog }) {
   const { t } = useTranslation()
-  const mediaUnit = mediaBillingUnit(log.effective_model || log.model)
   const mode = log.user_billing_mode || ''
-  if (mode === 'per_image' || mode === 'per_video' || mode === 'per_second') return <ImageBillingCost mode={mode} media={mediaUnit !== ''} count={log.billed_image_count} unitPrice={log.image_unit_price} userBilled={log.user_billed} accountBilled={log.account_billed} />
-  if (mediaUnit) return <MediaUsageCost log={log} unit={mediaUnit} />
+  if (mode === 'per_image') return <ImageBillingCost count={log.billed_image_count} unitPrice={log.image_unit_price} userBilled={log.user_billed} accountBilled={log.account_billed} />
   const accountBilled = safeNumber(log.account_billed)
   const userBilled = safeNumber(log.user_billed)
   const totalCost = safeNumber(log.total_cost)
@@ -515,42 +511,6 @@ function UsageCostCell({ log }: { log: UsageLog }) {
               valueClassName="text-orange-300"
             />
           )}
-        </div>
-      </TooltipContent>
-    </Tooltip>
-  )
-}
-
-// MediaUsageCost 是 Grok Imagine 媒体行(用户按上游成本计费)的价格列:展示计费单位
-// (张数 / 视频秒数)与上游成本;视频提交行在完成时才结算,成功但无单价的行标"未定价"。
-function MediaUsageCost({ log, unit }: { log: UsageLog; unit: MediaBillingUnit }) {
-  const { t } = useTranslation()
-  const accountBilled = safeNumber(log.account_billed)
-  const userBilled = safeNumber(log.user_billed)
-  const units = unit === 'second' ? safeNumber(log.video_seconds) : safeNumber(log.image_count)
-  if (log.status_code >= 400) {
-    return <span className={`${usageTableMonoClass} text-muted-foreground/50`}>-</span>
-  }
-  if (unit === 'second' && units <= 0) {
-    return <span className="text-[11px] text-muted-foreground">{t('usage.videoSettlesOnDone')}</span>
-  }
-  if (units > 0 && accountBilled <= 0) {
-    return <span className="inline-flex items-center gap-1 text-[11px] font-medium text-amber-600 dark:text-amber-400" title={t('usage.mediaUnpricedHint')}><AlertTriangle className="size-3.5" />{t('settings.pricing.mediaBilling.unpriced')}</span>
-  }
-  return (
-    <Tooltip>
-      <TooltipTrigger asChild>
-        <button type="button" className="group inline-flex cursor-help items-center gap-1.5 rounded-md px-1.5 py-1 text-left transition-colors hover:bg-muted/60 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring">
-          <span className="text-[13px] font-semibold leading-none tabular-nums text-emerald-600 antialiased dark:text-emerald-400">{formatUSD(userBilled > 0 ? userBilled : accountBilled)}</span>
-          <Info className="size-3.5 shrink-0 text-muted-foreground transition-colors group-hover:text-blue-500" />
-        </button>
-      </TooltipTrigger>
-      <TooltipContent side="right" sideOffset={8} className="w-72 max-w-none whitespace-nowrap rounded-lg border border-slate-700 bg-slate-950 px-3 py-2.5 text-xs text-slate-50 shadow-xl">
-        <div className="space-y-1.5">
-          <div className="mb-1 text-xs font-semibold text-slate-300">{t('usage.costDetails')}</div>
-          <CostTooltipRow label={t('usage.mediaBillingBasis')} value={t(unit === 'second' ? 'usage.mediaUnitsVideo' : 'usage.mediaUnitsImage', { count: units })} />
-          <CostTooltipRow label={t('usage.mediaUpstreamCostLabel')} value={formatUSD(accountBilled)} />
-          {units > 0 && <CostTooltipRow label={t('settings.pricing.mediaBilling.upstreamCost')} value={`${formatUSD(accountBilled / units)}${t(unit === 'second' ? 'settings.pricing.perSecondUnit' : 'settings.pricing.perImageUnit')}`} valueClassName="text-sky-300" />}
         </div>
       </TooltipContent>
     </Tooltip>
@@ -1450,8 +1410,6 @@ export default function Usage() {
   const [showAdvancedFilters, setShowAdvancedFilters] = useState(false)
   const [apiKeys, setAPIKeys] = useState<APIKeyRow[]>([])
   const [modelOptions, setModelOptions] = useState<string[]>([])
-  const [grokModelOptions, setGrokModelOptions] = useState<string[]>([])
-  const [claudeModelOptions, setClaudeModelOptions] = useState<string[]>([])
   const [apiKeyLoadFailed, setAPIKeyLoadFailed] = useState(false)
   const showFastFilter = true
   const pageSizeOptions = DEFAULT_PAGE_SIZE_OPTIONS
@@ -1463,7 +1421,6 @@ export default function Usage() {
     [t],
   )
   const [showAnalysis, setShowAnalysis] = useState(getInitialAnalysisVisibility)
-  const [channel, setChannel] = useUsageChannel()
 
   // 搜索防抖：输入停止 400ms 后触发查询
   const handleSearchChange = useCallback((value: string) => {
@@ -1508,11 +1465,10 @@ export default function Usage() {
       stream: filterType === 'stream' ? 'true' : filterType === 'sync' ? 'false' : undefined,
       compact: filterType === 'compact' ? 'true' : undefined,
       hasCompactionHistory: filterType === 'history' ? 'true' : undefined,
-      channel: channel || undefined,
       retry: filterRetry || undefined,
       viaWebsocket: filterTransport === 'ws' ? 'true' : filterTransport === 'http' ? 'false' : undefined,
     }
-  }, [timeRange, customRange, searchQuery, filterModel, filterEndpoint, filterApiKeyId, filterAccountId, filterFast, filterUltra, filterModelMismatch, filterType, channel, filterRetry, filterTransport])
+  }, [timeRange, customRange, searchQuery, filterModel, filterEndpoint, filterApiKeyId, filterAccountId, filterFast, filterUltra, filterModelMismatch, filterType, filterRetry, filterTransport])
 
   const buildLogFilterParams = useCallback(() => {
     return {
@@ -1627,13 +1583,9 @@ export default function Usage() {
           ? response.items.filter((item) => item.enabled).map((item) => item.id)
           : response.models ?? []
         setModelOptions(models)
-        setGrokModelOptions(response.grok_models ?? [])
-        setClaudeModelOptions(response.claude_models ?? [])
       } catch {
         if (active) {
           setModelOptions([])
-          setGrokModelOptions([])
-          setClaudeModelOptions([])
         }
       }
     }
@@ -1695,29 +1647,21 @@ export default function Usage() {
   const modelStats = stats?.model_stats ?? []
   // 统计现在跟随模型/账号等筛选,选中某个模型后 model_stats 只剩它自己;
   // 下拉选项按渠道累积本会话见过的模型,避免筛选一次就把其它模型从下拉里挤掉。
-  const seenModelsRef = useRef<Record<string, string[]>>({})
+  const seenModelsRef = useRef<string[]>([])
   const seenModels = useMemo(() => {
-    const bucket = seenModelsRef.current[channel] ?? []
-    const merged = [...bucket]
+    const merged = [...seenModelsRef.current]
     for (const item of modelStats) {
       const key = (item.model || '').trim()
       if (key && key !== 'unknown' && !merged.includes(key)) merged.push(key)
     }
-    seenModelsRef.current[channel] = merged
+    seenModelsRef.current = merged
     return merged
-  }, [modelStats, channel])
-  // 下拉选项跟随渠道过滤：codex 只列 Codex manifest 目录，grok 只列 Grok 账号声明模型，
-  // 全部渠道两者都列；再并上当前范围实际用过的模型（统计已按渠道过滤），去重后目录顺序优先。
+  }, [modelStats])
+  // 下拉选项为 Codex manifest 目录，再并上当前范围实际用过的模型（统计已按渠道过滤），去重后目录顺序优先。
   const modelFilterOptions = useMemo(() => {
     const seen = new Set<string>()
     const merged: string[] = []
-    const catalog = channel === 'grok'
-      ? grokModelOptions
-      : channel === 'codex'
-        ? modelOptions
-        : channel === 'claude'
-          ? claudeModelOptions
-          : [...modelOptions, ...grokModelOptions, ...claudeModelOptions]
+    const catalog = modelOptions
     for (const m of catalog) {
       const key = m.trim()
       if (key && !seen.has(key)) { seen.add(key); merged.push(key) }
@@ -1728,7 +1672,7 @@ export default function Usage() {
     // 从表格行点进来的模型可能不在目录里,补进选项让下拉能显示当前选中值。
     if (filterModel && !seen.has(filterModel)) merged.push(filterModel)
     return merged
-  }, [modelOptions, grokModelOptions, claudeModelOptions, seenModels, channel, filterModel])
+  }, [modelOptions, seenModels, filterModel])
   const featureStats = stats?.feature_stats
   const endpointStats = stats?.endpoint_stats ?? []
   const apiKeyStats = stats?.api_key_stats ?? []
@@ -1841,7 +1785,6 @@ export default function Usage() {
           title={t('usage.title')}
           description={t('usage.description')}
           onRefresh={() => { void reload(); void loadLogs(); void loadAPIKeys() }}
-          titleAdornment={<ChannelFilter value={channel} onChange={setChannel} />}
           actions={
             <Button
               variant="outline"
@@ -1854,7 +1797,7 @@ export default function Usage() {
           }
         />
 
-        <div key={channel || 'all'} className="space-y-6 animate-channel-switch-in">
+        <div className="space-y-6 animate-channel-switch-in">
         <div className="relative space-y-6">
         {statsOutdatedFailed && (
           <div role="alert" className="absolute inset-0 z-10 flex items-start justify-center rounded-xl bg-background/85 p-6 backdrop-blur-sm">
@@ -2428,12 +2371,12 @@ export default function Usage() {
                               onClick={() => toggleModelFilter(log.model)}
                               onKeyDown={(e) => { if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); toggleModelFilter(log.model) } }}
                             >
-                              {(log.channel === 'codex' || log.channel === 'grok' || log.channel === 'antigravity' || log.channel === 'claude') && (
+                              {log.channel === 'codex' && (
                                 <ChannelLogo
                                   channel={log.channel}
                                   size={13}
                                   className="mr-1"
-                                  title={log.channel === 'grok' ? 'Grok' : log.channel === 'antigravity' ? 'Antigravity' : log.channel === 'claude' ? 'Claude' : 'Codex'}
+                                  title="Codex"
                                 />
                               )}
                               <span className="min-w-0 break-all text-left">{log.model || '-'}</span>
@@ -2665,12 +2608,12 @@ export default function Usage() {
                               onClick={() => toggleModelFilter(log.model)}
                               onKeyDown={(e) => { if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); toggleModelFilter(log.model) } }}
                             >
-                              {(log.channel === 'codex' || log.channel === 'grok' || log.channel === 'antigravity' || log.channel === 'claude') && (
+                              {log.channel === 'codex' && (
                                 <ChannelLogo
                                   channel={log.channel}
                                   size={13}
                                   className="mr-1"
-                                  title={log.channel === 'grok' ? 'Grok' : log.channel === 'antigravity' ? 'Antigravity' : log.channel === 'claude' ? 'Claude' : 'Codex'}
+                                  title="Codex"
                                 />
                               )}
                               {log.model || '-'}
@@ -2728,7 +2671,7 @@ export default function Usage() {
                         {visibleColumns.endpoint && <TableCell>
                           <div
                             className={`${usageTableMonoClass} leading-relaxed`}
-                            // 中转/Grok 账号的完整上游 URL 收进 tooltip，列内只显示入站端点
+                            // 完整上游 URL 收进 tooltip，列内只显示入站端点
                             title={
                               log.upstream_endpoint && log.upstream_endpoint !== log.inbound_endpoint
                                 ? `→ ${log.upstream_endpoint}`

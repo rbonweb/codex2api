@@ -18,7 +18,6 @@ import {
   Power,
   PowerOff,
   RefreshCw,
-  RadioTower,
   RotateCcw,
   Timer,
   Trash2,
@@ -29,7 +28,6 @@ import { useTranslation } from "react-i18next";
 import type { AccountGroup, AccountHealthBucket, AccountRow } from "../types";
 import AccountHealthBar from "./AccountHealthBar";
 import ChannelLogo from "./ChannelLogo";
-import ModelLogo from "./ModelLogo";
 import StatusBadge from "./StatusBadge";
 import RequestCountPills from "./RequestCountPills";
 import { Button } from "@/components/ui/button";
@@ -191,7 +189,6 @@ export interface AccountDetailSheetProps {
   intelligenceError?: boolean;
   sequence?: number;
   usageSlot?: ReactNode;
-  providerSlot?: ReactNode;
   canGoPrev?: boolean;
   canGoNext?: boolean;
   refreshing?: boolean;
@@ -200,7 +197,6 @@ export interface AccountDetailSheetProps {
   onPrev?: () => void;
   onNext?: () => void;
   onQuickConfig?: () => void;
-  onChannelMonitor?: () => void;
   onEdit: () => void;
   onUsage: () => void;
   onTest: () => void;
@@ -228,7 +224,6 @@ export default function AccountDetailSheet({
   intelligenceError,
   sequence,
   usageSlot,
-  providerSlot,
   canGoPrev = false,
   canGoNext = false,
   refreshing = false,
@@ -237,7 +232,6 @@ export default function AccountDetailSheet({
   onPrev,
   onNext,
   onQuickConfig,
-  onChannelMonitor,
   onEdit,
   onUsage,
   onTest,
@@ -289,34 +283,17 @@ export default function AccountDetailSheet({
   }, [open, canGoPrev, canGoNext, onPrev, onNext]);
 
   const displayName = account
-    ? account.openai_responses_api
-      ? account.name || account.email || `#${account.id}`
-      : account.email || account.name || `#${account.id}`
+    ? account.email || account.name || `#${account.id}`
     : "";
   // 标题退化成 "#12" 这种 id 兜底时没有复制价值（旁边就有 ID 徽章），不显示按钮。
   const copyableName = Boolean(
     account && displayName && displayName !== `#${account.id}`,
   );
   const rateWindow = account ? getRateLimitWindow(account) : null;
-  const isGrok = Boolean(account?.grok_api);
-  const isClaude = Boolean(account?.claude_api);
-  const isAntigravity = Boolean(account?.antigravity_api);
-  // Grok API Key 无 refresh_token；Codex AT-only / Responses 也不走 AT 刷新。
-  const refreshDisabled = Boolean(
-    account &&
-      (refreshing ||
-        account.at_only ||
-        account.openai_responses_api ||
-        (isGrok && account.grok_auth_kind !== "oauth") ||
-        (isAntigravity && account.antigravity_auth_kind === "api_key")),
-  );
-  // 凭据导出由各 provider 自己决定格式；Claude 使用专用安全导出端点，
-  // Grok OAuth 由其页面生成 Grok CLI 格式（API Key 账号没有 CLI 登录态）。
-  const showAuthJson = Boolean(account && (!isGrok || account.grok_auth_kind === "oauth"));
-  const showResetCredits = Boolean(account && !isGrok && !isClaude && !isAntigravity);
+  // Codex AT-only 账号不走 AT 刷新。
+  const refreshDisabled = Boolean(account && (refreshing || account.at_only));
   const authJsonDisabled = Boolean(
-    account &&
-      (authJsonExporting || (!isClaude && (account.at_only || account.openai_responses_api))),
+    account && (authJsonExporting || account.at_only),
   );
   const resetCredits = account?.rate_limit_reset_credits ?? 0;
   const healthLabel = (() => {
@@ -361,17 +338,7 @@ export default function AccountDetailSheet({
             <div className="flex items-start justify-between gap-3 pr-2">
               <div className="flex min-w-0 flex-1 items-start gap-3">
                 <span className="mt-0.5 flex size-10 shrink-0 items-center justify-center overflow-hidden rounded-xl bg-card ring-1 ring-border shadow-sm">
-                  {account.claude_api ? (
-                    <ChannelLogo channel="claude" size={22} />
-                  ) : account.antigravity_api ? (
-                    <ChannelLogo channel="antigravity" size={22} />
-                  ) : account.grok_api ? (
-                    <ChannelLogo channel="grok" size={22} />
-                  ) : account.openai_responses_api ? (
-                    <ModelLogo model="openai" variant="plain" size={22} />
-                  ) : (
-                    <ChannelLogo channel="codex" size={40} className="rounded-xl" />
-                  )}
+                  <ChannelLogo channel="codex" size={40} className="rounded-xl" />
                 </span>
                 <div className="min-w-0 flex-1">
                 <div className="mb-1.5 flex flex-wrap items-center gap-1.5">
@@ -424,10 +391,6 @@ export default function AccountDetailSheet({
                       </SheetDescription>
                     ) : null}
                   </div>
-                ) : (isGrok || isAntigravity) && account.email && account.name && account.email !== account.name ? (
-                  <SheetDescription className="mt-1 break-all text-[12px]">
-                    {account.email}
-                  </SheetDescription>
                 ) : (
                   <SheetDescription className="mt-1">
                     {t("accounts.detailSubtitle")}
@@ -540,9 +503,7 @@ export default function AccountDetailSheet({
               </div>
             </Section>
 
-            {providerSlot}
-
-            {!isGrok ? <Section
+            <Section
               title={t("accounts.modelCooldownPolicy")}
               action={
                 (account.model_cooldowns?.length ?? 0) > 0 ? (
@@ -672,7 +633,7 @@ export default function AccountDetailSheet({
                   </div>
                 ) : null}
               </div>
-            </Section> : null}
+            </Section>
 
             <Section
               title={t("accounts.usage")}
@@ -789,13 +750,7 @@ export default function AccountDetailSheet({
 
             {(account.proxy_url ||
               account.at_only ||
-              account.openai_responses_api ||
-              account.grok_api ||
-              account.claude_api ||
-              account.antigravity_api ||
-              account.base_url ||
-              (!account.openai_responses_api &&
-                (account.models?.length ?? 0) > 0)) && (
+              (account.models?.length ?? 0) > 0) && (
               <Section title={t("accounts.detailTechnical")}>
                 <div className="space-y-2 rounded-xl border border-border bg-card p-3 text-[12px]">
                   {account.at_only && (
@@ -805,58 +760,6 @@ export default function AccountDetailSheet({
                       </span>
                       <span className="font-medium text-foreground">
                         {t("accounts.detailAuthTypeAT")}
-                      </span>
-                    </div>
-                  )}
-                  {account.openai_responses_api && (
-                    <div className="flex justify-between gap-3">
-                      <span className="text-muted-foreground">
-                        {t("accounts.detailApiLabel")}
-                      </span>
-                      <span className="font-medium text-foreground">
-                        {t("accounts.detailApiResponses")}
-                      </span>
-                    </div>
-                  )}
-                  {isClaude && (
-                    <div className="flex justify-between gap-3">
-                      <span className="text-muted-foreground">
-                        {t("accounts.detailAuthType")}
-                      </span>
-                      <span className="font-medium text-foreground">{t("claude.authOAuth")}</span>
-                    </div>
-                  )}
-                  {isAntigravity && (
-                    <div className="flex justify-between gap-3">
-                      <span className="text-muted-foreground">
-                        {t("accounts.detailAuthType")}
-                      </span>
-                      <span className="font-medium text-foreground">
-                        {account.antigravity_auth_kind === "api_key"
-                          ? t("antigravity.authKindApiKey")
-                          : t("antigravity.authKindOAuth")}
-                      </span>
-                    </div>
-                  )}
-                  {isGrok && (
-                    <div className="flex justify-between gap-3">
-                      <span className="text-muted-foreground">
-                        {t("accounts.detailAuthType")}
-                      </span>
-                      <span className="font-medium text-foreground">
-                        {account.grok_auth_kind === "oauth"
-                          ? t("grok.authKindOAuthShort")
-                          : t("grok.authKindApiKey")}
-                      </span>
-                    </div>
-                  )}
-                  {account.base_url && (
-                    <div className="flex justify-between gap-3">
-                      <span className="shrink-0 text-muted-foreground">
-                        {t("accounts.detailBaseUrl")}
-                      </span>
-                      <span className="min-w-0 break-all text-right font-mono text-[11px] text-foreground">
-                        {account.base_url}
                       </span>
                     </div>
                   )}
@@ -870,7 +773,7 @@ export default function AccountDetailSheet({
                       </span>
                     </div>
                   )}
-                  {showResetCredits && resetCredits > 0 && (
+                  {resetCredits > 0 && (
                     <div className="flex justify-between gap-3">
                       <span className="text-muted-foreground">
                         {t("accounts.resetCreditsButton")}
@@ -905,21 +808,10 @@ export default function AccountDetailSheet({
                   variant="outline"
                   size="sm"
                   onClick={onQuickConfig}
-                  className={`${onChannelMonitor ? "" : "col-span-2"} border-primary/40 bg-primary/10 font-bold text-primary hover:bg-primary/20`}
+                  className="col-span-2 border-primary/40 bg-primary/10 font-bold text-primary hover:bg-primary/20"
                 >
                   <Fingerprint className="size-4 text-primary" />
                   <span>指纹与快捷配置</span>
-                </Button>
-              ) : null}
-              {onChannelMonitor ? (
-                <Button
-                  type="button"
-                  variant="outline"
-                  size="sm"
-                  onClick={onChannelMonitor}
-                >
-                  <RadioTower className="size-4 text-emerald-600 dark:text-emerald-400" />
-                  <span>渠道监控</span>
                 </Button>
               ) : null}
               <Button type="button" variant="default" size="sm" onClick={onEdit}>
@@ -944,30 +836,18 @@ export default function AccountDetailSheet({
                 <RefreshCw
                   className={`size-3.5 ${refreshing ? "animate-spin" : ""}`}
                 />
-                {isClaude
-                  ? t("claude.actionRefresh")
-                  : isAntigravity
-                  ? t("antigravity.syncAccount")
-                  : isGrok
-                  ? t("grok.actionRefresh")
-                  : t("accounts.actionRefreshAT")}
+                {t("accounts.actionRefreshAT")}
               </Button>
-              {showAuthJson && (
-                <Button
-                  type="button"
-                  variant="outline"
-                  size="sm"
-                  disabled={authJsonDisabled}
-                  onClick={onGenerateAuthJson}
-                >
-                  <FileJson className="size-3.5" />
-                  {isClaude
-                    ? t("claude.exportCredential")
-                    : isAntigravity
-                      ? t("antigravity.exportOne")
-                      : t("accounts.actionAuthJson")}
-                </Button>
-              )}
+              <Button
+                type="button"
+                variant="outline"
+                size="sm"
+                disabled={authJsonDisabled}
+                onClick={onGenerateAuthJson}
+              >
+                <FileJson className="size-3.5" />
+                {t("accounts.actionAuthJson")}
+              </Button>
               <Button
                 type="button"
                 variant="outline"
@@ -1007,18 +887,16 @@ export default function AccountDetailSheet({
                 <RotateCcw className="size-3.5" />
                 {t("accounts.resetStatus")}
               </Button>
-              {showResetCredits && (
-                <Button
-                  type="button"
-                  variant="outline"
-                  size="sm"
-                  disabled={resetCredits <= 0}
-                  onClick={onResetCredits}
-                >
-                  <Timer className="size-3.5" />
-                  {t("accounts.resetCreditsButton")}
-                </Button>
-              )}
+              <Button
+                type="button"
+                variant="outline"
+                size="sm"
+                disabled={resetCredits <= 0}
+                onClick={onResetCredits}
+              >
+                <Timer className="size-3.5" />
+                {t("accounts.resetCreditsButton")}
+              </Button>
               <Button
                 type="button"
                 variant="destructive"

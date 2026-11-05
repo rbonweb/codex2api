@@ -255,26 +255,6 @@ func TestAsyncShadowAuxiliaryRealHandlerUpstreamMatrix(t *testing.T) {
 			invoke:              (*Handler).ChatCompletions,
 		},
 		{
-			name:                "messages_json",
-			endpoint:            "/v1/messages",
-			normalBody:          `{"model":"gpt-5.5","max_tokens":64,"messages":[{"role":"user","content":"` + normal + `"}]}`,
-			harmfulCurrentBody:  `{"model":"gpt-5.5","max_tokens":64,"messages":[{"role":"user","content":"` + malicious + `"}]}`,
-			blockingToolBody:    `{"model":"gpt-5.5","max_tokens":64,"messages":[{"role":"user","content":[{"type":"tool_result","tool_use_id":"tool_block","content":"` + operationalToolOutput + `"}]}]}`,
-			shadowAuxiliaryBody: messagesHistoryBody(false, malicious, normal),
-			shadowOrigin:        promptfilter.OriginHistory,
-			invoke:              (*Handler).Messages,
-		},
-		{
-			name:                "messages_sse",
-			endpoint:            "/v1/messages",
-			normalBody:          `{"model":"gpt-5.5","max_tokens":64,"stream":true,"messages":[{"role":"user","content":"` + normal + `"}]}`,
-			harmfulCurrentBody:  `{"model":"gpt-5.5","max_tokens":64,"stream":true,"messages":[{"role":"user","content":"` + malicious + `"}]}`,
-			blockingToolBody:    `{"model":"gpt-5.5","max_tokens":64,"stream":true,"messages":[{"role":"user","content":[{"type":"tool_result","tool_use_id":"tool_block","content":"` + operationalToolOutput + `"}]}]}`,
-			shadowAuxiliaryBody: messagesHistoryBody(true, malicious, normal),
-			shadowOrigin:        promptfilter.OriginHistory,
-			invoke:              (*Handler).Messages,
-		},
-		{
 			name:                "images_generations",
 			endpoint:            "/v1/images/generations",
 			normalBody:          `{"model":"gpt-image-2","prompt":"画一只蓝色小鸟。"}`,
@@ -450,13 +430,6 @@ func chatHistoryBody(stream bool, malicious string, normal string) string {
 	return `{"model":"gpt-5.5"` + streamField + `,"messages":[{"role":"user","content":"` + malicious + `"},{"role":"assistant","content":"我不能协助。"},{"role":"user","content":"` + normal + `"}]}`
 }
 
-func messagesHistoryBody(stream bool, malicious string, normal string) string {
-	streamField := ""
-	if stream {
-		streamField = `,"stream":true`
-	}
-	return `{"model":"gpt-5.5","max_tokens":64` + streamField + `,"messages":[{"role":"user","content":"` + malicious + `"},{"role":"assistant","content":"我不能协助。"},{"role":"user","content":"` + normal + `"}]}`
-}
 
 func imageEditJSONBody(prompt string, style string) string {
 	styleField := ""

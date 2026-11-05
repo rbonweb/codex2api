@@ -1,7 +1,6 @@
 package proxy
 
 import (
-	"encoding/json"
 	"strconv"
 	"strings"
 	"testing"
@@ -167,13 +166,3 @@ func TestNormalizeFunctionToolsInArray_ChatShapedStrictDefaultsFalse(t *testing.
 	}
 }
 
-func TestConvertAnthropicTools_StrictFalse(t *testing.T) {
-	tools := convertAnthropicTools([]anthropicTool{{Name: "Read", InputSchema: json.RawMessage(`{"type":"object","properties":{"path":{"type":"string"}}}`)}})
-	if len(tools) != 1 {
-		t.Fatalf("tools = %d", len(tools))
-	}
-	item := tools[0].(map[string]any)
-	if strict, ok := item["strict"].(bool); !ok || strict {
-		t.Fatalf("strict = %v, want false", item["strict"])
-	}
-}

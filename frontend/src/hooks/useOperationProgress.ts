@@ -9,7 +9,7 @@ import {
 import { operationProgressMessage } from "../lib/operationProgressMessage";
 
 // 批量操作（测试/删除/刷新）的流式进度：SSE 读取 + 右上角进度浮层状态机。
-// 从 Codex 账号页抽出，供 Codex / Grok 账号页共用，确保两处进度条一致。
+// 从 Codex 账号页抽出，供账号页共用，确保进度条一致。
 
 const OPERATION_PROGRESS_FLUSH_INTERVAL_MS = 200;
 
@@ -17,7 +17,6 @@ export type BatchOperationAction =
   | "batch_test"
   | "batch_delete"
   | "batch_refresh"
-  | "grok_import"
   | "clean";
 
 export interface BatchOperationEvent {

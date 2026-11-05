@@ -612,12 +612,8 @@ func (h *Handler) forwardResponsesWebSocketTurn(c *gin.Context, conn *websocket.
 	}()
 
 	dispatchPolicy := dispatchPolicyForModel(effectiveModel)
-	// Responses WS 入口的候选池（accountFilterForResponsesWebSocket）恒不含 Antigravity：
-	// OpenAIResponsesUsesUpstreamWebsocket 对 AG 账号恒为 false，accountFilterForModel
-	// 也直接拒绝 AG。Antigravity 渠道 Key 打到该入口时不得沿用请求渠道作为 Provider，
-	// 否则 Store 侧会对 Codex relay 候选套用 Antigravity 加权打分并绕过 spread / HRW，
-	// 与 compact 入口（selectionOptionsForCandidatePool(..., true)）保持一致。
-	selectionOpts := selectionOptionsForCandidatePool(c, effectiveModel, dispatchPolicy, true)
+	// Responses WS 入口与 compact 入口一致：选号上下文只带 Policy。
+	selectionOpts := auth.SelectionOptions{Policy: dispatchPolicy}
 	var affinityGuard auth.SessionAffinityGuard
 	var selectionErr error
 	for attempt := 0; ; attempt++ {
@@ -756,32 +752,16 @@ func (h *Handler) forwardResponsesWebSocketTurn(c *gin.Context, conn *websocket.
 			useWebsocket = false
 		}
 		// 体积达到已学习的 1009 阈值时直接首发 HTTP,跳过 WS 必败等待(issue #404)。
-		// 中转账号自己的 Responses WebSocket 不套用这条 Codex 体积学习。
-		relayUpstreamWS := account.OpenAIResponsesUsesUpstreamWebsocket() && !responsesBodyRequestsImageGeneration(rawBody) && !naturalImageIntent
-		if useWebsocket && globalWSSizeRouter.PreferHTTP(len(codexBody)) && !relayUpstreamWS {
+		if useWebsocket && globalWSSizeRouter.PreferHTTP(len(codexBody)) {
 			useWebsocket = false
 			if attempt == 0 {
 				log.Printf("[WS] 请求体 %dKB 达到已学习的 1009 体积阈值，直接走 HTTP 上游 (endpoint=/v1/responses, ingress=ws)", len(codexBody)/1024)
 			}
 		}
-		if relayUpstreamWS {
-			useWebsocket = true
-		}
 		// WebSocket 上游下剥离自动注入的图片工具，防止模型自主生图卡死。
 		upstreamBody := codexBody
 		attemptReplay := turnReplay
-		if account.IsOpenAIResponsesAPI() {
-			// A Responses relay supports its own native fields and continuation
-			// state. Do not feed it Codex's lossy compatibility preparation.
-			upstreamBody = applyImageGenerationStripPolicy(c, PrepareOpenAIResponsesBody(rawBody))
-			upstreamBody, _ = sjson.DeleteBytes(upstreamBody, "type")
-			if continuationDegraded {
-				// Recovery expands only lineage. Retain native provider fields
-				// while sending the admitted complete input without the lost ID.
-				upstreamBody, _ = sjson.SetRawBytes(upstreamBody, "input", []byte(responsesInputRaw(codexBody)))
-				upstreamBody, _ = sjson.DeleteBytes(upstreamBody, "previous_response_id")
-			}
-		} else if useWebsocket {
+		if useWebsocket {
 			upstreamBody = stripResponsesImageGenerationTool(codexBody)
 		} else if prevID := strings.TrimSpace(gjson.GetBytes(codexBody, "previous_response_id").String()); prevID != "" {
 			var contextErr *api.APIError
@@ -810,9 +790,6 @@ func (h *Handler) forwardResponsesWebSocketTurn(c *gin.Context, conn *websocket.
 		guardCodexTurnStateEcho(affinityKey, account, downstreamHeaders)
 		upstreamSessionID := resolveUpstreamSessionID(apiKeyID, sessionIdentity.upstreamSeed, sessionIdentity.explicitUpstreamID, useWebsocket)
 		resp, reqErr := executeHTTPWithContinuousRetryKeepalive(upstreamCtx, func() (*http.Response, error) {
-			if account.OpenAIResponsesUsesUpstreamWebsocket() {
-				return ExecuteOpenAIResponsesRequest(upstreamCtx, account, upstreamBody, proxyURL, downstreamHeaders)
-			}
 			return ExecuteRequest(upstreamCtx, account, upstreamBody, upstreamSessionID, proxyURL, apiKey, deviceCfg, downstreamHeaders, useWebsocket)
 		})
 		durationMs := int(time.Since(start).Milliseconds())
@@ -868,7 +845,7 @@ func (h *Handler) forwardResponsesWebSocketTurn(c *gin.Context, conn *websocket.
 			if wsHTTPFallback.ForceHTTP() && !useWebsocket {
 				wsHTTPFallback.LogHTTPAttemptCompletion("/v1/responses", account.ID(), attempt+1, durationMs, 0, logStatusUpstreamStreamBreak)
 			}
-			if useWebsocket && kind == upstreamErrorKindMessageTooBig && !account.OpenAIResponsesUsesUpstreamWebsocket() {
+			if useWebsocket && kind == upstreamErrorKindMessageTooBig {
 				wsElapsed := time.Since(start)
 				globalWSSizeRouter.RecordMessageTooBig(len(codexBody))
 				wsHTTPFallback.Retain(account, proxyURL, wsElapsed, websocketMessageTooBigSource(reqErr.Error()))
@@ -1079,7 +1056,7 @@ func (h *Handler) forwardResponsesWebSocketTurn(c *gin.Context, conn *websocket.
 			var retryErr *responsesWSRetryableStreamError
 			if errors.As(err, &retryErr) {
 				lastRetryableUpstreamErr = api.NewAPIError(api.ErrCodeUpstreamError, retryErr.outcome.failureMessage, api.ErrorTypeUpstream)
-				if useWebsocket && isWebsocketMessageTooBigOutcome(retryErr.outcome) && !account.OpenAIResponsesUsesUpstreamWebsocket() {
+				if useWebsocket && isWebsocketMessageTooBigOutcome(retryErr.outcome) {
 					wsElapsed := time.Since(start)
 					globalWSSizeRouter.RecordMessageTooBig(len(codexBody))
 					wsHTTPFallback.Retain(account, proxyURL, wsElapsed, websocketMessageTooBigSource(retryErr.outcome.failureMessage))
@@ -1556,7 +1533,7 @@ func (h *Handler) streamResponsesWSUpstream(
 		_ = writeResponsesWSErrorForContext(c, conn, newAPIPolicyDecisionAPIError(metadata))
 		return nil
 	}
-	if shouldFallbackWebsocketMessageTooBigToHTTP(outcome, viaWebsocket, downstreamWroteBeforeCommit, c.Request.Context().Err(), writeErr) && !account.OpenAIResponsesUsesUpstreamWebsocket() {
+	if shouldFallbackWebsocketMessageTooBigToHTTP(outcome, viaWebsocket, downstreamWroteBeforeCommit, c.Request.Context().Err(), writeErr) {
 		_ = wsReplay.Close()
 		resp.Body.Close()
 		return &responsesWSRetryableStreamError{outcome: outcome, eventType: terminalFailureEventType}
