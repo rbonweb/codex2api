@@ -1,35 +1,35 @@
-# 图库性能与存储保留
+# Gallery performance and storage retention
 
-## 保留规则
+## Retention rules
 
-可在进程环境或 `.env` 中设置：
+Can be set in the process environment or `.env`:
 
 ```dotenv
 IMAGE_ASSET_RETENTION_DAYS=3
 IMAGE_JOB_RETENTION_DAYS=30
 ```
 
-未设置或为 0 时不启用对应的自动删除。任务保留时间不能短于图片保留时间；启用任务清理必须同时启用图片清理。启动 1 分钟后首次执行，之后每小时执行一次，每轮限时 5 分钟，最多清理 1000 张过期图片和 1000 条过期任务记录，避免长时间锁住数据库。
+Unset or 0 means the corresponding automatic deletion is not enabled. The job retention period must not be shorter than the image retention period; enabling job cleanup requires image cleanup to be enabled too. The first run happens 1 minute after startup, then once an hour; each run is limited to 5 minutes, and deletes at most 1000 expired images and 1000 expired job records, to avoid locking the database for a long time.
 
-- 图片按创建时间计算（UTC 截止时间，完整的 3×24 小时，达到边界但未超过时不删除），只清理已结束任务的生成结果，包括对应的磁盘缩略图和内存缩略图缓存。原始参考图 URL 对应的外部 OSS 对象不属于这个清理范围。
-- 通过现有图库存储后端删除文件/对象。删除失败保留元数据，下轮重试；不会先删记录再丢失文件位置。
-- 任务按完成时间计算，仅删除 succeeded/failed 且已无关联图片的任务。queued/running 始终保留。
-- 超过图片保留期的已结束任务，其历史参数中的 Base64/内部临时参考图引用被移除，保留提示词及其他参数。旧参数逐条处理，不把几百 MB 的历史记录一次读入内存。
-- `queue-inputs` 中超过 24 小时、且不被活跃任务引用的 UUID 临时文件自动清理。读取活跃引用失败时不执行文件删除；不跟随软链接、不递归扫描其他目录。
-- 清理后旧下载链接会失效。已被业务方复制到其自己的 OSS 的图片不受影响。
+- Images are timed by creation time (UTC cutoff: a full 3×24 hours; an image exactly at the boundary but not past it is not deleted). Only the generated results of finished jobs are cleaned up, including the corresponding disk thumbnails and in-memory thumbnail cache. The external OSS objects behind the original reference image URLs are outside the scope of this cleanup.
+- Files/objects are deleted through the existing gallery storage backend. If deletion fails, the metadata is kept and retried in the next round; the record is never deleted before the file location is lost.
+- Jobs are timed by completion time, and only succeeded/failed jobs with no associated images left are deleted. queued/running jobs are always kept.
+- For finished jobs older than the image retention period, the Base64 and internal temporary reference-image references in their historical parameters are removed, while the prompt and other parameters are kept. Old parameters are processed one entry at a time, so hundreds of MB of history are not loaded into memory at once.
+- UUID temporary files in `queue-inputs` that are older than 24 hours and not referenced by an active job are cleaned up automatically. If reading the active references fails, no file is deleted; symbolic links are not followed, and other directories are not scanned recursively.
+- After cleanup, old download links stop working. Images that the business has already copied to its own OSS are not affected.
 
-清理结果以 `[image-retention]` 日志记录删除数量和生成图片回收字节数。SQLite 删除后的页可被新数据复用，但数据库文件不一定立即变小；不在运行中的请求路径执行 VACUUM。部署备份不属于图库清理范围，备份保留需单独管理。3 天保留不保证磁盘容量充足，需要按每天数量 × 平均图片大小 × 天数评估。
+Cleanup results are logged as `[image-retention]` with the number deleted and the bytes of generated images reclaimed. In SQLite, pages freed after deletion can be reused by new data, but the database file does not necessarily shrink immediately; VACUUM is not run on the running request path. Deployment backups are outside the scope of gallery cleanup, and backup retention must be managed separately. A 3-day retention does not guarantee sufficient disk capacity; it should be estimated as daily count × average image size × days.
 
-## 图库和历史列表
+## Gallery and history lists
 
-后台和公开门户的任务列表/任务详情支持 `summary=1`：
+The admin and public portal task list and task detail support `summary=1`:
 
-- 不返回输入图片或缓存 Base64；参数只保留必要的文字配置。
-- 超过 64 KiB 的旧任务参数不载入列表响应（返回空参数对象）。用户明确点击重新生成时，界面单独请求完整详情，避免丢失原来的生成选项。
-- 当前页关联图片通过一次批量查询取得，避免每条任务重复查一次数据库。门户仍按 API Key 隔离。
-- 默认原接口行为保留；UI 已使用精简查询，`summary=1` 与 `include_cache=1` 同时出现时仍不返回图片 Base64。
-- 列表使用缩略图和懒加载；打开预览才使用原图。轮询避免重叠请求，页面在浏览器后台时暂停查询。
+- Input images and cached Base64 are not returned; only the necessary text settings are kept in the parameters.
+- Old job parameters larger than 64 KiB are not loaded into the list response (an empty parameter object is returned). When a user explicitly clicks regenerate, the UI requests the full detail separately, so the original generation options are not lost.
+- The images linked to the current page are fetched with one batch query, to avoid querying the database once per job. The portal is still isolated by API key.
+- The original endpoint behavior is kept by default; the UI already uses the summary query, and when `summary=1` and `include_cache=1` appear together, Base64 image content is still not returned.
+- The list uses thumbnails and lazy loading; the original image is used only when the preview is opened. Polling avoids overlapping requests, and queries pause while the page is in a background browser tab.
 
-缩略图缓存写入 `IMAGE_ASSET_DIR/.thumbnails/<asset-id>/`，进程内缓存淘汰或重启后可以复用。首次缩略图生成最多同时执行 1 个，避免图库请求同时解码大量大图；无法生成缩略图时保留旧接口的流式原图回退。默认 24 小时签名链接按小时稳定（有效时间约 23–24 小时），提高浏览器缓存命中率。
+The thumbnail cache is written to `IMAGE_ASSET_DIR/.thumbnails/<asset-id>/`, and can be reused after in-process cache eviction or a restart. The first thumbnail generation runs at most 1 at a time, to avoid the gallery requests decoding many large images at once; when a thumbnail cannot be generated, the old endpoint's streamed original-image fallback is kept. The default 24-hour signed link is stable per hour (valid for about 23–24 hours), to improve the browser cache hit rate.
 
-全局清理使用两个查询索引。可选的[调用方存储策略](IMAGE_RESULT_STORAGE.md)还会新增 `image_assets.expires_at`、`delete_after_read` 两列与过期索引，历史记录默认仍走全局策略。显式指定保留时间的图片每分钟单独清理。启用清理前请备份数据库和图库文件。
+Global cleanup uses two query indexes. The optional [caller storage policy](IMAGE_RESULT_STORAGE.md) also adds the `image_assets.expires_at` and `delete_after_read` columns with an expiry index, and historical records still follow the global policy by default. Images with an explicitly set retention period are cleaned up separately every minute. Back up the database and gallery files before enabling cleanup.

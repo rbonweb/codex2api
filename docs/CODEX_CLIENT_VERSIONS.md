@@ -1,66 +1,66 @@
-# Codex 真实客户端版本配对
+# Codex real client version pairing
 
-Desktop 和 VSCode 的应用版本与其内置 CLI 版本一起同步、一起缓存。应用版本升级时，CLI 可能保持不变、降级或带 `alpha` 后缀，不能用最新稳定 CLI 拼接一个不存在的配对。
+The app versions of Desktop and VSCode are synced and cached together with their bundled CLI versions. When the app version is upgraded, the CLI may stay the same, be downgraded or carry an `alpha` suffix; a pairing that does not exist must not be assembled from the latest stable CLI.
 
-## 来源与目标
+## Sources and targets
 
-| 客户端 | 目标 | 首选来源 | 校验与回退 |
+| Client | Target | Preferred source | Verification and fallback |
 | --- | --- | --- | --- |
-| Desktop macOS | `darwin-arm64`、`darwin-x64` | 官方对应架构的 appcast | Range 读取 ZIP 的外层 `Contents/Info.plist` 与 `codex-cli/codex-package.json`；核对应用、构建号和 CLI 架构 |
-| Desktop Windows | `win32-x64`、`win32-arm64` | `https://codexapp.agentsmirror.com/latest/manifest` | 映射必须匹配官方 Windows update manifest 的包身份、包版本和架构；失败时读取官方下载地址的 MSIX |
-| VSCode | macOS、Windows、Linux，各自 x64/ARM64 | 官方 Marketplace 最新稳定 `openai.chatgpt` | Range 读取对应原生 VSIX 的扩展版本与 CLI manifest；Windows 包内的 Linux/WSL CLI 不作为 Windows 版本 |
-| TUI / exec | 独立 CLI | 官方 GitHub 最新稳定 release | 保留原来的 CLI 同步逻辑，独立于 Desktop / VSCode 配对 |
+| Desktop macOS | `darwin-arm64`, `darwin-x64` | Official appcast for the matching architecture | Read the outer `Contents/Info.plist` and `codex-cli/codex-package.json` of the ZIP with Range requests; check the app, build number and CLI architecture |
+| Desktop Windows | `win32-x64`, `win32-arm64` | `https://codexapp.agentsmirror.com/latest/manifest` | The mapping must match the package identity, package version and architecture in the official Windows update manifest; on failure, read the MSIX from the official download address |
+| VSCode | macOS, Windows, Linux, each with x64/ARM64 | Latest stable `openai.chatgpt` on the official Marketplace | Read the extension version and CLI manifest of the matching native VSIX with Range requests; the Linux/WSL CLI inside the Windows package does not count as the Windows version |
+| TUI / exec | Standalone CLI | Latest stable release on official GitHub | Keep the original CLI sync logic, independent of the Desktop / VSCode pairing |
 
-选择稳定版 Desktop/扩展包，不代表其内置 CLI 必须是稳定版。内置 manifest 或二进制中的完整 CLI 版本（例如 `0.158.0-alpha.2.1`）会原样保留。
+Choosing a stable Desktop/extension package does not mean its bundled CLI must be stable. The full CLI version in the bundled manifest or binary (for example `0.158.0-alpha.2.1`) is kept as is.
 
-## Windows 官方 fallback
+## Windows official fallback
 
-现有 MSIX 可能没有 `codex-package.json`，不能把“manifest 不存在”当作所有官方包都不受支持。fallback 流程如下：
+An existing MSIX may not contain `codex-package.json`, so "manifest does not exist" must not be treated as meaning that all official packages are unsupported. The fallback flow is as follows:
 
-先读取官方版本化下载地址；仅在返回 404 时，回退到对应架构的官方最新包地址。最新包可能落后于 Store 清单，沿用上游对主次版本的校验，保存包内实际版本和完整配对。可变下载地址以 URL、ETag、Last-Modified 和大小标识安装包；ETag 未变化时只需再次探测一个字节，并重新校验实际包版本与当前 Store 清单，即可复用配对缓存。
+First read the official versioned download address; only when it returns 404, fall back to the official latest package address for the matching architecture. The latest package may lag behind the Store manifest, so the upstream major/minor version check is kept, and the actual version inside the package and the full pairing are saved. A mutable download address is identified by URL, ETag, Last-Modified and size; when the ETag is unchanged, only one byte needs to be probed again, and the actual package version is rechecked against the current Store manifest, so the pairing cache can be reused.
 
-1. 获取 ZIP/ZIP64 目录，读取 `AppxManifest.xml`，核对 `OpenAI.Codex`、官方包版本与目标架构。
-2. 若包内有 CLI manifest，使用 manifest；无 manifest 时读取 `AppxBlockMap.xml`。损坏或架构不匹配的 manifest 不会被忽略。
-3. 利用 block map 中每个 64 KiB 原始块的压缩大小定位字节区间，独立解压所需块；核对原始长度与 SHA-256。非末块没有 DEFLATE 结束标志，仅在长度和哈希均正确时接受解压的 `UnexpectedEOF`。
-4. 读取 `app.asar` 的头和根 `package.json` 所在块，直接跳过中间内容，取得真实桌面端构建号。
-5. 读取 `codex.exe` 的 PE 头，核对 x64/ARM64，定位只读 `.rdata`，分批读取最多 8 MiB 原始数据。CLI 编译版本必须同时出现在 `codex-doctor/<version>` 与 `version: <version>\nplatform: ` 两个固定字符串中，且版本一致。不会执行下载的二进制。
+1. Get the ZIP/ZIP64 directory, read `AppxManifest.xml`, and check `OpenAI.Codex`, the official package version and the target architecture.
+2. If the package contains a CLI manifest, use the manifest; without a manifest, read `AppxBlockMap.xml`. A damaged manifest or one with a mismatched architecture is not ignored.
+3. Use the compressed size of each 64 KiB raw block in the block map to locate the byte range, decompress the required blocks independently, and check the raw length and SHA-256. A non-final block has no DEFLATE end marker, so the decompressed `UnexpectedEOF` is accepted only when both the length and the hash are correct.
+4. Read the header of `app.asar` and the block that holds the root `package.json`, skip the middle content directly, and get the real desktop build number.
+5. Read the PE header of `codex.exe`, check x64/ARM64, locate the read-only `.rdata`, and read at most 8 MiB of raw data in batches. The CLI build version must appear in both the `codex-doctor/<version>` and `version: <version>\nplatform: ` fixed strings, and the versions must match. The downloaded binary is never executed.
 
-如果压缩格式、块索引、哈希或版本字符串不受支持，仅返回失败状态，不写入数据库，继续使用上一次成功同步的完整配对。初次同步没有缓存配对时，使用明确标为 `builtin_observed` 的内置配对；不会改用任意最新 CLI，也不会继续下载全包。
+If the compression format, block index, hash or version string is not supported, only a failure status is returned and nothing is written to the database; the last fully successful pairing continues to be used. When the first sync has no cached pairing, the built-in pairing explicitly marked `builtin_observed` is used; the code does not switch to an arbitrary latest CLI and does not keep downloading the full package.
 
-读取预算对每个安装包独立生效：最多 **12 MiB Range 响应正文、64 次请求**，缓存块大小 256 KiB。服务器必须返回严格匹配的 `206`、`Content-Range`、正文长度和稳定的 ETag / Last-Modified；返回整包 `200` 时直接停止。只有格式正确的强 ETag 才作为 `If-Range` 发出，兼容 Marketplace 的未加引号 ETag。普通小文件最多 64 KiB，block map 和 ASAR 头分别最多 8 MiB。
+The read budget applies to each installer package separately: at most **12 MiB of Range response body and 64 requests**, with a cache block size of 256 KiB. The server must return an exactly matching `206`, `Content-Range`, body length and stable ETag / Last-Modified; if it returns the whole package with `200`, reading stops immediately. Only a well-formed strong ETag is sent as `If-Range`, which is compatible with the unquoted ETag of the Marketplace. Plain small files are limited to 64 KiB, and the block map and ASAR header are each limited to 8 MiB.
 
-2026-10-01 在官方包 `26.928.3736.0` 上验证：
+Verified on 2026-10-01 against the official package `26.928.3736.0`:
 
-| 架构 | 桌面端版本 | 内置 CLI | Range 正文字节 | 请求次数 |
+| Architecture | Desktop version | Bundled CLI | Range body bytes | Requests |
 | --- | --- | --- | --- | --- |
-| x64 | `26.928.31416` | `0.159.2` | 5,297,477（约 5.1 MiB） | 22 |
-| ARM64 | `26.928.31416` | `0.159.2` | 5,588,152（约 5.3 MiB） | 23 |
+| x64 | `26.928.31416` | `0.159.2` | 5,297,477 (about 5.1 MiB) | 22 |
+| ARM64 | `26.928.31416` | `0.159.2` | 5,588,152 (about 5.3 MiB) | 23 |
 
-这些数据包含应用版本与 CLI 版本的完整解析。小映射清单有效时无需读取 MSIX；已验证安装包未变化时直接复用缓存，不重新读取安装包。SHA-256 校验的是从官方 HTTPS block map 取得的块哈希，不等同于下载全包后验证 MSIX 签名。
+These results include the full resolution of the app version and CLI version. When the small mapping manifest is valid, the MSIX does not need to be read; when the verified installer is unchanged, the cache is reused directly and the installer is not read again. The SHA-256 check covers block hashes taken from the official HTTPS block map; it is not equivalent to downloading the full package and verifying the MSIX signature.
 
-迁移至 upstream main 后，另外验证了 x64 的版本化地址 404 回退：官方最新包完整配对解析仍读取 5,297,477 字节，共 23 次请求；再次同步只需 2 次请求（版本化地址 404 探测、最新包的 1 字节 Range 探测），Range 正文总共 1 字节。
+After migrating to upstream main, the versioned address 404 fallback was also verified for x64: full pairing resolution through the official latest package still reads 5,297,477 bytes in 23 requests in total; a second sync needs only 2 requests (the 404 probe of the versioned address and a 1-byte Range probe of the latest package), with 1 byte of Range body in total.
 
-## 选择与手动配置
+## Selection and manual configuration
 
-- 自动 Desktop / VSCode 根据客户端种类、操作系统和架构选择完整配对，优先最新应用构建。
-- `auto` 兼容模式的最低 CLI 版本仅过滤候选配对，按完整语义版本比较；`0.158.0-alpha.1` 不满足 `0.158.0`。没有满足条件的已知配对时，出站前返回不可重试的 HTTP 503，错误码 `codex_client_version_unavailable`，预览返回 400。
-- 手填 `client_version` 或 `app_version` 分别覆盖对应默认值，不根据手填版本重新配对；手填 CLI 不受最低版本抬升。只填应用版本时，自动 CLI 仍受最低版本过滤。
-- 原始 `user_agent` 保持原样。手动覆盖在预览中标为 `custom`。
-- HTTP、compact、WebSocket、alpha search、live 和遥测共享身份解析。WebSocket 按最终 UA、Version、Originator 隔离池；配置或配对变化后重新握手，旧身份的续链连接不再被新身份复用。版本变化时旧连接上的 `previous_response_id` 上下文可能需要由客户端重新建立。
+- Automatic Desktop / VSCode selects the full pairing by client type, operating system and architecture, preferring the latest app build.
+- The minimum CLI version of `auto` compatibility mode only filters candidate pairings and is compared by full semantic version; `0.158.0-alpha.1` does not satisfy `0.158.0`. When no known pairing meets the condition, a non-retryable HTTP 503 is returned before outbound, with error code `codex_client_version_unavailable`, and preview returns 400.
+- A manually entered `client_version` or `app_version` overrides the corresponding default respectively, and no pairing is recomputed from the manual version; a manually entered CLI is not raised to the minimum version. When only the app version is entered, the automatic CLI is still filtered by the minimum version.
+- The original `user_agent` is kept as is. A manual override is labeled `custom` in preview.
+- HTTP, compact, WebSocket, alpha search, live and telemetry share identity resolution. WebSocket pools are isolated by the final UA, Version and Originator; after a configuration or pairing change, the handshake is redone, and a chained connection from an old identity is no longer reused by the new identity. When the version changes, the `previous_response_id` context on an old connection may need to be re-established by the client.
 
-## 缓存和管理接口
+## Cache and management endpoints
 
-数据库自动创建 `codex_client_version_cache`，以 `(client_kind, target_platform)` 为主键，每个目标只保存最后一次成功同步的完整版本配对，不累积历史。同步成功后更新单个目标，事务成功后发布不可变内存快照；同步或数据库写入失败时保留原数据和生效版本。重启会先加载缓存，即使关闭后台同步也会加载。加载缓存不修改数据库；已有历史配对由实例管理员手动清理。
+The database automatically creates `codex_client_version_cache`, keyed by `(client_kind, target_platform)`. Each target stores only the full version pairing from its last successful sync, without accumulating history. A successful sync updates a single target, and after the transaction succeeds an immutable in-memory snapshot is published; when the sync or the database write fails, the original data and the active version are kept. A restart loads the cache first, even when background sync is turned off. Loading the cache does not modify the database; existing historical pairings are cleaned up manually by the instance administrator.
 
-`GET /api/admin/settings` 的只读 `codex_client_versions` 展示 10 个 Desktop / VSCode 目标及当前配对、来源、状态和最近成功检查时间；本次同步错误只在同步响应中返回。普通设置保存不会写回此缓存。兼容字段 `codex_synced_desktop_mac_build`、`codex_synced_desktop_windows_build`、`codex_synced_vscode_build` 分别投影 macOS ARM64、Windows x64 和 VSCode Linux x64；旧版独立字符串不迁移成配对。
+The read-only `codex_client_versions` in `GET /api/admin/settings` shows the 10 Desktop / VSCode targets with their current pairing, source, status and last successful check time; errors from this sync are returned only in the sync response. Saving ordinary settings does not write this cache back. The compatibility fields `codex_synced_desktop_mac_build`, `codex_synced_desktop_windows_build` and `codex_synced_vscode_build` project macOS ARM64, Windows x64 and VSCode Linux x64 respectively; the old standalone strings are not migrated into pairings.
 
-`POST /api/admin/settings/codex-client-versions/sync` 保留 `cli`、`desktop_mac`、`desktop_windows`、`vscode` 四类结果，增加 CLI 版本、来源、状态与各目标结果。并发调用合并，安装包解析最多并发 2 个；单一来源失败不阻断其他来源。
+`POST /api/admin/settings/codex-client-versions/sync` keeps the four result groups `cli`, `desktop_mac`, `desktop_windows` and `vscode`, and adds the CLI version, source, status and per-target results. Concurrent calls are merged, and installer parsing runs with at most 2 concurrent requests; a failure from one source does not block the other sources.
 
-管理后台「系统设置 → Codex」的「立即同步」可同步各架构的配对并显示来源。CLI/应用版本输入框留空即可使用自动配对，默认值取后端预览。现有同步开关、间隔与 `CODEX_DISABLE_CLI_VERSION_SYNC` 继续生效；该环境变量关闭后台同步，不关闭手动同步。
+"Sync now" under "System Settings → Codex" in the admin panel syncs the pairings for each architecture and shows their sources. Leaving the CLI/app version input boxes empty uses the automatic pairing, and the default values come from the backend preview. The existing sync switch, interval and `CODEX_DISABLE_CLI_VERSION_SYNC` still apply; this environment variable turns off background sync but not manual sync.
 
-## 验证
+## Verification
 
-关键回归覆盖 ZIP64、Range 拒绝整包与预算、版本/架构不匹配、原生 VSIX 与 WSL 区分、MSIX 独立块及哈希、稀疏 ASAR、alpha 字符串一致性、缓存失败不写库/重启恢复/并发替换、设置只读、手动覆盖、最低版本不可用以及 HTTP / WS 出站前拦截。
+Key regression coverage includes ZIP64, Range rejection of the whole package and the budget, version/architecture mismatch, native VSIX versus WSL distinction, independent MSIX blocks and hashes, sparse ASAR, alpha string consistency, cache failure without database writes, restart recovery and concurrent replacement, read-only settings, manual override, unavailable minimum version, and interception before outbound for HTTP / WS.
 
 ```sh
 go test -tags=http2legacy ./proxy ./proxy/wsrelay ./admin ./database
@@ -71,6 +71,6 @@ pnpm test
 pnpm build
 ```
 
-本次环境为 Go 1.27.1。已有 uTLS / `golang.org/x/net/http2` 路径在该环境的部分网络测试中触发空指针，因此完整相关包验证使用仓库已有的 `http2legacy` 构建标签。版本读取本身不依赖该标签；无网络依赖的版本用例也可直接运行。
+This run used Go 1.27.1. The existing uTLS / `golang.org/x/net/http2` path triggered nil pointer dereferences in some network tests in this environment, so full verification of the related packages uses the repository's existing `http2legacy` build tag. Reading versions does not depend on that tag itself; version test cases with no network dependency can also be run directly.
 
-参考：[Microsoft 的 MSIX 更新与 64 KiB block map](https://learn.microsoft.com/en-us/windows/msix/app-package-updates)、[MSIX 的 DEFLATE 块讨论](https://stackoverflow.com/questions/79511882/are-the-blocks-in-appxblockmap-xml-directly-tied-to-deflate-compressed-blocks-in)、[Codex doctor 编译版本标记](https://github.com/openai/codex/blob/main/codex-rs/cli/src/doctor/updates.rs)。
+References: [Microsoft's MSIX update and 64 KiB block map](https://learn.microsoft.com/en-us/windows/msix/app-package-updates), [discussion of MSIX DEFLATE blocks](https://stackoverflow.com/questions/79511882/are-the-blocks-in-appxblockmap-xml-directly-tied-to-deflate-compressed-blocks-in), [Codex doctor build version marker](https://github.com/openai/codex/blob/main/codex-rs/cli/src/doctor/updates.rs).

@@ -1,43 +1,43 @@
-# 自适应降智检测
+# Adaptive intelligence-degradation detection
 
-自适应检测默认关闭，升级不会改变已有自动检测开关、恢复阈值或固定频率。可在「降智检测 → 频率与资源」启用，配置使用现有 settings API 和 JSON 存储，无需新增业务表。
+Adaptive detection is off by default; the upgrade does not change the existing automatic detection switch, recovery thresholds or fixed frequency. It can be enabled under "Intelligence check → Frequency and resources", and the configuration uses the existing settings API and JSON storage, with no new business table.
 
-## 配置
+## Configuration
 
-| JSON 字段 | 默认值 | 含义 |
+| JSON field | Default | Meaning |
 | --- | --- | --- |
-| `adaptive_enabled` | `false` | 开启自适应检测 |
-| `pause_initial_seconds` | `1800` | 自动暂停后的初始间隔 |
-| `pause_max_seconds` | `172800` | 自动暂停探测的最大间隔，可设到 30 天；不与正常间隔绑定 |
-| `recovery_initial_seconds` | `300` | 首次通过后的确认间隔 |
-| `recovery_min_seconds` | `120` | 确认间隔下限 |
+| `adaptive_enabled` | `false` | Turns on adaptive detection |
+| `pause_initial_seconds` | `1800` | Initial interval after an automatic pause |
+| `pause_max_seconds` | `172800` | Maximum interval for automatic pause probing; can be set up to 30 days; not tied to the normal interval |
+| `recovery_initial_seconds` | `300` | Confirmation interval after the first pass |
+| `recovery_min_seconds` | `120` | Lower bound of the confirmation interval |
 
-初始暂停间隔不得超过上限；恢复确认下限不得超过初始确认间隔，初始确认间隔不得超过初始暂停间隔。现有 `interval_seconds`、`retry_seconds`、`degrade_threshold`、`recover_threshold` 继续控制正常检测、首次错误重试、暂停及恢复阈值。启用本功能不会自动改写阈值。
+The initial pause interval must not exceed the maximum; the recovery confirmation lower bound must not exceed the initial confirmation interval, and the initial confirmation interval must not exceed the initial pause interval. The existing `interval_seconds`, `retry_seconds`, `degrade_threshold` and `recover_threshold` continue to control normal detection, retry after the first error, pausing and recovery thresholds. Enabling this feature does not automatically rewrite the thresholds.
 
-## 调度规则
+## Scheduling rules
 
-- 正常账号：按正常间隔检测。请求错误/中断按重试间隔开始翻倍，最高到正常间隔（若重试间隔本身更长则保留它）。成功完成检测后清除错误重试退避。
-- 质量自动暂停：首次使用暂停初始间隔，此后任何未通过结果都让间隔翻倍，直到配置上限。请求错误是不可用证据，不会被当成确认降智。此策略只针对质量暂停，不改变切换分组的恢复所有权语义。
-- 恢复确认：一次正常即进入确认，账号仍暂停。确认间隔逐次减半，直到下限；下限至少一分钟时向下取整到整分钟，默认是 5 分钟、2 分钟、2 分钟。达到已有连续通过阈值才恢复。
-- 确认失败：错误、中断和检测不通过都会清零确认计数，回到此前暂停间隔，本次不额外翻倍。下一次常规恢复探测仍失败才再次翻倍。
-- 历史退避：恢复调度时保留原间隔。随后每次正常检测使历史间隔减半，减至初始间隔时清除。再次达到暂停阈值则沿用剩余历史间隔。历史间隔不影响健康账号的正常检测频率。
-- 抖动：实际等待随机取名义间隔的 90%～100%，不会超过配置上限。下次时间在检测完成时落库，重启、轮询不会重新抽取。
-- 凭证撤销：检测响应中的明确 `token_revoked`、`account_deactivated`、`workspace_deactivated`、`organization_deactivated` 错误会暂停该凭证代次的自动检测。凭证更新后代次变化会重新允许探测；手动检测仍允许，成功时解除阻断。普通 401/过期或过载不据此永久阻断。
+- Normal accounts: detected at the normal interval. After a request error or interruption, the retry interval starts doubling, up to the normal interval (if the retry interval itself is longer, it is kept). After a detection completes successfully, the error-retry backoff is cleared.
+- Quality automatic pause: the first pause uses the initial pause interval; from then on, every result that does not pass doubles the interval, up to the configured maximum. A request error is evidence of unavailability and is not treated as confirmed intelligence degradation. This policy applies only to quality pauses and does not change the recovery ownership semantics of group switching.
+- Recovery confirmation: one normal result enters confirmation, and the account stays paused. The confirmation interval halves each time until it reaches the lower bound; when the lower bound is at least one minute, it is rounded down to whole minutes, so the default is 5 minutes, then 2 minutes, then 2 minutes. Recovery happens only when the existing consecutive-pass threshold is reached.
+- Failed confirmation: an error, interruption or failed detection resets the confirmation count to zero and returns to the previous pause interval, without an extra doubling this time. Only when the next regular recovery probe fails again does the interval double again.
+- Historical backoff: the original interval is kept when scheduling recovers. Each normal detection after that halves the historical interval, and it is cleared once it reaches the initial interval. If the pause threshold is reached again, the remaining historical interval is reused. The historical interval does not affect the normal detection frequency of healthy accounts.
+- Jitter: the actual wait is randomly chosen as 90%–100% of the nominal interval, and never exceeds the configured maximum. The next time is saved to the database when detection completes, so restarts and polling do not draw it again.
+- Credential revocation: explicit `token_revoked`, `account_deactivated`, `workspace_deactivated` or `organization_deactivated` errors in a detection response pause automatic detection for that credential generation. Once the credential is updated and the generation changes, probing is allowed again; manual detection is still allowed, and a success lifts the block. An ordinary 401/expiry or overload does not cause a permanent block on this basis.
 
-全部状态随 `state_json` 持久化，任务租约到期也使用相同退避算法。配置修订、人工操作和凭证代次会隔离旧检测结果；旧版本正在执行的无代次快照只保留历史结果。人工启用/禁用业务调度会清除历史退避，但不会代替凭证修复。关闭自动检测不解除质量暂停。
+All state is persisted in `state_json`, and job lease expiry also uses the same backoff algorithm. Configuration revisions, manual actions and credential generations isolate old detection results; a legacy in-flight snapshot without a generation keeps only its history. Manually enabling or disabling business scheduling clears historical backoff, but does not replace credential repair. Turning off automatic detection does not lift a quality pause.
 
-保存配置会重置原有连续判定计数，保留并限制历史退避；缩短上限会提前远期检测。切换自适应开关时按新策略重排下次时间。停用自适应策略后回到原固定频率，并清除该策略保存的凭证阻断。
+Saving the configuration resets the existing consecutive-decision counts and keeps and limits the historical backoff; shortening the maximum brings far-future detections forward. Switching the adaptive toggle reschedules the next time under the new policy. Disabling the adaptive policy returns to the original fixed frequency and clears the credential blocks saved by that policy.
 
-## 建议实例
+## Suggested example
 
-正常间隔 1800 秒、异常重试 300 秒、连续未通过 3 次暂停、连续通过 3 次恢复，配合上表默认值：
+With a normal interval of 1800 seconds, a retry of 300 seconds after an error, a pause after 3 consecutive failures and recovery after 3 consecutive passes, and the defaults in the table above:
 
-- 暂停探测：30 分钟 → 1 → 2 → 4 → 8 → 16 → 32 → 48 小时，之后保持上限。
-- 恢复确认：首次正常 → 约 5 分钟后正常 → 约 2 分钟后正常 → 恢复业务。
-- 长间隔会延迟发现恢复，48 小时上限意味着最坏接近两天才发现恢复。可以使用账号的「立即检测」提前确认，但它不绕过连续通过阈值。
+- Pause probing: 30 minutes → 1 → 2 → 4 → 8 → 16 → 32 → 48 hours, then it stays at the maximum.
+- Recovery confirmation: first normal result → normal about 5 minutes later → normal about 2 minutes later → business recovers.
+- A long interval delays discovery of recovery; the 48-hour maximum means the worst case is nearly two days before recovery is discovered. The account's "Detect now" can be used to confirm early, but it does not bypass the consecutive-pass threshold.
 
-账号检测条和历史弹窗显示当前阶段、确认进度与持久化的下次检测时间。凭证阻断显示「等待凭证修复」。
+The account detection bar and the history dialog show the current stage, confirmation progress and the persisted next detection time. A credential block shows "Waiting for credential repair".
 
-## 验证
+## Verification
 
-状态机测试覆盖跨日退避、可变上限、确认失败、复发记忆和旧策略；数据库测试通过真实任务入队、认领、完成、租约过期验证 SQLite/PostgreSQL 持久化及凭证代次隔离；浏览器回归使用模拟接口，不调用真实模型。
+State machine tests cover backoff across days, variable maximums, failed confirmation, recurrence memory and legacy policies; database tests verify SQLite/PostgreSQL persistence through real job enqueue, claim, completion and lease expiry, and credential generation isolation; browser regression uses simulated endpoints and does not call a real model.

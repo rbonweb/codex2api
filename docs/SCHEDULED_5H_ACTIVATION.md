@@ -1,44 +1,44 @@
-# 账号定时激活
+# Scheduled account activation
 
-入口：账号 → 测试连接 →「模型指纹检测」右侧的「定时激活」。此入口打开独立二级弹窗。
+Entry: Account → Test connection → "Scheduled activation" to the right of "Model fingerprint check". This entry opens a separate secondary dialog.
 
-## 配置
+## Configuration
 
-- 为当前 Codex/Responses 账号选择测试模型和测试内容。
-- 分别添加、删除工作日（周一至周五）和周末（周六、周日）的多个时间点。
-- 时间统一使用 `Asia/Shanghai`（北京时间）。
-- 可独立开启或关闭计划；没有配置的账号默认关闭。
-- 点击保存只保存计划，不立即发送请求。模型、内容、时间点持久化在当前账号的 `scheduled_connection_tests` 配置中。
+- Choose the test model and test content for the current Codex/Responses account.
+- Add and remove multiple time points separately for weekdays (Monday to Friday) and weekends (Saturday and Sunday).
+- Times are uniformly in `Asia/Shanghai` (Beijing time).
+- Each plan can be turned on or off independently; accounts without a configured plan are off by default.
+- Clicking save only saves the plan and does not send a request immediately. The model, content and time points are persisted in the current account's `scheduled_connection_tests` configuration.
 
-配置接口在管理员鉴权下提供：
+The configuration API is provided under admin authentication:
 
-- `GET /api/admin/accounts/:id/scheduled-tests`：配置、时区和最近十次执行记录。
-- `PUT /api/admin/accounts/:id/scheduled-tests`：保存完整配置。
+- `GET /api/admin/accounts/:id/scheduled-tests`: the configuration, time zone and the most recent ten execution records.
+- `PUT /api/admin/accounts/:id/scheduled-tests`: saves the complete configuration.
 
 ```json
 {
   "enabled": true,
-  "model": "所选账号可用的测试模型",
-  "content": "hi，回复 ok",
+  "model": "the test model available for the selected account",
+  "content": "hi, reply ok",
   "weekday_times": ["05:40", "10:40", "15:40"],
   "weekend_times": ["09:00", "14:00", "19:00"]
 }
 ```
 
-计划按账号独立配置，默认不会自动创建时间表。
+Plans are configured per account, and no timetable is created automatically by default.
 
-## 执行
+## Execution
 
-网关进程按分钟检查计划，关闭浏览器或 Codex 桌面端不会影响执行。自动测试复用现有测试连接处理器，一次绑定一个账号，不走轮询、剩余额度、临近重置优先或限额换号流程。Codex OAuth 定时请求显式使用独立 HTTP，并请求 `none` 推理强度。
+The gateway process checks plans every minute. Closing the browser or the Codex desktop app does not affect execution. Automatic tests reuse the existing test-connection handler, bind one account at a time, and do not go through the polling, remaining-quota, near-reset-first or quota-based account-switching flows. Codex OAuth scheduled requests explicitly use a separate HTTP path and request `none` reasoning effort.
 
-每个时间点只执行一次，失败不重试、不切换账号。已在计时、锁定或额度耗尽的账号仍可按已启用的计划测试；停用、删除账号或关闭计划后停止后续任务。执行前重新读取计划，以免执行排队期间已被删除的时间点。服务离线时错过的槽位不补发。
+Each time point runs only once, and failures are not retried or switched to another account. Accounts that are already on a timer, locked, or out of quota can still be tested under their enabled plan; after an account is disabled or deleted, or its plan is turned off, later tasks stop. The plan is re-read before execution so that time points deleted while the run was queued are not executed. Slots missed while the service was offline are not made up.
 
-执行请求会真实消耗上游额度。计划本身不能保证上游一定开始或重置五小时窗口，记录以响应后的可见用量状态为准。
+Execution requests really consume upstream quota. The plan itself cannot guarantee that the upstream will start or reset the five-hour window; records follow the visible usage status after the response.
 
-## 记录与恢复
+## Records and recovery
 
-每次使用 `(账号 ID, 上海日期时间槽位)` 的唯一持久化声明防止并发实例或服务重启后重复发送。结果记录在现有 `maintenance_jobs` 表的 `scheduled_connection_test:` 命名空间；JSON 摘要保存在 `last_error` 字段（成功记录并不表示错误）。
+Each `(account ID, Shanghai date-time slot)` pair has a unique persisted claim that prevents duplicate sends from concurrent instances or after a service restart. Results are recorded in the `scheduled_connection_test:` namespace of the existing `maintenance_jobs` table; the JSON summary is stored in the `last_error` field (a successful record does not mean there was an error).
 
-摘要包括计划时间、实际执行时间、账号 ID、模型、成功/失败/跳过状态和最新可见的五小时重置时间。不保存测试响应全文或凭据。页面显示最近十次记录，测试原有用量日志另带 `scheduled_connection_test` 内部原因。
+The summary includes the scheduled time, the actual execution time, the account ID, the model, the success/failure/skipped status, and the latest visible five-hour reset time. The full text of the test response and any credentials are not stored. The page shows the most recent ten records; the test's existing usage log additionally carries a `scheduled_connection_test` internal reason.
 
-若服务在声明后、记录结果前意外退出，该槽位显示「结果未确认」，为防重复请求不自动补发。计划停用不能撤销已经发送到上游的请求。
+If the service exits unexpectedly after the claim but before the result is recorded, the slot shows "result unconfirmed" and is not automatically resent, to prevent duplicate requests. Disabling a plan cannot revoke a request that has already been sent upstream.

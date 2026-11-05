@@ -1,55 +1,55 @@
-# 持久化图片任务队列
+# Persistent image job queue
 
-设置 `IMAGE_JOB_WORKERS=2` 后重启应用，启用固定数量的图片 Worker。默认未设置或为 `0` 时保留旧的任务接收方式；合法范围为 0–32。此功能面向单实例部署，并发上限按进程计算，不是跨副本的集群限额。
+After setting `IMAGE_JOB_WORKERS=2` and restarting the app, a fixed number of image workers is enabled. When it is unset or `0` (the default), the old job intake method is kept. The valid range is 0–32. This feature targets single-instance deployments; the concurrency limit is counted per process, not as a cluster-wide limit across replicas.
 
-## 接收与执行
+## Intake and execution
 
-- 外部 `/v1/images/jobs`、后台工作台、公开工作台共用数据库队列。API Key 鉴权、提示词检查和配额检查仍然生效；并发槽改为执行时获取。
-- Worker 按 API Key 轮转取任务：每次扫描只看每个 Key 最早的一条排队任务，先占到该 Key 的并发槽再领取。某个 Key 的并发被自身请求（如长流式连接）占满时，它的任务留在队列里，Worker 转而执行其他 Key 的任务，不会原地等待。
-- 单个 API Key 最多同时有 `IMAGE_JOB_MAX_QUEUED_PER_KEY` 个排队任务（默认 1000，`0` 不限制），超出时创建接口返回 429 并带 `Retry-After`。
-- 排队超过 `IMAGE_JOB_MAX_QUEUE_WAIT` 仍未开始的任务标记为失败并清理落盘的参考图（默认 `24h`，`0` 关闭，最小 `1m`，Go duration 格式）。这类任务从未请求上游，可直接重试。
-- 参考图 URL 在入队时只保存字符串，不访问远程服务器、不转 Base64。原有下载地址安全检查在 Worker 执行时保留。
-- data URL 上传先落入 `IMAGE_ASSET_DIR/queue-inputs`（默认 `/data/images/queue-inputs`），数据库只保存内部文件标识。正常执行结束清理临时文件。需要持久化该目录，不能把它放在重建后消失的容器层。
-- 外部创建接口返回小回执 `{"job":{"id":42,"status":"queued"}}`。旧详情查询保持原有字段，精简查询仍为 `/v1/images/jobs/:id/result`。已生成图片仍使用现有图库文件/对象存储和 `assets[].proxy_url`。
-- Worker 领取任务后才读取输入、请求上游、等待结果并保存图片。不会给每个排队任务创建常驻协程，也不会一次加载整个队列的参数。
-- `/v1/images/generations` 和 `/v1/images/edits` 与 Worker 共用进程内执行槽，繁忙时在解析请求体之前返回 429；需要排队的客户端应使用 jobs 接口。此限制不涵盖通用 Responses API 中客户端自行构造的图片工具调用。
-- 单次任务的 `n` 仍为 1–4，依次执行。批量 50 张应创建多个任务；队列容量受磁盘、配额和数据库能力限制，并非无限资源。
+- The external `/v1/images/jobs`, the admin workbench and the public workbench share the database queue. API key authentication, prompt checks and quota checks still apply; the concurrency slot is now acquired at execution time.
+- Workers take jobs round-robin across API keys: each scan looks only at the oldest queued job of each key, and takes that key's concurrency slot before claiming it. If a key's concurrency is full because of its own requests (such as long streaming connections), its jobs stay in the queue and the worker runs jobs from other keys instead of waiting in place.
+- A single API key can have at most `IMAGE_JOB_MAX_QUEUED_PER_KEY` queued jobs (default 1000, `0` means no limit). Beyond that, the create endpoint returns 429 with `Retry-After`.
+- A job that has waited longer than `IMAGE_JOB_MAX_QUEUE_WAIT` without starting is marked failed, and its persisted reference images are cleaned up (default `24h`, `0` disables it, minimum `1m`, Go duration format). Such jobs never reached upstream and can be retried directly.
+- Reference image URLs are stored as strings only at enqueue time: no remote server is contacted and nothing is converted to Base64. The existing download-address safety check is kept and runs when the worker executes.
+- data URL uploads are first written to `IMAGE_ASSET_DIR/queue-inputs` (default `/data/images/queue-inputs`); the database stores only an internal file ID. Temporary files are cleaned up when execution finishes normally. This directory must be persisted; do not place it in the container layer, which disappears on rebuild.
+- The external create endpoint returns a small receipt `{"job":{"id":42,"status":"queued"}}`. The old detail query keeps its original fields, and the summary query is still `/v1/images/jobs/:id/result`. Generated images still use the existing gallery files/object storage and `assets[].proxy_url`.
+- A worker reads inputs, calls upstream, waits for the result and saves the image only after it has claimed the job. No long-lived goroutine is created per queued job, and the parameters of the whole queue are never loaded at once.
+- `/v1/images/generations` and `/v1/images/edits` share the in-process execution slots with the workers; when busy they return 429 before the request body is parsed. Clients that need to queue should use the jobs endpoint. This limit does not cover image tool calls that clients build themselves in the general Responses API.
+- A single job's `n` is still 1–4, and the images are generated one after another. For a batch of 50 images, create multiple jobs. Queue capacity is limited by disk, quota and database capacity; it is not unlimited.
 
-## 内存边界
+## Memory bounds
 
-入队请求最多同时解析 2 个，请求体最多 48 MiB；单张参考图最多 20 MiB，总参考图最多 32 MiB，图片头声明的像素数最多 4000 万。执行前再次校验输入，队列模式下生成结果在昂贵的放大操作前也校验像素数。
+At most 2 enqueue requests are parsed at the same time, and a request body is at most 48 MiB. A single reference image is at most 20 MiB, all reference images together at most 32 MiB, and the pixel count declared in an image header at most 40 million. Inputs are validated again before execution; in queue mode, the pixel count of generated results is also checked before the expensive upscale operation.
 
-可分别通过 `IMAGE_UPSCALE_CACHE_MB`（1–4096，默认 512）和 `IMAGE_THUMB_CACHE_MB`（1–1024，默认 64）调整缓存。2 GiB 机器建议从 Worker 2、放大缓存 64 MiB、缩略图缓存 16 MiB、`GOMEMLIMIT=768MiB` 开始验证。Go 内存目标是软目标；OS、其他服务、缓存和构建进程也需要预留内存。Swap 是峰值缓冲，不能代替执行限额。
+Caches can be adjusted separately with `IMAGE_UPSCALE_CACHE_MB` (1–4096, default 512) and `IMAGE_THUMB_CACHE_MB` (1–1024, default 64). For a 2 GiB machine, start validation with 2 workers, a 64 MiB upscale cache, a 16 MiB thumbnail cache and `GOMEMLIMIT=768MiB`. The Go memory target is a soft target; memory must also be reserved for the OS, other services, caches and build processes. Swap is a peak buffer and cannot replace execution limits.
 
-## 数据库与重启
+## Database and restarts
 
-首次启用会幂等地向现有 `image_generation_jobs` 增加：
+On first enablement, the following is idempotently added to the existing `image_generation_jobs` table:
 
-| 列 | 类型 / 默认值 | 用途 |
+| Column | Type / default | Purpose |
 | --- | --- | --- |
-| `queue_owner` | TEXT / 空字符串 | 本次领取的唯一标识 |
-| `queue_lease_until` | BIGINT / 0 | 租约到期的 Unix 秒数 |
+| `queue_owner` | TEXT / empty string | Unique identifier of this claim |
+| `queue_lease_until` | BIGINT / 0 | Unix seconds when the lease expires |
 
-同时增加 `(status, id)` 和 `(status, api_key_id, id)` 索引。支持 SQLite/PostgreSQL 的加列语法，不删除表、字段、历史图片或 API Key。发布前仍应备份数据库与图片目录。
+Indexes on `(status, id)` and `(status, api_key_id, id)` are also added. The add-column syntax is supported on SQLite/PostgreSQL; no tables, fields, historical images or API keys are deleted. Back up the database and image directory before release.
 
-任务领取使用条件更新，只有一个 Worker 能领取成功。租约为 2 分钟，每 20 秒续约；终态写入检查归属和租约，防止过期 Worker 覆盖恢复结果。
+Job claims use a conditional update, so only one worker can claim a job successfully. The lease lasts 2 minutes and is renewed every 20 seconds. Terminal-state writes check ownership and the lease, to stop a stale worker from overwriting recovered results.
 
-重启后 `queued` 保留并继续执行；`running` 租约过期后标记为失败，明确说明上游结果未知，**不自动再次提交生成请求**。旧版本没有租约的 running 任务首次启用时同样标记中断。尚未过期的 running 记录会在队列下一次扫描后处理；如果所有 Worker 都在执行，扫描会延后。需要先核对上游和计费，再决定是否手动重试。
+After a restart, `queued` jobs are kept and continue to run. A `running` job whose lease has expired is marked failed, clearly stating that the upstream result is unknown, and **the generation request is not submitted again automatically**. Running jobs from the old version that have no lease are likewise marked interrupted on first enablement. A running record whose lease has not yet expired is handled on the queue's next scan; if all workers are busy, the scan is delayed. Check upstream and billing first, then decide whether to retry manually.
 
-已执行任务的历史图片不受影响。回滚二进制时可保留新增列，但必须先处理待执行队列：旧版本启动逻辑会把 queued/running 标记中断。多副本部署还需额外设计集群级并发限额和共享输入文件存储。
+Historical images from jobs that already ran are not affected. When rolling back the binary, the new columns can be kept, but the pending queue must be handled first: the startup logic of the old version marks queued/running jobs as interrupted. Multi-replica deployments also need a cluster-wide concurrency limit and shared input-file storage to be designed.
 
 
-## 上传后释放内存的分阶段处理（可选）
+## Staged processing to release memory after upload (optional)
 
-设置 `IMAGE_JOB_WORKERS=10`、`IMAGE_JOB_MEMORY_WORKERS=1` 后重启：最多10个任务在途，只有1个任务同时进行参考图准备、请求构造压缩或返回结果处理。请求转为可重放的磁盘文件后释放内存处理名额，其他任务可以继续发送，不必等待前一个任务生成完成。真实同时到达上游的数量仍受账号、API Key、调度器和上游配额限制。
+After setting `IMAGE_JOB_WORKERS=10` and `IMAGE_JOB_MEMORY_WORKERS=1` and restarting: up to 10 jobs are in flight, but only 1 job at a time may be preparing reference images, building or compressing requests, or processing returned results. Once a request has been turned into a replayable disk file, its memory-processing slot is released, and other jobs can keep sending without waiting for the previous job's generation to finish. The number that actually reaches upstream at the same time is still limited by accounts, API keys, the scheduler and upstream quota.
 
-`IMAGE_JOB_MEMORY_WORKERS` 未设置/0时保留原Worker实现，不更改默认行为；合法范围0..IMAGE_JOB_WORKERS。直接调用 images/generations/edits 仍共用在途上限，且保守地占据内存处理名额直至结束；批量调用推荐jobs。通用Responses仍不在这个专用限制内。
+When `IMAGE_JOB_MEMORY_WORKERS` is unset or 0, the original worker implementation is kept and the default behavior does not change; the valid range is 0..IMAGE_JOB_WORKERS. Direct calls to images/generations/edits still share the in-flight limit, and conservatively hold a memory-processing slot until they finish; for batch calls, the jobs endpoint is recommended. The general Responses API is still outside this dedicated limit.
 
-- 请求构造、压缩阶段限流；最终HTTP请求体从私有文件流式发送，重试从文件重放，保持模型回退和账号调度。压缩器使用独立的单线程、小窗口实例，避免通用压缩器缓存的大量历史缓冲。
-- GPT等待期间不持有输入Base64；响应SSE以32KiB分块暂存磁盘（单次最大128MiB，超限明确失败，不返回截断图片）。收到终止事件后才获取内存名额解析结果。
-- 每张结果的Base64编码流式解码到文件，直接交给Local/S3存储。没有要求缩放或尺寸已经符合要求时，只读取图片头，不展开像素。确需尺寸处理时才读取图片，且受内存名额限制。
-- 不再聚合多张Base64 JSON或经内部HTTP返回大图；n>1逐张保存，最后更新任务状态，保留部分成功和按交付图片结算的逻辑。
-- 请求、响应、解码暂存位于 `IMAGE_ASSET_DIR/pipeline-tmp/job-*`，权限0700/0600，任务完成/失败/取消立即清理；异常退出遗留目录由每小时维护清理超过24h的目录。它们不会永久保存。部署须预留暂存磁盘空间，保护目录不被外部进程写入。
-- 本地磁盘或保存失败不触发额外付费生图；网络失败沿用现有重试规则。排队/任务租约、API鉴权、配额检查保持不变，无新增数据库表或字段。
+- Request building and compression are rate limited; the final HTTP request body is streamed from a private file, retries replay from the file, and model fallback and account scheduling are kept. The compressor uses an independent single-threaded, small-window instance, to avoid the large amount of history buffer held by the general compressor cache.
+- The input Base64 is not held while waiting for GPT; the response SSE is staged to disk in 32 KiB chunks (at most 128 MiB, and exceeding it fails explicitly without returning a truncated image). The memory slot is acquired to parse the result only after the terminal event is received.
+- The Base64 encoding of each result is streamed-decoded to a file and handed directly to Local/S3 storage. When no resizing is required, or the size already meets the requirement, only the image header is read and the pixels are not expanded. The image is read in full only when size processing is actually needed, and that is subject to the memory slot limit.
+- Multiple Base64 JSON results are no longer aggregated, nor are large images returned through an internal HTTP call; n>1 saves each image one by one, and the job status is updated at the end, keeping the logic of partial success and settlement by delivered images.
+- Request, response and decode staging files are located at `IMAGE_ASSET_DIR/pipeline-tmp/job-*`, with permissions 0700/0600, and are cleaned up immediately when the job completes, fails or is cancelled. Directories left behind by abnormal exits are cleaned up by hourly maintenance once they are older than 24h. They are never kept permanently. Deployments must reserve staging disk space and protect the directory from being written by external processes.
+- A local disk or save failure does not trigger an extra paid image generation; network failures follow the existing retry rules. Queue/job leases, API authentication and quota checks are unchanged, and there are no new database tables or fields.
 
-等待名额不等于无限并发，也不是吞吐承诺。2GB机器建议从内存处理1、在途10开始验证；保留运行期内存限制，观察账号限流、GC、Swap和磁盘，勿用空闲内存推算峰值。
+Waiting for a slot is not unlimited concurrency, nor a throughput promise. For a 2 GB machine, start validation with memory processing at 1 and in-flight at 10; keep the runtime memory limit, and watch account rate limits, GC, swap and disk. Do not estimate peak usage from idle memory.

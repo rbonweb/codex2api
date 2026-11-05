@@ -1,84 +1,48 @@
-# Codex 出站 attestation
+# Codex outbound attestation
 
-Codex 账号的 HTTP、Responses WebSocket、Live 建连和 sideband 共用一套
-`X-Oai-Attestation` 规则，适用于 Desktop、TUI、IDE、Exec、SDK 等客户端身份。
-平台取自最终出站 User-Agent；服务器的操作系统只决定能否实际调用原生 DeviceCheck。
+The HTTP, Responses WebSocket, Live connection setup and sideband of a Codex account share one `X-Oai-Attestation` rule set, which applies to client identities such as Desktop, TUI, IDE, Exec and SDK. The platform is taken from the final outbound User-Agent; the server's operating system only determines whether the native DeviceCheck can actually be called.
 
-OAuth 换码、令牌刷新和普通维护请求不调用对话的 attestation provider，也不复用对话证明。
-这与 Codex `rust-v0.166.0` 的登录客户端和默认 HTTP 头构建保持一致；令牌刷新只复用
-所选客户端的 UA、Originator，授权链接携带 Originator，换码使用独立客户端。
+OAuth code exchange, token refresh and ordinary maintenance requests do not call the conversation attestation provider, and do not reuse conversation attestation. This matches the login client and default HTTP header construction in Codex `rust-v0.166.0`; token refresh only reuses the selected client's UA and Originator; the authorization link carries the Originator, and code exchange uses a separate client.
 
-## 平台与失败状态
+## Platform and failure states
 
-| 出站身份或原生结果 | 自动行为 |
+| Outbound identity or native result | Automatic behavior |
 | --- | --- |
-| Windows | 内层 `error_code: 1`，携带账号设备画像 |
-| Linux，包括各发行版 | 不发送证明，同时清除外部提供的该请求头 |
-| macOS x64 | 内层 `error_code: 2`，表示架构不支持 |
-| macOS arm64，原生生成成功 | 内层携带真实 `token` |
-| macOS arm64，原生报告设备不支持 | 内层 `error_code: 3` |
-| macOS arm64，非兼容 Mac 宿主、缺组件、调用异常、超时或没有 token | 内层 `error_code: 4` |
+| Windows | Inner `error_code: 1`, carrying the account device profile |
+| Linux, including all distributions | No attestation is sent, and the externally supplied header for this request is removed |
+| macOS x64 | Inner `error_code: 2`, meaning the architecture is not supported |
+| macOS arm64, native generation succeeded | Inner carries the real `token` |
+| macOS arm64, native reports the device is not supported | Inner `error_code: 3` |
+| macOS arm64, non-compatible Mac host, missing component, call error, timeout or no token | Inner `error_code: 4` |
 
-上述自动生成结果的外层都是 `{"v":1,"s":0,"t":"v1.…"}`。
-`t` 是 Base64URL 编码的 CBOR；其中包含 `bundle_id: "com.openai.codex"`、
-设备画像 `f`、真实 token 或错误码，以及原生返回时可选的浮点耗时 `t`。
-外层 `s:0` 表示成功构造结果，并不表示 DeviceCheck 校验通过。
+The outer layer of all the automatically generated results above is `{"v":1,"s":0,"t":"v1.…"}`. `t` is CBOR encoded as Base64URL; it contains `bundle_id: "com.openai.codex"`, the device profile `f`, the real token or error code, and the optional floating-point duration `t` returned by the native call. The outer `s:0` means the result was constructed successfully; it does not mean that DeviceCheck verification passed.
 
-这些状态来自官方桌面包的生成策略：Windows/macOS `26.1021.31345`，
-Linux `26.1021.22027`。三平台包中的相关生成函数一致。Linux 默认不启用
-attestation，因此不主动发送其“平台不支持”的备用 token。
+These states come from the generation policy of the official desktop package: Windows/macOS `26.1021.31345`, Linux `26.1021.22027`. The relevant generation functions are identical across the three platform packages. Linux does not enable attestation by default, so it does not proactively send its "platform not supported" fallback token.
 
-## 身份、画像与证明来源
+## Identity, profile and attestation source
 
-证明仅使用本项目服务按最终出站身份生成的结果。下游请求和账号自定义请求头中的
-`X-Oai-Attestation` 均被清除，不能覆盖生成结果；Linux 或未启用证明的平台不发送该头。
-Live sideband 只恢复服务端保存的建连结果，包括明确的“不发送”，不会接收客户端证明。
+Attestation only uses results that this project's service generates for the final outbound identity. The `X-Oai-Attestation` headers in downstream requests and in account custom request headers are all removed and cannot override the generated result; Linux or platforms without attestation enabled do not send this header. Live sideband only restores the connection-setup result the server saved, including an explicit "do not send", and never receives client attestation.
 
-所有自动生成的画像使用账号绑定时区派生语言和日期，按账号固定选择屏幕档位，
-会话 UUID 按该时区的自然日轮换。保留原 Windows 实现的种子和档位映射，
-升级不会改变已有 Windows 账号的生成结果。
+All automatically generated profiles derive language and date from the account's bound time zone, and select a screen tier that is fixed per account, the session UUID rotates by the natural day in that time zone. The seeds and tier mapping from the original Windows implementation are kept, so upgrading does not change the generation result for existing Windows accounts.
 
-例如，Linux/Docker 上模拟 Windows 出站身份时仍生成 Windows 降级状态；
-模拟 macOS arm64 时因无法调用原生组件而生成错误码 4。Mac 主机使用 Linux
-出站身份时不自动添加证明。
+For example, on Linux/Docker, simulating a Windows outbound identity still generates the Windows degraded state; when simulating macOS arm64, error code 4 is generated because the native component cannot be called. When the Mac host uses a Linux outbound identity, no attestation is added automatically.
 
-## Mac 原生依赖
+## Mac native dependencies
 
-原生生成需要 Apple Silicon Mac，以及安装在系统或用户 `Applications` 目录中的
-官方 `ChatGPT.app` 或旧名称 `Codex.app`，应用标识须为 `com.openai.codex`。
-复用应用内的 `cua_node/bin/node` 和 `native/devicecheck.node`，无需新增 Go 原生依赖。
+Native generation requires an Apple Silicon Mac and the official app in the system or user `Applications` directory, `ChatGPT.app` or its old name `Codex.app`, whose application identifier must be `com.openai.codex`. It reuses `cua_node/bin/node` and `native/devicecheck.node` inside the app, so no new Go native dependency is needed.
 
-原生调用在独立子进程中进行，执行上限为 5 秒并遵从请求取消。设备不支持、组件缺失
-或进程失败时返回上述内层状态，不因生成失败在本地阻断普通请求或 Live。
+The native call runs in a separate child process, with a 5-second execution limit that honors request cancellation. When the device is unsupported or a component is missing or the process fails, the inner status above is returned, and ordinary requests or Live are not blocked locally because generation failed.
 
-CBOR 和设备画像可以在软件中构造，真实 DeviceCheck token 仍由 Apple 原生框架生成。
-不能把带错误码的结果视为硬件证明；实际可用性和权限由上游决定。
+CBOR and the device profile can be constructed in software; the real DeviceCheck token is still generated by Apple's native framework. A result carrying an error code must not be treated as hardware attestation; actual availability and permissions are decided by upstream.
 
-公开资料检索未找到可验证的 Windows/Linux 纯软件生成有效 Mac DeviceCheck token 的实现。
-Apple 的 [DCDevice 文档](https://developer.apple.com/documentation/devicecheck/dcdevice)
-要求先检查设备支持情况，生成 token 后交由服务端处理，并要求注册 App ID。
-[oh-my-pi 的原生调用问题记录](https://github.com/can1357/oh-my-pi/issues/8353)
-也表明直接调用仍依赖 Mac 的 DeviceCheck 框架，且无图形登录会话时可能使进程异常退出；
-因此本项目将该调用隔离在子进程中。这些资料不能证明跨平台模拟绝无可能。
+A public-source search found no verifiable implementation that generates a valid Mac DeviceCheck token purely in software on Windows/Linux. Apple's [DCDevice documentation](https://developer.apple.com/documentation/devicecheck/dcdevice) requires checking device support first, generating a token and handing it to the server for processing, and requires registering an App ID. [Native-call issue notes for oh-my-pi](https://github.com/can1357/oh-my-pi/issues/8353) also show that a direct call still depends on Mac's DeviceCheck framework, and that without a graphical login session the process may exit abnormally; this project therefore isolates the call in a child process. These sources cannot prove that cross-platform simulation is impossible.
 
-本次在 Linux 验证封装字节、平台分支、失败状态、Live 复用与跨平台编译，未验证 Mac
-真机生成成功或真实上游接受 Live 请求。
+This round verified on Linux the wrapped bytes, platform branches, failure states, Live reuse and cross-platform compilation, but did not verify Mac real-device generation success or acceptance of a Live request by the real upstream.
 
-## Live 会话
+## Live sessions
 
-Live 在选定账号后装配身份和证明；切换账号重试时重新解析。成功建连后，保存
-最终出站 UA、Version、Originator，并将最终证明加密保存到会话映射。
-未发送证明也加密保存为空字符串，区别于缺失或损坏的密文。
+Live assembles the identity and attestation after the account is selected; it is re-resolved when retrying with a switched account. After a successful connection setup, save the final outbound UA, Version and Originator, and store the final attestation encrypted in the session mapping. When no attestation was sent, an empty string is also stored encrypted, to distinguish it from missing or corrupted ciphertext.
 
-sideband 使用建连账号、冻结身份和解密后的证明，不重新生成，也不受随后修改的
-身份或自定义请求头影响。已有会话缺少身份快照时沿用原身份解析；原有证明密文格式兼容。
-API Key 的“自动”和 Codex 渠道均可设置“允许 ChatGPT Live”，新建 Key 在这两个渠道下
-默认开启，也可手动关闭。创建接口省略 `limits.allow_live` 时采用相同默认值，显式
-`false` 仍关闭；已有 Key 保留已保存的选择。长会话并发与租约沿用现有规则。
+Sideband uses the account that set up the connection, the frozen identity and the decrypted attestation; it is not regenerated and is not affected by identity or custom request headers changed afterwards. Existing sessions without an identity snapshot keep using the original identity resolution; the existing attestation ciphertext format remains compatible. For API keys, both the "auto" channel and the Codex channel can set "allow ChatGPT Live"; a newly created key is enabled by default in both channels, and can be turned off manually. When the create endpoint omits `limits.allow_live`, the same default applies; an explicit `false` still turns it off; existing keys keep their saved choice. Long-session concurrency and leases follow the existing rules.
 
-上游建连使用 `https://chatgpt.com/backend-api/codex/realtime/calls`，v3 sideband 使用
-`wss://api.openai.com/v1/live/<call_id>`。两步均使用池中同一个 Codex 账号的 OAuth
-access token 和 account ID；sideband 域名不同不代表切换为平台 API Key。
-此行为对应 [Codex 0.164.0 的鉴权说明](https://github.com/openai/codex/blob/rust-v0.164.0/codex-rs/core/src/client.rs#L525)
-及 [ChatGPT provider 的端点测试](https://github.com/openai/codex/blob/rust-v0.164.0/codex-rs/codex-api/src/endpoint/realtime_websocket/methods.rs#L2497)。
-拨号失败时服务端记录 HTTP 握手状态、上游 request ID 与调用映射哈希；不记录证明或鉴权头。
+Upstream connection setup uses `https://chatgpt.com/backend-api/codex/realtime/calls`, and the v3 sideband uses `wss://api.openai.com/v1/live/<call_id>`. Both steps use the OAuth access token and account ID of the same Codex account in the pool; a different sideband domain does not mean switching to a platform API Key. This behavior corresponds to the [Codex 0.164.0 authentication notes](https://github.com/openai/codex/blob/rust-v0.164.0/codex-rs/core/src/client.rs#L525) and the [ChatGPT provider endpoint tests](https://github.com/openai/codex/blob/rust-v0.164.0/codex-rs/codex-api/src/endpoint/realtime_websocket/methods.rs#L2497). When dialing fails, the server logs the HTTP handshake status, the upstream request ID and a hash of the call mapping; it does not log attestation or auth headers.

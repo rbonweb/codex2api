@@ -1,346 +1,342 @@
-# Codex2API 配置说明
+# Codex2API configuration guide
 
-本文档详细说明 Codex2API 的所有配置项及其作用。
+This document describes all Codex2API configuration options and what they do.
 
-## 目录
+## Contents
 
-- [配置层级](#配置层级)
-- [环境变量配置](#环境变量配置)
-- [系统设置（数据库）](#系统设置数据库)
-- [模型与价格自动更新](#模型与价格自动更新)
-- [API Key 模型周请求次数预算](#api-key-模型周请求次数预算)
-- [降智检测与目标分组](#降智检测与目标分组)
-- [Codex 出站 attestation](#codex-出站-attestation)
-- [配置文件示例](#配置文件示例)
-- [配置优先级](#配置优先级)
+- [Configuration layers](#configuration-layers)
+- [Environment variable configuration](#environment-variable-configuration)
+- [System settings (database)](#system-settings-database)
+- [Automatic model and price updates](#automatic-model-and-price-updates)
+- [API Key model weekly request budget](#api-key-model-weekly-request-budget)
+- [Quality check and target groups](#quality-check-and-target-groups)
+- [Codex outbound attestation](#codex-outbound-attestation)
+- [Configuration file example](#configuration-file-examples)
+- [Configuration precedence](#configuration-precedence)
 
 ---
 
-## 降智检测与目标分组
+## Quality check and target groups
 
-管理后台「降智检测」用于 Codex 账号。「新增账号默认检测」只影响之后创建的账号，不会修改已有账号的检测开关。
+The admin panel's "Quality check" applies to Codex accounts. "Default check for new accounts" only affects accounts created afterwards and does not change the check switch of existing accounts.
 
-- 自动处置为「不自动处置」或「暂停业务调度」时，新账号按默认开关决定是否参与检测。
-- 自动处置为「切换分组」时，目标分组不存在则新账号不自动参与检测。
-- 升级会替换 SQLite 和 PostgreSQL 的新账号触发器，但保留已有账号的检测开关。
+- When automatic action is set to "No automatic action" or "Pause business scheduling", new accounts join checks according to the default switch.
+- When automatic action is set to "Switch group", new accounts do not join checks automatically if the target group does not exist.
+- Upgrading replaces the new-account triggers in SQLite and PostgreSQL, but keeps the check switches of existing accounts.
 
-## 模型与价格自动更新
+## Automatic model and price updates
 
-在管理后台「模型定价 → 价格同步」开启「自动更新模型与官方价格」，勾选需要的来源（OpenAI 对应 Codex）并保存间隔。默认关闭，默认间隔为每天，可设为每小时；已开启官方价格轮询的部署升级后，所选渠道自动获得模型发现功能。
+In the admin panel, go to "Model pricing → Price sync", turn on "Automatically update models and official prices", select the sources you need (OpenAI corresponds to Codex), and save the interval. It is off by default; the default interval is daily, and it can be set to hourly. After an upgrade, deployments that already have official price polling enabled automatically get model discovery for the selected channels.
 
-每轮并行刷新所选渠道的模型目录，所有发现任务共用 30 秒预算，随后同步包含新型号的官方价格。Codex 读取官方目录并按套餐抽样获取账号清单。
+Each round refreshes the model catalogs of the selected channels in parallel. All discovery tasks share a 30-second budget, and then official prices, including those for new models, are synced. Codex reads the official catalog and samples the account list by plan.
 
-无需客户端先请求模型清单，也无需修改内置模型列表或重启服务。没有 ChatGPT 账号时仍可通过官方目录发现 Codex 模型；实际调用权限由账号及上游决定。
+Clients do not need to request the model list first, and there is no need to edit the built-in model list or restart the service. Codex models can still be discovered through the official catalog without a ChatGPT account; actual call permission is decided by the account and the upstream.
 
-Codex 注册表中管理员禁用的模型不会重新启用，账号清单学习只增加模型，不因单个账号缺少权限而删除模型；官方目录来源的非内置旧条目沿用现有同步清理规则。手工价格优先于同步价。发现失败不阻断后续价格同步，失败会在同步警告和服务日志中报告；未公布价格的新型号暂用现有兜底价，后续轮询获得价格后自动生效。
+Models that an administrator disabled in the Codex registry are not re-enabled. Account-list learning only adds models and never removes a model because a single account lacks permission. Old non-built-in entries from the official catalog follow the existing sync cleanup rules. Manual prices take precedence over synced prices. A discovery failure does not block the next price sync; failures are reported in sync warnings and the service log. New models without a published price temporarily use the existing fallback price, and take effect automatically once a later poll obtains a price.
 
-价格同步读取官方 HTML 网页，按列名识别价格，不解析 Markdown。OpenAI 折叠模型从页面内嵌数据补全，长上下文价读取该页面引用的官方价格组件，仅解码数据而不执行脚本；结构变化时拒绝不完整价格并进入参考来源回退。写入前校验表格结构、数值类型、非负有限价格、缓存读取价不高于对应输入价，以及已知模型的长上下文档位。官方抓取失败、格式变化、价格校验失败或模型缺价时，按模型依次尝试 **LiteLLM → models.dev → 项目默认 pricing.json**；仍无有效价格时清除该模型旧的同步覆盖，恢复内置默认定价。已获取的高优先级价格不会被后续来源覆盖，未勾选的渠道不受影响，管理员自定义价格始终优先。
+Price sync reads the official HTML pages and identifies prices by column name; it does not parse Markdown. Collapsed OpenAI models are filled in from the data embedded in the page, and long-context prices are read from the official price component that the page references. Only the data is decoded; no scripts are executed. If the structure changes, incomplete prices are rejected and the reference-source fallback is used. Before writing, the table structure, value types, non-negative finite prices, cached-read prices not higher than the matching input prices, and the long-context tiers of known models are validated. When official scraping fails, the format changes, price validation fails, or a model has no price, the system tries **LiteLLM → models.dev → project default pricing.json** in order, for each model. If there is still no valid price, the model's old synced override is cleared and the built-in default pricing is restored. A higher-priority price that has already been fetched is not overridden by later sources, channels that are not selected are not affected, and administrator-defined prices always take precedence.
 
-「参考 JSON 来源」提供 LiteLLM、models.dev、项目默认及自定义 URL 的手动导入。LiteLLM 的每 token 单价会转换为页面统一的 USD / 1M tokens；第三方目录只使用 OpenAI 第一方条目，避免混入转售商价格。自动回退顺序固定，不改写手动导入 URL。成功回退和使用内置默认价通过同步结果的普通提示展示；最近警告仅记录抓取、解析及校验异常。gpt-image-2 的 2K/4K 变体缺少独立价目时继承基础模型 token 价，仍可分别设置自定义价格。
+"Reference JSON sources" provides manual import from LiteLLM, models.dev, the project default, and custom URLs. LiteLLM per-token prices are converted to the page's unified USD / 1M tokens. Third-party catalogs only use OpenAI first-party entries, to avoid mixing in reseller prices. The automatic fallback order is fixed and does not rewrite manually imported URLs. A successful fallback and the use of built-in default prices are shown as regular hints in the sync result; the recent warnings only record fetch, parse, and validation errors. When the 2K/4K variants of gpt-image-2 have no separate price list, they inherit the base model's token prices, and custom prices can still be set for each variant separately.
 
-Daybreak 派生别名（如 `gpt-6-sol-daybreak-blue`、`gpt-6.1-sol-daybreak-blue`）按基础型号同步完整标准、Fast 和长上下文价格，不要求参考 JSON 单独收录别名。别名有精确价目时优先采用；别名自定义价优先，基础模型自定义价也不会被别名同步价压过。未查到基础型号价格时继续按既定来源顺序回退。官方 `gpt-daybreak-blue-latest`、`gpt-daybreak-red-latest` 的默认快照目前分别是 `gpt-5.6-sol`、`gpt-5.6-cyber`；Cyber 使用独立公开定价，不再按 Sol 兜底。来源：[Daybreak 指南](https://developers.openai.com/api/docs/guides/daybreak)、[官方价格页](https://developers.openai.com/api/docs/pricing)。
+Daybreak-derived aliases (such as `gpt-6-sol-daybreak-blue` and `gpt-6.1-sol-daybreak-blue`) sync the full standard, Fast, and long-context prices from their base model, and the reference JSON does not need to list the aliases separately. When an alias has an exact price entry, that entry is used first. Custom prices for an alias take precedence, and a custom price for the base model is not overridden by the alias sync price. When no base-model price is found, the fallback continues in the established source order. The current default snapshots of the official `gpt-daybreak-blue-latest` and `gpt-daybreak-red-latest` are `gpt-5.6-sol` and `gpt-5.6-cyber` respectively; Cyber uses its own public pricing and no longer falls back to Sol. Sources: [Daybreak guide](https://developers.openai.com/api/docs/guides/daybreak), [official pricing page](https://developers.openai.com/api/docs/pricing).
 
-「立即同步官方价」只同步价格，模型发现由定时轮询执行。新协议、特殊权限或特殊计费规则仍可能需要更新程序。
+"Sync official prices now" only syncs prices; model discovery is performed by scheduled polling. New protocols, special permissions, or special billing rules may still require a program update.
 
-## Codex 出站 attestation
+## Codex outbound attestation
 
-Codex HTTP、WebSocket 和 Live 共用出站证明服务，按最终 User-Agent 选择平台：
-Windows 自动发送平台不可用状态，Linux 不自动补头，macOS 尝试原生 DeviceCheck，
-生成失败时发送桌面端对应的内层错误状态。证明统一由本项目生成，忽略客户端及账号
-自定义请求头中的 `X-Oai-Attestation`；Live sideband 复用服务端冻结的建连结果。
-无需新增环境变量或数据库设置；详见 [平台矩阵、Mac 依赖与 Live 快照](CODEX_ATTESTATION.md)。
+Codex HTTP, WebSocket, and Live share the outbound attestation service, which selects the platform based on the final User-Agent: On Windows it automatically sends a platform-unavailable status; Linux does not add the header automatically; macOS tries native DeviceCheck, if generation fails, it sends the matching inner error status for the desktop client. This project always generates the attestation, and it ignores the client and account custom `X-Oai-Attestation` headers; Live sideband reuses the connection result frozen by the server. No new environment variables or database settings are needed; see [platform matrix, Mac dependencies, and Live snapshot](CODEX_ATTESTATION.md).
 
-## 配置层级
+## Configuration layers
 
-Codex2API 采用三层配置架构：
+Codex2API uses a three-layer configuration architecture:
 
 ```
 ┌─────────────────────────────────────────────────────────────┐
-│  Layer 1: 环境变量 / .env 文件                               │
-│  - 数据库连接、端口、基础认证                                 │
-│  - 物理层基础设施配置                                        │
+│  Layer 1: Environment variables / .env file                  │
+│  - Database connection, port, and basic authentication       │
+│  - Physical-layer infrastructure configuration               │
 └─────────────────────────────────────────────────────────────┘
                               ↓
 ┌─────────────────────────────────────────────────────────────┐
-│  Layer 2: 系统设置（数据库 SystemSettings 表）               │
-│  - 业务参数：并发、限流、测试配置                             │
-│  - 运行时可通过管理后台修改                                  │
+│  Layer 2: System settings (SystemSettings table)             │
+│  - Business settings: concurrency, rate limits, test settings│
+│  - Editable at runtime from the admin panel                  │
 └─────────────────────────────────────────────────────────────┘
-│  Layer 3: 运行时内存状态                                     │
-│  - 账号池状态、调度评分、冷却状态                             │
-│  - 程序重启后从数据库恢复                                    │
+│  Layer 3: Runtime in-memory state                            │
+│  - Account-pool state, scheduling scores, cooldown state     │
+│  - Restored from the database after a restart                 │
 └─────────────────────────────────────────────────────────────┘
 ```
 
 ---
 
-## 生图按张计费
+## Per-image billing for image generation
 
-在管理后台 **模型定价**（`/admin/model-pricing`）找到图片模型，把「用户生图计费」切换为「按成功图片张数」，填写大于 0 的每张美元单价后保存。默认仍为 Token 计费；恢复默认价格会同时恢复 Token 计费。例如单价 `$0.05`，成功返回 2 张图片扣 `$0.10`，Key 的 `$10` 额度剩余 `$9.90`。
+In the admin panel, open **Model pricing** (`/admin/model-pricing`), find the image model, switch "User image generation billing" to "Per successful image", enter a per-image USD price greater than 0, and save. It is still token-based billing by default; restoring the default prices also restores token billing. For example, with a price of `$0.05`, returning 2 successful images charges `$0.10`, and a key with a `$10` quota has `$9.90` left.
 
-- 按实际成功图片张数收费，不按 HTTP 请求数收费；失败、取消和内部重试不收图片费用。多图任务部分成功时只结算成功部分。
-- 图片 API（`/v1/images/generations`、`/v1/images/edits`，含流式）在成功响应后记账；工作台任务在图片保存完成后结算，无法保存或解码的结果不收费。
-- Token 价格继续核算上游成本（`account_billed`）；用户费用（`user_billed`）按张计算，用于 Key 累计额度、总消费及分组/账号预算，不额外叠加 Token 费用。文本模型通过 Responses 内嵌图片工具的请求仍沿用 Token 计费。
-- 每条用量记录保存计费方式、单价和收费张数，调价不重算历史记录。配置按实际生效的模型定价键匹配：GPT Image 2.5 的日期和 2K/4K 别名共用对应 Flare/Sunburst 价格；GPT Image 2 的基础、2K、4K 模型可分别设置。
-- 公开工作台在生成按钮上方显示所选模型的每张单价，Key 旁显示剩余额度。额度沿用异步结算机制；这不是预扣余额或并发余额预留，并发/批量请求仍可能超过剩余额度。
+- Billing is based on the number of successful images, not HTTP requests; failures, cancellations, and internal retries are not charged. For multi-image jobs that partly succeed, only the successful part is settled.
+- The image API (`/v1/images/generations`, `/v1/images/edits`, including streaming) records billing after a successful response; workspace jobs are settled after the images are saved, and results that cannot be saved or decoded are not charged.
+- Token prices continue to account for upstream cost (`account_billed`); user cost (`user_billed`) is calculated per image and is used for the key's cumulative quota, total spend, and group/account budgets, without adding token charges on top. Text-model requests that use the image tool embedded in Responses still use token billing.
+- Each usage record stores the billing method, unit price, and number of images charged; changing prices does not recalculate historical records. Settings are matched by the model pricing key that is actually in effect: the dated and 2K/4K aliases of GPT Image 2.5 share the corresponding Flare/Sunburst prices; the base, 2K, and 4K models of GPT Image 2 can be set separately.
+- The public workspace shows the per-image price of the selected model above the generate button, and the remaining quota next to the key. Quota uses the same asynchronous settlement mechanism; this is not a pre-deducted balance or a concurrent balance reservation, so concurrent or batch requests can still exceed the remaining quota.
 
-## 环境变量配置
+## Environment variable configuration
 
-### 核心服务配置
+### Core service settings
 
-| 变量 | 必填 | 默认值 | 说明 |
+| Variable | Required | Default | Description |
 |------|------|--------|------|
-| `CODEX_PORT` | 否 | 8080 | HTTP 服务端口 |
-| `BIND_HOST` | 否 | `127.0.0.1`（SQLite）/ `0.0.0.0`（PostgreSQL） | Docker 端口发布绑定地址（非进程监听地址，由 `CODEX_BIND` 控制）。SQLite compose 默认 `127.0.0.1` 仅本机访问；标准 compose 默认 `0.0.0.0` 所有网络接口 |
-| `CODEX_MAX_REQUEST_BODY_SIZE_MB` | 否 | 48 | HTTP 请求体上限。后台 MP4 动态壁纸上传最大 40MB，默认值为 multipart 上传预留余量 |
-| `CODEX_REQUEST_MEMORY_BUDGET_MB` | 否 | 至少 128 | 单进程 HTTP/WS 逻辑正文总预算（MiB），包括读入/解压、排队和处理中正文及 Realtime 会话正文；默认取 128 与单请求上限的较大值，显式配置不能小于单请求上限，重启生效。预算不足时 HTTP 返回 503 和 `Retry-After: 1`，WS 关闭码为 1013。不是 RSS 硬上限，账号导入的流式 multipart 路径仍按独立导入上限处理 |
-| `ADMIN_SECRET` | 否 | - | 管理后台登录密钥 |
-| `CODEX_ALLOW_ANONYMOUS` | 否 | `false` | 设为 `true` 时，未配置任何对外 API Key 也允许 `/v1/*` 直接调用（仅限内网测试场景） |
-| `CODEX_SCHEDULER_ENGINE` | 否 | 空 | 调度引擎强制值：`legacy` / `shadow` / `indexed`。设置后优先于数据库配置，适合容器级灰度或紧急回退 |
-| `CODEX_SCHEDULER_MAX_WAITERS` | 否 | `4096` | 本实例账号调度等待请求总上限，正整数，重启生效。队列满立即返回可重试的 503 |
-| `CODEX_SCHEDULER_MAX_WAITERS_PER_KEY` | 否 | `256` | 本实例每个 API Key 的调度等待上限，正整数，重启生效；匿名请求共用一个计数 |
-| `FAST_SCHEDULER_ENABLED` | 否 | `false` | 旧版兼容开关；未设置 `CODEX_SCHEDULER_ENGINE` 且数据库没有 `SchedulerEngine` 时，`true` 映射为 `indexed` |
-| `TZ` | 否 | UTC | 时区，如 `Asia/Shanghai` |
+| `CODEX_PORT` | No | 8080 | HTTP service port |
+| `BIND_HOST` | No | `127.0.0.1` (SQLite) / `0.0.0.0` (PostgreSQL) | Docker port publish bind address (not the process listen address, which is controlled by `CODEX_BIND`). The SQLite compose file defaults to `127.0.0.1`, so only the local machine can access it; the standard compose file defaults to `0.0.0.0`, which means all network interfaces |
+| `CODEX_MAX_REQUEST_BODY_SIZE_MB` | No | 48 | HTTP request body limit. The admin panel's MP4 live wallpaper upload is at most 40 MB; the default leaves headroom for multipart uploads |
+| `CODEX_REQUEST_MEMORY_BUDGET_MB` | No | At least 128 | Total logical body budget per process for HTTP/WS (MiB), covering bodies being read or decompressed, queued and in-flight bodies, and Realtime session bodies. The default is the larger of 128 and the per-request limit; an explicit value cannot be smaller than the per-request limit. Takes effect after restart. When the budget is insufficient, HTTP returns 503 with `Retry-After: 1`, and WS closes with code 1013. This is not a hard RSS limit; the streaming multipart path for account import is still handled under its separate import limit |
+| `ADMIN_SECRET` | No | - | Admin panel login secret |
+| `CODEX_ALLOW_ANONYMOUS` | No | `false` | When set to `true`, `/v1/*` can be called directly even if no external API key is configured (internal test environments only) |
+| `CODEX_SCHEDULER_ENGINE` | No | Empty | Forced scheduler engine value: `legacy` / `shadow` / `indexed`. When set, it takes precedence over the database setting, which suits container-level gradual rollout or emergency rollback |
+| `CODEX_SCHEDULER_MAX_WAITERS` | No | `4096` | Total limit on account-scheduling waiting requests for this instance. Positive integer; takes effect after restart. When the queue is full, a retryable 503 is returned immediately |
+| `CODEX_SCHEDULER_MAX_WAITERS_PER_KEY` | No | `256` | Scheduling waiting limit per API key for this instance. Positive integer; takes effect after restart. Anonymous requests share one count |
+| `FAST_SCHEDULER_ENABLED` | No | `false` | Legacy compatibility switch. When `CODEX_SCHEDULER_ENGINE` is not set and the database has no `SchedulerEngine`, `true` maps to `indexed` |
+| `TZ` | No | UTC | Time zone, for example `Asia/Shanghai` |
 
-### Codex 上游稳定性配置
+### Codex upstream stability settings
 
-| 变量 | 必填 | 默认值 | 说明 |
+| Variable | Required | Default | Description |
 |------|------|--------|------|
-| `CODEX_UPSTREAM_TRANSPORT` | 否 | `http` | Codex 上游协议：`http` / `auto` / `ws`。HTTP 入站在 `auto` 下仍走 HTTP 上游 |
-| `CODEX_PROXY_URL` | 否 | - | 全局代理 URL，适用于需要为所有 Codex 上游请求统一配置代理的场景 |
-| `USE_WEBSOCKET` | 否 | `false` | 旧版开关；未设置 `CODEX_UPSTREAM_TRANSPORT` 时，`true` 等价于 `CODEX_UPSTREAM_TRANSPORT=ws` |
-| `CODEX_TRANSPORT_MODE` | 否 | `standard` | Codex HTTP transport：默认标准 Go TLS；`utls_chrome` 可回滚旧 Chrome uTLS 行为 |
-| `CODEX_WS_SEND_USER_AGENT` | 否 | `true` | WS 握手是否发送 Codex `User-Agent`/`Version`；设为 `false` 可关闭 |
-| `CODEX_WS_USAGE_FRAME_PERSIST_SECONDS` | 否 | `30` | WS 逐帧用量快照落库的最小间隔（秒），正整数，重启生效。内存快照每帧更新；落库由每账号合并的异步 worker 执行，不阻塞上游响应流；跨自动暂停阈值、5pp 变化或 100% 时仍强制落库。大号池可按数据库承压调大 |
-| `CODEX_WS_USAGE_FRAME_INGEST` | 否 | `true` | 是否消费 WS 上游每轮及终态后连接级 `codex.rate_limits` / `codex.response.metadata` 配额帧；设为 `false` 时回退到 WHAM 探针与 HTTP 响应头，重启生效 |
-| `CODEX_SESSION_AFFINITY_TTL` | 否 | `1h` | Codex 会话到账号/代理的黏性 TTL，支持 `1h`、`90m` 或秒数 |
-| `CODEX_COMPACTION_AFFINITY_TTL` | 否 | `168h` | 加密压缩状态的来源亲和 TTL。缓存仅保存密文的 SHA-256 摘要、来源账号和兼容域；已知状态不会跨 Codex 官方上游流转 |
-| `CODEX_FINGERPRINT_DEBUG` | 否 | `false` | 输出脱敏指纹策略诊断日志，不记录 token |
-| `CODEX_REQUEST_COMPRESSION` | 否 | 跟随系统设置 | 覆盖系统设置「Codex HTTP 请求体压缩」。`zstd`/`on`/`true`/`1` 强制开启，`off`/`false`/`0` 强制关闭，未设置或取值无法识别时以系统设置为准。作为部署级逃生阀存在：DB 不可达或后台打不开时仍可整机切换 |
-| `CODEX_MULTI_AGENT_V2_COMPAT` | 否 | `false` | 实验性：为官方 Codex 客户端的 Multi-Agent v2 协作工具启用明文参数兼容。仅原生 Codex 账号生效，重启生效；开启后匹配的 v2 子任务正文会以明文发送。详见 `docs/CODEX_MULTI_AGENT_V2_COMPAT.md` |
-| `CODEX_TELEMETRY_ENABLED` | 否 | 跟随系统设置 | 设为 `false` 时无视管理后台「客户端遥测」开关，部署层强制关闭模拟遥测外发 |
-| `CODEX_STATSIG_API_KEY` | 否 | 内置公开 key | 覆盖 Codex Desktop/CLI 共用的公开 Statsig SDK key，仅遥测开启时使用 |
-| `CODEX_SESSION_HEADER_MODE` | 否 | `native` | 出站会话头形态。`native` 发真实客户端的 `session-id` / `thread-id` / `x-client-request-id`；`legacy` 回退到旧的 `Session_id`（WS 另带 `Conversation_id`） |
-| `CODEX_SESSION_HEADER_ALIGN_CONVERGED` | 否 | `false` | 开启后 `session-id` 头改用指纹收敛后的会话身份，与 turn metadata 的 `session_id` 对齐。默认关：请求体 `prompt_cache_key` 始终独立隔离，但上游是否也拿该头参与缓存分组无法从客户端源码确认 |
-| `DOWNSTREAM_HTTP_KEEPALIVE_INTERVAL` | 否 | `30s` | 下游 HTTP/SSE 保活周期，使用 Go duration；`0` 关闭。流式端点从首个心跳起建立 SSE 200，发送注释；非流式端点发送 HTTP 102，但 Codex/GPT Images 除外：其非流式请求不发送中间响应，直接等待最终 JSON |
-| `DOWNSTREAM_WS_KEEPALIVE_INTERVAL` | 否 | `45s` | 下游 WebSocket Ping 周期，使用 Go duration；`0` 关闭。覆盖 Responses、Realtime 与 Live Sideband |
+| `CODEX_UPSTREAM_TRANSPORT` | No | `http` | Codex upstream protocol: `http` / `auto` / `ws`. Under `auto`, HTTP inbound requests still use the HTTP upstream |
+| `CODEX_PROXY_URL` | No | - | Global proxy URL, for cases where all Codex upstream requests should share one proxy configuration |
+| `USE_WEBSOCKET` | No | `false` | Legacy switch. When `CODEX_UPSTREAM_TRANSPORT` is not set, `true` is equivalent to `CODEX_UPSTREAM_TRANSPORT=ws` |
+| `CODEX_TRANSPORT_MODE` | No | `standard` | Codex HTTP transport: the default is standard Go TLS; `utls_chrome` can roll back to the old Chrome uTLS behavior |
+| `CODEX_WS_SEND_USER_AGENT` | No | `true` | Whether the WS handshake sends Codex `User-Agent`/`Version`; set to `false` to turn it off |
+| `CODEX_WS_USAGE_FRAME_PERSIST_SECONDS` | No | `30` | Minimum interval, in seconds, between database writes of per-frame WS usage snapshots. Positive integer; takes effect after restart. The in-memory snapshot is updated on every frame; database writes are done by an asynchronous worker that merges writes per account and does not block the upstream response stream. Writes are still forced when crossing the auto-pause threshold, on a 5pp change, or at 100%. Large account pools can raise this value to match the database's capacity |
+| `CODEX_WS_USAGE_FRAME_INGEST` | No | `true` | Whether to consume the connection-level `codex.rate_limits` / `codex.response.metadata` quota frames that the WS upstream sends after each round and at the final state. When set to `false`, it falls back to WHAM probes and HTTP response headers. Takes effect after restart |
+| `CODEX_SESSION_AFFINITY_TTL` | No | `1h` | TTL for stickiness between a Codex session and its account/proxy. Accepts `1h`, `90m`, or seconds |
+| `CODEX_COMPACTION_AFFINITY_TTL` | No | `168h` | Source-affinity TTL for encrypted compaction state. The cache stores only the SHA-256 digest of the ciphertext, the source account, and the compatibility domain; known state never moves across official Codex upstreams |
+| `CODEX_FINGERPRINT_DEBUG` | No | `false` | Outputs redacted fingerprint-policy diagnostic logs; tokens are not logged |
+| `CODEX_REQUEST_COMPRESSION` | No | Follows system setting | Overrides the system setting "Codex HTTP request body compression". `zstd` / `on` / `true` / `1` force it on; `off` / `false` / `0` force it off. If the value is unset or unrecognized, the system setting applies. This is a deployment-level escape valve: the whole host can still be switched when the database is unreachable or the admin panel cannot be opened |
+| `CODEX_MULTI_AGENT_V2_COMPAT` | No | `false` | Experimental: enables plaintext parameter compatibility for the Multi-Agent v2 collaboration tool in the official Codex client. Applies only to native Codex accounts and takes effect after restart. When enabled, matching v2 sub-task bodies are sent in plaintext. See `docs/CODEX_MULTI_AGENT_V2_COMPAT.md` |
+| `CODEX_TELEMETRY_ENABLED` | No | Follows system setting | When set to `false`, the admin panel's "Client telemetry" switch is ignored and simulated telemetry sending is forcibly disabled at the deployment level |
+| `CODEX_STATSIG_API_KEY` | No | Built-in public key | Overrides the public Statsig SDK key shared by Codex Desktop and CLI; used only when telemetry is enabled |
+| `CODEX_SESSION_HEADER_MODE` | No | `native` | Outbound session header format. `native` sends the real client's `session-id` / `thread-id` / `x-client-request-id`; `legacy` falls back to the old `Session_id` (WS also sends `Conversation_id`) |
+| `CODEX_SESSION_HEADER_ALIGN_CONVERGED` | No | `false` | When enabled, the `session-id` header uses the session identity converged by fingerprinting, aligning it with the `session_id` in turn metadata. Off by default: the request body's `prompt_cache_key` is always kept isolated, but whether the upstream also uses this header for cache grouping cannot be confirmed from the client source code |
+| `DOWNSTREAM_HTTP_KEEPALIVE_INTERVAL` | No | `30s` | Downstream HTTP/SSE keepalive period, using a Go duration; `0` turns it off. Streaming endpoints establish an SSE 200 from the first heartbeat and send a comment; non-streaming endpoints send HTTP 102, except Codex/GPT Images: their non-streaming requests send no interim response and wait directly for the final JSON |
+| `DOWNSTREAM_WS_KEEPALIVE_INTERVAL` | No | `45s` | Downstream WebSocket ping period, using a Go duration; `0` turns it off. Covers Responses, Realtime, and Live Sideband |
 
-配额帧读路径只更新内存和调度器；用量、credits、套餐及冷却的写库共用后台合并路径。并发观测锁争用时，每账号最多保留 64 个待应用 partial 帧，按原始时间顺序处理；溢出保留最新的有界尾部，并通过已有探针补齐权威快照。停机丢弃未完成的缓存写，重启后由探针重建。冷却写失败会在后续观测重试，不重复计入失败次数。
+The quota-frame read path only updates memory and the scheduler; writes to usage, credits, plan, and cooldown share a background merge path. When the concurrent observation lock is contended, each account keeps at most 64 pending partial frames, processed in their original time order. On overflow, the latest bounded tail is kept, and the authoritative snapshot is filled in through existing probes. On shutdown, unfinished cache writes are dropped, and probes rebuild them after restart. A failed cooldown write is retried on a later observation and is not counted again as a failure.
 
-> `CODEX_UPSTREAM_TRANSPORT` 只控制 HTTP 入站请求转发到 Codex 上游时使用 `http` 还是 `ws`。客户端侧 WebSocket 入口独立可用：使用 `GET ws://<host>/v1/responses` 建连，首帧发送 `response.create` JSON，服务端会通过 Codex 上游 WS 返回 Responses 事件帧。
+> `CODEX_UPSTREAM_TRANSPORT` only controls whether `http` or `ws` is used when HTTP inbound requests are forwarded to the Codex upstream. The client-side WebSocket entry point works independently: connect with `GET ws://<host>/v1/responses`, send a `response.create` JSON as the first frame, and the server returns Responses event frames through the Codex upstream WS.
 >
-> WS 传输下，服务端会消费上游每轮下发的 `codex.rate_limits` 帧，以及响应终态后 1–2 秒补发的连接级用量帧，实时更新账号的 5h/7d 用量快照；自动暂停阈值不再需要等待 WHAM 探针周期即可生效。这些帧随对话本身下发，不产生额外上游请求。
+> Under WS transport, the server consumes the `codex.rate_limits` frames the upstream sends each round, plus the connection-level usage frames re-sent 1–2 seconds after the response reaches its final state, and updates the account's 5h/7d usage snapshots in real time. Auto-pause thresholds take effect without waiting for the WHAM probe cycle. These frames are delivered with the conversation itself and do not create extra upstream requests.
 
-### 数据库配置
+### Database settings
 
-#### PostgreSQL 模式
+#### PostgreSQL mode
 
-| 变量 | 必填 | 默认值 | 说明 |
+| Variable | Required | Default | Description |
 |------|------|--------|------|
-| `DATABASE_DRIVER` | 是 | postgres | 固定值: postgres |
-| `DATABASE_URL` | 否 | - | 完整连接串，如 `postgresql://USER:PASSWORD@HOST[:PORT]/DBNAME?sslmode=require`（可直接粘贴 Neon / Render 提供的连接串）。设置后优先于下面的拆分变量，查询串中只读取 `sslmode`；不能与 `DATABASE_DRIVER=sqlite` 同时使用 |
-| `DATABASE_HOST` | 是（未设置 `DATABASE_URL` 时） | - | PostgreSQL 主机地址 |
-| `DATABASE_PORT` | 否 | 5432 | PostgreSQL 端口 |
-| `DATABASE_USER` | 是 | - | PostgreSQL 用户名 |
-| `DATABASE_PASSWORD` | 是 | - | PostgreSQL 密码 |
-| `DATABASE_NAME` | 是 | - | PostgreSQL 数据库名 |
-| `DATABASE_SCHEMA` | 否 | - | PostgreSQL schema；适合 Supabase 等多项目共享 database 的场景。配置后启动时自动 `CREATE SCHEMA IF NOT EXISTS` 并将所有连接的 `search_path` 指向该 schema。仅允许字母/数字/下划线，长度 ≤63；留空保持默认（通常是 `public`）。|
-| `DATABASE_SSLMODE` | 否 | disable | SSL 模式: disable/require/verify-full |
+| `DATABASE_DRIVER` | Yes | postgres | Fixed value: postgres |
+| `DATABASE_URL` | No | - | Full connection string, for example `postgresql://USER:PASSWORD@HOST[:PORT]/DBNAME?sslmode=require` (you can paste the connection string provided by Neon or Render directly). When set, it takes precedence over the separate variables below; only `sslmode` is read from the query string. Cannot be used together with `DATABASE_DRIVER=sqlite` |
+| `DATABASE_HOST` | Yes (when `DATABASE_URL` is not set) | - | PostgreSQL host address |
+| `DATABASE_PORT` | No | 5432 | PostgreSQL port |
+| `DATABASE_USER` | Yes | - | PostgreSQL username |
+| `DATABASE_PASSWORD` | Yes | - | PostgreSQL password |
+| `DATABASE_NAME` | Yes | - | PostgreSQL database name |
+| `DATABASE_SCHEMA` | No | - | PostgreSQL schema; suited to setups such as Supabase where several projects share one database. When set, startup runs `CREATE SCHEMA IF NOT EXISTS` automatically and points every connection's `search_path` at this schema. Only letters, digits, and underscores are allowed, with a length of ≤63. Leave empty for the default (usually `public`).|
+| `DATABASE_SSLMODE` | No | disable | SSL mode: disable/require/verify-full |
 
-### 生图工作台
+### Image workspace
 
-| 变量 | 必填 | 默认值 | 说明 |
+| Variable | Required | Default | Description |
 |------|------|--------|------|
-| `CODEX_IMAGES_MAIN_MODEL` | 否 | `gpt-5.6-luna` | 生图文本驱动的部署默认值；后台「Codex → 生图设置」选择具体模型后优先使用后台配置 |
-| `IMAGE_ASSET_DIR` | 否 | `/data/images` | 管理台生图工作台保存图片文件的服务器目录；Docker 部署建议持久化 `/data` |
-| `IMAGE_ASSET_PUBLIC_BASE_URL` | 否 | 空 | 图片代理 URL 的公开基址，例如 `https://cdn.example.com`；仅改变返回地址，需由反向代理将 `/p/img/` 转发到 Codex2Api |
-| `IMAGE_ASSET_SIGNING_SECRET` | 否 | 随机值 | 图片代理 URL 的持久化签名密钥；生产环境应配置固定随机值，避免服务重启后历史图片链接失效 |
-| `IMAGE_UPSCALER_ENDPOINT` | 否 | 空 | RealESRGAN 服务地址，例如 `http://image-upscaler:8090`；配置后 `upscale=2k/4k` 必须由该服务成功处理，否则异步任务失败 |
-| `IMAGE_UPSCALER_FIT` | 否 | `inside` | RealESRGAN 目标尺寸适配方式，可选 `inside` 或 `cover` |
-| `BACKGROUND_ASSET_DIR` | 否 | `/data/backgrounds` | 管理台背景图/MP4 上传文件的服务器目录；未配置时优先保存到 `IMAGE_ASSET_DIR` 同级的 `backgrounds` 目录 |
+| `CODEX_IMAGES_MAIN_MODEL` | No | `gpt-5.6-luna` | Deployment default for the text model that drives image generation. When a specific model is chosen under "Codex → Image generation settings" in the admin panel, that admin setting takes precedence |
+| `IMAGE_ASSET_DIR` | No | `/data/images` | Server directory where the admin image workspace saves image files; for Docker deployments, persisting `/data` is recommended |
+| `IMAGE_ASSET_PUBLIC_BASE_URL` | No | Empty | Public base for image proxy URLs, for example `https://cdn.example.com`. It only changes the returned address; a reverse proxy must forward `/p/img/` to Codex2Api |
+| `IMAGE_ASSET_SIGNING_SECRET` | No | Random value | Persistent signing secret for image proxy URLs. Production should set a fixed random value so historical image links do not break after a service restart |
+| `IMAGE_UPSCALER_ENDPOINT` | No | Empty | RealESRGAN service address, for example `http://image-upscaler:8090`. When set, `upscale=2k/4k` must be processed successfully by this service, otherwise the async job fails |
+| `IMAGE_UPSCALER_FIT` | No | `inside` | RealESRGAN target-size fitting mode; `inside` or `cover` |
+| `BACKGROUND_ASSET_DIR` | No | `/data/backgrounds` | Server directory for background image and MP4 uploads in the admin panel. When not set, files are saved first to the `backgrounds` directory next to `IMAGE_ASSET_DIR` |
 
-### 日志目录
+### Log directory
 
-| 变量 | 必填 | 默认值 | 说明 |
+| Variable | Required | Default | Description |
 |------|------|--------|------|
-| `LOG_DIR` | 否 | `logs` | 上游错误日志目录；只允许写临时盘的平台可设为 `/tmp/logs` |
-| `LOG_DISABLED` | 否 | `false` | 设为 `true` 时禁用文件型错误日志与安全审计日志 |
-| `SECURITY_LOG_DIR` | 否 | `${LOG_DIR}/security` | 安全审计日志目录；未设置时跟随 `LOG_DIR` |
+| `LOG_DIR` | No | `logs` | Upstream error log directory; platforms that allow writes only to a temporary disk can set `/tmp/logs` |
+| `LOG_DISABLED` | No | `false` | When set to `true`, file-based error logs and security audit logs are disabled |
+| `SECURITY_LOG_DIR` | No | `${LOG_DIR}/security` | Security audit log directory; follows `LOG_DIR` when not set |
 
-#### SQLite 模式
+#### SQLite mode
 
-| 变量 | 必填 | 默认值 | 说明 |
+| Variable | Required | Default | Description |
 |------|------|--------|------|
-| `DATABASE_DRIVER` | 是 | sqlite | 固定值: sqlite |
-| `DATABASE_PATH` | 是 | - | SQLite 数据库文件路径，如 `/data/codex2api.db` |
+| `DATABASE_DRIVER` | Yes | sqlite | Fixed value: sqlite |
+| `DATABASE_PATH` | Yes | - | SQLite database file path, for example `/data/codex2api.db` |
 
-### 缓存配置
+### Cache settings
 
-#### Redis 模式
+#### Redis mode
 
-| 变量 | 必填 | 默认值 | 说明 |
+| Variable | Required | Default | Description |
 |------|------|--------|------|
-| `CACHE_DRIVER` | 是 | redis | 固定值: redis |
-| `REDIS_ADDR` | 是 | - | Redis 地址，支持 `redis:6379`、`redis://default:pass@host:6379/0`、`rediss://default:pass@host:6379/0` |
-| `REDIS_USERNAME` | 否 | - | Redis ACL 用户名；URL 中已包含用户名时可不填 |
-| `REDIS_PASSWORD` | 否 | - | Redis 密码；URL 中已包含密码时可不填 |
-| `REDIS_DB` | 否 | 0 | Redis 数据库编号 |
-| `REDIS_TLS` | 否 | false | 为 `host:port` 形式的 Redis 启用 TLS；`rediss://` 会自动启用 |
-| `REDIS_INSECURE_SKIP_VERIFY` | 否 | false | 跳过 TLS 证书校验，仅建议自签证书或排障时使用 |
+| `CACHE_DRIVER` | Yes | redis | Fixed value: redis |
+| `REDIS_ADDR` | Yes | - | Redis address. Supports `redis:6379`, `redis://default:pass@host:6379/0`, and `rediss://default:pass@host:6379/0` |
+| `REDIS_USERNAME` | No | - | Redis ACL username; can be left empty if the URL already includes a username |
+| `REDIS_PASSWORD` | No | - | Redis password; can be left empty if the URL already includes a password |
+| `REDIS_DB` | No | 0 | Redis database number |
+| `REDIS_TLS` | No | false | Enables TLS for Redis addresses in `host:port` form; `rediss://` enables it automatically |
+| `REDIS_INSECURE_SKIP_VERIFY` | No | false | Skips TLS certificate verification; only recommended for self-signed certificates or troubleshooting |
 
-> Aiven、Upstash 等云 Redis 通常要求 TLS。优先使用平台提供的 `rediss://...` 连接串；如果只填写 `host:port`，请设置 `REDIS_TLS=true`，否则可能在启动时出现 `Redis 连接失败: EOF`。
+> Cloud Redis services such as Aiven and Upstash usually require TLS. Prefer the `rediss://...` connection string provided by the platform. If you only enter `host:port`, set `REDIS_TLS=true`, otherwise startup may fail with `Redis connection failed: EOF`.
 
-#### 内存缓存模式
+#### Memory cache mode
 
-| 变量 | 必填 | 默认值 | 说明 |
+| Variable | Required | Default | Description |
 |------|------|--------|------|
-| `CACHE_DRIVER` | 是 | memory | 固定值: memory |
+| `CACHE_DRIVER` | Yes | memory | Fixed value: memory |
 
-#### API Key 鉴权缓存
+#### API key authentication cache
 
-| 变量 | 必填 | 默认值 | 说明 |
+| Variable | Required | Default | Description |
 | --- | --- | --- | --- |
-| `CODEX_API_KEY_AUTH_CACHE_ENABLED` | 否 | `true` | 启用鉴权 L1/L2；设置 `false` 并重启后恢复旧版鉴权缓存策略 |
+| `CODEX_API_KEY_AUTH_CACHE_ENABLED` | No | `true` | Enables authentication L1/L2; setting `false` and restarting restores the legacy authentication-cache policy |
 
-启用后，带分组、模型权限、有效期和限额配置的 Key 也可缓存。读取顺序为本地 L1 → Redis L2 → 数据库；Memory 模式只有 L1。L1 绝对 TTL 为 15 秒，最多 4,096 条、16 MiB 逻辑 JSON 快照，单条上限 64 KiB；超大条目直接回源。Redis L2 TTL 为 5 分钟，按数据库作用域、鉴权修订号和 Key 摘要隔离。缓存不保存原始 Key 或已用额度；确认不存在的 Key 只进入有界 L1，TTL 为 2 秒。字节预算不包含 Go 对象、map 或 allocator 开销，不是进程 RSS 上限。
+When enabled, keys that have groups, model permissions, validity periods, and quota settings can also be cached. The read order is local L1 → Redis L2 → database; Memory mode has only L1. The absolute TTL of L1 is 15 seconds, with at most 4,096 entries and a 16 MiB logical JSON snapshot budget, and a single entry is limited to 64 KiB; oversized entries go directly to the source. The Redis L2 TTL is 5 minutes and is isolated by database scope, authentication revision number, and key digest. The cache does not store raw keys or used quota. Keys confirmed not to exist enter only the bounded L1, with a 2-second TTL. The byte budget does not include Go object, map, or allocator overhead, and it is not a process RSS limit.
 
-启用、停用、删除、修改 Key 配置会在同一数据库事务内推进 `api_key_auth_cache_state` 修订号；累计用量写入不推进修订号。每个实例在活跃鉴权时复核该修订号，复核结果最多复用 250 毫秒。本实例的管理端操作同步清理 L1，并通过 Redis Pub/Sub 通知其他实例；通知丢失或旧版本实例修改数据时，数据库复核仍会发现变化。250 毫秒是修订结果的复用上限，不包含在途请求和基础设施延迟。数据库复核失败返回 503，不使用无法确认的旧快照，也不会误开启匿名访问。
+Enabling, disabling, deleting, or changing a key's configuration advances the `api_key_auth_cache_state` revision number within the same database transaction. Writes of cumulative usage do not advance the revision number. Each instance re-checks this revision number during active authentication, and a check result is reused for at most 250 milliseconds. Admin operations on this instance clear its L1 cache at once and notify other instances through Redis Pub/Sub. If a notification is lost, or an older-version instance changes data, the database re-check still detects the change. The 250 milliseconds is the maximum reuse time for a revision result; it does not include in-flight requests or infrastructure latency. If the database re-check fails, the response is 503. The system does not use an old snapshot it cannot confirm, and it does not accidentally enable anonymous access.
 
-设置了累计额度的 Key 每次鉴权仍查询数据库中的 `quota_used`；模型周预算仍在转发前执行数据库权威计数和请求幂等校验。窗口统计的原有 TTL、已建立长连接的校验策略不变。修订号变更会淘汰当前实例的全部鉴权条目；频繁修改 Key 配置会增加冷缓存回源。快照回填使用版本隔离和本地代际检查，延迟完成的旧查询不能恢复新版本的权限。
+A key with a cumulative quota still queries `quota_used` in the database on every authentication. The model weekly budget still runs the database-authoritative count and request-idempotency check before forwarding. The original TTL for window statistics and the check policy for long-lived connections that are already established do not change. A revision-number change evicts all authentication entries on this instance; frequent key-configuration changes increase cold-cache fetches from the source. Snapshot backfill uses version isolation and a local generation check, so a late-completing old query cannot restore permissions from a newer version.
 
-启动自动创建修订表和 PostgreSQL/SQLite 触发器，无需手工迁移。关闭两级缓存后仍保留这些表和触发器，便于混合版本部署；旧版策略只对无访问约束的 Key 缓存元数据，并合并同一时刻的相同 Key 查询。
+On startup, the revision table and the PostgreSQL/SQLite triggers are created automatically, so no manual migration is needed. These tables and triggers are kept even when both cache levels are turned off, which makes mixed-version deployments easier. The legacy policy caches metadata only for keys with no access constraints, and merges identical key queries that happen at the same moment.
 
-`GET /api/admin/ops/overview` 的 `api_key_auth_cache` 提供开关、L1 条目/字节数、本地/远端命中、数据库配置加载次数、动态额度读取次数、修订号复核次数、失效、淘汰、超限旁路和错误计数。评估收益时应分开看配置回源与动态额度查询。
+The `api_key_auth_cache` field of `GET /api/admin/ops/overview` provides the switch, L1 entry and byte counts, local and remote hits, database configuration load count, dynamic quota read count, revision re-check count, invalidations, evictions, over-limit bypasses, and error counts. When evaluating the benefit, look separately at configuration fetches from the source and dynamic quota queries.
 
-#### Codex 客户端版本
+#### Codex client versions
 
-管理后台「系统设置 → Codex」可同步并展示 Desktop / VSCode 各架构的应用版本与内置 CLI 配对。macOS 使用官方 appcast，Windows 优先第三方映射、失败后局部读取官方 MSIX，VSCode 使用官方原生 VSIX。每个包最多读取 12 MiB，保留 alpha CLI、缓存和历史，不下载全包分析。
+The admin panel's "System settings → Codex" can sync and display the app versions and bundled CLI pairings for each Desktop / VSCode architecture. macOS uses the official appcast. On Windows, a third-party mapping is preferred, and if it fails, the official MSIX is read partially. VSCode uses the official native VSIX. Each package reads at most 12 MiB, keeps alpha CLIs, caches, and history, and does not download whole packages for analysis.
 
-CLI/应用版本留空使用自动配对；手填字段独立覆盖。`auto` 模式最低 CLI 版本只筛选已有配对，无可用配对时返回 `codex_client_version_unavailable`，不会凭空抬升版本。详见 [真实版本配对与 Windows fallback](CODEX_CLIENT_VERSIONS.md)。
+Leave the CLI/app version empty to use automatic pairing; manually entered fields override independently. In `auto` mode, the minimum CLI version only filters existing pairings. When no pairing is available, it returns `codex_client_version_unavailable` and never raises the version artificially. See [real version pairing and Windows fallback](CODEX_CLIENT_VERSIONS.md).
 
-#### Codex 客户端遥测
+#### Codex client telemetry
 
-**实验性功能，默认关闭。** 开启后，Codex OAuth 的普通 Responses 请求会按所选 Codex Desktop/CLI 指纹异步发送客户端遥测。分析事件发送到 `chatgpt.com/backend-api/codex/analytics-events/events`，OTLP metrics 发送到 `ab.chatgpt.com/otlp/v1/metrics`；失败不会影响代理响应，沿用账号的代理地址，Resin 启用时与 `/responses` 一样经反代发出。注意：工具调用、文件修改、hook 等事件是随机模拟生成的，并非对真实请求的观测，与上游侧可见的请求流可能不一致；是否开启由部署者自行评估。
+**Experimental feature, off by default.** When enabled, ordinary Responses requests made with Codex OAuth send client telemetry asynchronously, using the selected Codex Desktop/CLI fingerprint. Analytics events are sent to `chatgpt.com/backend-api/codex/analytics-events/events`, and OTLP metrics are sent to `ab.chatgpt.com/otlp/v1/metrics`. Failures do not affect the proxy response. The account's proxy address is used, and when Resin is enabled, it is sent through the reverse proxy in the same way as `/responses`. Note: events such as tool calls, file changes, and hooks are randomly simulated and are not observations of real requests, so they may not match the request flow visible on the upstream side. Deployers decide for themselves whether to enable it.
 
-管理后台「系统设置 → Codex → 客户端遥测」可实时开关，字段为 `codex_telemetry_enabled`（新装与升级安装均默认关闭）。`CODEX_TELEMETRY_ENABLED=false` 是部署层强制关闭开关，无视后台设置。`CODEX_STATSIG_API_KEY` 可覆盖内置的公开 SDK key；当前 Codex Desktop 与 Codex CLI 使用同一个 key。
+The admin panel's "System settings → Codex → Client telemetry" can be switched on and off in real time, with the field `codex_telemetry_enabled` (off by default for both fresh installs and upgrades). `CODEX_TELEMETRY_ENABLED=false` is a deployment-level forced-off switch that ignores the admin setting. `CODEX_STATSIG_API_KEY` can override the built-in public SDK key; Codex Desktop and Codex CLI currently use the same key.
 
-事件按 Codex CLI 的结构模拟：首次观察到的 thread 使用 `codex_thread_initialized`，每轮生成 `codex_turn_event`，结束时生成 4 个 `codex_hook_run`。`codex_dynamic_tool_call_event` 每轮随机 40%，命中后其中 50% 同时生成 `codex_command_execution_event`；`codex_file_change_event` 每轮随机 20%，并同时生成 `codex_accepted_line_fingerprints`，其 `repo_hash` 固定为 `null`。这些随机事件不解析请求中的命令、工具调用或 diff。
+Events are simulated according to the Codex CLI structure: the first observed thread uses `codex_thread_initialized`, each round generates `codex_turn_event`, and at the end 4 `codex_hook_run` events are generated. `codex_dynamic_tool_call_event` occurs randomly in 40% of rounds, and when it does, 50% of those also generate `codex_command_execution_event`. `codex_file_change_event` occurs randomly in 20% of rounds and also generates `codex_accepted_line_fingerprints`, whose `repo_hash` is always `null`. These random events do not parse commands, tool calls, or diffs in the request.
 
-原生 `codex_turn_steer_event` 只对应 App Server 的 `turn/steer` RPC；Responses 请求无法可靠识别，因此不会模拟。普通 turn 固定 `steer_count=0`，历史 assistant/tool 内容、`previous_response_id` 和恢复标记也不会被推断为 resumed。标题和 guardian 子流程使用独立的初始化事件。OTLP 首批发送 HAR 中的 62 个启动指标，随后每 60 秒增量发送本轮产生的 turn/hook/tool 指标；包含仅在后续样本出现的 4 个名称，共覆盖 66 个名称。
+The native `codex_turn_steer_event` corresponds only to the App Server `turn/steer` RPC; Responses requests cannot be reliably identified, so it is not simulated. Ordinary turns always use `steer_count=0`, and historical assistant/tool content, `previous_response_id`, and recovery markers are never inferred as resumed. Title and guardian sub-flows use separate initialization events. The first OTLP batch sends the 62 startup metrics from the HAR file, and then every 60 seconds it sends incremental turn/hook/tool metrics produced in that round. Including the 4 names that appear only in later samples, it covers 66 names in total.
 
-#### 窗口用量与连接池
+#### Window usage and connection pool
 
-API Key 启用多个 RPM/RPD/费用/Token 窗口时，Redis 会通过一次 `MGET` 读取这些窗口的统计缓存；缺失、损坏或读取失败仍按原有顺序回源数据库。自然日和滑动窗口的定义、60 秒统计缓存 TTL 均保持不变。Memory 驱动提供同等批量读取语义。RPM/RPD 的准入点在缓存值之外另有进程内原子计数：RPM 按秒桶计数，RPD 按滑动 24 小时计数，同一分钟内的记录合并到最后一次准入过期（最多保守多保留不到一分钟）。该计数不依赖当前请求是否写用量日志，但按进程独立且不持久化；多实例或重启后的历史额度仍需共享、持久的计量方案。最多保留 8,192 个 Key，满表且无可回收记录时新 Key 返回 `503`，不淘汰仍有效的计数。
+When an API key has several RPM/RPD/cost/token windows enabled, Redis reads the statistics caches for those windows with a single `MGET`. If an entry is missing, corrupted, or fails to read, the system still falls back to the database in the original order. The definitions of calendar-day and sliding windows, and the 60-second TTL of the statistics cache, do not change. The Memory driver provides the same batch-read semantics. The RPM/RPD admission point has, in addition to the cached value, an in-process atomic counter: RPM counts in one-second buckets, and RPD counts over a sliding 24-hour window. Records within the same minute are merged and expire at their last admission (conservatively keeping at most a little under one extra minute). This count does not depend on whether the current request writes a usage log, but it is per process and is not persisted. Historical quota across several instances or after a restart still needs a shared, persistent metering scheme. At most 8,192 keys are kept. When the table is full and there is no record that can be reclaimed, a new key returns `503`, and records that are still valid are not evicted.
 
-分组/账号预算的三个共享分钟桶通过 Pipeline 一起读取，同一个 Key 的并发回源合并为一次，继续复用原有 5 秒本地快照。共享增量最多启动 16 个后台写入，槽位满时由调用方同步写入并承受背压；Redis 故障时仍以数据库用量聚合为后备。
+The three shared per-minute buckets for group/account budgets are read together through a pipeline. Concurrent fetches from the source for the same key are merged into one, and the existing 5-second local snapshot is still reused. Shared increments start at most 16 background writes; when the slots are full, the caller writes synchronously and takes the backpressure. When Redis fails, the database usage aggregation remains the fallback.
 
-运维概览和运行状态中的 Redis `usage_percent` 表示本进程连接池占用：`(total_conns - idle_conns) / pool_size`，不表示 Redis 服务端 CPU、内存或数据命中率。`stale_conns` 是累计移除连接数，不参与当前占用计算。`wait_count`、`wait_duration_ns`、`timeouts` 为累计连接池等待/超时指标，`pending_requests` 表示当前等待连接的请求数，可用于判断是否需要调整连接池。
+The Redis `usage_percent` in the operations overview and runtime status shows this process's connection-pool usage: `(total_conns - idle_conns) / pool_size`. It does not show Redis server CPU, memory, or data hit rate. `stale_conns` is the cumulative number of removed connections and does not take part in the current usage calculation. `wait_count`, `wait_duration_ns`, and `timeouts` are cumulative connection-pool wait and timeout metrics, and `pending_requests` is the number of requests currently waiting for a connection, which can be used to decide whether the pool size needs adjusting.
 
 ---
 
-## 系统设置（数据库）
+## System settings (database)
 
-系统设置存储在数据库的 `SystemSettings` 表中，可通过管理后台 `/admin/settings` 实时修改。
+System settings are stored in the `SystemSettings` table of the database and can be changed in real time through the admin panel at `/admin/settings`.
 
-### Codex 生图设置
+### Codex image generation settings
 
-管理后台「系统设置 → Codex → 生图设置」可选择生图使用的文本驱动模型。选择后自动保存，对本实例之后构造的生图请求立即生效，重启后从数据库恢复。
+In the admin panel's "System settings → Codex → Image generation settings", you can choose the text model that drives image generation. The choice is saved automatically and takes effect immediately for image generation requests this instance builds afterwards, and is restored from the database after a restart.
 
-管理 API `PUT /api/admin/settings` 使用 `codex_images_main_model` 字段，空字符串表示「使用部署默认值」。优先级为：后台配置 → `CODEX_IMAGES_MAIN_MODEL` → 内置 `gpt-5.6-luna`。`GET /api/admin/settings` 同时返回只读的 `codex_images_default_main_model`，用于展示部署默认值。模型名称长度不超过 128 字节，不含空白或控制字符，不能填 `gpt-image-*` 图像模型。
+The admin API `PUT /api/admin/settings` uses the `codex_images_main_model` field; an empty string means "use the deployment default". The priority is: admin configuration → `CODEX_IMAGES_MAIN_MODEL` → built-in `gpt-5.6-luna`. `GET /api/admin/settings` also returns the read-only `codex_images_default_main_model`, which shows the deployment default. A model name must be no longer than 128 bytes, must not contain whitespace or control characters, and cannot be an image model such as `gpt-image-*`.
 
-设置覆盖管理与公开生图工作台、`/v1/images/generations`、`/v1/images/edits`，以及顶层 `model` 填写图像模型的 `/v1/responses` 请求。原生 Responses 请求若显式填写文本 `model`，则继续使用该模型。图像模型由工作台或 API 请求选择；Images 链路在上游明确拒绝文本驱动时仍会按现有候选顺序重试。
+The setting applies to the admin and public image workspaces, `/v1/images/generations`, `/v1/images/edits`, and `/v1/responses` requests whose top-level `model` is an image model. If a native Responses request explicitly sets a text `model`, that model is still used. The image model is chosen by the workspace or API request. When the upstream explicitly rejects the text driver, the Images path still retries in the existing candidate order.
 
-### 模型列表读取上限
+### Model list read limit
 
-`models_list_read_max_bytes` 限制 Codex OAuth 模型清单成功响应的最大读取大小。默认 `8,388,608` bytes（8 MiB），管理后台以整数 MiB 展示，允许范围为 1-256 MiB。响应超过上限时请求会明确失败，不会把截断的 JSON 当成完整模型列表解析。
+`models_list_read_max_bytes` limits the maximum number of bytes read from a successful Codex OAuth model-list response. The default is `8,388,608` bytes (8 MiB). The admin panel shows it in whole MiB, and the allowed range is 1–256 MiB. When a response exceeds the limit, the request fails explicitly, and a truncated JSON is never parsed as a complete model list.
 
-### Responses 上下文缓存
+### Responses context cache
 
-Responses 连续请求会按 `previous_response_id` 重建上下文。每个 Codex2API 进程都有一层有界 L1 缓存，三个字节预算保存在数据库中；管理台用整数 MiB 展示和修改，管理 API 使用原始字节数。
+Consecutive Responses requests rebuild their context by `previous_response_id`. Each Codex2API process has a bounded L1 cache, and three byte budgets are stored in the database. The admin panel displays and edits them in whole MiB, and the admin API uses raw byte counts.
 
-| 管理 API 字段 | 默认值 | 设置页范围 | 说明 |
+| Admin API field | Default | Settings page range | Description |
 |------|------|------|------|
-| `response_cache_local_max_bytes` | 67,108,864 bytes（64 MiB） | 整数 8-4096 MiB | 单个进程 L1 可保留的逻辑 JSON payload 总量 |
-| `response_cache_local_max_entry_bytes` | 8,388,608 bytes（8 MiB） | 整数 1-256 MiB | 单条上下文进入 L1 的上限，且不能超过本地总量 |
-| `response_cache_reconstruct_max_bytes` | 67,108,864 bytes（64 MiB） | 整数 8-512 MiB | 从共享后端读取并重建一条上下文时允许的逻辑 payload 上限 |
-| `response_cache_config_generation` | 1 | 只读 | 配置发生实际变化时递增；客户端不能写入 |
+| `response_cache_local_max_bytes` | 67,108,864 bytes (64 MiB) | Integer, 8-4096 MiB | Total logical JSON payload size that the L1 of a single process can keep |
+| `response_cache_local_max_entry_bytes` | 8,388,608 bytes (8 MiB) | Integer, 1-256 MiB | Limit on a single context entering L1; it cannot exceed the local total |
+| `response_cache_reconstruct_max_bytes` | 67,108,864 bytes (64 MiB) | Integer, 8-512 MiB | Maximum logical payload allowed when reading a context from the shared backend and rebuilding it |
+| `response_cache_config_generation` | 1 | Read-only | Incremented when the configuration actually changes; clients cannot write it |
 
-设置页会把三个预算作为一个原子更新发送。管理 API 也支持只提交部分预算，服务端会在数据库事务中与当前值合并并校验，提交成功后才应用到本实例。固定边界不随这三个设置变化：最多 2,000 条、45 分钟绝对 TTL、每条最多 200 个 raw item。降低预算会立即收缩本地 L1，并可能淘汰已有上下文。
+The settings page sends the three budgets as one atomic update. The admin API also accepts submitting only some of the budgets; the server merges them with the current values in a database transaction, validates them, and applies them to this instance only after the commit succeeds. The fixed limits do not change with these three settings: at most 2,000 entries, an absolute TTL of 45 minutes, and at most 200 raw items per entry. Lowering a budget shrinks the local L1 immediately and may evict existing contexts.
 
-Redis 模式会把 response context 保存到共享后端。后端值在重建上限内但超过 L1 单条或总量准入预算时，仍可服务当前请求，但不会提升到本地 L1。Memory 缓存配合 SQLite 文件主库时默认把 response context 同时写入本地磁盘持久层（见下节），L1 淘汰、超过 L1 准入预算或进程重启后仍可从磁盘恢复；关闭持久层后只保留本进程 L1，已知超限/淘汰，或依赖的必需上下文缺失/过期时，可能导致 HTTP `409 previous_response_not_found`。Redis 值损坏或超过重建上限时也可能返回 409。共享后端暂时不可用时，依赖该上下文的请求可能返回 HTTP `503`。
+Redis mode stores the response context in the shared backend. A backend value that is within the rebuild limit but exceeds the single-entry or total admission budget of L1 can still serve the current request, but it is not promoted to the local L1. When the Memory cache is used with a SQLite file as the main database, the response context is also written by default to the local disk persistence layer (see the next section), so it can still be recovered from disk after L1 eviction, after exceeding the L1 admission budget, or after a process restart. If the persistence layer is turned off, only the process-local L1 is kept; when a context is known to be over limit or evicted, or when a required context is missing or expired, HTTP `409 previous_response_not_found` may be returned. A corrupted Redis value, or one that exceeds the rebuild limit, can also return 409. When the shared backend is temporarily unavailable, requests that depend on that context may return HTTP `503`.
 
-#### Memory 模式的磁盘持久层
+#### Disk persistence layer in Memory mode
 
-Memory 驱动 + SQLite 主库时默认启用。上下文写入主库同目录下的独立文件 `response-context.db`，不写主库，也不进入主库备份；内容相同的历史条目只存一份（按 SHA-256 去重并引用计数），按最近访问时间滑动保留。持久层只是缓存，打不开时服务照常启动并退回纯 L1。
+Enabled by default when the Memory driver is used with a SQLite main database. Contexts are written to a separate file, `response-context.db`, in the same directory as the main database. They are not written to the main database and are not included in its backups. Historical entries with identical content are stored only once (deduplicated by SHA-256 with reference counting), and are kept on a sliding basis by most recent access time. The persistence layer is only a cache; if it cannot be opened, the service still starts and falls back to pure L1.
 
-| 环境变量 | 默认 | 说明 |
+| Environment variable | Default | Description |
 | --- | --- | --- |
-| `RESPONSE_CONTEXT_STORE_PATH` | 主库目录下的 `response-context.db` | 显式路径；`off`/`none`/`false`/`0` 关闭。仅支持 Memory 驱动；Redis 模式使用共享后端 |
-| `RESPONSE_CONTEXT_STORE_TTL_HOURS` | `48` | 最短保留时长（1~720 小时），每次读取会顺延 |
-| `RESPONSE_CONTEXT_STORE_MAX_MB` | `2048` | 去重后条目正文总量上限（64~65536 MB），超过时按最近最少访问淘汰到 90% |
+| `RESPONSE_CONTEXT_STORE_PATH` | `response-context.db` in the main database directory | Explicit path; `off` / `none` / `false` / `0` disable it. Only the Memory driver is supported; Redis mode uses the shared backend |
+| `RESPONSE_CONTEXT_STORE_TTL_HOURS` | `48` | Minimum retention time (1–720 hours); extended on every read |
+| `RESPONSE_CONTEXT_STORE_MAX_MB` | `2048` | Upper limit on the total size of deduplicated entry bodies (64–65536 MB); when exceeded, the least recently accessed entries are evicted down to 90% |
 
-上下文不可用时，日志会输出一行 `[response-context] unavailable`，包含原因、查询结果、L1 占用与淘汰计数，可据此区分重启、淘汰和超限。
+When a context is unavailable, the log prints one line `[response-context] unavailable`, including the reason, the query result, and the L1 usage and eviction counts, so that restarts, evictions, and over-limit cases can be told apart.
 
-只有预算实际变化时才会分配并递增 generation；同值更新或空更新不会递增。当前实例在数据库提交后立即应用，其他实例每 5 秒轮询一次，只应用更新的 generation；单次读取最多等待 3 秒。同步失败时保留最后一次有效配置，并在运维页显示错误，后续轮询成功后自动恢复。
+A generation is allocated and incremented only when a budget actually changes; an update with the same value or an empty update does not increment it. The current instance applies the change immediately after the database commit. Other instances poll every 5 seconds and apply only a newer generation; a single read waits at most 3 seconds. If synchronization fails, the last valid configuration is kept and the error is shown on the operations page; it recovers automatically after a later poll succeeds.
 
-这些预算覆盖 HTTP Responses/Compact 和原生 Responses WebSocket 的回放上下文。健康的原生 WS 续链仍保留 `previous_response_id` 交给原上游连接。显式 `store:false` 的原生 WS 请求会在响应成功过滤并提交后保存完整快照：Memory 使用本进程 L1，Redis 同时保存共享快照，支持下游重连到其他实例时恢复；此快照不受按需写入策略影响。快照按数据库作用域、API Key、权限范围、稳定会话、执行通道和 `stream_id` 隔离，沿用上述预算与绝对 TTL；读取或提升到 L1 不延长原过期时间。超过 L1 预算但仍在重建上限内时可从 Redis 服务，超过条目数或重建上限则拒绝整条快照，不截尾丢失祖先。
+These budgets cover the replay context for HTTP Responses/Compact and native Responses WebSocket. A healthy native WS continuation still keeps `previous_response_id` and hands it to the original upstream connection. A native WS request with an explicit `store:false` saves a full snapshot after the response is successfully filtered and committed: Memory uses the process-local L1, and Redis also saves a shared snapshot so that the downstream can recover when it reconnects to another instance. This snapshot is not affected by the on-demand write policy. Snapshots are isolated by database scope, API key, permission scope, stable session, execution channel, and `stream_id`, and follow the budgets and absolute TTL above. Reading or promoting to L1 does not extend the original expiry time. When the L1 budget is exceeded but the entry is still within the rebuild limit, it can be served from Redis. If the entry count or the rebuild limit is exceeded, the entire snapshot is rejected, and ancestors are not silently lost by truncation.
 
-Redis 原生 WS 快照将完整历史、账号 ID、凭证代际、兼容域和过期时间原子保存为同一记录。恢复加密 reasoning/compaction 时优先选择原账号，再核对凭证与兼容域；账号不兼容时不丢弃必要推理来强行续链。终态发送前登记共享提交屏障，其他实例等待快照提交后再读取；共享快照暂时不可用且 L1 无法恢复时返回可恢复的 `503`，完整 L1 命中不额外查询 Redis。上游实体连接与连接池仍属于原实例，Redis 分享上下文与协调状态，不迁移实体 WS。
+Redis native WS snapshots atomically save the full history, account ID, credential generation, compatibility domain, and expiry time as a single record. When restoring encrypted reasoning/compaction items, the original account is preferred, and then the credential and compatibility domain are checked. If the account is not compatible, the system does not drop necessary reasoning just to force a continuation. A shared commit barrier is registered before the terminal state is sent, and other instances wait for the snapshot commit before reading. If the shared snapshot is temporarily unavailable and L1 cannot restore it, a recoverable `503` is returned; a full L1 hit does not query Redis additionally. Upstream entity connections and the connection pool still belong to the original instance; Redis shares the context and coordination state, and does not migrate entity WS connections.
 
-原连接丢失或上游明确拒绝旧 ID 时，网关在尚未交付内容或工具调用的条件下，最多恢复一次：移除 `previous_response_id` 并发送完整快照。加密推理/压缩项仅在原账号、凭证代次和兼容域均匹配时回放。祖先缺失、超限或兼容性无法确认时，返回 `status:409`、`code:previous_response_not_found`，供客户端重发完整输入；健康下游 WS 保持可用。原生 WebSocket 快照在 Memory 模式下仅保存在进程内；Redis 模式可在原绝对 TTL 内跨实例或重启恢复共享快照。
+When the original connection is lost, or the upstream explicitly rejects the old ID, the gateway recovers at most once, provided no content or tool call has been delivered yet: it removes `previous_response_id` and sends the full snapshot. Encrypted reasoning/compaction items are replayed only when the original account, credential generation, and compatibility domain all match. When an ancestor is missing, over limit, or its compatibility cannot be confirmed, it returns `status:409` and `code:previous_response_not_found`, so the client can resend the full input; a healthy downstream WS stays available. In Memory mode, native WebSocket snapshots are kept only in the process; in Redis mode, shared snapshots can be recovered across instances or after a restart within the original absolute TTL.
 
-共享后端写入的异步与同步路径统一限制为最多 16 个在途写、64 MiB 在途逻辑正文、64 个等待者；在复制/编码之前获取额度，最多等待 5 秒。超过 64 MiB 的既有合法单条上下文可独占写入器，因此其逻辑上限为普通预算与最大在途单条的较大值，不会静默丢弃大快照。普通写入 I/O deadline 为 2 秒，关停同步写为 500 毫秒。饱和时响应收尾及同 WS 后续轮次可能等待写入额度；写失败后 L1 仍可服务，必须依赖该快照但 L1/共享后端均缺失时返回 503。
+Both the asynchronous and synchronous write paths to the shared backend are uniformly limited to at most 16 in-flight writes, 64 MiB of in-flight logical body, and 64 waiters. The budget is acquired before copying or encoding, and the wait is at most 5 seconds. A valid single context that already exceeds 64 MiB may take the writer exclusively, so its logical limit is the larger of the normal budget and the largest single in-flight entry; large snapshots are not silently dropped. The normal write I/O deadline is 2 seconds, and the synchronous write at shutdown is 500 milliseconds. When saturated, response wrap-up and later turns on the same WS may wait for write budget; after a write failure, L1 can still serve, and when a snapshot is required but both L1 and the shared backend are missing it, 503 is returned.
 
-运维 API `/api/admin/ops/overview` 的 `request_memory` 提供正文预算、当前值、高水位与拒绝数，`response_cache_writer` 提供在途/等待写数、逻辑字节、超时和拒绝数；`response_cache.backend_write_failures` 统计后端写入失败。L1 `current_bytes` 是各快照逻辑大小之和，`shared_payload_bytes` 是去重后的正文大小；两者均不包含 JSON 编码副本、Go 分配器和容器开销。
+The operations API `/api/admin/ops/overview` provides `request_memory`, with the body budget, current value, high-water mark, and rejection count, and `response_cache_writer`, with the in-flight and waiting write counts, logical bytes, timeouts, and rejection counts. `response_cache.backend_write_failures` counts backend write failures. L1 `current_bytes` is the sum of the logical sizes of all snapshots, and `shared_payload_bytes` is the body size after deduplication. Neither includes JSON-encoded copies, Go allocator, or container overhead.
 
-这里的“字节”是保留 `json.RawMessage` 长度之和，不包含 map、切片、LRU、Go 堆或容器开销，因此不是 RSS 或进程内存硬上限。滚动升级时，新前端对旧后端缺失的设置使用 64/8/64 MiB 展示默认值、generation `0`；旧后端缺少 response-cache 运维对象时，前端显示兼容等待状态而不会崩溃。
+The "bytes" here are the sum of the retained `json.RawMessage` lengths. They do not include map, slice, LRU, Go heap, or container overhead, so they are not a hard limit on RSS or process memory. During a rolling upgrade, when an old backend lacks a setting, the new frontend shows the default display values of 64/8/64 MiB and generation `0`; when an old backend lacks the response-cache operations object, the frontend shows a compatibility waiting state instead of crashing.
 
-### 调度配置
+### Scheduling settings
 
-| 字段 | 类型 | 默认值 | 范围 | 说明 |
+| Field | Type | Default | Range | Description |
 |------|------|--------|------|------|
-| `MaxConcurrency` | int | 2 | ≥1（无上限） | 单账号最大并发请求数 |
-| `GlobalRPM` | int | 0 | 0-∞ | 全局每分钟请求限制，0 表示不限 |
-| `MaxRetries` | int | 2 | 0-10 | 原有有限重试预算，覆盖传输错误及既有可重试的 5xx（含 500/502/503/504）；`0` 禁用该预算 |
-| `MaxRateLimitRetries` | int | 1 | 0-10 | 原有有限的 429 独立重试预算；`0` 禁用该预算 |
-| `RetryIntervalMS` | int | 0 | 0-30000 | 普通重试前等待的毫秒数；`0` 保持立即重试 |
-| `TransportRetryPolicy` | string | `rotate` | `rotate` / `sticky` | 传输错误重试时换号，或保留同一账号重试 |
-| `SchedulerEngine` | string | `legacy` | `legacy` / `shadow` / `indexed` | 调度执行引擎；设置页可热切换，跨实例通过数据库 outbox 增量同步 |
-| `FastSchedulerEnabled` | bool | false | - | 旧版兼容字段；新部署应使用 `SchedulerEngine` |
-| `CodexForceWebsocket` | bool | false | - | 强制 Codex 上游走 WebSocket 长连接（复用连接池），更接近官方 CLI 体验；关闭时走原有 HTTP 请求 |
-| `CodexWSKeepaliveEnabled` | bool | false | - | 启用上游 WS 空闲连接保活（后台仅发 Ping，不发起新请求、不消耗账号额度） |
-| `CodexWSKeepaliveIntervalSec` | int | 60 | 10-600 | WS 保活 Ping 间隔（秒），仅在 `CodexWSKeepaliveEnabled` 开启时生效 |
-| `CodexWSDownstreamKeepaliveSlots` | int | 8 | 0-32 | 每账号在推理输出结束后保留的空闲聊天上游连接数，超额按 LRU 回收 |
-| `CodexWSStatelessSlots` | int | 8 | 0-32 | 每账号空白上游连接预算及无状态池扫描窗口 |
-| `CodexWSHideUpstreamErrors` | bool | true | - | WS 上游最终失败时向客户端隐藏原始错误，返回统一友好提示；原始错误仍记录在后台日志/用量记录 |
-| `CodexWSSilentRetryEnabled` | bool | true | - | WS 首包前遇到限流、额度耗尽、5xx、读取错误或超时时，静默换账号并重建上游 WS |
-| `CodexWSSilentMaxRetries` | int | 2 | 0-10 | WS 首包前静默重试上限；`0` 禁用该预算 |
-| `SchedulerMode` | string | `round_robin` | - | 调度模式：`round_robin`（轮询，按调度分权重排序）、`remaining_quota`（优先使用用量少的账号）或 `fill_first`（顺序耗尽：集中使用剩余额度最少的账号，耗尽/限流后切下一个）。索引引擎在同一优先级和健康档位内按最多 8 个可用候选的窗口比较实时占用；配额模式仍优先比较用量。窗口被过滤或并发占满时继续补选，不保证全池绝对最小占用。 |
-| `AffinityMode` | string | `bounded` | - | 会话亲和：`bounded`（账号不健康或绑定空闲超过 10 分钟时重新挑号，活跃会话不轮换以保住上游 prompt cache）、`off`（每次重选）、`strict`（长期粘连） |
+| `MaxConcurrency` | int | 2 | ≥1 (no upper limit) | Maximum number of concurrent requests per account |
+| `GlobalRPM` | int | 0 | 0-∞ | Global request limit per minute; 0 means no limit |
+| `MaxRetries` | int | 2 | 0-10 | Existing finite retry budget, covering transport errors and the existing retryable 5xx responses (including 500/502/503/504); `0` disables this budget |
+| `MaxRateLimitRetries` | int | 1 | 0-10 | Existing finite, separate retry budget for 429 responses; `0` disables this budget |
+| `RetryIntervalMS` | int | 0 | 0-30000 | Milliseconds to wait before a normal retry; `0` keeps retries immediate |
+| `TransportRetryPolicy` | string | `rotate` | `rotate` / `sticky` | On transport-error retries, switch to another account, or retry on the same account |
+| `SchedulerEngine` | string | `legacy` | `legacy` / `shadow` / `indexed` | Scheduler execution engine; can be switched live on the settings page, and synced incrementally across instances through the database outbox |
+| `FastSchedulerEnabled` | bool | false | - | Legacy compatibility field; new deployments should use `SchedulerEngine` |
+| `CodexForceWebsocket` | bool | false | - | Forces the Codex upstream to use a long-lived WebSocket connection (reusing the connection pool), which is closer to the official CLI experience; when off, the original HTTP requests are used |
+| `CodexWSKeepaliveEnabled` | bool | false | - | Enables keepalive for idle upstream WS connections (the background only sends pings, starts no new requests, and uses no account quota) |
+| `CodexWSKeepaliveIntervalSec` | int | 60 | 10-600 | WS keepalive ping interval (seconds); takes effect only when `CodexWSKeepaliveEnabled` is on |
+| `CodexWSDownstreamKeepaliveSlots` | int | 8 | 0-32 | Number of idle chat upstream connections kept per account after reasoning output ends; excess connections are reclaimed by LRU |
+| `CodexWSStatelessSlots` | int | 8 | 0-32 | Per-account budget for blank upstream connections and the scan window of the stateless pool |
+| `CodexWSHideUpstreamErrors` | bool | true | - | When the WS upstream finally fails, hides the raw error from the client and returns a unified friendly message; the raw error is still recorded in the admin logs and usage records |
+| `CodexWSSilentRetryEnabled` | bool | true | - | When rate limiting, quota exhaustion, 5xx, a read error, or a timeout happens before the first WS packet, silently switches account and rebuilds the upstream WS |
+| `CodexWSSilentMaxRetries` | int | 2 | 0-10 | Upper limit of silent retries before the first WS packet; `0` disables this budget |
+| `SchedulerMode` | string | `round_robin` | - | Scheduling mode: `round_robin` (round-robin, ordered by scheduling-score weight), `remaining_quota` (prefers accounts with lower usage), or `fill_first` (sequential exhaustion: concentrates use on the account with the least remaining quota, then moves to the next one after exhaustion or rate limiting). Within the same priority and health tier, the indexed engine compares live occupancy over windows of up to 8 available candidates; quota modes still compare usage first. When windows are filtered out or concurrency is full, selection continues to fill in, and absolute minimum occupancy across the whole pool is not guaranteed. |
+| `AffinityMode` | string | `bounded` | - | Session affinity: `bounded` (re-picks the account when it is unhealthy or its binding has been idle for more than 10 minutes; active sessions are not rotated, so the upstream prompt cache is kept), `off` (re-selects every time), `strict` (long-term stickiness) |
 
-调度优先级先决定账号层级，同一优先级内再比较健康档位、调度分和当前负载；会话亲和只负责复用已绑定账号。多个最终用户共享同一个 API Key 时，下游可传 `X-Codex2API-Affinity-Key`，值会先哈希且仅用于本地账号绑定，不会转发给上游。
+Scheduling priority decides the account tier first; within the same priority, health tier, scheduling score, and current load are compared. Session affinity only reuses an already bound account. When several end users share one API key, the downstream client can send `X-Codex2API-Affinity-Key`; the value is hashed first and used only for local account binding, and is not forwarded to the upstream.
 
-调度引擎的推荐上线顺序是 `legacy → shadow → indexed`：
+The recommended rollout order for scheduler engines is `legacy → shadow → indexed`:
 
-- `legacy` 保留原有全池扫描，作为无停机回退路径。
-- `shadow` 仍由 legacy 选号，每 64 次请求抽样一次索引可用性并在运维页展示一致/差异计数；它用于短时灰度，不建议长期承载全量流量。
-- `indexed` 使用分层内存索引、稀疏 API Key 路由子池和事件驱动等待。账号数增长时，稳态选号不再复制或扫描完整账号切片。
+- `legacy` keeps the original full-pool scan, as a no-downtime fallback path.
+- `shadow` still selects accounts with legacy, samples index availability once every 64 requests, and shows match/mismatch counts on the operations page; it is for short gradual rollouts and is not recommended for carrying full traffic long term.
+- `indexed` uses a tiered in-memory index, sparse API key routing sub-pools, and event-driven waiting. As the number of accounts grows, steady-state selection no longer copies or scans the full account slice.
 
-索引选号的过滤器与准入回调在调度锁外执行，返回后重新检查候选代次、账号状态和并发；`Disabled` / `DispatchPaused` 同样阻止最终占位。已有会话绑定、容量借号保护和有状态续链的账号约束保持生效。
+The filters and admission callbacks for indexed selection run outside the scheduling lock. After they return, the candidate generation, account status, and concurrency are checked again; `Disabled` / `DispatchPaused` likewise block the final placement. Existing session bindings, capacity-borrowing protection, and account constraints for stateful continuations remain in effect.
 
-账号满载时，等待队列同时受全局与单个 API Key 上限约束，所有使用该账号池等待路径的协议和上游共用预算。HTTP 队列溢出返回 `503` 和 `Retry-After: 1`；已提交的 SSE 输出对应协议的失败事件，Responses WebSocket 返回带 `status:503` 的错误帧并保持连接可用，文案提示 1 秒后重试。该本地过载不会进入持续重试的上游换号循环，也不会被误报为账号额度耗尽。已有等待者不因调低上限而被取消；环境变量不是跨实例配额，也不限制已经在上游执行的请求。
+When accounts are fully loaded, the waiting queue is subject to both the global limit and the per-API-key limit, and all protocols and upstreams that use the account-pool waiting path share this budget. On HTTP queue overflow, it returns `503` with `Retry-After: 1`. For SSE output that has already been committed, it sends the failure event of the corresponding protocol. Responses WebSocket returns an error frame with `status:503` and keeps the connection available; the message suggests retrying after 1 second. This local overload does not enter the upstream account-switching loop that retries continuously, and it is not misreported as account quota exhaustion. Existing waiters are not canceled by lowering the limit. The environment variables are not a cross-instance quota and do not limit requests already running upstream.
 
-队列内按 API Key 轮转，同一 Key 按可尝试请求的入队顺序唤醒。普通单槽释放只唤醒一个等待者；已有续链绑定和排除账号用于跳过不匹配的通知，剩余模型、分组和 scope 过滤仍在锁外执行，失败后把机会交给后续等待者。一轮通知最多尝试当前等待集合一次，同时最多有 8 个通知驱动的选号；密集释放合并为后续容量检查。公平性针对已排队的请求，不承诺绕过快路径新请求的全局先来先服务，也不保证不同过滤条件获得相同吞吐。SSE/WS 心跳不重新入队。每个有等待者的账号池只使用一个每秒恢复检查定时器，空队列自动停止；账号冷却自身的到期恢复通知仍然生效。
+Within the queue, requests rotate by API key, and waiters for the same key are woken in the order they were enqueued among requests that can be tried. A normal single-slot release wakes only one waiter. Existing continuation bindings and excluded accounts are used to skip non-matching notifications, and the remaining model, group, and scope filters still run outside the lock; on failure, the opportunity passes to the next waiter. One round of notifications tries the current waiting set at most once, and at most 8 notification-driven selections run at the same time; dense releases are merged into later capacity checks. Fairness applies to queued requests; it does not promise to bypass the global first-come-first-served order for new requests on the fast path, and it does not guarantee the same throughput for different filter conditions. SSE/WS heartbeats are not re-queued. Each account pool with waiters uses only one per-second recovery check timer, which stops automatically when the queue is empty; the expiry-recovery notification of account cooldown itself still applies.
 
-Codex 瞬时账号限流按 `15s → 30s → 60s → 120s → 240s → 300s` 退避。同一冻结窗口的并发 429 只推进一次；较长的真实 `Retry-After` 可延长该窗口（上限 5 分钟），普通重复 429 不顺延截止时间。短时冻结同样阻止 Spark 调度，但普通模型的 5h/7d 配额耗尽仍不占用 Spark 独立配额。短冻结不写数据库、不主动触发 WHAM 探测，到期直接恢复本地索引。原生 Redis/Memory 缓存保留限流类型和退避级别，并原子合并截止时间；迟到的短冻结不能覆盖配额或鉴权冷却。滚动升级期间旧实例无法识别新分类，建议完成全部实例升级后再评估短冻结行为。
+Codex transient account rate limiting backs off along `15s → 30s → 60s → 120s → 240s → 300s`. Concurrent 429 responses within the same frozen window advance the backoff only once. A longer real `Retry-After` can extend that window (up to 5 minutes), while ordinary repeated 429 responses do not push the deadline back. A short freeze also blocks Spark scheduling, but exhaustion of the 5h/7d quota for ordinary models still does not consume the separate Spark quota. A short freeze does not write to the database and does not trigger a WHAM probe; when it expires, the local index is restored directly. The native Redis/Memory cache keeps the rate-limit type and backoff level, and merges deadlines atomically; a late short freeze cannot override a quota or authentication cooldown. During a rolling upgrade, old instances cannot recognize the new category, so it is recommended to evaluate short-freeze behavior only after all instances have been upgraded.
 
-运维 API 的 `scheduler` 指标新增 `fast_scanned_accounts`（实际候选检查数）、`fast_filter_checks`、`fast_acquire_failures`、`fast_lock_wait_ns` 和 `model_cooldown_cache_reads`。这些是本进程累计计数，宜取时间差计算每次选号成本；快路径命中不再代表没有扫描。`selection_duration_buckets` 为 `10us/100us/1ms/10ms/100ms/1s/+Inf` 累积直方图，覆盖与 `selection_total` 相同的普通/新会话选号，已有绑定的直接复用不计入该直方图。跨实例共享冷却与 outbox 不提供账号全局并发限制，并发名额仍由每个实例独立计数。
+The `scheduler` metrics of the operations API add `fast_scanned_accounts` (actual number of candidate checks), `fast_filter_checks`, `fast_acquire_failures`, `fast_lock_wait_ns`, and `model_cooldown_cache_reads`. These are cumulative counts for this process, so the cost of each selection should be computed from the difference over time; a fast-path hit no longer means that no scan happened. `selection_duration_buckets` is a cumulative histogram with buckets `10us/100us/1ms/10ms/100ms/1s/+Inf`. It covers the same ordinary and new-session selections as `selection_total`; direct reuse of an existing binding is not counted in this histogram. Shared cooldown and outbox across instances do not provide a global per-account concurrency limit; concurrency slots are still counted separately by each instance.
 
-等待队列还暴露 `max_waiters`、`max_waiters_per_key`、`waiters`、`wait_rejected`（全部队列拒绝）、`wait_rejected_per_key`（其中因单 Key 上限被拒绝的子集）、`wait_granted`、`wait_duration_ns`，以及 `10ms/100ms/1s/10s/30s/+Inf` 的 `wait_duration_buckets` 累积直方图。等待耗时统计包含成功、取消和超时，拒绝入队不计入；`wait_wakeups / wait_granted` 的增量比可辅助观察无效唤醒，不能当作上游吞吐指标。Docker 部署应将两个新环境变量传给应用容器；项目标准/SQLite compose 的 `env_file` 会读取 `.env`，2004 专用 compose 可用 `environment` 覆盖。
+The waiting queue also exposes `max_waiters`, `max_waiters_per_key`, `waiters`, `wait_rejected` (all queue rejections), `wait_rejected_per_key` (the subset rejected by the per-key limit), `wait_granted`, `wait_duration_ns`, and the cumulative `wait_duration_buckets` histogram with buckets `10ms/100ms/1s/10s/30s/+Inf`. Wait-time statistics include successful, canceled, and timed-out waits; rejected enqueues are not counted. The incremental ratio of `wait_wakeups / wait_granted` helps spot wasted wakeups, but it should not be treated as an upstream throughput metric. Docker deployments should pass the two new environment variables to the application container. The project's standard/SQLite compose `env_file` reads `.env`, and the dedicated 2004 compose file can override them with `environment`.
 
-启动会自动创建 `scheduler_outbox` 和 `maintenance_jobs` 及相应索引/触发器，PostgreSQL 与 SQLite 均无需手工迁移。多实例对账号、API Key、分组、代理和调度设置的变化按 outbox 水位增量重放；高频用量计数不会产生调度事件。环境变量 `CODEX_SCHEDULER_ENGINE` 一旦设置，会固定本实例引擎并覆盖管理后台值。
+On startup, `scheduler_outbox` and `maintenance_jobs` are created automatically, along with their indexes and triggers; neither PostgreSQL nor SQLite needs a manual migration. Changes to accounts, API keys, groups, proxies, and scheduling settings across multiple instances are replayed incrementally by outbox watermark; high-frequency usage counts do not produce scheduling events. Once the environment variable `CODEX_SCHEDULER_ENGINE` is set, it fixes this instance's engine and overrides the admin panel value.
 
-`ContinuousRetryPolicy` 是默认关闭的独立持续重试策略，持久化为 JSON：
+`ContinuousRetryPolicy` is a separate continuous-retry policy that is off by default and is persisted as JSON:
 
 ```json
 {
@@ -352,123 +348,123 @@ Codex 瞬时账号限流按 `15s → 30s → 60s → 120s → 240s → 300s` 退
 }
 ```
 
-启用后，类别、精确 HTTP 状态码或精确上游错误代码任一命中即可持续重试；`http_4xx`、403、404、上下文错误以及“全部 `response.failed`”等宽泛或确定性故障需要管理员显式选择，501 则已由默认的 `http_5xx` 类别覆盖。普通自选模式不会把未选中的 `invalid_request` 或结构化安全策略拒绝自动升级为无限重试。
+When enabled, continuous retry starts if any of the category, the exact HTTP status code, or the exact upstream error code matches. Broad or deterministic failures such as `http_4xx`, 403, 404, context errors, and "all `response.failed`" must be explicitly selected by the administrator; 501 is already covered by the default `http_5xx` category. The ordinary custom-selection mode does not automatically upgrade unselected `invalid_request` or structured safety-policy rejections to unlimited retries.
 
-`catch_all` 是默认关闭的超级模式。开启后不再依赖已知类别或错误码清单；除明确的上游 `cyber_policy` 外，任何真实上游 HTTP、传输、流读取、`error`、`response.failed` 或未知失败都会进入持续重试，包括永久额度、余额、鉴权、无效请求和其他结构化安全策略错误。明确的上游 `cyber_policy` 始终终止当前请求，不换号、不重放。文本推理只接受上游 HTTP `200` 及协议正常终态；其他状态、失败终态及无终态 EOF 都会丢弃整次尝试并继续。管理界面的超级开关会在一次保存中同时设置 `enabled=true` 和 `catch_all=true`；关闭总开关会同步清除 `catch_all`，避免隐藏启用。
+`catch_all` is a super mode that is off by default. When it is on, the system no longer relies on lists of known categories or error codes. Apart from an explicit upstream `cyber_policy`, any real upstream HTTP, transport, stream-read, `error`, `response.failed`, or unknown failure enters continuous retry, including permanent quota, balance, authentication, invalid-request, and other structured safety-policy errors. An explicit upstream `cyber_policy` always ends the current request, with no account switch and no replay. Text reasoning accepts only an upstream HTTP `200` and a normal protocol terminal state; any other status, failed terminal state, or EOF without a terminal state discards the whole attempt and continues. The super switch in the admin panel sets both `enabled=true` and `catch_all=true` in one save; turning off the master switch also clears `catch_all`, so it is never hidden as enabled.
 
-持续重试会把每次流式上游尝试完整暂存；失败整次丢弃，正常终态才一次性回放。目标端点等待上游响应头、读取响应体或流数据时保持下游连接：Responses、Chat Completions 和 Images 在首个保活周期到达时建立 SSE 200 并发送 `: keepalive` 注释；Responses、Realtime 与 Live Sideband WebSocket 使用 Ping 控制帧。心跳提交 SSE 后，随后的上游错误会使用协议错误事件，不再改变 HTTP 200。非流式 JSON（包括 native Responses、compact 和 Alpha Search，但不包括 Codex/GPT Images）使用标准 HTTP `102 Processing` 信息响应，不提交最终状态或 JSON；Cloudflare 收到 102 后仍要求在 125 秒内收到最终响应，因此它只能延长等待，不是无限期保活。`max_duration_seconds` 设置无限预算的墙钟时间上限（默认 600 秒，范围 1 到 900 秒），从请求第一次进入无限重试时开始，后续尝试不会重置。期限到达会立即取消上游并返回最近一次真实上游失败；仅在尚无失败可返回时使用 `504 upstream_timeout`。普通自选模式不会无限重试未选中的结构化安全策略拒绝；`catch_all` 可覆盖其他拒绝，但不能覆盖明确的上游 `cyber_policy` 或本地重试期限。
+Continuous retry buffers each streaming upstream attempt in full; a failed attempt is discarded entirely, and only a normal terminal state is replayed at once. While the target endpoint waits for the upstream response headers, reads the response body, or reads stream data, it keeps the downstream connection alive: Responses, Chat Completions, and Images establish an SSE 200 when the first keepalive period arrives and send a `: keepalive` comment; Responses, Realtime, and Live Sideband WebSockets use Ping control frames. After the heartbeat has committed the SSE, any later upstream error uses a protocol error event and no longer changes the HTTP 200. Non-streaming JSON (including native Responses, compact, and Alpha Search, but not Codex/GPT Images) uses the standard HTTP `102 Processing` informational response and does not commit the final status or JSON. Cloudflare still requires the final response within 125 seconds after receiving a 102, so it only extends the wait and is not indefinite keepalive. `max_duration_seconds` sets the wall-clock limit of the unlimited budget (default 600 seconds, range 1 to 900 seconds). It starts when a request first enters unlimited retry, and later attempts do not reset it. When the deadline is reached, the upstream is canceled immediately and the most recent real upstream failure is returned; `504 upstream_timeout` is used only when there is no failure yet to return. The ordinary custom-selection mode does not retry unselected structured safety-policy rejections without limit; `catch_all` can override other rejections, but cannot override an explicit upstream `cyber_policy` or the local retry deadline.
 
-Codex/GPT Images 在 `stream=false` 或省略 `stream` 时不发送 HTTP 102、不提前提交 200，直接等待最终 JSON，避免部分反向代理错误转发信息响应；调用方仍需为完整生成时长设置足够的等待/空闲超时。其 `stream=true` 请求继续使用 SSE 心跳。此例外不改变其他非流式端点的 102 行为，也不改变重试和截止时间。
+When `stream=false` or `stream` is omitted, Codex/GPT Images do not send HTTP 102 and do not commit a 200 early; they wait directly for the final JSON, which avoids some reverse proxies forwarding informational responses incorrectly. Callers still need to set wait/idle timeouts long enough for the full generation time. Their `stream=true` requests continue to use SSE heartbeats. This exception does not change the 102 behavior of other non-streaming endpoints, and it does not change retry or deadline behavior.
 
-上述 HTTP/SSE 保活覆盖 `/v1/responses`（含 native、stream 与 non-stream）、`/v1/chat/completions`、`/v1/responses/compact`、`/v1/alpha/search`、`/v1/images/generations` 和 `/v1/images/edits`（Codex/GPT 仅覆盖 `stream=true`）；image jobs 与 `POST /v1/live` 不启用这套保活。
+The HTTP/SSE keepalive above covers `/v1/responses` (including native, stream, and non-stream), `/v1/chat/completions`, `/v1/responses/compact`, `/v1/alpha/search`, `/v1/images/generations`, and `/v1/images/edits` (for Codex/GPT, only `stream=true`). Image jobs and `POST /v1/live` do not enable this keepalive.
 
-配置 API Key 模型请求次数预算时，额度准入完成前不会因保活提交 SSE 200。普通 Responses 和 Chat Completions 请求在下游取消后停止发送心跳，并沿用最多 5 秒的上游 usage 补读窗口；持续重试的响应读取仍随下游取消立即结束。
+When an API key model request-count budget is configured, keepalive does not commit SSE 200 before quota admission is complete. Ordinary Responses and Chat Completions requests stop sending heartbeats after the downstream cancels, and keep the upstream usage read-back window of at most 5 seconds. Response reads in continuous retry still end immediately when the downstream cancels.
 
-单次流式尝试的暂存上限为 64 MiB，前 8 MiB 使用内存，之后写入立即 unlink 的 mode-0600 临时文件；暂存超限或存储失败会作为本地错误立即停止。当前没有跨请求的进程级暂存总预算，高并发环境需要另行限制并发并监控内存与临时磁盘。Responses HTTP 等待期间若 SSE 心跳已提交响应头，最终成功账号的 `X-Codex-Turn-State` 无法再补发，因此实现会省略该头而不会转发失败账号的状态；无法安全展开为自包含请求的账号绑定 continuation 也不会强行换号。
+The staging limit for a single streaming attempt is 64 MiB. The first 8 MiB is kept in memory, and beyond that, data is written to a mode-0600 temporary file that is unlinked immediately. Exceeding the staging limit or a storage failure stops the attempt immediately as a local error. There is currently no process-wide staging budget across requests, so high-concurrency environments need separate concurrency limits and must monitor memory and temporary disk. If an SSE heartbeat has already committed the response headers during the Responses HTTP wait, the final successful account's `X-Codex-Turn-State` can no longer be sent, so the implementation omits that header rather than forwarding the failed account's state. An account-bound continuation that cannot be safely expanded into a self-contained request is also not forced onto another account.
 
-客户端取消、下游写失败、WebSocket 断开、入口校验、账号池/并发调度、本地提示词或输出策略拒绝、暂存资源失败和成功回放失败都立即结束，绝不作为上游错误继续轮换。普通图片请求仍以 5 次为上限；一旦错误被持续策略选中（含 `catch_all`），就会越过普通上限，直到成功或客户端取消。图片创建可能重复生成和重复扣费，因为上游未必支持可靠幂等键。超级模式还可能持续消耗 token、请求次数、余额、账号配额、暂存内存与磁盘，并长期占用 API Key 与 scope 并发槽位、阻塞较新的请求，必须显式承担风险后开启。
+Client cancellation, downstream write failure, WebSocket disconnection, entry validation, account-pool or concurrency scheduling, local prompt or output-policy rejection, staging resource failure, and replay failure after success all end immediately and are never rotated on as upstream errors. Ordinary image requests are still capped at 5 attempts; once an error is selected by a continuous policy (including `catch_all`), it passes the ordinary cap and continues until success or client cancellation. Image creation may generate and charge repeatedly, because the upstream may not support a reliable idempotency key. Super mode may also keep consuming tokens, request counts, balance, account quota, staging memory and disk, and may occupy API key and scope concurrency slots for a long time, blocking newer requests; it must be enabled only after explicitly accepting these risks.
 
-明确的上游 `cyber_policy` 是不可覆盖的安全终态：普通自选与超级模式都会立即停止当前请求，保留本地审计与 signed decision，并按现有策略写入 conversation lock 和已验证用户冷却。它不会作为中间失败被透明吞掉，也不会轮换其他账号重放同一请求。
+An explicit upstream `cyber_policy` is a non-overridable security terminal state: both ordinary custom selection and super mode stop the current request immediately, keep the local audit and signed decision, and write a conversation lock and a verified-user cooldown according to the existing policy. It is never silently swallowed as an intermediate failure, and it does not rotate to another account to replay the same request.
 
-持续重试等待取 `retry_interval_ms`、带抖动的指数退避（250ms 起步，30 秒封顶）以及有效 `Retry-After`（最多 5 分钟）中的较大值。即使上游持续返回很小的 `Retry-After`，本地退避仍会增长，避免无限模式形成高频请求循环。
+The continuous-retry wait takes the largest of `retry_interval_ms`, jittered exponential backoff (starting at 250 ms, capped at 30 seconds), and the effective `Retry-After` (at most 5 minutes). Even if the upstream keeps returning a very small `Retry-After`, the local backoff still grows, so that unlimited mode does not form a high-frequency request loop.
 
-### 测试配置
+### Test settings
 
-| 字段 | 类型 | 默认值 | 说明 |
+| Field | Type | Default | Description |
 |------|------|--------|------|
-| `TestModel` | string | "gpt-5.5" | 测试连接使用的模型 |
-| `TestContent` | string | "hi" | 测试连接发送给上游的用户输入内容。多行时每次随机抽取一行；支持 `{{time}}`、`{{date}}`、`{{datetime}}`、`{{timestamp}}`、`{{rand}}`、`{{rand:min-max}}` 变量 |
-| `TestConcurrency` | int | 50 | 批量测试并发数，范围 1-200 |
+| `TestModel` | string | "gpt-5.5" | Model used for test connections |
+| `TestContent` | string | "hi" | User input content sent to the upstream by test connections. For multiple lines, one line is picked at random each time. Supports the `{{time}}`, `{{date}}`, `{{datetime}}`, `{{timestamp}}`, `{{rand}}`, and `{{rand:min-max}}` variables |
+| `TestConcurrency` | int | 50 | Concurrency for batch tests, range 1-200 |
 
-### 代理配置
+### Proxy settings
 
-| 字段 | 类型 | 默认值 | 说明 |
+| Field | Type | Default | Description |
 |------|------|--------|------|
-| `ProxyURL` | string | "" | 全局代理 URL |
-| `ProxyPoolEnabled` | bool | false | 启用代理池。开启后未绑定账号从启用代理中粘性分配；绑定到已禁用/测挂托管代理的账号不会直连；池空且无全局代理时拒绝调度 |
-| `ResinURL` | string | "" | Resin 粘性代理池地址（含 token，形如 `http://127.0.0.1:2260/<token>`）。日志与设置接口只回显打码后的 `scheme://host` |
-| `ResinPlatformName` | string | "" | Resin 侧平台标识。与 `ResinURL` 同时填写才启用，清空任一即禁用 |
+| `ProxyURL` | string | "" | Global proxy URL |
+| `ProxyPoolEnabled` | bool | false | Enables the proxy pool. When on, unbound accounts are sticky-assigned from enabled proxies; accounts bound to a disabled or failed managed proxy do not connect directly; scheduling is refused when the pool is empty and there is no global proxy |
+| `ResinURL` | string | "" | Resin sticky proxy pool address (including the token, in the form `http://127.0.0.1:2260/<token>`). Logs and the settings API only echo the masked `scheme://host` |
+| `ResinPlatformName` | string | "" | Platform identifier on the Resin side. It is enabled only when filled in together with `ResinURL`; clearing either one disables it |
 
-#### 出口链路优先级
+#### Egress chain priority
 
-Codex 渠道的出站有三套配置并存，生效关系是固定的、逐层覆盖而不是叠加：
+The Codex channel has three outbound configurations that coexist. Their precedence is fixed, each layer overrides the one below rather than adding to it:
 
-1. **Resin 反代**（全局）：启用后 Codex 渠道所有携带账号身份的出站（`/responses`、compact、WebSocket、wham 用量/重置券/订阅查询、客户端遥测、令牌刷新）全部改经 Resin，出口 IP 由 Resin 按账号粘性提供。此时下面第 2 层选出的代理只保留在审计标签里、不参与拨号；代理池的 fail-closed（池空、绑定的托管代理已禁用）对 Codex 账号也不再成立，账号不会因此被跳过。
-2. **代理链**：账号 `proxy_url` > 分组代理 > 代理池（按账号 ID 粘性）> 全局 `ProxyURL`。
-3. **直连**：代理池关闭且以上都为空时直连上游。
+1. **Resin reverse proxy** (global): when enabled, all outbound traffic of the Codex channel that carries account identity (`/responses`, compact, WebSocket, wham usage/reset-coupon/subscription queries, client telemetry, and token refresh) is routed through Resin, and the egress IP is provided by Resin with account stickiness. In this case, the proxy selected by layer 2 below is kept only in the audit label and does not take part in dialing. The fail-closed behavior of the proxy pool (empty pool, or bound managed proxy disabled) no longer applies to Codex accounts, so accounts are not skipped because of it.
+2. **Proxy chain**: account `proxy_url` > group proxy > proxy pool (sticky by account ID) > global `ProxyURL`.
+3. **Direct connection**: when the proxy pool is off and all of the above are empty, connect directly to the upstream.
 
-管理后台在「系统设置 → Resin」卡片、代理池页顶部与 Codex 账号列表的代理徽章上标出当前由谁承担出站；设置接口的只读字段 `codex_egress` 给出同一结论（`mode` 为 `resin` 或 `proxy_chain`）。
+The admin panel marks which layer currently carries outbound traffic on the "System settings → Resin" card, at the top of the proxy pool page, and on the proxy badges in the Codex account list. The read-only `codex_egress` field of the settings API gives the same result (`mode` is `resin` or `proxy_chain`).
 
-### 账号级设置（单账号）
+### Account-level settings (single account)
 
-以下字段存储在 `accounts` 表中，可通过管理后台账号详情或 API 按账号单独设置：
+The following fields are stored in the `accounts` table and can be set per account in the admin panel's account details or through the API:
 
-| 字段 | 类型 | 默认值 | 说明 |
+| Field | Type | Default | Description |
 |------|------|--------|------|
-| `credit_enabled` | bool | false | 标记账号为信用计费模式 |
-| `credit_skip_usage_window` | bool | false | 跳过 7 天/5 小时用量窗口惩罚（适用于信用账号） |
-| `score_bias_override` | int/null | null | 手工覆盖调度权重分，`null` 跟随套餐默认 |
-| `base_concurrency_override` | int/null | null | 手工覆盖基础并发值（`≥1` 无上限）；`null` 时先继承所属分组的最小有效值，再回退到全局默认 |
-| `scheduler_priority` | int/null | null | 严格调度优先级（`-100..100`）；`null` 恢复默认值 `0` |
-| `skip_warm_tier` | bool | false | 跳过 warm 层级；仅把 warm 提升为 healthy，不覆盖 risky/banned |
+| `credit_enabled` | bool | false | Marks the account as using credit-based billing |
+| `credit_skip_usage_window` | bool | false | Skips the 7-day/5-hour usage window penalty (for credit accounts) |
+| `score_bias_override` | int/null | null | Manually overrides the scheduling weight score; `null` follows the plan default |
+| `base_concurrency_override` | int/null | null | Manually overrides the base concurrency value (`≥1`, no upper limit); when `null`, first inherit the smallest effective value of the owning group, then fall back to the global default |
+| `scheduler_priority` | int/null | null | Strict scheduling priority (`-100..100`); `null` restores the default `0` |
+| `skip_warm_tier` | bool | false | Skips the warm tier; it only promotes warm to healthy and does not override risky/banned |
 
-账号列表的批量编辑支持分数偏置、基础并发、调度优先级、标签和分组。勾选某个数值字段但保持输入为空时，会发送 `null`，将该字段重置为继承值或默认值；未勾选的字段保持不变。
+Bulk editing in the account list supports score bias, base concurrency, scheduling priority, tags, and groups. If a numeric field is checked but its input is left empty, `null` is sent, which resets that field to its inherited or default value. Unchecked fields stay unchanged.
 
-### 分组级基础并发
+### Group-level base concurrency
 
-账号分组可设置 `base_concurrency_override`（`≥1`，无上限，`null` 表示不覆盖）。基础并发按“账号显式覆盖 > 所属分组中最小的有效值 > 全局 `max_concurrency`”解析；最终动态并发仍会受健康档位、用量保护和智能配速限制。
+An account group can set `base_concurrency_override` (`≥1`, no upper limit; `null` means no override). Base concurrency is resolved as: account explicit override > smallest effective value among the owning groups > global `max_concurrency`. The final dynamic concurrency is still limited by health tier, usage protection, and smart pacing limits.
 
-### WebSocket 连接池与 1009 降级
+### WebSocket connection pool and 1009 degradation
 
-- 管理后台 **设置 → WebSocket（Codex 上游）→ 聊天续链连接保留数**（`codex_ws_downstream_keepalive_slots`）限制每账号在 Codex 输出完毕、等待用户继续输入时保留的空闲聊天上游连接数，默认 8、范围 0～32，所有 Key 共用，保存后热更新。设为 0 时聊天输出收尾即关闭上游连接，后续通过仍有效的上下文恢复。拨号及推理中的连接不占空闲保留额度；普通会话、无状态客户端、overflow、一次性连接与后台执行道的聊天输出收尾后，均按相同规则保留。
-- 原 `codex_ws_stateless_slots`（空白预热连接保留数）独立限制每账号未承载用户聊天上下文的空白连接，并控制无状态连接池扫描窗口，默认 8、范围 0～32。没有聊天输入、指令、工具定义、模板或续链 ID 的明确预热请求使用空白预算。首次在空白连接上开始聊天前，连接退出空白预算，进入推理状态，输出结束后才进入聊天空闲保留池；两个保留池不互相占位。设为 0 时不扫描通用池、不保留空白连接，预热请求仍可临时建连并在收尾后关闭。两项之和是正常空闲保留量，不是全部实体连接的硬上限；推理连接另外由原账号/Key 请求并发约束。
-- 连接预算独立于 `DynamicConcurrencyLimit`。API Key 和账号的请求并发继续沿用原配置、队列与计数方式。例如 4 个 Key 各限并发 3、账号限并发 3，仍最多同时处理 3 个请求；若希望保留 12 个独立聊天会话的上游连接，可将“聊天续链连接保留数”设为 12 或 16，不会自动修改现有配置。
-- 空白拨号仍按原预算原子预留；聊天拨号、在途以及摘池后的收尾只登记实体 socket 生命周期，直到实际关闭后幂等解除登记。聊天推理可以在空闲保留池已满时正常开始，不会因这个设置返回 503；原来的 Key/账号请求并发和 busy 等待规则继续生效。
-- 聊天输出收尾后更新最后业务使用时间，空闲聊天连接超过上限时按 LRU 关闭最久未使用的连接，包括仍有有效续链绑定的连接。回收在账号锁下复验连接身份和 pending 请求，跳过在途请求、拨号及空白连接；旧连接的晚到回调不会影响新连接。被回收会话再次输入时，可从仍有效且兼容的完整上下文快照重建上游连接。空白预算不足时仍可能返回 `503 upstream_ws_connection_capacity_exceeded`。
-- 下调聊天保留数后，取连、输出收尾或每 30 秒后台巡检会按新上限淘汰最旧空闲连接；推理不受影响。普通模式下，曾用于用户聊天的上游 WS 在最后一次业务使用后闲置 30 分钟也会关闭，Ping/Pong、下游连接保持打开和后台元数据不续期。空白连接不受聊天闲置限制，弱网模式及到龄轮转沿用原规则。
-- 空闲回收会实际关闭旧上游 socket，清除对应会话和续链绑定。后续请求重新握手创建新的上游 WS，并在需要时恢复完整上下文；旧连接的晚到清理不会移除同池键下的新连接。
-- `CODEX_WS_STATELESS_ONESHOT=1` 禁止通用槽位复用；响应正常收尾后，有有效续链绑定的连接按聊天空闲上限保留，无绑定的一次性连接直接销毁。异常或未完整消费的响应继续销毁对应坏连接。
-- 连接关闭日志区分本地回收、空闲超时、到龄轮转、上游关闭帧与网络错误，并记录关闭码、续链绑定状态和剩余连接数。Redis 继续用于完整续链快照及恢复元数据，实体连接预算在单实例内协调。本地与 Redis 上下文默认保存 45 分钟，覆盖聊天连接 30 分钟空闲回收后的恢复窗口；缓存容量淘汰、账号不兼容或已过期仍可能使恢复失败。
-- 带 `previous_response_id` 的请求只取回原连接，并复验账号、模型、出口和客户端身份；忙时可取消地等待，遵守现有 busy 等待上限。等待耗尽返回 `status:503`，API Key 并发拒绝返回 `status:429`，均保留下游 WS 供下一轮使用。
-- 上游在尚未向下游输出内容时返回 close 1009，或本地读取触发等价的 read-limit 错误，网关会保留同一账号租约和已解析代理，最多降级一次 HTTP。
-- 1009 属于传输限制，不降低账号健康度，也不触发鉴权探针；一旦已向下游输出内容，就不会再发起 HTTP 降级，避免重复请求和重复计费。
+- In the admin panel **Settings → WebSocket (Codex upstream) → Chat continuation connection retention** (`codex_ws_downstream_keepalive_slots`) limits how many idle chat upstream connections each account keeps while Codex output is finished and it is waiting for the user to continue. The default is 8, the range is 0–32, it is shared by all keys, and it is hot-updated after saving. When set to 0, the upstream connection is closed as soon as chat output finishes, and later input is recovered through a context that is still valid. Connections that are being dialed or are reasoning do not use the idle retention budget. After chat output finishes for ordinary sessions, stateless clients, overflow, one-off connections, and background execution lanes, they are retained by the same rule.
+- The existing `codex_ws_stateless_slots` (number of blank warm-up connections retained) independently limits, for each account, the blank connections that do not carry user chat context, and controls the scan window of the stateless connection pool. The default is 8 and the range is 0–32. An explicit warm-up request with no chat input, instructions, tool definitions, templates, or continuation ID uses the blank budget. Before a chat starts on a blank connection for the first time, the connection leaves the blank budget and enters the reasoning state, and only after output ends does it enter the chat idle retention pool; the two retention pools do not occupy each other's slots. When set to 0, the general pool is not scanned and no blank connections are retained, but warm-up requests can still create a connection temporarily and close it after wrap-up. The sum of the two values is the normal idle retention amount, not a hard limit on all entity connections; reasoning connections are additionally constrained by the original account/key request concurrency.
+- The connection budget is independent of `DynamicConcurrencyLimit`. The request concurrency of API keys and accounts keeps the original configuration, queue, and counting method. For example, if 4 keys each have a concurrency limit of 3 and the account has a concurrency limit of 3, at most 3 requests are still handled at the same time. To keep upstream connections for 12 independent chat sessions, set "Chat continuation connection retention" to 12 or 16; existing configuration is not changed automatically.
+- Blank dials still reserve atomically against the original budget. Chat dials, in-flight connections, and wrap-up after removal from the pool only register the entity socket lifecycle, and the registration is released idempotently once the socket is actually closed. Chat reasoning can start normally even when the idle retention pool is full, and it does not return 503 because of this setting; the original key/account request concurrency and busy-wait rules still apply.
+- After chat output finishes, the last business-use time is updated. When idle chat connections exceed the limit, the least recently used connections are closed by LRU, including connections that still have a valid continuation binding. Reclamation rechecks connection identity and pending requests under the account lock, and skips in-flight requests, dials, and blank connections. A late callback from an old connection does not affect a new one. When a reclaimed session receives input again, the upstream connection can be rebuilt from a still-valid and compatible full context snapshot. When the blank budget is insufficient, `503 upstream_ws_connection_capacity_exceeded` may still be returned.
+- After lowering the chat retention count, acquiring a connection, finishing output, or the background check every 30 seconds evicts the oldest idle connections under the new limit; reasoning is not affected. In normal mode, an upstream WS that was used for user chat is also closed after 30 minutes idle since its last business use; Ping/Pong, downstream connections staying open, and background metadata do not extend it. Blank (never-used) connections are not subject to the chat idle limit; weak-network mode and rotation on reaching max age keep the original rules.
+- Idle reclaim actually closes the old upstream socket and clears the corresponding session and continuation binding. Later requests re-handshake to create a new upstream WS and restore the full context when needed; a late cleanup of an old connection does not remove a new connection under the same pool key.
+- `CODEX_WS_STATELESS_ONESHOT=1` disables generic slot reuse; after a response finishes normally, connections with a valid continuation binding are kept under the chat idle limit, and one-shot connections without a binding are destroyed immediately. Responses that fail or are not fully consumed still destroy the corresponding bad connection.
+- Connection close logs distinguish local reclaim, idle timeout, rotation on reaching max age, upstream close frames, and network errors, and record the close code, continuation binding status, and the number of remaining connections. Redis continues to hold full continuation snapshots and recovery metadata, and the physical connection budget is coordinated within a single instance. Local and Redis contexts are kept for 45 minutes by default, which covers the recovery window after chat connections are reclaimed after 30 minutes idle; cache capacity eviction, account incompatibility, or expiry can still make recovery fail.
+- Requests carrying `previous_response_id` only retrieve the original connection and re-verify the account, model, egress, and client identity; when busy, they wait cancellably and respect the existing busy wait limit. When the wait is exhausted they return `status:503`; API Key concurrency rejections return `status:429`. In both cases the downstream WS is kept for the next turn.
+- If the upstream returns close 1009 before any content has been output downstream, or a local read triggers an equivalent read-limit error, the gateway keeps the same account lease and resolved proxy and degrades to HTTP at most once.
+- 1009 is a transport limit: it does not lower account health and does not trigger an auth probe; once content has been output downstream, no HTTP degradation is started, to avoid duplicate requests and duplicate billing.
 
-### 连接池配置
+### Connection pool configuration
 
-| 字段 | 类型 | 默认值 | 范围 | 说明 |
+| Field | Type | Default | Range | Description |
 |------|------|--------|------|------|
-| `PgMaxConns` | int | 50 | 5-500 | PostgreSQL 最大连接数 |
-| `RedisPoolSize` | int | 30 | 5-500 | Redis 连接池大小 |
+| `PgMaxConns` | int | 50 | 5-500 | Maximum PostgreSQL connections |
+| `RedisPoolSize` | int | 30 | 5-500 | Redis connection pool size |
 
-### 自动清理配置
+### Automatic cleanup configuration
 
-| 字段 | 类型 | 默认值 | 说明 |
+| Field | Type | Default | Description |
 |------|------|--------|------|
-| `AutoCleanUnauthorized` | bool | false | 自动清理 401 账号 |
-| `AutoCleanRateLimited` | bool | false | 自动清理 429 账号 |
-| `AutoCleanFullUsage` | bool | false | 自动清理满用量账号 |
-| `AutoCleanError` | bool | false | 自动清理错误状态账号 |
+| `AutoCleanUnauthorized` | bool | false | Automatically clean up 401 accounts |
+| `AutoCleanRateLimited` | bool | false | Automatically clean up 429 accounts |
+| `AutoCleanFullUsage` | bool | false | Automatically clean up accounts at full usage |
+| `AutoCleanError` | bool | false | Automatically clean up accounts in error status |
 
-### 5h 窗口自动激活
+### Automatic activation of the 5h window
 
-| 字段 | 类型 | 默认值 | 说明 |
+| Field | Type | Default | Description |
 |------|------|--------|------|
-| `AutoActivate5hWindowEnabled` | bool | false | 5h 窗口重置后自动发送一次最小真实 `/responses`，用于启动下一轮 5h 计时（issue #581）。默认关闭，开启会消耗少量真实额度。只对上游明确返回 5h 窗口和重置时间的账号生效；每个窗口最多一次。账号不可用、被自动暂停或没有 5h 窗口时跳过。不调用 `rate-limit-reset-credits/consume`，也不同于零成本 `wham/usage` 到点探针。 |
+| `AutoActivate5hWindowEnabled` | bool | false | After the 5h window resets, automatically sends one minimal real `/responses` request to start the next 5h timer (issue #581). Disabled by default; enabling it consumes a small amount of real quota. Only applies to accounts for which the upstream explicitly returns a 5h window and reset time; at most once per window. Skipped when the account is unavailable, automatically paused, or has no 5h window. It does not call `rate-limit-reset-credits/consume`, and it is also not the zero-cost `wham/usage` probe that runs when due. |
 
-### 安全设置
+### Security settings
 
-| 字段 | 类型 | 默认值 | 说明 |
+| Field | Type | Default | Description |
 |------|------|--------|------|
-| `AdminSecret` | string | "" | 管理后台密码（数据库存储） |
-| `AllowRemoteMigration` | bool | false | 允许远程迁移（需设置 AdminSecret） |
+| `AdminSecret` | string | "" | Admin panel password (stored in the database) |
+| `AllowRemoteMigration` | bool | false | Allow remote migration (requires AdminSecret to be set) |
 
 ---
 
-## API Key 模型周请求次数预算
+## API Key model weekly request budget
 
-在管理后台 **API Key → 高级限制** 中，可以为同一个 Key 给指定模型分配每周调用次数。例如 `gpt-6*` 每周合计 50 次，用完后其他未匹配模型仍可调用；不配置 `model_request_limits` 时保持原有行为。次数由管理员分配，系统不会假设某个上游套餐的每周额度。
+In the admin panel under **API Key → Advanced limits**, you can assign a weekly call count for specified models to the same key. For example, `gpt-6*` totals 50 calls per week, and after they are used up, other unmatched models can still be called; without `model_request_limits` configured, the original behavior is kept. Counts are assigned by the administrator, and the system does not assume a weekly quota for any upstream plan.
 
-通过创建或更新 API Key 接口配置 `limits.model_request_limits`：
+Configure `limits.model_request_limits` through the API Key create or update endpoint:
 
 ```json
 {
@@ -487,41 +483,41 @@ Codex 渠道的出站有三套配置并存，生效关系是固定的、逐层�
 }
 ```
 
-| 字段 | 说明 |
+| Field | Description |
 | --- | --- |
-| `id` | 服务端生成的稳定规则 ID；新增规则省略，修改次数上限或调整顺序时保留 |
-| `model` | 最终映射后的模型名，支持精确名称和 `*` 通配；一条规则的所有匹配模型共享次数 |
-| `window` | 当前仅支持 `week`，省略时默认为 `week` |
-| `max_requests` | 每个固定周窗口的请求次数上限，必须为正整数 |
-| `timezone` | IANA 时区，默认 `Asia/Shanghai`，与服务器 `TZ` 独立 |
-| `reset_weekday` | 重置星期，`1` 为周一，`7` 为周日，省略或 `0` 时默认为周一 |
-| `reset_time` | 时区内的重置时间，`HH:MM`，默认 `00:00` |
+| `id` | Stable rule ID generated by the server; omit when adding a rule, keep it when changing the call limit or reordering |
+| `model` | Final mapped model name; supports exact names and `*` wildcards; all models matched by one rule share its count |
+| `window` | Currently only `week` is supported; defaults to `week` when omitted |
+| `max_requests` | Maximum number of requests per fixed weekly window; must be a positive integer |
+| `timezone` | IANA time zone, default `Asia/Shanghai`, independent of the server's `TZ` |
+| `reset_weekday` | Reset weekday, `1` is Monday and `7` is Sunday; defaults to Monday when omitted or `0` |
+| `reset_time` | Reset time within the time zone, `HH:MM`, default `00:00` |
 
-周窗口按指定时区的日历计算，包括夏令时变化。窗口是固定周期，例如上海时间本周一 00:00 到下周一 00:00；它与现有金额、Token 的滑动 `7d` 限额独立，所有限制同时生效。命中多条模型规则时，各条规则都要有余额并各计一次，因此可以同时配置 `gpt-6*` 系列总预算与 `gpt-6-astra` 单模型预算。
+Weekly windows are calculated on the calendar of the specified time zone, including daylight saving time changes. A window is a fixed period, for example from Monday 00:00 to next Monday 00:00 in Shanghai time; it is independent of the existing sliding `7d` limits on amount and tokens, and all limits apply at the same time. When several model rules match, each rule must have balance and each is counted once, so you can configure both a total budget for the `gpt-6*` series and a single-model budget for `gpt-6-astra` at the same time.
 
-计数单位是一个外部 HTTP 请求，或 WebSocket 连接中的一个 `response.create`。全局和账号模型映射完成后，网关在尝试向上游发送时原子扣额；内部换号、传输回退与重试复用同一请求身份，同一规则最多计一次。已经尝试发送的请求即使失败、超时或取消也计入，入口校验、无可用账号和发送前拒绝不计入。客户端重新发起请求属于新请求。若内部重试映射到另一模型，则新命中的规则也需要额度。跨周继续重试不重复扣同一规则，已扣次数仍归属首次扣额窗口。
+The counting unit is one external HTTP request, or one `response.create` on a WebSocket connection. After global and account model mapping completes, the gateway atomically deducts quota when it attempts to send upstream; internal account switching, transport fallback, and retries reuse the same request identity, and the same rule is counted at most once. A request that was already attempted counts even if it fails, times out, or is canceled; entry validation, no available account, and rejection before sending are not counted. A client re-sending a request counts as a new request. If an internal retry maps to another model, the newly matched rule also needs quota. Retrying across weeks does not deduct the same rule again, and the deducted count still belongs to the window where it was first deducted.
 
-规则的 `id` 与模型匹配条件、时区及重置安排共同标识一个预算。已有规则只允许修改 `max_requests` 或列表顺序，保留已用次数；模型或重置安排需要变化时，删除旧规则并新增规则，新规则从零计数。提高次数上限立即提供更多余额；将上限调低到已用次数以下会停止放行该规则。更新请求不带 `limits` 时保留全部限制；传入 `limits` 时按完整限制对象替换，`model_request_limits: []` 移除模型周预算。
+A rule's `id` together with its model matching condition, time zone, and reset schedule identifies one budget. Existing rules may only have `max_requests` or their list order changed, and keep their used count; when the model or reset schedule needs to change, delete the old rule and add a new one, and the new rule starts counting from zero. Raising the limit immediately provides more balance; lowering the limit below the used count stops the rule from allowing requests. An update request without `limits` keeps all limits; when `limits` is passed, it replaces the whole limits object, and `model_request_limits: []` removes the model weekly budgets.
 
-计数与请求幂等记录保存在 PostgreSQL / SQLite 的独立表中，启动时自动创建。PostgreSQL 多实例共享同一权威计数；SQLite 轻量模式使用相同语义。重启服务、清理 Redis/内存缓存、删除用量日志或重置金额额度不会清零模型周预算，到下一窗口自然获得新额度。扣额数据库不可用时，有模型周预算的相关请求返回服务不可用，避免并发超发。
+Counts and request idempotency records are stored in separate tables in PostgreSQL / SQLite, and are created automatically at startup. Multiple PostgreSQL instances share the same authoritative count; SQLite lightweight mode uses the same semantics. Restarting the service, clearing the Redis/in-memory cache, deleting usage logs, or resetting amount quota does not clear the model weekly budget; it gains new quota naturally at the next window. When the quota-deduction database is unavailable, related requests with a model weekly budget return service unavailable, to avoid concurrent over-spending.
 
-后台 Key 编辑窗口和公开 `/key-usage` 页面展示本周已用、剩余、上限及下次重置时间。展示不受用量图表的 `today` / `7d` / `30d` / `all` 筛选影响，始终显示规则当前周窗口。该预算用于分配网关调用次数，不保证与上游套餐的计量口径相同；超额响应与查询接口见 [API 文档](API.md#api-key-模型周请求次数预算)。
+The admin Key edit window and the public `/key-usage` page show the used, remaining, and maximum counts for this week, along with the next reset time. The display is not affected by the `today` / `7d` / `30d` / `all` filters of the usage chart, and always shows the rule's current weekly window. This budget is used to allocate gateway call counts; it does not guarantee the same metering basis as an upstream plan. For over-limit responses and query endpoints, see the [API docs](API.md#api-key-model-weekly-request-budget).
 
-## 配置文件示例
+## Configuration file examples
 
-### 标准生产环境 (.env)
+### Standard production environment (.env)
 
 ```bash
 # ============================================================
-# Codex2API 生产环境配置
+# Codex2API production environment configuration
 # ============================================================
 
-# 服务配置
+# Service configuration
 CODEX_PORT=8080
 ADMIN_SECRET=your-secure-admin-password-here
 TZ=Asia/Shanghai
 
-# 数据库配置 (PostgreSQL)
+# Database configuration (PostgreSQL)
 DATABASE_DRIVER=postgres
 DATABASE_HOST=postgres
 DATABASE_PORT=5432
@@ -533,7 +529,7 @@ IMAGE_ASSET_DIR=/data/images
 LOG_DIR=logs
 LOG_DISABLED=false
 
-# 缓存配置 (Redis)
+# Cache configuration (Redis)
 CACHE_DRIVER=redis
 REDIS_ADDR=redis:6379
 REDIS_USERNAME=
@@ -543,40 +539,40 @@ REDIS_TLS=false
 REDIS_INSECURE_SKIP_VERIFY=false
 ```
 
-### SQLite 轻量环境 (.env)
+### SQLite lightweight environment (.env)
 
 ```bash
 # ============================================================
-# Codex2API SQLite 轻量版配置
+# Codex2API SQLite lightweight edition configuration
 # ============================================================
 
-# 服务配置
+# Service configuration
 CODEX_PORT=8080
 ADMIN_SECRET=your-admin-password
 TZ=Asia/Shanghai
 
-# 数据库配置 (SQLite)
+# Database configuration (SQLite)
 DATABASE_DRIVER=sqlite
 DATABASE_PATH=/data/codex2api.db
 IMAGE_ASSET_DIR=/data/images
 LOG_DIR=logs
 LOG_DISABLED=false
 
-# 缓存配置 (内存)
+# Cache configuration (in-memory)
 CACHE_DRIVER=memory
 ```
 
-### 开发环境 (.env)
+### Development environment (.env)
 
 ```bash
 # ============================================================
-# Codex2API 开发环境配置
+# Codex2API development environment configuration
 # ============================================================
 
 CODEX_PORT=8080
-# ADMIN_SECRET=dev  # 开发环境可不设置
+# ADMIN_SECRET=dev  # Can be left unset in development
 
-# 本地 PostgreSQL
+# Local PostgreSQL
 DATABASE_DRIVER=postgres
 DATABASE_HOST=localhost
 DATABASE_PORT=5432
@@ -584,7 +580,7 @@ DATABASE_USER=codex2api
 DATABASE_PASSWORD=codex2api
 DATABASE_NAME=codex2api
 
-# 本地 Redis
+# Local Redis
 CACHE_DRIVER=redis
 REDIS_ADDR=localhost:6379
 REDIS_USERNAME=
@@ -597,105 +593,105 @@ TZ=Asia/Shanghai
 
 ---
 
-## 配置优先级
+## Configuration precedence
 
-当同一配置项存在多个来源时，按以下优先级生效：
-
-```
-1. 环境变量（最高优先级）
-   ↓
-2. .env 文件中的变量
-   ↓
-3. 数据库 SystemSettings（业务配置）
-   ↓
-4. 程序默认值（最低优先级）
-```
-
-### 特殊规则
-
-**Admin Secret 优先级:**
+When the same setting comes from multiple sources, the following precedence applies:
 
 ```
-1. 环境变量 ADMIN_SECRET
+1. Environment variables (highest precedence)
    ↓
-2. 数据库 SystemSettings.AdminSecret
+2. Variables in the .env file
    ↓
-3. 空值（无认证）
+3. Database SystemSettings (business configuration)
+   ↓
+4. Program default values (lowest precedence)
 ```
 
-**数据库连接池:**
+### Special rules
 
-- `PgMaxConns` 修改后立即生效，无需重启
-- `RedisPoolSize` 修改后需重启生效
+**Admin Secret precedence:**
 
-**调度参数:**
+```
+1. Environment variable ADMIN_SECRET
+   ↓
+2. Database SystemSettings.AdminSecret
+   ↓
+3. Empty value (no authentication)
+```
 
-- `MaxConcurrency`、`GlobalRPM` 等修改后立即生效
-- 通过管理后台修改时会自动持久化到数据库
+**Database connection pool:**
+
+- `PgMaxConns` takes effect immediately after it is changed, no restart needed
+- `RedisPoolSize` takes effect only after a restart
+
+**Scheduling parameters:**
+
+- `MaxConcurrency`, `GlobalRPM`, and similar settings take effect immediately after being changed
+- Changes made in the admin panel are automatically persisted to the database
 
 ---
 
-## 配置验证
+## Configuration validation
 
-### 启动时验证
+### Validation at startup
 
-程序启动时会自动验证配置：
+The program automatically validates the configuration at startup:
 
 ```
-✓ 数据库连接成功: PostgreSQL
-✓ 缓存连接成功: Redis
-✓ 账号池初始化完成: 10/10 可用
-✓ 系统设置加载完成
-✓ HTTP 服务启动: http://0.0.0.0:8080
+✓ Database connection succeeded: PostgreSQL
+✓ Cache connection succeeded: Redis
+✓ Account pool initialized: 10/10 available
+✓ System settings loaded
+✓ HTTP service started: http://0.0.0.0:8080
 ```
 
-### 配置检查 API
+### Configuration check API
 
 ```bash
-# 健康检查
+# Health check
 curl http://localhost:8080/health
 
-# 系统概览（需 Admin Secret）
+# System overview (requires Admin Secret)
 curl -H "X-Admin-Key: your-secret" http://localhost:8080/api/admin/ops/overview
 ```
 
 ---
 
-## 常见问题
+## FAQ
 
-### Q: 修改环境变量后需要重启吗？
+### Q: Do I need to restart after changing environment variables?
 
-**A:** 是的，环境变量在程序启动时加载，修改后需要重启容器才能生效。
+**A:** Yes. Environment variables are loaded when the program starts, so the container must be restarted after a change for it to take effect.
 
-### Q: 如何在不重启的情况下修改配置？
+### Q: How do I change configuration without restarting?
 
-**A:** 通过管理后台 `/admin/settings` 修改的业务配置（如 MaxConcurrency、GlobalRPM）会立即生效。
+**A:** Business settings changed through the admin panel at `/admin/settings` (such as MaxConcurrency and GlobalRPM) take effect immediately.
 
-### Q: SQLite 和 PostgreSQL 可以切换吗？
+### Q: Can I switch between SQLite and PostgreSQL?
 
-**A:** 可以，但需要：
-1. 停止服务
-2. 修改 DATABASE_DRIVER 和相关配置
-3. 启动服务（新数据库会重新初始化）
-4. 重新导入账号数据
+**A:** Yes, but you need to:
+1. Stop the service
+2. Change DATABASE_DRIVER and the related configuration
+3. Start the service (the new database will be initialized again)
+4. Re-import account data
 
-### Q: 如何查看当前生效的配置？
+### Q: How do I view the configuration currently in effect?
 
-**A:** 通过管理后台 `/admin/settings` 页面可查看系统设置及配置来源（env/database）。Responses 上下文缓存的本实例 effective/applied generation、最近同步时间和同步错误可在 `/admin/ops` 查看。
+**A:** The `/admin/settings` page in the admin panel shows system settings and their sources (env/database). The effective/applied generation of this instance's Responses context cache, the last sync time, and sync errors can be viewed at `/admin/ops`.
 
-### Q: 配置错误导致无法启动怎么办？
+### Q: What if a configuration error prevents startup?
 
-**A:** 检查日志输出，常见错误：
-- `DATABASE_HOST is empty` - 未配置数据库主机
-- `REDIS_ADDR is empty` - Redis 模式下未配置 Redis 地址
-- `DATABASE_PATH is empty` - SQLite 模式下未配置数据路径
+**A:** Check the log output. Common errors:
+- `DATABASE_HOST is empty` - database host is not configured
+- `REDIS_ADDR is empty` - Redis address is not configured in Redis mode
+- `DATABASE_PATH is empty` - data path is not configured in SQLite mode
 
-### 惰性模式下的 Codex 授权保活
+### Codex authorization keepalive in lazy mode
 
-管理设置 `codex_oauth_keepalive_enabled`（默认 `false`）允许惰性模式单独运行 Codex Token 续期。它使用现有 `background_refresh_interval_minutes` 巡检间隔和 AT 到期前 5 分钟的阈值，不改变额度冷却，也不启用生成探针。普通模式本来就运行 Codex 续期，不依赖此开关。
+The admin setting `codex_oauth_keepalive_enabled` (default `false`) allows lazy mode to run Codex token renewal on its own. It uses the existing `background_refresh_interval_minutes` background check interval and the threshold of 5 minutes before AT expiry, does not change quota cooldown, and does not enable the generation probe. Normal mode already runs Codex renewal and does not depend on this switch.
 
-Codex 刷新新增 `codex_oauth_refresh_attempts` 保护表，启动时自动创建，兼容 PostgreSQL 与 SQLite。表内只保存旧 RT 的 SHA-256 指纹、刷新操作 ID 和开始时间，不保存明文 Token。成功保存全部相关凭据后删除记录；结果不确定的记录保留，防止跨实例或重启后重复消费旧 RT。已有凭据无需重新导入；已经失效的授权需重新登录恢复。
+Codex refresh adds the `codex_oauth_refresh_attempts` protection table, which is created automatically at startup and is compatible with PostgreSQL and SQLite. The table only stores the SHA-256 fingerprint of the old RT, the refresh operation ID, and the start time, and does not store plaintext tokens. A record is deleted after all related credentials are saved successfully; records with uncertain results are kept, to prevent the old RT from being consumed again across instances or after a restart. Existing credentials do not need to be re-imported; authorization that has already expired must be restored by signing in again.
 
-## 自适应降智检测
+## Adaptive intelligence-downgrade detection
 
-降智检测支持可配置上限的指数退避、恢复加速与复发记忆。默认关闭，配置与状态迁移规则见 [自适应降智检测](INTELLIGENCE_BACKOFF.md)。
+Intelligence-downgrade detection supports exponential backoff with a configurable cap, recovery acceleration, and recurrence memory. It is disabled by default; for the configuration and state transition rules, see [Adaptive intelligence-downgrade detection](INTELLIGENCE_BACKOFF.md).

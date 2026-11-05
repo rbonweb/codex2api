@@ -1,27 +1,27 @@
-# 可选 NewAPI 身份与执行适配器
+# Optional NewAPI identity and execution adapter
 
-NewAPI 是一个可选的外部适配器，不是 Prompt Filter、本地拦截、外部模型审核或风险画像的运行前提。未使用 NewAPI 的部署可以忽略本文。
+NewAPI is an optional external adapter, not a prerequisite for Prompt Filter, local blocking, external model review, or risk profiling. Deployments that do not use NewAPI can ignore this document.
 
-Codex2API 只接受与实际请求使用的 Codex2API Key 一对一绑定的 NewAPI 签名身份：
+Codex2API only accepts a NewAPI signed identity that is bound one-to-one to the Codex2API key the request actually uses:
 
-- 请求使用已绑定 Key 时，只使用该绑定的启用状态与绑定密钥验证身份。
-- 未绑定 Key 不接受 NewAPI 签名身份。
-- 旧版进程级密钥配置不再参与验签。
+- When a request uses a bound key, the identity is verified only with that binding's enabled state and binding secret.
+- A key without a binding does not accept a NewAPI signed identity.
+- The legacy process-level secret configuration no longer takes part in signature verification.
 
-绑定不控制 Prompt 拦截模式或审核档位。所有请求统一服从 Codex2API GuardPipeline；NewAPI 发送的 `mode`、`profile` 仅可作为兼容元数据接收，不会覆盖全局安全策略。
+The binding does not control the Prompt blocking mode or the review tier. All requests are governed by the Codex2API GuardPipeline. The `mode` and `profile` that NewAPI sends are accepted only as compatibility metadata and do not override the global security policy.
 
-提示词过滤不依赖 NewAPI 审计接入。违规累计、账号限制和 IP 限制由 NewAPI 的独立开关控制，默认全部关闭。
+Prompt filtering does not depend on the NewAPI audit integration. Violation strikes, account restrictions, and IP restrictions are controlled by NewAPI's separate switches, all off by default.
 
-## 双方配置
+## Configuration on both sides
 
-在管理页为调用方实际使用的 Codex2API Key 创建绑定，系统会生成并保存至少 32 字节的绑定密钥。绑定密钥不得写入日志或业务响应正文。
+In the admin page, create a binding for the Codex2API key that the caller actually uses. The system generates and stores a binding secret of at least 32 bytes. The binding secret must not be written to logs or to business response bodies.
 
-NewAPI：
+NewAPI:
 
 ```env
 CODEX2API_POLICY_ENABLED=false
 CODEX2API_POLICY_IDENTITY_FORWARD_ENABLED=true
-CODEX2API_POLICY_BINDINGS=[{"platform_id":"primary-newapi","target":"http://127.0.0.1:18095","codex_key_fingerprint":"<Codex2API Key 的 SHA-256 指纹>","secret":"<该 Key 的绑定密钥，至少 32 个字符>","enabled":true}]
+CODEX2API_POLICY_BINDINGS=[{"platform_id":"primary-newapi","target":"http://127.0.0.1:18095","codex_key_fingerprint":"<SHA-256 fingerprint of the Codex2API key>","secret":"<binding secret for this key, at least 32 characters>","enabled":true}]
 CODEX2API_POLICY_AUDIT_ENABLED=true
 CODEX2API_POLICY_STRIKE_ENABLED=false
 CODEX2API_POLICY_ACCOUNT_BAN_ENABLED=false
@@ -30,19 +30,19 @@ CODEX2API_POLICY_BAN_AFTER=2
 CODEX2API_POLICY_WINDOW_SECONDS=86400
 ```
 
-首次部署建议保持 `CODEX2API_POLICY_ENABLED=false`，完成连通性和签名测试后再按需要开启；处罚子开关继续保持关闭。
+On first deployment, keep `CODEX2API_POLICY_ENABLED=false`, enable it as needed after connectivity and signature tests pass, and keep the penalty sub-switches off.
 
-`CODEX2API_POLICY_BINDINGS` 的每一项必须同时匹配实际出站目标地址和实际使用的 Codex2API Key 指纹。原始 Codex2API Key 不得写入该配置；指纹为原始 Key 的 SHA-256 小写十六进制值。管理页面保存的绑定配置与该环境变量结构相同，环境变量存在时以环境变量为准。
+Each entry in `CODEX2API_POLICY_BINDINGS` must match both the actual outbound target address and the fingerprint of the Codex2API key actually used. The raw Codex2API key must not be written to this config; the fingerprint is the lowercase hex SHA-256 value of the raw key. The binding config saved on the admin page has the same structure as this environment variable; when the environment variable is set, it takes precedence.
 
-## 请求签名协议
+## Request signing protocol
 
-NewAPI 生成唯一请求 ID 和 Unix 秒时间戳，构造签名原文：
+NewAPI generates a unique request ID and a Unix timestamp in seconds, and builds the signing string:
 
 ```text
 v1\n<timestamp>\n<request_id>\n<user_id>\n<client_ip>\n<http_method>\n<request_path>\n<body_sha256>
 ```
 
-使用当前 Codex2API Key 的绑定密钥计算 HMAC-SHA256，并以小写十六进制写入以下请求头：
+Compute HMAC-SHA256 with the binding secret of the current Codex2API key, and write the lowercase hex result to the following request headers:
 
 ```text
 X-NewAPI-User-ID
@@ -56,15 +56,15 @@ X-NewAPI-Signature-Version: 1
 X-NewAPI-Signature
 ```
 
-原始端点、协议和模型提供商放入 `X-NewAPI-Policy-Meta`，并使用独立的 `policy-meta-v1` HMAC 签名。为兼容已有 NewAPI，Codex2API 仍可解析其中的模式与档位字段，但不会将其用作拦截配置。扩展元数据不会改变 V1 身份签名格式。
+The original endpoint, protocol, and model provider go into `X-NewAPI-Policy-Meta`, signed with a separate `policy-meta-v1` HMAC. For compatibility with existing NewAPI deployments, Codex2API can still parse its mode and tier fields, but does not use them as blocking config. Extended metadata does not change the V1 identity signature format.
 
-## 外部适配器实现建议
+## Recommendations for implementing an external adapter
 
-1. 在 OpenAI 兼容渠道创建上游请求头时签名，不接受客户端提交的同名头。
-2. 必须设置目标地址允许列表，只向 Codex2API 主机发送身份头。
-3. 收到签名 HTTP 400 策略决策或 WebSocket 策略事件时，必须先校验决策签名和事件签名，再保存用户、IP、请求 ID、模型、接口和受限长度的 Prompt 证据。
-4. 审计、违规累计、账号封禁、IP 限制必须是相互独立且默认关闭处罚的配置；不能因为启用审计就自动封禁。
-5. 管理员和超级管理员应保留自动处罚保护，避免误报造成管理后台失联。
-6. 审计页面必须使用管理员鉴权；Prompt 证据应限制长度并设置数据保留周期。
+1. Sign when creating upstream request headers on an OpenAI-compatible channel, and do not accept same-named headers submitted by the client.
+2. Set a target address allowlist, and send identity headers only to the Codex2API host.
+3. When a signed HTTP 400 policy decision or a WebSocket policy event arrives, verify the decision signature and the event signature first, and only then store the user, IP, request ID, model, endpoint, and length-limited Prompt evidence.
+4. Audit, violation strikes, account bans, and IP restrictions must be independent settings with penalties off by default; enabling audit must not trigger automatic bans.
+5. Admins and super admins should keep automatic-penalty protection, so a false positive cannot lock them out of the admin panel.
+6. The audit page must use admin authentication; Prompt evidence should have a length limit and a data retention period.
 
-外部项目的文件布局和持久化实现不属于本仓库契约。兼容实现只需遵守上述签名、目标限制、默认关闭处罚和隐私边界。
+The file layout and persistence implementation of external projects are not part of this repository's contract. A compatible implementation only needs to follow the signing, target restriction, penalties-off-by-default, and privacy boundaries above.

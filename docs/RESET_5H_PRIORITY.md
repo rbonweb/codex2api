@@ -1,26 +1,26 @@
-# 5 小时临近重置优先
+# Earliest 5-hour reset first
 
-调度模式：`reset_5h_first`。设置位置：通用设置 → 流量与调度 → 调度策略 → 调度模式 → **5 小时临近重置优先**。
+Scheduling mode: `reset_5h_first`. Where to set it: General settings → Traffic and scheduling → Scheduling policy → Scheduling mode → **Earliest 5-hour reset first**.
 
-这是新增的可选模式，默认仍为 `round_robin`，只有主动选择后生效。无需数据库结构迁移。
+This is a new optional mode. The default remains `round_robin`, and it takes effect only when explicitly selected. No database schema migration is needed.
 
-## 原有相似机制
+## Existing similar mechanisms
 
-`premium5hUsageUrgencyBonusLocked` 已经对符合条件的高级套餐提供临近重置加分：剩余时间在 4 小时以内、剩余额度超过 5% 时，按时间及剩余比例计算，最高 25 分。它是调度评分的一部分，不能保证先使用最早重置的账号。现有“剩余配额”和“顺序耗尽”主要按 Codex 的周用量比例排序。
+`premium5hUsageUrgencyBonusLocked` already gives a near-reset bonus to eligible premium plans: when less than 4 hours remain and the remaining quota exceeds 5%, the bonus is calculated from the time and the remaining ratio, up to 25 points. It is part of the scheduling score and does not guarantee that the account with the earliest reset is used first. The existing "remaining quota" and "sequential exhaustion" modes mainly sort by the Codex weekly usage ratio.
 
-## 新模式
+## New mode
 
-1. 先遵守人工账号调度优先级，再遵守健康档位。
-2. 在同一层内，使用账号已观测的 Codex 5 小时窗口重置时间，由早到晚选择。
-3. 只有有效、非负且小于 100% 的用量和严格晚于当前时刻的重置时间，才能获得该优先级。也不优先消耗独立积分余额。
-4. 限流、禁用、停调度、权限不符、模型过滤、并发已满或准入失败，继续尝试后续候选；周限额及各类现有 gate 仍按原设置执行。
-5. 过期、缺失或不适用的时间不推算新周期，沿用对应引擎的原有兜底。索引引擎在重置边界到达或快照更新后重新排序，平时不逐请求重排整个账号池。
-6. API Key 受限分组使用自己的缓存顺序；快照更新会刷新已存在的成员，不能把无权限账号插入分组。
-7. 新会话首次选号遵守该模式，不让亲和散列绕过重置顺序。已存在的会话绑定和活跃回合继续遵守原有续聊逻辑；账号耗尽后的可恢复切换由此前额度切换补丁处理。
-8. 索引、旧版扫描、影子模式的实际旧版路径及懒加载兜底均支持此排序。Spark 继续使用独立窗口，不受账号级 5 小时排序限制。
+1. Manual account scheduling priority is honored first, then the health tier.
+2. Within the same tier, accounts are chosen by the observed Codex 5-hour window reset time, earliest first.
+3. Only usage that is valid, non-negative and below 100%, and a reset time strictly later than now, can earn this priority. It also does not prioritize spending the separate credit balance.
+4. Rate limiting, disabled, scheduling stopped, permission mismatch, model filtering, full concurrency or failed admission means the next candidates are tried; weekly limits and the existing gates continue to apply as configured.
+5. Expired, missing or inapplicable times do not project a new cycle; the corresponding engine's existing fallback is used. The index engine re-sorts when a reset boundary arrives or a snapshot is updated, and normally does not re-sort the whole account pool on every request.
+6. An API-key-restricted group uses its own cached order; a snapshot update refreshes existing members, and an account without permission cannot be inserted into the group.
+7. The first account selection for a new session follows this mode, and affinity hashing must not bypass the reset order. Existing session bindings and active turns continue to follow the original continuation logic; recoverable switching after an account is exhausted is handled by the earlier quota-switch patch.
+8. The index, the legacy scan, the actual legacy path in shadow mode, and the lazy-loading fallback all support this ordering. Spark continues to use its own separate window and is not subject to the account-level 5-hour ordering.
 
-如果 A 还剩 4 小时、B 还剩 1 小时、C 还剩 2 小时重置，在三者优先级、健康和可用条件相同时，新选号顺序为 **B → C → A**。
+If A resets in 4 hours, B in 1 hour and C in 2 hours, and the three have the same priority, health and availability, the new selection order is **B → C → A**.
 
-## 不提供的能力与限制
+## What it does not provide, and limits
 
-本模式不创建定时任务，不发送激活／预热请求，不假定每隔 5 小时一定自动产生新周期，不增加周额度，也不能保证三个账号无限连续可用。上游快照存在延迟，实际额度耗尽仍须依据既有 gate 和上游响应判断。已绑定会话可能继续使用原账号，因此它也不表示每条消息都重新选择最早重置的账号。
+This mode does not create scheduled tasks, does not send activation or warm-up requests, does not assume that a new cycle is always produced every 5 hours, does not add weekly quota, and cannot guarantee that the three accounts stay available continuously without limit. Upstream snapshots are delayed, and actual quota exhaustion must still be judged from the existing gates and upstream responses. A bound session may keep using its original account, so this also does not mean that every message reselects the account with the earliest reset.

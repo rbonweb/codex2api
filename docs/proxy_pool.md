@@ -1,43 +1,43 @@
-# 增强代理池管理
+# Enhanced proxy pool management
 
-本文档描述了 codex2api 的增强代理池管理功能。
+This document describes the enhanced proxy pool management feature of codex2api.
 
-## 功能概述
+## Overview
 
-增强代理池管理提供了以下核心功能：
+Enhanced proxy pool management provides the following core features:
 
-1. **代理健康检查**
-   - 定期 HTTP HEAD 检查
-   - 响应时间监控
-   - HTTP/SOCKS5 代理支持
+1. **Proxy health checks**
+   - Periodic HTTP HEAD checks
+   - Response time monitoring
+   - HTTP/SOCKS5 proxy support
 
-2. **代理轮换策略**
-   - 轮询 (Round-robin)
-   - 加权选择 (Weighted)
-   - 最少连接 (Least Connections)
+2. **Proxy rotation strategies**
+   - Round-robin
+   - Weighted selection
+   - Least connections
 
-3. **代理池状态监控**
-   - 健康代理列表
-   - 代理统计信息
-   - 实时状态更新
+3. **Proxy pool status monitoring**
+   - Healthy proxy list
+   - Proxy statistics
+   - Real-time status updates
 
-4. **账号级代理优先级**
-   - 账号单独配置的 `proxy_url` 优先
-   - Refresh Token 刷新、测试连接、用量探针会按账号 ID 粘性选择代理池出口
-   - 未启用代理池时回退到全局 `ProxyURL`
+4. **Account-level proxy priority**
+   - A `proxy_url` configured on the account takes priority
+   - Refresh Token refresh, test connection, and usage probes stick to a proxy pool egress selected by account ID
+   - When the proxy pool is not enabled, falls back to the global `ProxyURL`
 
-5. **代理性能统计**
-   - 成功率跟踪
-   - 延迟监控
-   - 活跃连接数
-   - 总请求数
+5. **Proxy performance statistics**
+   - Success rate tracking
+   - Latency monitoring
+   - Active connection count
+   - Total request count
 
-6. **故障代理自动隔离**
-   - 连续失败阈值检测
-   - 自动隔离故障代理
-   - 隔离期满后自动恢复
+6. **Automatic isolation of failing proxies**
+   - Consecutive failure threshold detection
+   - Automatically isolate failing proxies
+   - Automatically recover after the isolation period ends
 
-## 核心数据结构
+## Core data structures
 
 ### ProxyPool
 
@@ -46,7 +46,7 @@ type ProxyPool struct {
     proxies   []*ProxyEntry
     stats     map[string]*ProxyStats
     healthy   []*ProxyEntry
-    // ... 配置和运行时状态
+    // ... configuration and runtime state
 }
 ```
 
@@ -88,9 +88,9 @@ type ProxyStats struct {
 }
 ```
 
-## API 使用示例
+## API usage examples
 
-### 创建代理池
+### Create a proxy pool
 
 ```go
 config := &auth.ProxyPoolConfig{
@@ -105,42 +105,42 @@ config := &auth.ProxyPoolConfig{
 pool := auth.NewProxyPool(config)
 ```
 
-### 添加代理
+### Add a proxy
 
 ```go
 pool.AddProxy("http://proxy1:8080", 10)
 pool.AddProxy("http://proxy2:8080", 5)
 ```
 
-### 选择代理
+### Select a proxy
 
 ```go
-// 使用默认策略（轮询）
+// Use the default strategy (round-robin)
 entry := pool.Select()
 if entry != nil {
     fmt.Println("Selected proxy:", entry.URL)
 }
 
-// 使用加权策略
+// Use the weighted strategy
 pool.SetStrategy(auth.StrategyWeighted)
 entry := pool.Select()
 
-// 使用最少连接策略
+// Use the least-connections strategy
 pool.SetStrategy(auth.StrategyLeastConnections)
 entry := pool.Select()
 ```
 
-### 标记成功/失败
+### Mark success or failure
 
 ```go
-// 标记代理成功
+// Mark the proxy as successful
 pool.MarkSuccess("http://proxy1:8080")
 
-// 标记代理失败
+// Mark the proxy as failed
 pool.MarkFailure("http://proxy1:8080")
 ```
 
-### 获取统计信息
+### Get statistics
 
 ```go
 stats := pool.GetStats()
@@ -154,10 +154,10 @@ fmt.Printf("Total: %d, Healthy: %d, Isolated: %d\n",
     status.Total, status.Healthy, status.Isolated)
 ```
 
-### 启动健康检查
+### Start health checks
 
 ```go
-// 设置回调
+// Set the callback
 pool.SetOnHealthCheck(func(result *auth.HealthCheckResult) {
     if !result.Healthy {
         log.Printf("Proxy %s health check failed: %v", result.URL, result.Error)
@@ -172,168 +172,151 @@ pool.SetOnRecovery(func(entry *auth.ProxyEntry) {
     log.Printf("Proxy %s has recovered", entry.URL)
 })
 
-// 启动定期健康检查
+// Start periodic health checks
 pool.StartHealthCheck()
 
-// 停止
+// Stop
 pool.Stop()
 ```
 
-### 连接管理
+### Connection management
 
 ```go
-// 获取连接
+// Acquire a connection
 if pool.AcquireConnection("http://proxy1:8080") {
-    // 使用代理...
+    // Use the proxy...
 
-    // 释放连接
+    // Release the connection
     pool.ReleaseConnection("http://proxy1:8080")
 }
 ```
 
-## 策略说明
+## Strategies
 
-### 轮询 (Round-robin)
+### Round-robin
 
-按顺序轮流选择每个代理，适用于负载均匀分布的场景。
+Selects each proxy in turn. Suited to evenly distributed load.
 
-### 加权选择 (Weighted)
+### Weighted selection
 
-根据代理权重进行随机选择，权重高的代理被选中的概率更大。适用于代理性能不均衡的场景。
+Selects randomly according to proxy weight; a higher-weight proxy has a greater chance of being selected. Suited to proxies with uneven performance.
 
-### 最少连接 (Least Connections)
+### Least connections
 
-选择当前活跃连接数最少的代理。适用于长连接场景，可以更好地均衡负载。
+Selects the proxy with the fewest active connections. Suited to long-lived connections, where it balances load better.
 
-## 健康检查机制
+## Health check mechanism
 
-1. **定期检查**：按配置的间隔时间定期检查所有代理
-2. **响应时间监控**：记录每次检查的响应时间
-3. **健康状态更新**：根据检查结果更新代理健康状态
-4. **自动隔离**：连续失败超过阈值的代理会被自动隔离
-5. **自动恢复**：隔离期满后，代理会重新参与健康检查，成功后自动恢复
+1. **Periodic checks**: check all proxies at the configured interval
+2. **Response time monitoring**: record the response time of each check
+3. **Health status updates**: update each proxy's health status based on the check result
+4. **Automatic isolation**: proxies that exceed the consecutive failure threshold are isolated automatically
+5. **Automatic recovery**: after the isolation period ends, the proxy rejoins health checks and recovers automatically after a success
 
-## 配置环境变量
+## Environment variables
 
 ```bash
-# 代理池策略: round_robin, weighted, least_connections
+# Proxy pool strategy: round_robin, weighted, least_connections
 PROXY_POOL_STRATEGY=round_robin
 
-# 健康检查间隔
+# Health check interval
 PROXY_POOL_CHECK_INTERVAL=30s
 
-# 健康检查超时
+# Health check timeout
 PROXY_POOL_TIMEOUT=10s
 
-# 隔离阈值（连续失败次数）
+# Isolation threshold (consecutive failures)
 PROXY_POOL_ISOLATION_THRESHOLD=3
 
-# 隔离持续时间
+# Isolation duration
 PROXY_POOL_ISOLATION_DURATION=5m
 
-# 健康检查 URL
+# Health check URL
 PROXY_POOL_HEALTH_CHECK_URL=http://www.google.com/generate_204
 ```
 
-## 代理生效优先级
+## Proxy resolution priority
 
-请求与内部刷新（Refresh Token、账号测试、用量探针）按以下优先级解析出口：
+Requests and internal refreshes (Refresh Token, account tests, usage probes) resolve their egress in this priority order:
 
 ```text
-账号 proxy_url > 分组代理 > 账号 ID 粘性代理池 > 全局 ProxyURL > 直连
+Account proxy_url > group proxy > account-ID sticky proxy pool > global ProxyURL > direct connection
 ```
 
-约束（issue #517）：
+Constraints (issue #517):
 
-- 账号 `proxy_url` 指向代理池中的托管代理时，这是钉死出口：禁用/测挂后该账号不会改走其它代理，也不会直连；重新启用后自动恢复。
-- 删除托管代理会解绑仍引用它的账号。
-- 未绑定账号从当前启用且测试未失败的代理中粘性选择；一条不可用就换池内其它条目。
-- **开启代理池后不会直连。** 池空且没有全局 `ProxyURL` 时，该账号不可调度，请求返回无可用账号，刷新拒绝直连。
-- 从未加入代理池的自定义 `proxy_url` 仍按原样使用。
+- When an account's `proxy_url` points to a managed proxy in the pool, the egress is pinned: after that proxy is disabled or fails testing, the account does not switch to another proxy and does not connect directly; it recovers automatically after re-enabling.
+- Deleting a managed proxy unbinds the accounts that still reference it.
+- Unbound accounts are sticky-selected from the currently enabled proxies that have not failed testing; if one becomes unavailable, switch to another entry in the pool.
+- **Once the proxy pool is enabled, there is no direct connection.** When the pool is empty and there is no global `ProxyURL`, the account cannot be scheduled, requests return no available account, and refresh refuses a direct connection.
+- A custom `proxy_url` that was never added to the proxy pool is still used as is.
 
-全局 `ProxyURL` 或代理池配置更新后会立即影响后续请求，不需要重启服务。
+Changes to the global `ProxyURL` or the proxy pool config take effect on subsequent requests immediately, without a service restart.
 
-## 随账号导出/导入迁移代理绑定
+## Migrating proxy bindings with account export and import
 
-账号导出默认只写凭据，换机后代理绑定要重配一遍。导出加 `include_proxy=1`、导入加
-`import_proxy=true`，可以把「号池 + 代理绑定关系」当作一个整体迁走。Codex `/accounts/import` 支持，参数细节见 [API.md](API.md)。
+Account export writes only credentials by default, so proxy bindings must be reconfigured after moving to a new machine. Add `include_proxy=1` to the export and add `import_proxy=true` to the import, so the "account pool plus proxy binding" can be moved as one unit. Codex `/accounts/import` supports this; for parameter details, see [API.md](API.md).
 
-### 写入顺序
+### Write order
 
-导入端严格按 **写代理表 → 重载内存代理池 → 才写账号** 的顺序执行，中途重载失败会
-中止整次导入。
+The import side strictly runs in the order **write the proxy table, then reload the in-memory proxy pool, and only then write accounts**; if the reload fails midway, the entire import is aborted.
 
-顺序不能颠倒，原因就是上一节那条 fail-closed 约束：账号一旦绑上「已登记为托管代理、
-却还不在启用集里」的 URL，就会被判定为没有可用出口而不可调度。先写账号再重载代理池，
-正好在这两步之间开出这样一个窗口，窗口期内导进来的账号全都调度不到。重载失败却继续
-写账号，则是把这个窗口永久固定下来。
+The order must not be reversed. The reason is the fail-closed constraint in the previous section: an account bound to a URL that is registered as a managed proxy but not yet in the enabled set is judged to have no usable egress and cannot be scheduled. Writing accounts first and then reloading the proxy pool opens exactly such a window between those two steps, and accounts imported during the window cannot be scheduled. Continuing to write accounts after a failed reload makes this window permanent.
 
-### 代理入表规则
+### Proxy registration rules
 
-- 单次最多注册 500 条。超限时**一条都不注册**，全部账号退回表单填写的代理——注册
-  一半会让另一半账号绑上未入池的 URL，那种半生效状态比整体回退难解释得多。
-- URL 只做去空白 + 合法性校验（与手动添加代理一致），不改写 scheme 大小写、也不补齐
-  或裁掉尾斜杠。入表和写进账号 `proxy_url` 的是同一个字符串，两边恒等——差一个尾斜杠
-  就会被当成两个不同的代理，账号照样 fail-closed，所以这里的关键不是"规范成什么样"，
-  而是"两边必须一模一样"。同一个代理的不同写法会各自入表一行，与手动添加的行为相同。
-- 格式非法的条目跳过、对应账号退回表单代理，不会因为一条烂代理毁掉整批导入。
-- 入表走 `ON CONFLICT (url) DO NOTHING`。目标端已存在的同 URL 代理**不会**被复活、
-  也不会被改标签；它若处于禁用或测试失败状态，绑定它的账号不会被调度，导入响应里
-  会给出告警。
-- 新注册的代理打上 `imported-<YYYYMMDD-HHmm>` 标签，事后可在代理管理页按批筛选清理。
-- 代理注册早于账号写入，所以**即使这一批账号全部导入失败**（凭据不合法等），代理仍会
-  留在代理表里。这是上述顺序的必然结果，不是缺陷；按 `imported-` 标签清理即可。
+- At most 500 entries are registered at once. When the limit is exceeded, **none are registered**, and all accounts fall back to the proxy filled in on the form. Registering half of them would leave the other half of the accounts bound to URLs that are not in the pool, and that half-applied state is much harder to explain than a full rollback.
+- URLs only get whitespace trimming and validity checks, the same as manual adding; the scheme case is not rewritten, and no trailing slash is added or removed. The registered entry and the value written to the account's `proxy_url` are the same string, so the two sides are identical; a difference of one character, such as a trailing slash, makes them two different proxies and the account still fails closed. So the key is not "what form it is normalized to," but that "both sides must be exactly identical". Different spellings of the same proxy each get their own row, the same as manual adding.
+- Entries with an invalid format are skipped, and their accounts fall back to the form proxy; one bad proxy does not ruin the whole import batch.
+- Registration uses `ON CONFLICT (url) DO NOTHING`. A proxy with the same URL that already exists on the target side is **not** revived and its label is not changed. If it is disabled or in a failed-test state, the accounts bound to it are not scheduled, and the import response includes a warning.
+- Newly registered proxies get the `imported-<YYYYMMDD-HHmm>` label, so they can be filtered by batch and cleaned up later on the proxy management page.
+- Proxy registration happens before account writes, so **even if every account in the batch fails to import** (for example, invalid credentials), the proxies remain in the proxy table. This is an inevitable result of the order above, not a defect; clean them up by the `imported-` label.
 
-### 启用状态与既有绑定
+### Enabled state and existing bindings
 
-- 源端标记为禁用的代理**一律以启用态导入**，并在响应里告警。照搬禁用状态会让绑定
-  它们的账号立刻 fail-closed，用户看到的是「导入成功但账号全废」；以启用态导入 +
-  明确告知，信息没丢，要禁用由操作员自己去点。
-- 导入命中目标端已有账号时，文件带来的代理**不覆盖**该账号已有的绑定，只填补空绑定。
-  文件里的代理是被动数据，目标端的绑定可能已经做过精细分配。表单填写的 `proxy_url`
-  是操作员的显式换绑意图，维持既有的覆盖语义。
+- Proxies marked disabled on the source side are **always imported as enabled**, and the response includes a warning. Copying the disabled state would make the accounts bound to them fail closed immediately, and the user would see "import succeeded but every account is unusable"; importing as enabled, plus an explicit notice, loses no information, and the operator disables them manually if needed.
+- When an import hits an account that already exists on the target side, the proxy carried by the file **does not override** that account's existing binding; it only fills empty bindings. A proxy in the file is passive data, and the target side's bindings may already have been carefully assigned. The `proxy_url` filled in on the form is the operator's explicit rebinding intent, so it keeps the existing override semantics.
 
-### 不随账号导出的部分
+### Parts not included in account export
 
-只绑到分组、由分组下发的代理不属于账号自身的绑定，账号导出不携带，目标端需要先建好
-同名分组。
+A proxy bound only to a group and delivered by that group is not the account's own binding, so account export does not carry it; the target side must first create a group with the same name.
 
-## 与 Store 集成
+## Store integration
 
-项目提供了 `EnhancedProxyPool` 和 `StoreProxyPoolIntegration` 用于与现有 Store 集成：
+The project provides `EnhancedProxyPool` and `StoreProxyPoolIntegration` for integrating with the existing Store:
 
 ```go
-// 创建增强代理池
+// Create the enhanced proxy pool
 enhancedPool := auth.NewEnhancedProxyPool(db, config)
 
-// 初始化
+// Initialize
 err := enhancedPool.Init(ctx)
 
-// 获取代理
+// Get a proxy
 proxyURL := enhancedPool.NextProxy()
 
-// 标记成功/失败
+// Mark success or failure
 enhancedPool.MarkProxySuccess(proxyURL)
 enhancedPool.MarkProxyFailure(proxyURL)
 ```
 
-## 文件列表
+## File list
 
-- `auth/proxy_pool.go` - 核心代理池实现
-- `auth/proxy_pool_test.go` - 代理池单元测试
-- `auth/proxy_pool_integration.go` - Store 集成实现
-- `auth/proxy_pool_integration_test.go` - 集成测试
+- `auth/proxy_pool.go` - core proxy pool implementation
+- `auth/proxy_pool_test.go` - proxy pool unit tests
+- `auth/proxy_pool_integration.go` - Store integration implementation
+- `auth/proxy_pool_integration_test.go` - integration tests
 
-## 测试
+## Testing
 
-运行测试：
+Run the tests:
 
 ```bash
 cd /path/to/project
 go test -v ./auth/
 ```
 
-检查覆盖率：
+Check coverage:
 
 ```bash
 go test -cover ./auth/
