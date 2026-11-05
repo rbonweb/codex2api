@@ -131,3 +131,37 @@ func TestScopedModelsHidesModelWithActiveUnsupportedCooldown(t *testing.T) {
 		t.Fatal("a rate-limit cooldown must keep the model listed")
 	}
 }
+
+// Upstream issue #826: an account's text model allowlist must not hide image models. The Images path schedules with imageCapableAccountFilter and ignores that allowlist, so without this a key could generate images yet not discover the image models in /v1/models.
+func TestScopedModelsTextAllowlistDoesNotHideCodexImageModels(t *testing.T) {
+	store := auth.NewStore(nil, nil, &database.SystemSettings{MaxConcurrency: 1})
+	codex := &auth.Account{DBID: 1, AccessToken: "codex", PlanType: "plus", Models: []string{"gpt-5.5"}}
+	store.AddAccount(codex)
+	handler := NewHandler(store, nil, nil, nil)
+
+	models := listScopedModelsForTest(t, handler, &database.APIKeyRow{ID: 1})
+	if _, _, ok := scopedModelByID(models, "gpt-5.5"); !ok {
+		t.Fatalf("allowlisted text model missing: %+v", models)
+	}
+	if _, _, ok := scopedModelByID(models, "gpt-5.5-codex"); ok {
+		t.Fatalf("text allowlist no longer narrows text models: %+v", models)
+	}
+	for _, id := range []string{"gpt-image-2", "gpt-image-2-2k", "gpt-image-2-4k"} {
+		if _, _, ok := scopedModelByID(models, id); !ok {
+			t.Fatalf("image model %q hidden by text-only allowlist: %+v", id, models)
+		}
+	}
+
+	// Key-level allow and deny lists still apply: discovery must not return image models to every key unconditionally.
+	denied := listScopedModelsForTest(t, handler, &database.APIKeyRow{ID: 1, Limits: database.APIKeyLimits{ModelDeny: []string{"gpt-image-2"}}})
+	if _, _, ok := scopedModelByID(denied, "gpt-image-2"); ok {
+		t.Fatalf("key ModelDeny did not hide image model: %+v", denied)
+	}
+	if _, _, ok := scopedModelByID(denied, "gpt-5.5"); !ok {
+		t.Fatalf("ModelDeny on image model removed text model: %+v", denied)
+	}
+	allowOnly := listScopedModelsForTest(t, handler, &database.APIKeyRow{ID: 1, Limits: database.APIKeyLimits{ModelAllow: []string{"gpt-5.5"}}})
+	if len(allowOnly) != 1 || allowOnly[0].ID != "gpt-5.5" {
+		t.Fatalf("key ModelAllow must still gate image models: %+v", allowOnly)
+	}
+}

@@ -149,7 +149,11 @@ func (h *Handler) scopedModelRecords(ctx context.Context, row *database.APIKeyRo
 			continue
 		}
 		for _, item := range catalog.Items {
-			if !account.ModelCatalogEligible() || !item.Enabled || !account.SupportsCodexModel(item.ID) {
+			if !account.ModelCatalogEligible() || !item.Enabled {
+				continue
+			}
+			// Image models are a separate capability: the Images path schedules them with imageCapableAccountFilter and ignores the account's text model allowlist (upstream issue #826). Discovery follows the same rule, otherwise a text-only allowlist hides image models the account can actually serve.
+			if !isImageModelInfo(item) && !account.SupportsCodexModel(item.ID) {
 				continue
 			}
 			if item.ProOnly && !isSparkPlanCandidate(account.GetPlanType()) {

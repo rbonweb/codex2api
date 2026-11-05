@@ -2,6 +2,10 @@
 
 ## Unreleased
 
+### Fixes
+
+- **Image generation works again.** The ChatGPT image backend started rejecting the explicit `reasoning.effort` the gateway sent with every image request ("Complexity 'medium' is not supported for this image model."). Image requests now leave the effort to the upstream (ported from upstream `f22cbf4e`). `/v1/models` also lists image models for accounts whose text model allowlist would have hidden them (upstream `42ffd35d`). See `UPSTREAM_SYNC.md` for the full upstream review.
+
 ### Features
 
 - **`DATABASE_URL` configures PostgreSQL in one variable.** A `postgres://` or `postgresql://` connection string, such as the one Neon or Render shows, can be pasted as is: host, port (default 5432), user, password and database come from the URL and `sslmode` from its query string. It wins over the split `DATABASE_*` variables, cannot be combined with `DATABASE_DRIVER=sqlite`, and configuration errors never echo the URL. The admin setup page shows only `host[:port]/name` from it.
