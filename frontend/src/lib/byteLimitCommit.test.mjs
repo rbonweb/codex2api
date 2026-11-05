@@ -6,7 +6,7 @@ import { resolveByteLimitCommit } from './byteLimitCommit.ts'
 const KIB = 1024
 const MIB = 1024 * 1024
 
-// 复刻 Settings 页 commitByteLimitField 的决策：只有 submit=true 才算真正写入。
+// Replicates the commitByteLimitField decision on the Settings page: only submit=true counts as a real write.
 function makeCommitHandler(persistedBytes, bytesPerUnit) {
   const writes = []
   const commit = (submittedUnits) => {
@@ -17,7 +17,7 @@ function makeCommitHandler(persistedBytes, bytesPerUnit) {
 }
 
 test('unedited blur keeps the persisted non-multiple byte value', () => {
-  // 131073 字节在界面上显示为 128 KiB；blur 时把展示值写回会静默改成 131072。
+  // 131073 bytes is shown as 128 KiB in the UI; writing the displayed value back on blur would silently change it to 131072.
   const decision = resolveByteLimitCommit(131073, 128, KIB)
   assert.deepEqual(decision, { submit: false, bytes: 131073 })
 })
@@ -25,11 +25,11 @@ test('unedited blur keeps the persisted non-multiple byte value', () => {
 test('unedited blur never submits and edited blur submits exactly once', () => {
   const { commit, writes } = makeCommitHandler(131073, KIB)
 
-  // 未编辑：展示值仍是 128 KiB，即使表单在 onValueChange 时已被改成 131072。
+  // Not edited: the displayed value is still 128 KiB, even though the form was already changed to 131072 in onValueChange.
   commit(128)
   assert.deepEqual(writes, [], 'unedited blur must not persist a rounded value')
 
-  // 用户实际改成 129 KiB：只提交一次，提交值是准确的 129 KiB。
+  // The user actually changed it to 129 KiB: submit only once, and the submitted value is the accurate 129 KiB.
   commit(129)
   assert.deepEqual(writes, [129 * KIB])
 })

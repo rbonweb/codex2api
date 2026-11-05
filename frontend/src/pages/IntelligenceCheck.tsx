@@ -109,7 +109,7 @@ export default function IntelligenceCheck() {
       if (conflict) setTargetConflict(conflict);
       showToast(
         conflict
-          ? `有 ${conflict.conflict_count} 个账号的检测通道不兼容，请处理下方列表后重新保存`
+          ? `There are ${conflict.conflict_count} accounts whose check channel is incompatible; handle the list below and save again`
           : getErrorMessage(e),
         "error",
       );
@@ -124,7 +124,7 @@ export default function IntelligenceCheck() {
       setSettings(next);
       setSaved(next);
       setTargetConflict(null);
-    }, "检测配置和题库已保存");
+    }, "Check settings and question bank saved");
   const disableConflicts = () =>
     mutate(async () => {
       if (!targetConflict) return;
@@ -133,7 +133,7 @@ export default function IntelligenceCheck() {
       );
       refreshIntelligenceBars();
       setTargetConflict(null);
-    }, "已关闭所列账号的自动检测，请重新保存配置");
+    }, "Auto-check turned off for the listed accounts; save the settings again");
   const question = settings?.questions.find((q) => q.id === editor);
   const editQuestion = (patch: Partial<IntelligenceQuestion>) => {
     if (settings)
@@ -183,13 +183,13 @@ export default function IntelligenceCheck() {
   return (
     <>
       <PageHeader
-        title="降智检测"
-        description="固定账号逐题检测，记录答案与耗时，按已保存策略处理连续结果。"
+        title="Intelligence check"
+        description="Checks fixed accounts question by question, records answers and durations, and handles consecutive results by the saved policy."
         actions={
           <div className="flex flex-wrap items-center gap-2">
             {dirty && (
               <span className="text-xs text-muted-foreground">
-                有未保存更改
+                Unsaved changes
               </span>
             )}
             <Button
@@ -197,50 +197,50 @@ export default function IntelligenceCheck() {
               disabled={!settings || busy || !dirty}
             >
               <Save className="size-4" />
-              保存配置
+              Save configuration
             </Button>
           </div>
         }
       />
       {configError && (
         <p role="alert" className="mb-4 text-sm text-destructive">
-          配置加载失败：{configError}。请刷新页面重试。
+          Failed to load configuration: {configError}. Refresh the page and try again.
         </p>
       )}
       {settings && <div className="grid items-start gap-6 xl:grid-cols-2">
         <section aria-labelledby="intelligence-settings-title" className="min-w-0 space-y-4">
-          <h2 id="intelligence-settings-title" className="text-lg font-semibold">检测配置</h2>
+          <h2 id="intelligence-settings-title" className="text-lg font-semibold">Check settings</h2>
           <p className="text-xs text-muted-foreground">
-            检测使用账号绑定的代理；未绑定则直连。客户端身份、指纹和时区沿用账号或全局配置。
+            Checks use the account's bound proxy; without one, they connect directly. Client identity, fingerprint and time zone follow the account or global configuration.
           </p>
           <Card>
             <CardHeader className="pb-0">
-              <CardTitle>模型与判定</CardTitle>
+              <CardTitle>Models and verdicts</CardTitle>
             </CardHeader>
             <CardContent className="grid gap-5 sm:grid-cols-2">
               {field(
-                "自动检测总开关",
+                "Auto-check master switch",
                 <Switch
-                  aria-label="自动检测总开关"
+                  aria-label="Auto-check master switch"
                   checked={settings.enabled}
                   onCheckedChange={(v) => change("enabled", v)}
                 />,
-                "保存后生效；关闭时仍可手动检测。",
+                "Takes effect after saving; manual checks are still available when turned off.",
               )}
               {field(
-                "GPT / Codex 模型",
+                "GPT / Codex model",
                 <Input
                   value={settings.gpt_model}
                   onChange={(e) => change("gpt_model", e.target.value)}
                 />,
               )}
               {field(
-                "GPT 推理强度",
+                "GPT reasoning effort",
                 <Select
                   value={settings.reasoning_effort}
                   onValueChange={(v) => change("reasoning_effort", v)}
                   options={options({
-                    "": "模型默认",
+                    "": "Model default",
                     none: "none",
                     minimal: "minimal",
                     low: "low",
@@ -253,7 +253,7 @@ export default function IntelligenceCheck() {
                 />,
               )}
               {field(
-                "判断方式",
+                "Verdict method",
                 <Select
                   value={settings.judge_mode}
                   onValueChange={(v) =>
@@ -263,83 +263,83 @@ export default function IntelligenceCheck() {
                     )
                   }
                   options={options({
-                    answer: "仅答案",
-                    latency: "仅耗时",
-                    both: "答案和耗时均满足",
+                    answer: "Answer only",
+                    latency: "Latency only",
+                    both: "Answer and latency both pass",
                   })}
                 />,
-                "仅完整成功响应参与判定，耗时必须严格小于题目阈值。",
+                "Only complete successful responses are judged, and latency must be strictly below the question's threshold.",
               )}
               {field(
-                "新增账号默认检测",
+                "Check new accounts by default",
                 <Switch
                   checked={settings.new_accounts_enabled}
                   onCheckedChange={(v) => change("new_accounts_enabled", v)}
                 />,
-                "仅支持 Codex；切换分组时，仅同通道新账号默认参与。已有账号不受此选项影响。",
+                "Codex only. When switching groups, only new accounts on the same channel are included by default. Existing accounts are not affected by this option.",
               )}
             </CardContent>
           </Card>
           <Card>
             <CardHeader className="pb-0">
-              <CardTitle>频率与资源</CardTitle>
+              <CardTitle>Frequency and resources</CardTitle>
             </CardHeader>
             <CardContent className="grid gap-5 sm:grid-cols-2">
-              {numeric("interval_seconds", "正常间隔（秒）", 1, 86400)}
-              {numeric("retry_seconds", "异常重试间隔（秒）", 1, 86400)}
-              {numeric("timeout_seconds", "请求超时（秒）", 1, 3600)}
-              {numeric("concurrency", "全局检测并发", 1, 100)}
-              {numeric("retention", "每账号保留记录", 1, 10000)}
+              {numeric("interval_seconds", "Normal interval (seconds)", 1, 86400)}
+              {numeric("retry_seconds", "Error retry interval (seconds)", 1, 86400)}
+              {numeric("timeout_seconds", "Request timeout (seconds)", 1, 3600)}
+              {numeric("concurrency", "Global check concurrency", 1, 100)}
+              {numeric("retention", "Records kept per account", 1, 10000)}
               <div className="sm:col-span-2">
-                {field("自适应检测", <Switch aria-label="自适应检测" checked={settings.adaptive_enabled ?? false} onCheckedChange={v => change("adaptive_enabled", v)} />,
-                  "暂停后未通过则间隔翻倍；检测正常后加速确认。恢复调度后，正常检测逐步减轻历史退避。关闭时沿用固定间隔。")}
+                {field("Adaptive checks", <Switch aria-label="Adaptive checks" checked={settings.adaptive_enabled ?? false} onCheckedChange={v => change("adaptive_enabled", v)} />,
+                  "After a pause, a failed check doubles the interval; a passing check speeds up confirmation. After scheduling resumes, normal checks gradually reduce the historical backoff. When off, the fixed interval is used.")}
               </div>
               {settings.adaptive_enabled && <>
-                {numeric("pause_initial_seconds", "暂停初始间隔（秒）", 1, 2592000)}
-                {numeric("pause_max_seconds", "暂停最大间隔（秒）", 1, 2592000)}
-                {numeric("recovery_initial_seconds", "恢复确认初始间隔（秒）", 1, 2592000)}
-                {numeric("recovery_min_seconds", "恢复确认最短间隔（秒）", 1, 2592000)}
-                <p className="text-xs text-muted-foreground sm:col-span-2">恢复确认间隔逐次减半（最短间隔至少一分钟时按整分钟向下取整），直到达到下方连续通过次数。实际等待有最多 10% 的提前抖动。最大间隔越长，发现恢复可能越晚。</p>
+                {numeric("pause_initial_seconds", "Initial pause interval (seconds)", 1, 2592000)}
+                {numeric("pause_max_seconds", "Maximum pause interval (seconds)", 1, 2592000)}
+                {numeric("recovery_initial_seconds", "Initial recovery check interval (seconds)", 1, 2592000)}
+                {numeric("recovery_min_seconds", "Minimum recovery check interval (seconds)", 1, 2592000)}
+                <p className="text-xs text-muted-foreground sm:col-span-2">The recovery check interval halves on each attempt (when the minimum interval is at least one minute, it is rounded down to whole minutes) until the consecutive pass count below is reached. The actual wait has up to 10% early jitter. The longer the maximum interval, the later a recovery may be detected.</p>
               </>}
 
             </CardContent>
           </Card>
           <Card>
             <CardHeader className="pb-0">
-              <CardTitle>自动处置</CardTitle>
+              <CardTitle>Automatic handling</CardTitle>
             </CardHeader>
             <CardContent className="space-y-4">
               <div className="grid gap-5 sm:grid-cols-2">
                 {field(
-                  "达到未通过阈值时",
+                  "When the failure threshold is reached",
                   <Select
                     value={settings.action}
                     onValueChange={(v) =>
                       change("action", v as IntelligenceSettings["action"])
                     }
                     options={options({
-                      none: "不自动处置",
-                      pause: "暂停业务调度",
-                      switch_group: "切换分组",
+                      none: "No automatic handling",
+                      pause: "Pause business scheduling",
+                      switch_group: "Switch group",
                     })}
                   />,
                 )}
-                {numeric("degrade_threshold", "连续未通过次数", 1, 1000)}
-                {numeric("recover_threshold", "连续恢复次数", 1, 1000)}
+                {numeric("degrade_threshold", "Consecutive failures", 1, 1000)}
+                {numeric("recover_threshold", "Consecutive recovery passes", 1, 1000)}
                 {settings.action === "switch_group" &&
                   field(
-                    "目标分组",
+                    "Target group",
                     <Select
                       value={String(settings.target_group_id || "")}
                       onValueChange={(v) =>
                         change("target_group_id", Number(v))
                       }
-                      placeholder="选择分组"
+                      placeholder="Select group"
                       options={groups
                         .filter(g => !g.channel || g.channel === "codex")
                         .map(g => ({
                           value: String(g.id),
-                          label: `${g.name}（Codex）`,
+                          label: `${g.name} (Codex)`,
                         }))}
                     />,
                   )}
@@ -351,16 +351,16 @@ export default function IntelligenceCheck() {
                   className="space-y-3 rounded-md border border-destructive/40 p-3 text-sm"
                 >
                   <p className="font-medium">
-                    有 {targetConflict.conflict_count}{" "}
-                    个账号的检测通道与目标分组不兼容，配置尚未保存。
+                    There are {targetConflict.conflict_count}{" "}
+                    accounts whose check channel is incompatible with the target group. Settings are not saved yet.
                   </p>
                   <p className="text-muted-foreground">
-                    目标分组：
+                    Target group:
                     {groups.find(
                       (g) => g.id === targetConflict.target_group_id,
                     )?.name || `#${targetConflict.target_group_id}`}
-                    （{targetConflict.target_group_channel}
-                    ）。可关闭下列账号的自动检测后重新保存，或调整处置策略。
+                    ({targetConflict.target_group_channel}
+                    ). You can turn off auto-check for the accounts below and save again, or adjust the handling policy.
                   </p>
                   <ul className="max-h-60 space-y-2 overflow-y-auto">
                     {targetConflict.conflicts.map((account) => (
@@ -370,7 +370,7 @@ export default function IntelligenceCheck() {
                       >
                         <span className="min-w-0 break-all">
                           #{account.account_id} ·{" "}
-                          {account.account_name || "未命名账号"} ·{" "}
+                          {account.account_name || "Unnamed account"} ·{" "}
                           {account.channel}
                         </span>
                         <Button
@@ -387,7 +387,7 @@ export default function IntelligenceCheck() {
                             setParams(next);
                           }}
                         >
-                          查看账号检测
+                          View account checks
                         </Button>
                       </li>
                     ))}
@@ -395,8 +395,8 @@ export default function IntelligenceCheck() {
                   {targetConflict.conflict_count >
                     targetConflict.conflicts.length && (
                     <p className="text-muted-foreground">
-                      当前列出前 {targetConflict.conflicts.length}{" "}
-                      个；处理后重新保存可查看剩余冲突。
+                      Showing the first {targetConflict.conflicts.length}{" "}
+                      accounts; save again after handling them to see the remaining conflicts.
                     </p>
                   )}
                   <Button
@@ -404,25 +404,25 @@ export default function IntelligenceCheck() {
                     disabled={busy}
                     onClick={() => void disableConflicts()}
                   >
-                    关闭以上 {targetConflict.conflicts.length}{" "}
-                    个账号的自动检测
+                    Turn off auto-check for the above {targetConflict.conflicts.length}{" "}
+                    accounts
                   </Button>
                   <p className="text-xs text-muted-foreground">
-                    仅关闭自动检测，账号的业务调度和已有处置恢复状态保持不变。
+                    This only turns off auto-check; the accounts' business scheduling and existing handling recovery state stay unchanged.
                   </p>
                 </div>
               )}
               <p className="text-xs leading-relaxed text-muted-foreground">
-                上游错误不计为降智；开启自适应时会中断恢复确认。人工修改调度或分组优先，并重置连续次数。关闭暂停策略不会自动释放已有暂停；关闭切组策略后，已切组账号仍可按恢复阈值还原原分组。检测暂停期间继续检测。
+                Upstream errors are not counted as intelligence degradation; with adaptive checks on, they interrupt recovery confirmation. Manual changes to scheduling or group take priority and reset the consecutive count. Turning off the pause policy does not automatically release existing pauses; after turning off the switch-group policy, accounts already switched can still be restored to their original group by the recovery threshold. Checks keep running during a pause.
               </p>
             </CardContent>
           </Card>
         </section>
         <section aria-labelledby="intelligence-questions-title" className="min-w-0 space-y-4">
-          <h2 id="intelligence-questions-title" className="text-lg font-semibold">检测题库</h2>
+          <h2 id="intelligence-questions-title" className="text-lg font-semibold">Check question bank</h2>
           <div className="flex flex-wrap items-center justify-between gap-3">
             <p className="text-sm text-muted-foreground">
-              每个账号按启用题目顺序轮换，每次一道题；编辑后统一保存。
+              Each account rotates through the enabled questions in order, one question at a time; edits are saved together.
             </p>
             <Button
               variant="outline"
@@ -432,7 +432,7 @@ export default function IntelligenceCheck() {
                   ...settings.questions,
                   {
                     id,
-                    name: "新题目",
+                    name: "New question",
                     prompt: "",
                     expected_answer: "",
                     match_mode: "exact",
@@ -444,14 +444,14 @@ export default function IntelligenceCheck() {
               }}
             >
               <Plus className="size-4" />
-              新增题目
+              Add question
             </Button>
           </div>
           {settings.questions.map((q, index) => (
             <Card key={q.id}>
               <CardContent className="flex flex-wrap items-center gap-3 py-4">
                 <Switch
-                  aria-label={`启用 ${q.name}`}
+                  aria-label={`Enable ${q.name}`}
                   checked={q.enabled}
                   onCheckedChange={(enabled) =>
                     change(
@@ -465,7 +465,7 @@ export default function IntelligenceCheck() {
                 <div className="min-w-0 flex-1">
                   <div className="font-medium">{q.name}</div>
                   <div className="mt-1 text-xs text-muted-foreground">
-                    {q.match_mode} · {q.max_duration_ms} ms · 预期{" "}
+                    {q.match_mode} · {q.max_duration_ms} ms · Expected{" "}
                     {q.expected_answer.slice(0, 60)}
                   </div>
                 </div>
@@ -473,7 +473,7 @@ export default function IntelligenceCheck() {
                   <Button
                     variant="ghost"
                     size="icon"
-                    aria-label={`上移 ${q.name}`}
+                    aria-label={`Move ${q.name} up`}
                     disabled={index === 0}
                     onClick={() => reorder(index, -1)}
                   >
@@ -482,7 +482,7 @@ export default function IntelligenceCheck() {
                   <Button
                     variant="ghost"
                     size="icon"
-                    aria-label={`下移 ${q.name}`}
+                    aria-label={`Move ${q.name} down`}
                     disabled={index === settings.questions.length - 1}
                     onClick={() => reorder(index, 1)}
                   >
@@ -493,12 +493,12 @@ export default function IntelligenceCheck() {
                     size="sm"
                     onClick={() => setEditor(editor === q.id ? null : q.id)}
                   >
-                    编辑
+                    Edit
                   </Button>
                   <Button
                     variant="ghost"
                     size="icon"
-                    aria-label={`删除 ${q.name}`}
+                    aria-label={`Delete ${q.name}`}
                     onClick={() => {
                       change(
                         "questions",
@@ -513,14 +513,14 @@ export default function IntelligenceCheck() {
                 {question?.id === q.id && (
                   <div className="grid w-full gap-4 border-t pt-4 sm:grid-cols-2">
                     {field(
-                      "题目名称",
+                      "Question name",
                       <Input
                         value={question.name}
                         onChange={(e) => editQuestion({ name: e.target.value })}
                       />,
                     )}
                     {field(
-                      "匹配方式",
+                      "Match mode",
                       <Select
                         value={question.match_mode}
                         onValueChange={(v) =>
@@ -529,15 +529,15 @@ export default function IntelligenceCheck() {
                           })
                         }
                         options={options({
-                          exact: "标准答案（完整匹配）",
-                          contains: "包含匹配",
-                          regex: "正则匹配（RE2）",
+                          exact: "Exact answer (full match)",
+                          contains: "Contains match",
+                          regex: "Regex match (RE2)",
                         })}
                       />,
                     )}
                     <div className="sm:col-span-2">
                       {field(
-                        "题目正文",
+                        "Question text",
                         <textarea
                           rows={7}
                           className={fieldClass}
@@ -549,7 +549,7 @@ export default function IntelligenceCheck() {
                       )}
                     </div>
                     {field(
-                      "预期答案 / 正则",
+                      "Expected answer / regex",
                       <Input
                         value={question.expected_answer}
                         onChange={(e) =>
@@ -558,7 +558,7 @@ export default function IntelligenceCheck() {
                       />,
                     )}
                     {field(
-                      "耗时阈值（毫秒）",
+                      "Latency threshold (ms)",
                       <Input
                         type="number"
                         min={1}
@@ -577,7 +577,7 @@ export default function IntelligenceCheck() {
           ))}
           {!settings.questions.length && (
             <p className="py-12 text-center text-muted-foreground">
-              暂无题目，开启自动检测前请添加并启用至少一道题。
+              No questions yet. Before turning on auto-check, add and enable at least one question.
             </p>
           )}
         </section>

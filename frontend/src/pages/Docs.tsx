@@ -25,7 +25,7 @@ import { Select } from "@/components/ui/select";
 import { useToast } from "../hooks/useToast";
 import { CodeBlock, EndpointDoc } from "./docs/EndpointDoc";
 import DocsTOC, { type DocsTOCItem } from "./docs/DocsTOC";
-import { buildQuickTools, type DocsLocale } from "./docs/quickStartTools";
+import { buildQuickTools } from "./docs/quickStartTools";
 import {
   buildAdminSpecs,
   buildDocsMarkdown,
@@ -45,13 +45,7 @@ type CCSwitchApp = "codex";
 type QuickToolTab = "codex-cli" | "cc-switch" | "cherry-studio";
 type QuickServiceTier = "default" | "fast" | "ultrafast";
 type QuickReasoningEffort =
-  | "none"
-  | "minimal"
-  | "low"
-  | "medium"
-  | "high"
-  | "xhigh"
-  | "ultra";
+  "none" | "minimal" | "low" | "medium" | "high" | "xhigh" | "ultra";
 
 const CC_SWITCH_LOGO = "https://ccswitch.io/assets/cc-switch-logo-BPrI77SG.png";
 // Bundled from npm `@lobehub/icons-static-svg`.
@@ -383,13 +377,9 @@ function encodeBase64(text: string): string {
 }
 
 export default function Docs() {
-  const { t, i18n } = useTranslation();
+  const { t } = useTranslation();
   const baseUrl = useMemo(() => window.location.origin, []);
   const adminSeed = useMemo(() => getAdminKey(), []);
-  const docsLocale = useMemo<DocsLocale>(
-    () => ((i18n.language || "zh").startsWith("zh") ? "zh" : "en"),
-    [i18n.language],
-  );
   const [quickBaseUrl, setQuickBaseUrl] = useState(baseUrl);
   const [codexOs, setCodexOs] = useState<"unix" | "windows">("unix");
   const [firstKey, setFirstKey] = useState("");
@@ -422,7 +412,7 @@ export default function Docs() {
 
   useEffect(() => {
     api
-      .getAPIKeys({ view: 'lite' })
+      .getAPIKeys({ view: "lite" })
       .then((res) => {
         const keys = (res.keys ?? []).map((k) => ({
           name: k.name,
@@ -439,13 +429,11 @@ export default function Docs() {
 
   useEffect(() => {
     Promise.all([
-      api.getModels().catch(
-        (): ModelsResponse => ({
-          models: [],
-          items: [],
-          source_url: "",
-        }),
-      ),
+      api.getModels().catch((): ModelsResponse => ({
+        models: [],
+        items: [],
+        source_url: "",
+      })),
       api.getSettings().catch(() => null),
     ])
       .then(([res, nextSettings]) => {
@@ -487,7 +475,7 @@ export default function Docs() {
     if (curlModelOptions.some((option) => option.value === curlModel)) return;
     if (curlModelOptions[0]) setCurlModel(curlModelOptions[0].value);
   }, [curlModel, curlModelOptions]);
-  const quickTools = useMemo(() => buildQuickTools(docsLocale), [docsLocale]);
+  const quickTools = useMemo(() => buildQuickTools(), []);
   const ccSwitchConfig = CC_SWITCH_APPS[ccSwitchApp];
   const siteName = settings?.site_name?.trim() || "CodexProxy";
   const defaultCcSwitchName = `${siteName} ${ccSwitchConfig.suffix}`;
@@ -519,71 +507,51 @@ export default function Docs() {
   }, [ccSwitchConfig, models, quickStartModel]);
 
   const modelEndpoints = useMemo(
-    () => buildEndpointSpecs(quickBaseUrl, docsLocale),
-    [quickBaseUrl, docsLocale],
+    () => buildEndpointSpecs(quickBaseUrl),
+    [quickBaseUrl],
   );
   const adminEndpoints = useMemo(
-    () => buildAdminSpecs(quickBaseUrl, docsLocale),
-    [quickBaseUrl, docsLocale],
+    () => buildAdminSpecs(quickBaseUrl),
+    [quickBaseUrl],
   );
-
-  const copy = useMemo(
-    () => (zh: string, en: string) => (docsLocale === "zh" ? zh : en),
-    [docsLocale],
-  );
-  const guides = useMemo(
-    () => buildGuides(quickBaseUrl, docsLocale),
-    [quickBaseUrl, docsLocale],
-  );
+  const guides = useMemo(() => buildGuides(quickBaseUrl), [quickBaseUrl]);
   const sections = useMemo(
     () => [
       {
         id: "quick-start",
-        label: copy("快速接入", "Quick start"),
-        summary: copy(
-          "选好客户端，生成配置，完成第一次请求。",
+        label: "Quick start",
+        summary:
           "Choose a client, generate its configuration and make your first request.",
-        ),
         icon: <Sparkles className="size-4" />,
       },
       {
         id: "development",
-        label: copy("开发指南", "Development"),
-        summary: copy(
-          "从地址与认证到 SDK、流式响应和工具调用。",
-          "URLs, authentication, SDKs, streaming and tool calls.",
-        ),
+        label: "Development",
+        summary: "URLs, authentication, SDKs, streaming and tool calls.",
         icon: <Terminal className="size-4" />,
       },
       {
         id: "model-api",
-        label: copy("接口参考", "API reference"),
-        summary: copy(
-          "按需展开文本、图片与进阶接口，查看参数和示例。",
+        label: "API reference",
+        summary:
           "Expand text, image and advanced endpoints for parameters and examples.",
-        ),
         icon: <Wand2 className="size-4" />,
       },
       {
         id: "troubleshooting",
-        label: copy("故障排查", "Troubleshooting"),
-        summary: copy(
-          "根据错误码找到原因，明确下一步操作。",
-          "Find the cause by error code and choose the next action.",
-        ),
+        label: "Troubleshooting",
+        summary: "Find the cause by error code and choose the next action.",
         icon: <LifeBuoy className="size-4" />,
       },
       {
         id: "admin-api",
-        label: copy("管理与进阶", "Administration"),
-        summary: copy(
-          "理解密钥范围、额度、凭据与模型映射，查阅常用管理接口。",
+        label: "Administration",
+        summary:
           "Key scopes, budgets, credentials, model mappings and common admin endpoints.",
-        ),
         icon: <Server className="size-4" />,
       },
     ],
-    [copy],
+    [],
   );
   const entries = useMemo<DocEntry[]>(
     () => [
@@ -596,17 +564,14 @@ export default function Docs() {
       {
         id: "qs-tools",
         section: "quick-start",
-        title: copy("客户端配置", "Client configuration"),
+        title: "Client configuration",
         summary: "Codex CLI · CC Switch · Cherry Studio",
       },
       {
         id: "qs-curl",
         section: "quick-start",
-        title: copy("cURL 验证", "cURL verification"),
-        summary: copy(
-          "发送第一个请求并验证响应",
-          "Send your first request and verify its response",
-        ),
+        title: "cURL verification",
+        summary: "Send your first request and verify its response",
       },
       ...guides.map((g) => ({
         id: g.id,
@@ -636,7 +601,7 @@ export default function Docs() {
         method: e.method,
       })),
     ],
-    [sections, guides, modelEndpoints, adminEndpoints, copy],
+    [sections, guides, modelEndpoints, adminEndpoints],
   );
   const [hash, setHash] = useState(() => window.location.hash);
   const [navigationRevision, setNavigationRevision] = useState(0);
@@ -695,7 +660,6 @@ export default function Docs() {
           content: codexAuthJson.split(activeKey).join("YOUR_API_KEY"),
         },
       ],
-      locale: docsLocale,
     });
     try {
       await navigator.clipboard.writeText(md);
@@ -808,14 +772,12 @@ goals = true`;
         <div>
           <div className="docs-eyebrow">
             <BookOpen className="size-3.5" />
-            CODEX2API / {copy("使用文档", "DOCUMENTATION")}
+            CODEX2API / DOCUMENTATION
           </div>
-          <h2>{copy("从接入到用好每个接口", "Connect. Build. Go further.")}</h2>
+          <h2>Connect. Build. Go further.</h2>
           <p>
-            {copy(
-              "客户端配置、开发示例与接口参考，都从这里开始。",
-              "Client configuration, working examples and API reference, all in one place.",
-            )}
+            Client configuration, working examples and API reference, all in one
+            place.
           </p>
         </div>
         <div className="docs-hero-actions">
@@ -837,10 +799,7 @@ goals = true`;
         </div>
       </header>
       <div className="docs-toolbar">
-        <nav
-          className="docs-tabs"
-          aria-label={copy("文档分类", "Documentation sections")}
-        >
+        <nav className="docs-tabs" aria-label="Documentation sections">
           {sections.map((s) => (
             <a
               key={s.id}
@@ -852,13 +811,13 @@ goals = true`;
             </a>
           ))}
         </nav>
-        <DocsSearch entries={entries} locale={docsLocale} />
+        <DocsSearch entries={entries} />
         <Button
           variant="outline"
           size="sm"
           className="docs-mobile-toc"
           onClick={() => setMobileToc(true)}
-          aria-label={copy("打开目录", "Open table of contents")}
+          aria-label="Open table of contents"
         >
           <List className="size-4" />
         </Button>
@@ -886,20 +845,12 @@ goals = true`;
                 <div className="docs-step">
                   <span>01</span>
                   <div>
-                    <strong>
-                      {copy("准备可用账号", "Prepare an account")}
-                    </strong>
+                    <strong>Prepare an account</strong>
                     <p>
-                      <a href="/admin/accounts">
-                        {copy("账号管理", "Accounts")}
-                      </a>
+                      <a href="/admin/accounts">Accounts</a>
                       <span className="docs-step-detail">
                         {" "}
-                        ·{" "}
-                        {copy(
-                          "确认账号已启用且模型可用。",
-                          "Enable an account with the model you need.",
-                        )}
+                        · Enable an account with the model you need.
                       </span>
                     </p>
                   </div>
@@ -907,20 +858,12 @@ goals = true`;
                 <div className="docs-step">
                   <span>02</span>
                   <div>
-                    <strong>
-                      {copy("选择客户端密钥", "Choose a client key")}
-                    </strong>
+                    <strong>Choose a client key</strong>
                     <p>
-                      <a href="/admin/api-keys">
-                        {copy("API 密钥", "API keys")}
-                      </a>
+                      <a href="/admin/api-keys">API keys</a>
                       <span className="docs-step-detail">
                         {" "}
-                        ·{" "}
-                        {copy(
-                          "为客户端创建独立访问凭据。",
-                          "Create a dedicated key for your client.",
-                        )}
+                        · Create a dedicated key for your client.
                       </span>
                     </p>
                   </div>
@@ -928,18 +871,12 @@ goals = true`;
                 <div className="docs-step">
                   <span>03</span>
                   <div>
-                    <strong>{copy("配置并验证", "Configure & verify")}</strong>
+                    <strong>{"Configure & verify"}</strong>
                     <p>
-                      <a href="#qs-curl">
-                        {copy("发送验证请求", "Send a test request")}
-                      </a>
+                      <a href="#qs-curl">Send a test request</a>
                       <span className="docs-step-detail">
                         {" "}
-                        ·{" "}
-                        {copy(
-                          "在使用统计确认结果。",
-                          "Check the result in Usage.",
-                        )}
+                        · Check the result in Usage.
                       </span>
                     </p>
                   </div>
@@ -950,13 +887,10 @@ goals = true`;
                   <div className="mb-3 flex flex-wrap items-end justify-between gap-3">
                     <div className="min-w-0">
                       <h3 className="text-[15px] font-semibold text-foreground">
-                        {copy("生成客户端配置", "Configure your client")}
+                        Configure your client
                       </h3>
                       <p className="mt-0.5 text-[12.5px] text-muted-foreground">
-                        {copy(
-                          "选择工具后，复制对应配置或一键导入。",
-                          "Choose a tool, then copy its configuration or import it.",
-                        )}
+                        Choose a tool, then copy its configuration or import it.
                       </p>
                     </div>
                     <div className="flex shrink-0 items-center gap-2">
@@ -1041,10 +975,7 @@ goals = true`;
                   {showQuickCodexOptions && (
                     <details className="docs-advanced">
                       <summary>
-                        {copy(
-                          "高级选项 · 思考强度与服务档位",
-                          "Advanced · reasoning effort & service tier",
-                        )}
+                        {"Advanced · reasoning effort & service tier"}
                       </summary>
                       <div>
                         {showQuickCodexOptions ? (
@@ -1236,10 +1167,8 @@ goals = true`;
                         {t("docs.quickStart.curlTitle")}
                       </h3>
                       <p className="text-sm text-muted-foreground">
-                        {copy(
-                          "使用当前选中的密钥与模型验证。Responses / Chat 返回 SSE。",
-                          "Verify with the selected key and model. Responses / Chat return SSE.",
-                        )}
+                        Verify with the selected key and model. Responses / Chat
+                        return SSE.
                       </p>
                     </div>
                     <Select
@@ -1282,12 +1211,11 @@ goals = true`;
               </Card>
 
               <p className="docs-callout">
-                {copy(
-                  "看到完整结束事件或成功 JSON 后，在使用统计确认最终模型与用量。健康检查成功仅代表服务在线。",
-                  "After a terminal event or successful JSON response, verify the final model and usage in Usage. A healthy service alone does not prove generation works.",
-                )}{" "}
+                After a terminal event or successful JSON response, verify the
+                final model and usage in Usage. A healthy service alone does not
+                prove generation works.{" "}
                 <a href="#connection-check" className="text-primary">
-                  {copy("连接排查 →", "Connection checks →")}
+                  Connection checks →
                 </a>
               </p>
             </>
@@ -1298,7 +1226,6 @@ goals = true`;
               <GuideArticle
                 key={`${guide.id}-${target.id === guide.id ? navigationRevision : 0}`}
                 guide={guide}
-                locale={docsLocale}
                 activeId={target.id}
               />
             ))}
@@ -1307,10 +1234,10 @@ goals = true`;
               <section key={category}>
                 <h4 className="docs-group-title">
                   {category === "text"
-                    ? copy("文本与基础接口", "Text & essentials")
+                    ? "Text & essentials"
                     : category === "media"
-                      ? copy("图片", "Images")
-                      : copy("进阶与兼容接口", "Advanced & compatibility")}
+                      ? "Images"
+                      : "Advanced & compatibility"}
                   <span>
                     {
                       modelEndpoints.filter((e) => e.category === category)
@@ -1335,7 +1262,7 @@ goals = true`;
           {activeSection === "admin-api" && (
             <>
               <h4 className="docs-group-title">
-                {copy("常用管理接口", "Common admin endpoints")}
+                Common admin endpoints
                 <span>{adminEndpoints.length}</span>
               </h4>
               {adminEndpoints.map((endpoint) => (
@@ -1351,16 +1278,12 @@ goals = true`;
           )}
         </div>
         <aside className="docs-sidebar">
-          <DocsTOC
-            items={tocItems}
-            title={copy("本页目录", "On this page")}
-            activeId={target.id}
-          />
+          <DocsTOC items={tocItems} title="On this page" activeId={target.id} />
         </aside>
       </div>
       <Dialog open={mobileToc} onOpenChange={setMobileToc}>
         <DialogContent className="max-h-[80dvh]" aria-describedby={undefined}>
-          <DialogTitle>{copy("文档目录", "Contents")}</DialogTitle>
+          <DialogTitle>Contents</DialogTitle>
           <DocsTOC
             items={tocItems}
             title={section.label}

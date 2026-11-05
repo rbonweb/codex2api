@@ -4,12 +4,12 @@ import { TIME_RANGE_OPTIONS, type TimeRangeKey } from '../lib/timeRange'
 interface Props {
   timeRange: TimeRangeKey
   onTimeRangeChange: (range: TimeRangeKey) => void
-  // showLiveBadge 为 true 且当前为 1h（实时）时，前面显示「实时中」脉冲徽章。
+  // When showLiveBadge is true and the current range is 1h (live), a pulsing "Live" badge is shown in front.
   showLiveBadge?: boolean
 }
 
-// TimeRangeSelector 是仪表盘共享的时间跨度选择器（1h/6h/24h/7d/30d）。
-// 从「使用趋势」内联控件抽出，提升到仪表盘右上角，供整个页面共用。
+// TimeRangeSelector is the time span selector shared by the dashboard (1h/6h/24h/7d/30d).
+// Extracted from the inline control in the "Usage trend" section and moved to the top right of the dashboard, so the whole page can share it.
 export default function TimeRangeSelector({
   timeRange,
   onTimeRangeChange,

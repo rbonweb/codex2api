@@ -10,8 +10,8 @@ import { ACCOUNT_GROUP_COLORS } from "./AccountGroupManagerModal";
 import Modal from "./Modal";
 import { Button } from "@/components/ui/button";
 
-// 批量设置账号分组(issue #763):语义与 Codex
-// 页"设置分组"一致——所选分组完整替换,留空即清空;走 batch-update,后端校验渠道。
+// Batch set account groups (issue #763): semantics match the Codex
+// page "set groups": the selected groups fully replace the existing ones, and leaving it empty clears them; goes through batch-update, and the backend validates the channel.
 export default function BatchAccountGroupModal({
   show,
   ids,

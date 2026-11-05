@@ -37,9 +37,9 @@ const DROPDOWN_GAP = 8
 const DROPDOWN_MAX_HEIGHT = 320
 const VIEWPORT_PADDING = 8
 
-// Radix Dialog 的 react-remove-scroll 会在 document capture 阶段对
-// 弹层外（含 createPortal 到 body 的下拉）的 wheel/touchmove 调 preventDefault，
-// 导致 overflow 容器无法原生滚动。这里手动改 scrollTop，兼容 Dialog 内外。
+// react-remove-scroll in Radix Dialog calls preventDefault during the document capture phase on
+// wheel/touchmove events outside the popup (including dropdowns portaled to body with createPortal),
+// which stops overflow containers from scrolling natively. Here we set scrollTop manually, so it works both inside and outside the Dialog.
 function applyManualScroll(el: HTMLElement, deltaX: number, deltaY: number): boolean {
   const canScrollY = el.scrollHeight > el.clientHeight + 1
   const canScrollX = el.scrollWidth > el.clientWidth + 1
@@ -71,7 +71,7 @@ export function Select({
   value,
   onValueChange,
   options,
-  placeholder = '请选择',
+  placeholder = 'Please select',
   disabled = false,
   className,
   compact = false,
@@ -114,7 +114,7 @@ export function Select({
     computePosition()
   }, [open, computePosition, options.length])
 
-  // 打开后把当前选中项滚进可视区。
+  // After opening, scroll the currently selected item into view.
   useLayoutEffect(() => {
     if (autoScrollKey === null) return
     const list = listRef.current
@@ -126,10 +126,10 @@ export function Select({
   useEffect(() => {
     if (!open) return
 
-    // 关闭仅在「点击 trigger 与 dropdown 之外」触发。注意 dropdown 通过 createPortal
-    // 渲染在 document.body 下，与 trigger 不在同一 DOM 子树，必须按 ref 直接判断。
-    // 用 pointerdown 而非 mousedown，能同时覆盖鼠标 / 触屏 / 笔，且对路径上的 React
-    // 合成事件 stopPropagation 不敏感（native 监听拿到的总是真实 target）。
+    // Closing only triggers on a click outside the trigger and the dropdown. Note that the dropdown is rendered via createPortal
+    // under document.body, not in the same DOM subtree as the trigger, so the check must be made directly against refs.
+    // Use pointerdown instead of mousedown: it covers mouse, touch and pen at once, and is not affected by React
+    // synthetic event stopPropagation calls along the way (native listeners always get the real target).
     const handlePointerDown = (event: PointerEvent) => {
       const target = event.target as Node | null
       if (!target) return
@@ -146,16 +146,16 @@ export function Select({
 
     const handleReposition = (event: Event) => {
       const target = event.target
-      // list.scrollTop 的变化也会被 window capture 阶段收到；此时触发重定位
-      // 只会制造额外 render，并可能把用户重新拉回当前选中项。
+      // Changes to list.scrollTop also reach the window capture phase; triggering a reposition at that point
+      // only causes extra renders and may pull the user back to the currently selected item.
       if (target instanceof Node && dropdownRef.current?.contains(target)) return
       computePosition()
     }
 
-    // 在 document capture 阶段手动滚动：晚于 React 挂载、与 remove-scroll 同阶段，
-    // 即使其 preventDefault 了默认滚动，我们仍可通过改 scrollTop 完成滚动。
-    // 命中判断放宽到整个 dropdown（含滚动条 gutter、列表内边距等 list 子树之外的
-    // 区域），滚动仍作用于内部可滚动列表，避免鼠标停在边缘时滚不动。
+    // Scroll manually in the document capture phase: after React mounts, in the same phase as remove-scroll,
+    // even if it called preventDefault on the default scroll, we can still scroll by changing scrollTop.
+    // The hit test covers the whole dropdown (including the scrollbar gutter and list padding, which lie outside the list subtree)
+    // area). Scrolling still applies to the inner scrollable list, so the list does not stall when the mouse rests at the edge.
     const handleWheel = (event: WheelEvent) => {
       const list = listRef.current
       if (!list) return
@@ -264,8 +264,8 @@ export function Select({
                 bottom: position.openUp ? window.innerHeight - position.top : undefined,
                 left: position.left,
                 width: position.width,
-                // 高度约束交给内层可滚动列表单点控制，避免双重 maxHeight + flex 布局
-                // 让内层 clientHeight/scrollHeight 计算出现歧义、导致 wheel 判空滚不动。
+                // Height limits are handled by the inner scrollable list alone, to avoid double maxHeight + flex layout
+                // which makes the inner clientHeight/scrollHeight ambiguous and causes the wheel check to find nothing to scroll.
               }}
               className={cn(
                 'pointer-events-auto z-[1000] overflow-hidden rounded-md border border-border bg-popover shadow-[0_18px_40px_hsl(222_30%_18%/0.12)] backdrop-blur-sm'
@@ -275,7 +275,7 @@ export function Select({
                 ref={listRef}
                 className={cn(
                   'overscroll-contain overflow-x-hidden overflow-y-auto',
-                  // 始终显示细滚动条，避免 macOS 叠加滚动条「看不见、以为不能滚」。
+                  // Always show a thin scrollbar, so macOS overlay scrollbars do not make users think the list cannot scroll.
                   '[scrollbar-gutter:stable] [scrollbar-width:thin]',
                   '[&::-webkit-scrollbar]:w-1.5',
                   '[&::-webkit-scrollbar-track]:bg-transparent',
@@ -304,16 +304,16 @@ export function Select({
                             ? 'bg-primary/10 text-primary'
                             : 'text-foreground hover:bg-accent/70 hover:text-accent-foreground'
                         )}
-                        // 用 onPointerDown 在 target 阶段直接 commit 选择：
-                        //  1. 早于 document 的 outside-pointerdown handler，避免 portal 边界
-                        //     场景下 dropdown 被先关掉、click 永远收不到的竞态；
-                        //  2. preventDefault 阻止 button 的默认 focus 转移，下拉关闭时焦点自然
-                        //     回到 trigger，不会跳到无关元素。
+                        // Use onPointerDown to commit the selection directly in the target phase:
+                        //  1. Runs before the document's outside-pointerdown handler, avoiding a portal-boundary
+                        //     race where the dropdown is closed first and click never fires;
+                        //  2. preventDefault stops the button's default focus move, so when the dropdown closes, focus naturally
+                        //     returns to the trigger and does not jump to an unrelated element.
                         onPointerDown={(event) => {
                           event.preventDefault()
                           handleSelect(option.value)
                         }}
-                        // onClick 兜底：键盘 Enter / Space 触发的合成 click 没有 pointerdown。
+                        // onClick fallback: a synthetic click from keyboard Enter / Space has no pointerdown.
                         onClick={() => handleSelect(option.value)}
                       >
                         <span className={cn('min-w-0 flex-1', option.content ? 'block' : 'truncate')}>{option.content ?? option.label}</span>

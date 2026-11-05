@@ -10,9 +10,9 @@ const TONE_STYLE: Record<CompactStatTone, { chip: string; dot: string }> = {
 }
 
 /**
- * 可点击的账号筛选统计磁贴（数值 + 状态芯片 + 可选明细列），
- * 由账号页共用。
- * 标签排版跟随 house 磁贴规格（uppercase tracking-wider 小标签）。
+ * A clickable account-filter statistics tile (value + status chip + optional detail column),
+ * shared by the account page.
+ * Label typography follows the house tile spec (uppercase tracking-wider small labels).
  */
 export function CompactStat({
   label,
@@ -70,7 +70,7 @@ export function CompactStat({
                 className="grid grid-cols-[max-content_auto_max-content] items-center gap-x-0.5 whitespace-nowrap tabular-nums"
               >
                 <span className="justify-self-start">{item.label}</span>
-                <span className="justify-self-center">：</span>
+                <span className="justify-self-center">: </span>
                 <span className="justify-self-end text-foreground">{item.value}</span>
               </div>
             ))}

@@ -16,8 +16,8 @@ export function resolveDisabledAccountSorts(
   disabledSorts?: string[] | null,
   poolTotal?: number,
 ): string[] {
-  // 空数组是后端明确说「已聚完,可以排序」。不能再按池子规模回退,
-  // 否则分批查询完成后前端仍会永远禁用请求(7d)/今日排序。
+  // An empty array means the backend has explicitly said "aggregation is complete, sorting is allowed". Do not fall back based on pool size anymore,
+  // otherwise after batched queries finish, the frontend would still disable the 7d / today sort permanently.
   if (Array.isArray(disabledSorts)) {
     return disabledSorts
   }

@@ -1,4 +1,4 @@
-// 测连弹窗与账号页共用的模型候选/展示辅助。
+// Model candidate and display helpers shared by the connection test modal and the accounts page.
 import type { api } from "../api";
 import type { AccountRow } from "../types";
 import { parseModelMappingEntries } from "./modelMapping";

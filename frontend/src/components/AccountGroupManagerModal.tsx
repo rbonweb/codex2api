@@ -17,7 +17,7 @@ import {
   isAutoPauseThresholdPercentInvalid,
 } from "../lib/autoPauseThreshold";
 
-// 分组管理器的调色板(与账号页一致,避免各页各造一套)。
+// Palette for the group manager (same as the accounts page, so each page does not build its own).
 export const ACCOUNT_GROUP_COLORS = [
   "#2563eb",
   "#16a34a",
@@ -48,9 +48,9 @@ function emptyDraft(color: string): GroupDraft {
   return { id: null, name: "", description: "", color, baseConcurrency: "", autoPause5h: "", autoPause7d: "", proxyUrls: "" };
 }
 
-// AccountGroupManagerModal 是各渠道通用的「管理分组」弹窗:创建/编辑/删除分组,
-// 字段与账号页的分组管理器一致(名称/描述/颜色/基础并发/自动暂停阈值/分组代理)。
-// channel 决定新建分组归属的渠道;groups 为该渠道已有分组。
+// AccountGroupManagerModal is the "manage groups" dialog shared by all channels: create, edit and delete groups,
+// with the same fields as the group manager on the accounts page (name / description / color / base concurrency / auto-pause threshold / group proxy).
+// channel decides which channel a newly created group belongs to; groups are the existing groups of that channel.
 export function AccountGroupManagerModal({
   channel,
   groups,
@@ -94,7 +94,7 @@ export function AccountGroupManagerModal({
       description: g.description ?? "",
       color: normalizeGroupColor(g.color),
       baseConcurrency: g.base_concurrency_override != null ? String(g.base_concurrency_override) : "",
-      // 阈值后端存 0..1 比例,输入框按百分比展示(issue #843)。
+      // The backend stores the threshold as a 0..1 ratio; the input shows it as a percentage (issue #843).
       autoPause5h: formatAutoPauseThresholdPercent(g.auto_pause_5h_threshold),
       autoPause7d: formatAutoPauseThresholdPercent(g.auto_pause_7d_threshold),
       proxyUrls: (g.proxy_urls ?? []).join("\n"),
@@ -176,7 +176,7 @@ export function AccountGroupManagerModal({
       }
     >
       <div className="grid gap-5 md:grid-cols-[minmax(0,1fr)_260px]">
-        {/* 左:创建/编辑表单 */}
+        {/* Left: create/edit form */}
         <div className="space-y-3">
           <div className="text-[11px] font-semibold uppercase tracking-wide text-muted-foreground">
             {draft.id === null ? t("accountGroups.newGroup") : t("accountGroups.editGroup")}
@@ -238,7 +238,7 @@ export function AccountGroupManagerModal({
           ) : null}
         </div>
 
-        {/* 右:已有分组列表 */}
+        {/* Right: existing group list */}
         <div className="space-y-1.5">
           <div className="text-[11px] font-semibold uppercase tracking-wide text-muted-foreground">
             {t("accountGroups.existing", { count: groups.length })}

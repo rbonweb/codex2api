@@ -58,17 +58,17 @@ export function formatRelativeTime(dateStr?: string | null, options: RelativeTim
     : i18n.t('common.daysAgoLong', { count: days })
 }
 
-/** 当前生效的显示时区(IANA)。未保存选择或选择"自动"时跟随浏览器时区,取不到则 UTC。 */
+/** Currently effective display timezone (IANA). When no choice is saved or "Auto" is selected, it follows the browser timezone, and falls back to UTC if that cannot be read. */
 export function getTimezone(): string {
   return resolveDisplayTimezone()
 }
 
-/** 已保存的显示时区偏好:IANA 名称,或 AUTO_DISPLAY_TIMEZONE 表示跟随浏览器。 */
+/** Saved display timezone preference: an IANA name, or AUTO_DISPLAY_TIMEZONE to follow the browser. */
 export function getTimezonePreference(): string {
   return readTimezonePreference()
 }
 
-/** 保存显示时区偏好到 localStorage;传 AUTO_DISPLAY_TIMEZONE 清除保存值(跟随浏览器)。 */
+/** Saves the display timezone preference to localStorage; passing AUTO_DISPLAY_TIMEZONE clears the saved value (follow the browser). */
 export function setTimezone(tz: string): void {
   writeTimezonePreference(tz)
   dateTimeFormatters.clear()
@@ -95,11 +95,11 @@ function dateTimeFormatter(timeZone: string): Intl.DateTimeFormat {
 }
 
 /**
- * 以当前显示时区格式化时间,输出 YYYY-MM-DD HH:mm:ss。
+ * Formats a time in the current display timezone, outputting YYYY-MM-DD HH:mm:ss.
  *
- * 函数名沿用历史命名;实际使用 getTimezone() 返回的显示时区,不固定为北京时间。
- * 使用 Intl.DateTimeFormat 换算,无论后端返回 UTC(带 Z)还是带偏移(+08:00)都能正确显示,
- * 避免手动加减偏移导致的重复转换。
+ * The function name is kept from earlier naming; it actually uses the display timezone returned by getTimezone() and is not fixed to Beijing time.
+ * It uses Intl.DateTimeFormat for conversion, so it displays correctly whether the backend returns UTC (with Z) or an offset (+08:00),
+ * avoiding duplicate conversion caused by manually adding or subtracting offsets.
  */
 export function formatBeijingTime(dateStr?: string | null, fallback = '-'): string {
   if (!dateStr) return fallback
@@ -107,6 +107,6 @@ export function formatBeijingTime(dateStr?: string | null, fallback = '-'): stri
   const date = new Date(dateStr)
   if (Number.isNaN(date.getTime())) return fallback
 
-  // sv-SE locale 输出格式为 "YYYY-MM-DD HH:mm:ss"，正好是目标格式
+  // The sv-SE locale outputs "YYYY-MM-DD HH:mm:ss", which is exactly the target format
   return dateTimeFormatter(getTimezone()).format(date)
 }

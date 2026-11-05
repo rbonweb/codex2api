@@ -18,7 +18,7 @@ const healthy = {
   enabled: true,
   test_status: "success",
   test_ip: "1.2.3.4",
-  test_location: "香港",
+  test_location: "Hong Kong",
   test_latency_ms: 82,
 };
 
@@ -39,9 +39,9 @@ const failed = {
 };
 
 const groups = [
-  { id: 10, name: "主力", proxy_urls: ["http://hk-01:8080"] },
-  { id: 11, name: "无代理组", proxy_urls: [] },
-  { id: 12, name: "全挂组", proxy_urls: ["http://sg-03:8080"] },
+  { id: 10, name: "primary", proxy_urls: ["http://hk-01:8080"] },
+  { id: 11, name: "no-proxy group", proxy_urls: [] },
+  { id: 12, name: "all-down group", proxy_urls: ["http://sg-03:8080"] },
 ];
 
 function ctxWith(overrides = {}) {
@@ -82,7 +82,7 @@ test("account pinned to a disabled or test-failed managed proxy is fail-closed",
     const binding = resolveAccountProxyBinding({ proxy_url: url }, ctxWith());
     assert.equal(binding.kind, "bound_unusable");
     assert.equal(binding.usable, false);
-    // 徽章仍要拿得到那一行，才能在提示里说清楚是哪条代理挂了。
+    // The badge must still get that row, so the tooltip can say clearly which proxy is down.
     assert.equal(binding.proxy?.url, url);
   }
 });
@@ -114,7 +114,7 @@ test("account proxy is matched by trim only, never normalized", () => {
     resolveAccountProxyBinding({ proxy_url: "  http://hk-01:8080  " }, ctx).kind,
     "bound",
   );
-  // 末尾斜杠在后端是另一个 key，这里必须落到 custom 而不是被"修好"。
+  // A trailing slash is a different key on the backend, so this must resolve to custom and must not be "fixed".
   assert.equal(
     resolveAccountProxyBinding({ proxy_url: "http://hk-01:8080/" }, ctx).kind,
     "bound_custom",
@@ -127,8 +127,8 @@ test("unpinned account inherits the first group that still has a usable proxy", 
     ctxWith(),
   );
   assert.equal(binding.kind, "group");
-  assert.equal(binding.groupName, "主力");
-  // 继承态不报具体 URL：池内/组内选路是粘性散列的，前端复刻必漂移。
+  assert.equal(binding.groupName, "primary");
+  // The inherited state does not report a specific URL: selection within the pool or group is sticky hashing, and a frontend copy would inevitably drift.
   assert.equal(binding.url, "");
 });
 
@@ -138,9 +138,9 @@ test("a group whose proxies are all unavailable is skipped, not reported", () =>
     ctxWith(),
   );
   assert.equal(binding.kind, "group");
-  assert.equal(binding.groupName, "主力");
+  assert.equal(binding.groupName, "primary");
 
-  // 只有全挂的组时继续回落到代理池。
+  // Only when the group is entirely down does it continue falling back to the proxy pool.
   const fallback = resolveAccountProxyBinding({ group_ids: [12] }, ctxWith());
   assert.equal(fallback.kind, "pool");
 });
@@ -188,7 +188,7 @@ test("tooltip URLs keep scheme/host but never leak credentials", () => {
     formatProxyDisplayURL("socks5h://user:pass@66.253.7.45:10000"),
     "socks5h://***:***@66.253.7.45:10000",
   );
-  // 无凭据的原样返回，别把能直接认出来的 URL 也糊掉。
+  // URLs without credentials are returned as-is; do not blur a URL that is already recognizable.
   assert.equal(
     formatProxyDisplayURL("http://hk-01:8080"),
     "http://hk-01:8080",
@@ -199,7 +199,7 @@ test("tooltip URLs keep scheme/host but never leak credentials", () => {
 });
 
 test("egress summary only shows for a successful test", () => {
-  assert.equal(formatProxyEgressSummary(healthy), "1.2.3.4 · 香港 · 82ms");
+  assert.equal(formatProxyEgressSummary(healthy), "1.2.3.4 · Hong Kong · 82ms");
   assert.equal(formatProxyEgressSummary(failed), "");
   assert.equal(formatProxyEgressSummary(null), "");
 });
@@ -213,23 +213,23 @@ test("resin overrides every layer of the proxy chain for codex accounts", () => 
     resinEnabled: true,
   });
 
-  // 未绑定 + 池开着但只有一条:正常会报 pool,Resin 下一律 resin 且可调度。
+  // Unbound + pool on but only one entry: normally reports pool; under Resin it always reports resin and is schedulable.
   const unbound = resolveAccountProxyBinding({}, ctx);
   assert.equal(unbound.kind, "resin");
   assert.equal(unbound.url, "");
   assert.equal(unbound.usable, true);
 
-  // 绑定到已禁用托管代理:正常会 fail-closed,Resin 承担出口后不再被跳过。
+  // Bound to a disabled managed proxy: normally it fails closed; once Resin takes over egress, it is no longer skipped.
   const pinned = resolveAccountProxyBinding({ proxy_url: disabled.url }, ctx);
   assert.equal(pinned.kind, "resin");
   assert.equal(pinned.url, disabled.url, "keeps the overridden URL for the tooltip");
   assert.equal(pinned.proxy, disabled);
   assert.equal(pinned.usable, true);
 
-  // 组代理同样被覆盖。
+  // Group proxies are overridden in the same way.
   assert.equal(resolveAccountProxyBinding({ group_ids: [5] }, ctx).kind, "resin");
 
-  // 未传 resinEnabled 的页面(中继渠道)行为不变。
+  // Pages that do not pass resinEnabled (relay channels) behave as before.
   const plain = buildProxyBindingContext({ proxies: [healthy], poolEnabled: true });
   assert.equal(plain.resinEnabled, false);
   assert.equal(resolveAccountProxyBinding({}, plain).kind, "pool");

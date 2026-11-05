@@ -1,8 +1,8 @@
-// 账号并发徽标的展示口径。
+// Display rules for the account concurrency badge.
 //
-// 调度准入按「占用槽位 >= dynamic_concurrency_limit」判断：dynamic 是配置并发
-// （账号覆盖 > 分组 > 全局默认）再经健康度、额度保护等运行时下调后的实际上限。
-// 因此分母用实际上限，分子在开启会话缓冲槽时用占用槽位，其余情况用真实在途。
+// Scheduling admission checks "occupied slots >= dynamic_concurrency_limit": dynamic is the configured concurrency
+// (account override > group > global default), further lowered at runtime by health, quota protection and so on; it is the effective limit.
+// So the denominator uses the effective limit; the numerator uses occupied slots when the session buffer slot is enabled, and real in-flight requests otherwise.
 export type AccountConcurrencyInput = {
   active_requests?: number
   occupied_requests?: number
@@ -15,15 +15,15 @@ export type AccountConcurrencyDisplay = {
   active: number
   occupied: number
   buffered: number
-  // 开启会话缓冲槽时展示占用口径。
+  // When the session buffer slot is enabled, show the occupied-slot basis.
   showOccupied: boolean
-  // 分子：与准入判断同口径的已用槽位。
+  // Numerator: used slots, on the same basis as the admission check.
   used: number
-  // 实际并发上限；未知或 <= 0 时为 null，此时只展示分子。
+  // Effective concurrency limit; null when unknown or <= 0, in which case only the numerator is shown.
   limit: number | null
-  // 配置并发；未知或 <= 0 时为 null。
+  // Configured concurrency; null when unknown or <= 0.
   base: number | null
-  // 实际上限低于配置值（被运行时临时下调）。
+  // The effective limit is below the configured value (temporarily lowered at runtime).
   degraded: boolean
 }
 
@@ -34,8 +34,8 @@ function positiveInteger(value: number | undefined): number | null {
   return Math.floor(value)
 }
 
-// resolveAccountConcurrencyDisplay 返回徽标数据；没有在途/占用时返回 null，
-// 与原先「空闲账号不显示并发徽标」的行为保持一致。
+// resolveAccountConcurrencyDisplay returns the badge data; it returns null when there are no in-flight or occupied slots,
+// keeping the earlier behavior where idle accounts do not show a concurrency badge.
 export function resolveAccountConcurrencyDisplay(
   account: AccountConcurrencyInput,
 ): AccountConcurrencyDisplay | null {

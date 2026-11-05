@@ -167,7 +167,7 @@ const CODEX_CLIENT_SYNC_SOURCES = [
 ] as const
 type CodexClientSyncSource = (typeof CODEX_CLIENT_SYNC_SOURCES)[number]['key']
 
-// 设置接口只返回最后一次成功的配对；本次同步失败的目标把状态与错误叠加上去，面板才能显示失败原因。
+// The settings endpoint returns only the last successful pairing; targets whose sync failed this time overlay their status and error, so the panel can show the failure reason.
 function overlayCodexClientSyncFailures(targets: CodexClientVersionTarget[], result: Record<CodexClientSyncSource, CodexClientVersionSyncResult>): CodexClientVersionTarget[] {
   const failures = new Map<string, CodexClientVersionTarget>()
   for (const source of CODEX_CLIENT_SYNC_SOURCES) {
@@ -182,7 +182,7 @@ function overlayCodexClientSyncFailures(targets: CodexClientVersionTarget[], res
 }
 const CODEX_UA_FALLBACK_POOL_MIX: Record<string, number> = { 'codex-desktop': 50, 'codex-vscode': 30, 'codex-tui': 20 }
 const CODEX_UA_STRING_KEYS = ['raw_user_agent', 'client_name', 'client_version', 'os_name', 'os_version', 'arch', 'terminal', 'client_kind', 'app_name', 'app_version', 'mode'] as const
-// 与后端 inferCodexClientKind 同规则:未指定形态的旧配置按客户端名推断。
+// Same rules as the backend inferCodexClientKind: old configs with no shape specified are inferred from the client name.
 const inferCodexUAKind = (clientName?: string): CodexUAKind => {
   const name = (clientName ?? '').trim().toLowerCase()
   if (!name || name === 'codex-tui') return 'codex-tui'
@@ -230,7 +230,7 @@ const DEFAULT_SETTINGS_TAB: SettingsTabKey = 'codex'
 const HIDDEN_IMAGE_DRIVER_MODELS = new Set(['gpt-5.3-codex-spark', 'codex-auto-review', 'gpt-reserve'])
 const isSettingsTabKey = (value: string | null): value is SettingsTabKey =>
   value !== null && (SETTINGS_TAB_KEYS as readonly string[]).includes(value)
-// 旧版单页锚点 → Tab 映射，保证外部深链不失效。
+// Mapping from the old single-page anchors to tabs, so external deep links keep working.
 const LEGACY_SECTION_TABS: Record<string, SettingsTabKey> = {
   'settings-overview': 'general',
   'settings-traffic': 'general',
@@ -245,8 +245,8 @@ const LEGACY_SECTION_TABS: Record<string, SettingsTabKey> = {
   'settings-codex-images': 'codex',
   'settings-appearance': 'appearance',
 }
-// 每个 Tab 内的分区目录：多于一个分区的 Tab 渲染侧边目录并按滚动位置高亮。
-// icon 与对应 SettingsSection 的图标保持一致，目录项和分区标题才能互相对上。
+// Section directory inside each tab: a tab with more than one section renders a side directory and highlights by scroll position.
+// The icon matches the icon of the corresponding SettingsSection, so directory items and section titles line up with each other.
 const SETTINGS_TAB_SECTION_INDEX: Record<SettingsTabKey, ReadonlyArray<{ id: string; labelKey: string; icon: ReactNode }>> = {
   codex: [
     { id: 'settings-codex-quota', labelKey: 'settings.nav.codexQuota', icon: <Gauge /> },
@@ -265,13 +265,13 @@ const SETTINGS_TAB_SECTION_INDEX: Record<SettingsTabKey, ReadonlyArray<{ id: str
     { id: 'settings-reference', labelKey: 'settings.nav.reference', icon: <Link2 /> },
   ],
 }
-// 分区滚动高亮的判定线：分区顶部越过视口该高度即视为当前分区（要盖过粘性 Tab 栏）。
+// Scroll-highlight threshold line for sections: when a section's top crosses this height in the viewport, it counts as the current section (it has to clear the sticky tab bar).
 const SETTINGS_SECTION_SPY_OFFSET_PX = 140
-// 手动保存字段的脏检查里跳过的键：生成号是服务端只读，自定义 Prompt 规则由规则页单独保存。
+// Keys skipped by the dirty check for manually saved fields: the generation number is read-only on the server, and custom prompt rules are saved separately on the rules page.
 const SETTINGS_DIRTY_IGNORED_KEYS: ReadonlySet<string> = new Set(['response_cache_config_generation', 'output_guard_config_generation', 'prompt_filter_custom_patterns', 'codex_images_default_main_model', 'codex_egress'])
 
-// 以 KiB/MiB 展示、blur 自动保存的字节上限字段：展示值是四舍五入后的整数，
-// blur 提交必须回到持久化的原始字节值判断，否则未编辑的字段也会被舍入改写。
+// Byte-limit fields shown in KiB/MiB and auto-saved on blur: the displayed value is a rounded integer,
+// the blur commit must compare against the persisted raw byte value, otherwise unedited fields would also be rewritten by rounding.
 type ByteLimitField =
   | 'output_guard_max_tool_argument_bytes'
   | 'output_guard_max_channel_bytes'
@@ -290,7 +290,7 @@ const parseModelMappingEntries = (value: string, fallbackEntries: ModelMappingEn
       typeof model === 'string' ? model : String(model ?? ''),
     ]) as ModelMappingEntry[]
 
-    // 如果数据库中为空，按调用方提供的默认值填充
+    // If the database value is empty, fill in the default value provided by the caller
     return entries.length > 0 ? entries : fallbackEntries
   } catch {
     return fallbackEntries
@@ -309,7 +309,7 @@ const serializeModelMappingEntries = (entries: ModelMappingEntry[]) => {
 
 const normalizeReasoningEffortValue = (effort: string) => {
   const value = effort.trim().toLowerCase()
-  // max 仅 gpt-5.6+ 上游支持,后端会按模型钳位,前端保留原值让用户可配
+  // max is supported only by gpt-5.6+ upstreams; the backend clamps it per model, and the frontend keeps the original value so the user can still configure it
   return ['none', 'minimal', 'low', 'medium', 'high', 'xhigh', 'ultra', 'max'].includes(value) ? value : 'xhigh'
 }
 
@@ -324,7 +324,7 @@ const getSettingsPatchValues = (settings: SystemSettings, keys: Array<keyof Syst
   return patch as Partial<SystemSettings>
 }
 
-// 脏检查用的宽松相等：null/undefined 同义，数组与对象按 JSON 结构比较。
+// Loose equality for the dirty check: null and undefined are treated as the same, and arrays and objects are compared by JSON structure.
 const settingsValueEquals = (a: unknown, b: unknown) => {
   if (a === b) return true
   if (a == null && b == null) return true
@@ -453,7 +453,7 @@ const serializeCodexUserAgentConfig = (config: CodexUserAgentConfig) => {
 
 const normalizeVersionText = (version?: string) => (version ?? '').trim().replace(/^v/i, '')
 
-// 模型映射编辑器组件
+// Model mapping editor component
 function ModelMappingEditor({
   value,
   onChange,
@@ -790,11 +790,11 @@ function ReasoningEffortModelsEditor({
 const SETTINGS_FIELD_GRID = 'grid grid-cols-1 gap-x-4 gap-y-4 sm:grid-cols-2'
 const SETTINGS_FIELD_GRID_3 = 'grid grid-cols-1 gap-x-4 gap-y-4 sm:grid-cols-2 xl:grid-cols-3'
 const SETTINGS_SWITCH_GRID = 'grid grid-cols-1 gap-3 sm:grid-cols-2'
-// 卡片里只有一个开关时用整行，放进双列栅格会挤成半宽、标签折行。
+// When a card has only one switch, use a full row; in a two-column grid it would be squeezed to half width and the label would wrap.
 const SETTINGS_SWITCH_ROW = 'grid grid-cols-1 gap-3'
-// 一组只含开关的相关设置合并成一张卡，用 SettingField layout="row" 逐行排列，说明文字直接外显。
+// A group of related switch-only settings is merged into one card, with rows laid out one per line via SettingField layout="row", and the description shown directly.
 const SETTINGS_ROW_LIST = 'divide-y divide-border/60'
-// 卡片级双列栅格：卡片高度不一，必须顶对齐，否则矮卡被拉高留下大片空白。
+// Card-level two-column grid: cards have different heights and must be top-aligned, otherwise short cards get stretched and leave large gaps.
 const SETTINGS_CARD_GRID_2 = 'grid gap-4 lg:grid-cols-2 lg:items-stretch'
 
 function SettingsCard({
@@ -929,10 +929,10 @@ function SettingField({
 }: {
   label: string
   description?: string
-  // row 布局下 description 直接外显，help 才进问号 tooltip；其他布局 help 与 description 合并进 tooltip。
+  // In row layout the description is shown directly and only help goes into the question-mark tooltip; in other layouts help and description are merged into the tooltip.
   help?: string
   warning?: string
-  // stretch:stack 布局下让控件撑满剩余高度(等高卡片里的 textarea)。
+  // In the stretch:stack layout, the control fills the remaining height (the textarea in equal-height cards).
   stretch?: boolean
   children: ReactNode
   className?: string
@@ -1431,7 +1431,7 @@ function SegmentedPillGroup<T extends string>({
         className,
       )}
     >
-      {/* 平滑滑块背景 indicator */}
+      {/* Smooth sliding background indicator */}
       {activeIndex >= 0 && count > 0 ? (
         <div
           className="absolute inset-y-1 rounded-lg bg-background shadow-xs ring-1 ring-border/60 transition-all duration-200 ease-[cubic-bezier(0.16,1,0.3,1)]"
@@ -1442,7 +1442,7 @@ function SegmentedPillGroup<T extends string>({
         />
       ) : null}
 
-      {/* 选项按钮 */}
+      {/* Option buttons */}
       <div className="relative z-10 flex w-full items-center">
         {options.map((opt) => {
           const active = opt.value === value
@@ -1506,10 +1506,10 @@ function SettingsSection({
 
 type SettingsSectionIndexItem = { id: string; label: string; icon: ReactNode }
 
-// 按滚动位置算出当前分区：最后一个顶部越过判定线的分区即当前分区。
-// 点击目录后先锁定所选分区，直到用户手动滚动（滚轮/触摸/键盘）才恢复按位置判定——
-// 页尾几个分区挤在同一屏时，滚动位置分不出用户点的是哪一个。
-// 滚到底的兜底只在末尾分区真正占据视口下半部分时才把高亮给它，否则会抢走倒数第二个分区。
+// Work out the current section from the scroll position: the last section whose top has crossed the threshold line is the current section.
+// After a directory click, the chosen section is locked first; position-based detection resumes only when the user scrolls manually (wheel/touch/keyboard) —
+// When several sections at the end of the page fit on one screen, scroll position cannot tell which one the user clicked.
+// The scroll-to-bottom fallback gives the highlight to the last section only when it really occupies the lower half of the viewport; otherwise it would steal the highlight from the second-to-last section.
 function useActiveSettingsSection(sectionIds: readonly string[]) {
   const [activeId, setActiveId] = useState<string | null>(sectionIds[0] ?? null)
   const pinnedRef = useRef<string | null>(null)
@@ -1565,7 +1565,7 @@ function useActiveSettingsSection(sectionIds: readonly string[]) {
   return { activeId, pinSection }
 }
 
-// Tab 内分区目录：Tab 栏下方居中的磨砂玻璃胶囊条，随 Tab 栏一起粘顶，按滚动位置高亮当前分区。
+// Section directory inside a tab: a centered frosted-glass pill bar below the tab bar, sticks to the top together with the tab bar, and highlights the current section by scroll position.
 function SettingsSectionIndex({
   items,
   activeId,
@@ -1613,7 +1613,7 @@ function SettingsSectionIndex({
   )
 }
 
-// 页头保存状态：自动保存进行中 > 手动字段未保存 > 自动保存失败 > 已保存。
+// Header save status: auto-save in progress > manual fields unsaved > auto-save failed > saved.
 function SaveStatusPill({
   autoSaveStatus,
   dirtyCount,
@@ -1715,7 +1715,7 @@ function textToBase64(value: string) {
 }
 
 function minifySVG(value: string) {
-  // 循环剥离注释直到不动点：单次替换可能因相邻片段重新拼出 "<!--" 而残留
+  // Strip comments in a loop until a fixed point: a single pass can leave residue, because adjacent fragments can rejoin to form "<!--"
   let out = value
   for (let prev = ''; prev !== out; ) {
     prev = out
@@ -2091,8 +2091,8 @@ export default function Settings() {
   const responseCacheBudget = responseCacheBudgetFromSettings(settingsForm)
   const [savingSettings, setSavingSettings] = useState(false)
   const [autoSaveStatus, setAutoSaveStatus] = useState<AutoSaveStatus>('idle')
-  // 服务端已确认的设置快照，用来算"手动保存字段还有几项没存"。自动保存路径按 key 局部合并，
-  // 不能整份覆盖，否则一次开关自动保存会把其他还没点保存的文本改动一起标成已保存。
+  // Snapshot of the settings confirmed by the server, used to count how many manually saved fields are still unsaved. The auto-save path merges per key locally,
+  // and must not overwrite the whole thing, otherwise one toggle auto-save would also mark other unsaved text edits as saved.
   const [persistedSettings, setPersistedSettings] = useState<SystemSettings | null>(null)
   const markPersisted = useCallback((patch: Partial<SystemSettings>) => {
     setPersistedSettings((current) => (current ? { ...current, ...patch } : current))
@@ -2127,10 +2127,10 @@ export default function Settings() {
   const [modelsSourceURL, setModelsSourceURL] = useState('')
   const [syncingModels, setSyncingModels] = useState(false)
   const [syncingCliVersion, setSyncingCliVersion] = useState(false)
-  // GitHub token 只写不回显：草稿态独立于 settingsForm，提交后清空（issue #522）
+  // GitHub token is write-only and never echoed back: its draft state is independent of settingsForm and is cleared after submit (issue #522)
   const [githubTokenDraft, setGithubTokenDraft] = useState('')
   const [syncedCliVersion, setSyncedCliVersion] = useState('')
-  // 实际用于出站 UA 的版本(内置与同步取大);「设为同步版本」按钮以它为准,同步值过期/为空时不会把门槛设低
+  // The version actually used for the outbound UA (the larger of the built-in and synced versions). The "set to synced version" button uses it as the reference, so when the synced value is expired or empty, the threshold is never lowered.
   const [effectiveCliVersion, setEffectiveCliVersion] = useState('')
   const [syncedAppBuilds, setSyncedAppBuilds] = useState({ desktop_mac: '', desktop_windows: '', vscode: '' })
   const [clientSyncErrors, setClientSyncErrors] = useState<Partial<Record<CodexClientSyncSource, string>>>({})
@@ -2139,9 +2139,9 @@ export default function Settings() {
   const backgroundFileInputRef = useRef<HTMLInputElement>(null)
   const persistedBrandingRef = useRef<Partial<SiteBranding> | null>(null)
   const settingsFormRef = useRef(settingsForm)
-  // 最后一次被服务器确认的设置快照（首次加载成功或自动/手动保存成功后更新）。
-  // 键入型字段在 blur 提交前已同步进 settingsFormRef，自动保存失败若按该值
-  // 回滚，会把从未被服务端接受的草稿留在界面上；回滚必须以本快照为准。
+  // Snapshot of the settings last confirmed by the server (updated after a successful first load or a successful auto/manual save).
+  // Typed fields are already synced into settingsFormRef before the blur commit, so if auto-save fails and rollback uses that value,
+  // the draft that the server never accepted stays on screen; rollback must use this snapshot.
   const confirmedSettingsRef = useRef<SystemSettings | null>(null)
   const confirmedFieldVersionsRef = useRef<Record<string, number>>({})
   const autoSavePendingCountRef = useRef(0)
@@ -2149,9 +2149,9 @@ export default function Settings() {
   const autoSaveStatusTimerRef = useRef<number | null>(null)
   const continuousRetrySaveQueueRef = useRef(createContinuousRetrySaveQueue())
   const { toast, showToast } = useToast()
-  // 邀请引导开关走独立端点(system_settings.invite_guide_config),不进主设置
-  // 表单——那条 UPSERT 的占位符已经排到 $119,每加一列都要整体顺移。
-  // null 表示还没加载出来,此时开关不渲染,避免先闪一个错误的默认态。
+  // The invite guide toggle uses its own endpoint (system_settings.invite_guide_config) and is not part of the main settings
+  // form: that UPSERT's placeholder is already at $119, and every added column would shift them all.
+  // null means not loaded yet; the toggle does not render at that point, to avoid briefly flashing a wrong default state.
   const [inviteGuideEnabled, setInviteGuideEnabled] = useState<boolean | null>(null)
 
   useEffect(() => {
@@ -2162,8 +2162,8 @@ export default function Settings() {
     return () => { cancelled = true }
   }, [])
 
-  // 乐观更新 + 失败回滚：开关是本地独立状态，写失败必须回到真实值，
-  // 否则界面显示开着、后端其实是关的。
+  // Optimistic update + rollback on failure: the toggle is independent local state, so a failed write must return to the real value,
+  // otherwise the UI shows it on while the backend is actually off.
   const saveInviteGuideEnabled = async (next: boolean) => {
     const previous = inviteGuideEnabled
     setInviteGuideEnabled(next)
@@ -2256,9 +2256,9 @@ export default function Settings() {
 
     try {
       const updated = await api.updateSettings(getSettingsPatchValues(optimistic, patchKeys))
-      // 本次请求提交的字段已被服务器确认；记录到快照里，"最后一次服务器确认
-      // 的设置"才能作为后续失败的可靠回滚目标。
-      // 为每个字段检查版本：若同一字段有更新版本的响应已提前到达，旧响应不应覆盖新基线。
+      // The fields submitted in this request are confirmed by the server; record them in the snapshot so that the "last server-confirmed
+      // settings" can serve as a reliable rollback target for later failures.
+      // Check the version for each field: if a response for a newer version of the same field has already arrived, an older response must not overwrite the new baseline.
       const mergedConfirmedState = mergeConfirmedSettingsWithVersions(
         confirmedSettingsRef.current,
         confirmedFieldVersionsRef.current,
@@ -2322,8 +2322,8 @@ export default function Settings() {
         return autoSaveFieldVersionsRef.current[fieldKey] === requestedVersions[fieldKey]
       })
       if (rollbackKeys.length > 0) {
-        // 回滚到最后的服务器确认值，而不是提交前的表单值：键入型字段在 blur
-        // 提交前就把草稿写进了 settingsFormRef，那个值从未被服务端接受。
+        // Roll back to the last server-confirmed value, not the form value from before the submit: typed fields in blur
+        // have already written the draft into settingsFormRef before the submit, and that value was never accepted by the server.
         const rollbackValues = resolveAutoSaveRollbackValues(
           confirmedSettingsRef.current,
           previous,
@@ -2341,9 +2341,9 @@ export default function Settings() {
     }
   }, [commitSettingsForm, finishAutoSaveRequest, showToast, t])
 
-  // 字节上限输入框的 blur 提交：展示单位值没变时不做任何写入，并保留持久化的
-  // 原始字节值，避免把 131073 这类非整倍数值舍入成 131072。基准取持久化快照
-  // 而不是当前表单值——键入时表单已经变成换算后的新字节值了。
+  // Blur commit for a byte-limit input: when the displayed unit value has not changed, no write happens, and the persisted
+  // raw byte value is kept, so a non-round value such as 131073 is not rounded to 131072. The baseline comes from the persisted snapshot
+  // rather than the current form value, because while typing the form has already become the converted new byte value.
   const commitByteLimitField = useCallback((
     field: ByteLimitField,
     submittedUnits: number,
@@ -2416,7 +2416,7 @@ export default function Settings() {
   const loadSettingsData = useCallback(async () => {
     const [health, settings, modelsResp] = await Promise.all([api.getHealth(), api.getSettings(), api.getModels()])
     setPersistedSettings(commitSettingsForm(settings))
-    // commitSettingsForm 已把归一化后的加载结果同步进 settingsFormRef。
+    // commitSettingsForm has already synced the normalized load result into settingsFormRef.
     confirmedSettingsRef.current = settingsFormRef.current
     const branding = {
       site_name: settings.site_name,
@@ -2468,19 +2468,19 @@ export default function Settings() {
     try {
       const adminSecretChanged = settingsForm.admin_auth_source !== 'env' && settingsForm.admin_secret !== loadedAdminSecret
 	      const payload: Partial<SystemSettings> = omitOutputGuardFields(buildWritableSettingsPayload(normalized))
-      // 自定义 Prompt 规则由规则页单独保存，避免普通设置提交覆盖并发发布结果。
+      // Custom prompt rules are saved separately on the rules page, so an ordinary settings submit does not overwrite concurrent publish results.
       delete payload.prompt_filter_custom_patterns
-      // 失控防护字段只走自动保存：整表单提交会把手动打开页面时读到的陈旧快照
-      // 连同新 generation 一起上送，可能覆盖其他管理员刚改过、甚至刚关闭的 guard。
+      // Runaway-protection fields go through auto-save only: a full-form submit would send the stale snapshot read when the page was opened manually
+      // together with the new generation, and could overwrite a guard that another admin just changed or even just turned off.
       const updated = await api.updateSettings(payload)
-      // 手动保存成功后以服务器响应更新表单，但必须保留当前本地的 guard 字段，
-      // 防止保存期间或之前通过 autosave 生效的新 guard 值被手动响应里的旧 guard 字段冲回。
+      // After a successful manual save the form is updated from the server response, but the current local guard fields must be kept,
+      // so that new guard values that took effect via autosave during or before the save are not reverted by the old guard fields in the manual response.
       const safeMerged = preserveOutputGuardFields(updated, settingsFormRef.current)
       setPersistedSettings(commitSettingsForm(safeMerged))
-      // 手动保存同样刷新"最后一次服务器确认"快照，后续自动保存失败时不会
-      // 回滚到这次手动保存之前的旧值。这里只把非 guard 字段从表单复制到确认快照；
-      // 若响应中的 generation 大于确认快照，则同步采纳服务器 guard 字段与 generation，
-      // 否则保留确认快照中已有的 guard 字段，避免把在途 autosave 的未确认 guard 值带进快照。
+      // A manual save also refreshes the "last server-confirmed" snapshot, so a later auto-save failure will not
+      // roll back to the old values from before this manual save. Here only the non-guard fields are copied from the form into the confirmed snapshot;
+      // if the generation in the response is greater than the confirmed snapshot's, the server's guard fields and generation are adopted as well,
+      // otherwise the guard fields already in the confirmed snapshot are kept, so unconfirmed guard values from an in-flight autosave are not carried into the snapshot.
       confirmedSettingsRef.current = preserveConfirmedGuardFields(settingsFormRef.current, confirmedSettingsRef.current, updated)
       const branding = {
         site_name: updated.site_name,
@@ -2640,7 +2640,7 @@ export default function Settings() {
         const settings = await api.getSettings()
         setCodexClientVersions(overlayCodexClientSyncFailures(settings.codex_client_versions ?? [], result))
       } catch {
-        // 同步本身已成功；面板沿用旧数据，下次加载设置时刷新。
+        // The sync itself succeeded; the panel keeps the old data and refreshes it the next time settings load.
       }
       const failed = Object.keys(errors).length > 0
       showToast(failed ? t('settings.clientVersionSyncPartial') : t('settings.clientVersionSyncSuccess'), failed ? 'error' : 'success')
@@ -2676,7 +2676,7 @@ export default function Settings() {
   const isExternalDatabase = settingsForm.database_driver === 'postgres'
   const isExternalCache = settingsForm.cache_driver === 'redis'
   const showConnectionPool = isExternalDatabase || isExternalCache
-  // Resin 生效与否以后端摘要为准(保存后随响应刷新),不按表单里未保存的草稿猜。
+  // Whether Resin is in effect is determined by the backend summary (refreshed with the response after saving), not guessed from unsaved drafts in the form.
   const codexEgress = persistedSettings?.codex_egress
   const resinActive = Boolean(codexEgress?.resin_enabled)
   const canConfigureRemoteMigration = settingsForm.admin_auth_source === 'env' || settingsForm.admin_secret.trim() !== ''
@@ -2763,12 +2763,12 @@ export default function Settings() {
   const saveCodexUserAgentConfig = useCallback(() => {
     void autoSaveSettingsPatch({ codex_user_agent_config: settingsForm.codex_user_agent_config })
   }, [autoSaveSettingsPatch, settingsForm.codex_user_agent_config])
-  // 下拉/分段控件没有 blur,改完直接落库;从 ref 取最新表单避免闭包里的旧值。
+  // Dropdown and segmented controls have no blur, so changes are written to the database right away; read the latest form from the ref to avoid stale values in the closure.
   const patchAndSaveCodexUserAgentConfig = useCallback((patch: Partial<CodexUserAgentConfig>) => {
     const current = parseCodexUserAgentConfig(settingsFormRef.current.codex_user_agent_config)
     void autoSaveSettingsPatch({ codex_user_agent_config: serializeCodexUserAgentConfig({ ...current, ...patch }) })
   }, [autoSaveSettingsPatch])
-  // 形态目录与出站身份预览都由后端算,前端不复制 UA 拼装/版本配对规则。
+  // The shape catalog and the outbound identity preview are both computed by the backend; the frontend does not duplicate the UA assembly or version pairing rules.
   const [codexUACatalog, setCodexUACatalog] = useState<CodexUserAgentCatalog | null>(null)
   const [codexUAPreview, setCodexUAPreview] = useState<CodexUserAgentPreview | null>(null)
   const [codexUAPreviewError, setCodexUAPreviewError] = useState('')
@@ -2776,7 +2776,7 @@ export default function Settings() {
     let cancelled = false
     api.getCodexUserAgentCatalog()
       .then((catalog) => { if (!cancelled) setCodexUACatalog(catalog) })
-      .catch(() => { /* 目录拉不到只影响预设候选,表单仍可自由填写 */ })
+      .catch(() => { /* Failing to load the directory only affects preset candidates; the form can still be filled in freely */ })
     return () => { cancelled = true }
   }, [])
   useEffect(() => {
@@ -2902,7 +2902,7 @@ export default function Settings() {
   const codexUAEffectiveAppName = (codexUserAgentConfig.app_name ?? '').trim() || codexUAKindSpec?.default_app_name || (codexUserAgentConfig.client_name ?? '').trim() || DEFAULT_CODEX_UA_CONFIG.client_name
   const codexUAAppNamePresetValue = codexUAAppNameOptions.some((option) => option.value === codexUAEffectiveAppName && option.value !== 'custom') ? codexUAEffectiveAppName : 'custom'
   const codexUAShowAppNamePreset = codexUAKind !== 'custom' && !codexUAAppFollowsCLI && (codexUAKindSpec?.app_names?.length ?? 0) > 1
-  // 默认版本取后端预览，与出站使用相同的配对选择器。
+  // The default version comes from the backend preview, using the same pairing selector as outbound requests.
   const codexUAClientVersionPlaceholder = codexUAPreviewError
     ? t('settings.codexClientVersions.unavailable')
     : codexUAPreview?.persona?.version || t('settings.codexUAPreviewLoading')
@@ -2917,7 +2917,7 @@ export default function Settings() {
     const current = parseCodexUserAgentConfig(settingsFormRef.current.codex_user_agent_config)
     const parsed = Number(text)
     const weight = text.trim() === '' || !Number.isFinite(parsed) ? 0 : Math.max(0, Math.floor(parsed))
-    // 首次编辑时把其余形态从默认配比补齐,避免只填一项就把别的形态全部清零。
+    // On first edit, fill in the other shapes from the default ratio, so that filling in one item does not zero out all the other shapes.
     updateCodexUserAgentConfig({ pool_mix: { ...codexUADefaultPoolMix, ...(current.pool_mix ?? {}), [kind]: weight } })
   }, [codexUADefaultPoolMix, updateCodexUserAgentConfig])
   const dirtyKeys = useMemo(() => {
@@ -2943,7 +2943,7 @@ export default function Settings() {
     if (!persistedSettings) return
     setSettingsForm((form) => ({ ...form, [field]: persistedSettings[field] }))
   }, [persistedSettings])
-  // 有未保存改动时保存按钮才是主色；没改动也保留可点，脏检查漏判时用户仍能强制保存。
+  // The save button uses the primary color only when there are unsaved changes; it stays clickable even with no changes, so users can still force a save if the dirty check misses something.
   const renderSaveButton = (className?: string) => (
     <Button
       className={className}
@@ -2987,7 +2987,7 @@ export default function Settings() {
   const modelPanelOtherDirtyCount = dirtyCount - (modelPanelDirty ? 1 : 0)
   const settingsNavRef = useRef<HTMLElement | null>(null)
 
-  // 切换 Tab 后要定位的 section id：面板内容在下一次渲染才挂载，滚动动作放到 effect 里。
+  // The section id to scroll to after switching tabs: the panel content only mounts on the next render, so the scroll action goes into an effect.
   const pendingSectionRef = useRef<string | null>(null)
   const selectTab = useCallback(
     (tab: SettingsTabKey, sectionId?: string) => {
@@ -3011,14 +3011,14 @@ export default function Settings() {
     document.getElementById(sectionId)?.scrollIntoView({ behavior: 'smooth', block: 'start' })
   }, [activeTab])
 
-  // 兼容旧的 #settings-xxx 锚点深链：首次进入时把锚点映射到对应 Tab。
+  // Compatibility for old #settings-xxx anchor deep links: on first entry, map the anchor to the matching tab.
   useEffect(() => {
     if (tabParam) return
     const legacy = LEGACY_SECTION_TABS[location.hash.replace(/^#/, '')]
     if (legacy) selectTab(legacy)
   }, [location.hash, selectTab, tabParam])
 
-  // 当前 Tab 变化时，把对应 pill 滚进顶栏可视区（窄屏横向滚动导航）。
+  // When the current tab changes, scroll its pill into view in the top bar (horizontal scrolling navigation on narrow screens).
   useEffect(() => {
     const nav = settingsNavRef.current
     if (!nav) return
@@ -3064,7 +3064,7 @@ export default function Settings() {
           }
         />
 
-        {/* Tab 栏 + 分区目录一起跟随页面流、滚动时粘在顶部，不再用 fixed 悬浮盖住内容 */}
+        {/* The tab bar and section directory flow with the page and stick to the top when scrolling; they no longer use fixed positioning to float over content */}
         <div className="sticky top-2 z-30 mb-5 space-y-2.5 lg:top-3">
           <nav
             ref={settingsNavRef}
@@ -3457,7 +3457,7 @@ export default function Settings() {
                   </div>
                 </div>
               </SettingsCard>
-              {/* 调度策略跨渠道共用，归在通用设置；这里只做导流，避免用户在 Codex 页找不到。 */}
+              {/* The scheduling policy is shared across channels and belongs in general settings; this is only a pointer, so users do not miss it on the Codex page. */}
               <div className="flex flex-wrap items-center justify-between gap-3 rounded-xl border border-dashed border-border bg-muted/20 px-4 py-3">
                 <div className="flex min-w-0 items-center gap-3">
                   <div className="flex size-8 shrink-0 items-center justify-center rounded-lg bg-muted/70 text-muted-foreground ring-1 ring-border/60">
@@ -3680,7 +3680,7 @@ export default function Settings() {
                 </div>
               </SettingsCard>
 
-              {/* 三个只有一个开关的兼容项合并成一张卡逐行排列，说明外显；拆成三张窄卡时开关会被挤成半宽折行。 */}
+              {/* The three compatibility items that each have only one switch are merged into one card, one row each, with descriptions shown directly; split into three narrow cards, the switches would be squeezed to half width and wrap. */}
               <SettingsCard title={t('settings.codexCompatToggles')} description={t('settings.codexCompatTogglesDesc')} icon={<Layers className="size-4" />}>
                 <div className={SETTINGS_ROW_LIST}>
                   <SettingField
@@ -3862,10 +3862,10 @@ export default function Settings() {
                     />
                   </SettingField>
 
-                  {/* 可视化预算分配比例条 (Memory Allocation Bar) */}
+                  {/* Visual budget allocation ratio bar (Memory Allocation Bar) */}
                   <div className="rounded-xl border border-border/70 bg-muted/20 p-3.5 space-y-2.5">
                     <div className="flex items-center justify-between text-xs font-semibold">
-                      <span className="text-foreground">内存缓存分配预览 (Memory Allocation)</span>
+                      <span className="text-foreground">Memory cache allocation preview (Memory Allocation)</span>
                       <span className="font-mono text-primary font-bold">{responseCacheBudget.totalMiB} MiB</span>
                     </div>
                     <div className="flex h-2.5 w-full overflow-hidden rounded-full bg-muted shadow-inner">
@@ -3892,7 +3892,7 @@ export default function Settings() {
                       </div>
                       <div className="flex items-center gap-1.5">
                         <span className="size-2 rounded-full bg-emerald-500/60" />
-                        <span>常驻热点池: <strong className="text-foreground font-mono">{Math.max(0, responseCacheBudget.totalMiB - responseCacheBudget.entryMiB - responseCacheBudget.reconstructMiB)} MiB</strong></span>
+                        <span>Resident hot pool: <strong className="text-foreground font-mono">{Math.max(0, responseCacheBudget.totalMiB - responseCacheBudget.entryMiB - responseCacheBudget.reconstructMiB)} MiB</strong></span>
                       </div>
                     </div>
                   </div>
@@ -4006,7 +4006,7 @@ export default function Settings() {
                           value={settingsForm.codex_min_cli_version}
                           onChange={(e: ChangeEvent<HTMLInputElement>) => setSettingsForm(f => ({ ...f, codex_min_cli_version: e.target.value }))}
                         />
-                        {/* 一键把阈值对齐到当前同步到的 CLI 版本；只改表单值,随「保存设置」落库 */}
+                        {/* One click aligns the threshold to the CLI version currently synced; it only changes the form value and is saved with "Save settings" */}
                         <Button
                           size="sm"
                           variant="outline"
@@ -4543,7 +4543,7 @@ export default function Settings() {
                         {t('settings.backgroundImageEmpty')}
                       </div>
                     )}
-                    {/* 毛玻璃效果实时预览卡片 (Glassmorphism Live Preview Overlay) */}
+                    {/* Frosted-glass live preview card (Glassmorphism Live Preview Overlay) */}
                     <div
                       className="absolute inset-x-4 bottom-4 flex items-center justify-between rounded-xl border border-white/20 bg-background/60 p-3 shadow-lg backdrop-blur-md dark:border-white/10 dark:bg-black/50"
                       style={{
@@ -4562,7 +4562,7 @@ export default function Settings() {
                         )}
                         <div className="space-y-0.5">
                           <div className="text-xs font-bold leading-none text-foreground">{settingsForm.site_name || 'CodexProxy'}</div>
-                          <div className="text-[10px] text-muted-foreground">毛玻璃预览 Glass Effect</div>
+                          <div className="text-[10px] text-muted-foreground">Frosted glass preview Glass Effect</div>
                         </div>
                       </div>
                       <Badge variant="outline" className="text-[10px] border-primary/30 bg-primary/10 text-primary font-mono">
@@ -5240,7 +5240,7 @@ export default function Settings() {
                       <p className="mt-1 text-xs leading-relaxed text-muted-foreground">{t('settings.resinDesc')}</p>
                     </div>
                   ) : null}
-                  {/* 三套出口并存时必须明说谁在生效(issue #679):Resin 是整层覆盖,不是叠加。 */}
+                  {/* When three egress options coexist, it must be stated clearly which one is in effect (issue #679): Resin is a full-layer override, not an overlay. */}
                   <div
                     className={cn(
                       'rounded-lg border px-3 py-2 text-xs leading-relaxed',
@@ -5288,7 +5288,7 @@ export default function Settings() {
                     <div className="rounded-xl border border-primary/20 bg-primary/5 p-4 space-y-4">
                       <div className="flex items-center gap-2 font-semibold text-foreground text-sm border-b border-primary/10 pb-2.5">
                         <Cloud className="size-4 text-primary" />
-                        <span>对象存储凭证 (S3 Compatible Storage)</span>
+                        <span>Object storage credentials (S3 Compatible Storage)</span>
                       </div>
                       <div className={SETTINGS_FIELD_GRID_3}>
                         <SettingField label={t('settings.imageS3Endpoint')} description={t('settings.imageS3EndpointDesc')}>
@@ -5410,15 +5410,15 @@ export default function Settings() {
                     <div className="flex flex-wrap items-center justify-between gap-3 rounded-xl border border-destructive/20 bg-destructive/5 p-3.5 text-xs">
                       <div className="flex items-center gap-2 font-medium text-foreground">
                         <ShieldAlert className="size-4 text-destructive" />
-                        <span>系统防护与审计 (Security Guard)</span>
+                        <span>System protection and audit (Security Guard)</span>
                       </div>
                       <div className="flex items-center gap-2">
                         <Badge variant={settingsForm.prompt_filter_enabled ? 'default' : 'outline'} className="text-[11px] gap-1">
                           <span className={`size-1.5 rounded-full ${settingsForm.prompt_filter_enabled ? 'bg-emerald-400' : 'bg-amber-400'}`} />
-                          Prompt 风控: {settingsForm.prompt_filter_enabled ? '已开启' : '未开启'}
+                          Prompt risk control: {settingsForm.prompt_filter_enabled ? 'Enabled' : 'Disabled'}
                         </Badge>
                         <Badge variant="secondary" className="text-[11px] uppercase font-mono">
-                          模式: {settingsForm.prompt_filter_mode}
+                          Mode: {settingsForm.prompt_filter_mode}
                         </Badge>
                       </div>
                     </div>
@@ -5484,14 +5484,14 @@ export default function Settings() {
                 </SettingsCard>
 
                 <SettingsCard
-                  title="模型输出失控防护"
-                  description="全局实时监控工具参数持续重复、细碎 delta 泛洪与通道/请求级字节预算超限"
+                  title="Model output runaway protection"
+                  description="Globally and in real time monitors for tool arguments that keep repeating, floods of tiny deltas, and channel- or request-level byte budget overruns"
                   icon={<ShieldAlert className="size-4" />}
                   tone={settingsForm.output_guard_enabled ? 'default' : 'danger'}
                   badge={
                     <Badge variant={settingsForm.output_guard_enabled ? 'outline' : 'destructive'} className="text-[11px] gap-1">
                       <span className={`size-1.5 rounded-full ${settingsForm.output_guard_enabled ? 'bg-emerald-400' : 'bg-red-500'}`} />
-                      {settingsForm.output_guard_enabled ? '已启用全局防护' : '已关闭 (高风险)'}
+                      {settingsForm.output_guard_enabled ? 'Global protection enabled' : 'Turned off (high risk)'}
                     </Badge>
                   }
                   footer={
@@ -5507,7 +5507,7 @@ export default function Settings() {
                         }}
                       >
                         <RotateCcw className="size-3" />
-                        恢复默认防护
+                        Restore default protection
                       </Button>
                     </div>
                   }
@@ -5517,21 +5517,21 @@ export default function Settings() {
                       <div className="rounded-xl border border-destructive/30 bg-destructive/10 p-3.5 text-xs text-destructive flex items-start gap-2">
                         <ShieldAlert className="size-4 shrink-0 mt-0.5" />
                         <div>
-                          <p className="font-semibold">高风险操作警告：失控防护已全局关闭</p>
-                          <p className="opacity-90">关闭后模型失控生成死循环、重复代码或细碎 arguments delta 时，将直接击穿代理并在下游引发 O(n²) 全量重解析雪崩。仅用于临时诊断，请尽快重新开启！</p>
+                          <p className="font-semibold">High-risk operation warning: runaway protection is turned off globally</p>
+                          <p className="opacity-90">With protection off, if the model gets stuck in a generation loop, emits repeated code, or produces tiny arguments deltas, it will break straight through the proxy and cause an O(n²) full re-parse avalanche downstream. Use this only for temporary diagnosis, and turn it back on as soon as possible!</p>
                         </div>
                       </div>
                     )}
 
                     <div className="rounded-xl border bg-muted/20 p-3.5 text-xs text-muted-foreground space-y-1.5">
-                      <p className="font-medium text-foreground">开启前请注意</p>
+                      <p className="font-medium text-foreground">Before turning it on, note the following</p>
                       <ul className="list-disc pl-4 space-y-1">
-                        <li><span className="font-medium text-foreground">CPU 开销</span>：开启后需对每条模型输出流做重复扫描与预算记账，会带来额外 CPU 占用（1 MiB 单流实测约 1%–2%，40 并发下的净增已落入测量噪声）。高吞吐部署建议开启后持续观察 CPU 与吞吐。</li>
-                        <li><span className="font-medium text-foreground">命中行为</span>：触发即终止本次上游生成并返回 502（错误码 <code className="font-mono">model_output_guard_triggered</code>），已下发内容不回滚；Guard 命中<b>不会自动重试</b>（确定性失控，重试只会重复消耗）。</li>
-                        <li><span className="font-medium text-foreground">与断流区分</span>：上游断流（<code className="font-mono">upstream_stream_break</code>）属瞬态故障，消息带 <code className="font-mono">status 502</code> 标记，客户端会自动重试；Guard 命中则不同。</li>
-                        <li><span className="font-medium text-foreground">生效范围</span>：全局生效（所有账号与模型），默认关闭；关闭 Guard 不会关闭 framing 硬上限（单行/事件 8 MiB、WS 48 MB）。</li>
-                        <li><span className="font-medium text-foreground">误伤处理</span>：正常超长输出被拦截时，可调高「工具参数增量上限」（≤65536）或「通道字节上限」；保存后约 5 秒内热生效，无需重启。</li>
-                        <li><span className="font-medium text-foreground">数据安全</span>：拦截原因仅记录在服务端，下游只收到稳定公开错误码与通用文案（不含模型原文、工具路径、prompt 或密钥）。</li>
+                        <li><span className="font-medium text-foreground">CPU overhead</span>: once enabled, every model output stream is scanned for repetition and has its budget accounted for, which adds CPU usage (measured at about 1%–2% for a single 1 MiB stream; the net increase at 40 concurrent streams falls within measurement noise). For high-throughput deployments, keep watching CPU and throughput after enabling.</li>
+                        <li><span className="font-medium text-foreground">Hit behavior</span>: a hit immediately ends this upstream generation and returns 502 (error code <code className="font-mono">model_output_guard_triggered</code>); content already sent is not rolled back; a Guard hit <b>does not retry automatically</b> (the runaway is deterministic, so a retry would only repeat the cost).</li>
+                        <li><span className="font-medium text-foreground">Difference from stream breaks</span>: an upstream stream break (<code className="font-mono">upstream_stream_break</code>) is a transient failure, its message carries a <code className="font-mono">status 502</code> marker, and clients retry it automatically; a Guard hit is different.</li>
+                        <li><span className="font-medium text-foreground">Scope</span>: applies globally (all accounts and models), off by default; turning off the Guard does not turn off the framing hard limits (8 MiB per line/event, 48 MB for WS).</li>
+                        <li><span className="font-medium text-foreground">False positives</span>: if normal, very long output is blocked, raise the &quot;Tool argument delta limit&quot; (≤65536) or the &quot;Per-channel byte limit&quot;; changes take effect within about 5 seconds after saving, with no restart needed.</li>
+                        <li><span className="font-medium text-foreground">Data safety</span>: the block reason is recorded only on the server; downstream receives only a stable public error code and a generic message (no model text, tool paths, prompts or keys).</li>
                       </ul>
                     </div>
 
@@ -5543,8 +5543,8 @@ export default function Settings() {
 
                     <div className="flex items-center justify-between p-3 rounded-lg border bg-muted/20">
                       <div>
-                        <div className="text-sm font-medium">启用失控输出防护</div>
-                        <div className="text-xs text-muted-foreground">全局实时检测持续短周期重复、细碎 arguments 泛洪与字节预算超额并前置切断</div>
+                        <div className="text-sm font-medium">Enable runaway output protection</div>
+                        <div className="text-xs text-muted-foreground">Detects, globally and in real time, persistent short-period repetition, floods of tiny arguments deltas, and byte budget overruns, and cuts them off early</div>
                       </div>
                       <Switch
                         checked={settingsForm.output_guard_enabled}
@@ -5557,8 +5557,8 @@ export default function Settings() {
 
                     <div className={SETTINGS_FIELD_GRID}>
                       <SettingField
-                        label="工具参数字节上限 (KiB)"
-                        description="单次工具调用完整参数序列化字节硬上限（默认 256 KiB，范围 16 KiB..4096 KiB）"
+                        label="Tool argument byte limit (KiB)"
+                        description="Hard cap on the full serialized byte size of one tool call's arguments (default 256 KiB, range 16 KiB..4096 KiB)"
                       >
                         <DraftNumberInput
                           min={16}
@@ -5574,8 +5574,8 @@ export default function Settings() {
                       </SettingField>
 
                       <SettingField
-                        label="工具非空 Delta 数量上限"
-                        description="限制细碎 arguments delta 触发下游高频重解析事件的次数（默认 4096，范围 256..65536）"
+                        label="Tool non-empty delta count limit"
+                        description="Limits how many tiny arguments deltas can trigger high-frequency downstream re-parse events (default 4096, range 256..65536)"
                       >
                         <DraftNumberInput
                           min={256}
@@ -5591,8 +5591,8 @@ export default function Settings() {
                       </SettingField>
 
                       <SettingField
-                        label="单 Channel 字节上限 (KiB)"
-                        description="单 text/thinking 生成通道累计字节上限（默认 2048 KiB，范围 128 KiB..16384 KiB）"
+                        label="Per-channel byte limit (KiB)"
+                        description="Cumulative byte limit for one text/thinking generation channel (default 2048 KiB, range 128 KiB..16384 KiB)"
                       >
                         <DraftNumberInput
                           min={128}
@@ -5608,8 +5608,8 @@ export default function Settings() {
                       </SettingField>
 
                       <SettingField
-                        label="单请求语义预算 (KiB)"
-                        description={`一次请求内所有 channel 消耗的总语义字节硬上限（默认 ${bytesToMiB(DEFAULT_OUTPUT_GUARD_SETTINGS.output_guard_max_request_bytes)} MiB，范围 256 KiB..65536 KiB）`}
+                        label="Per-request semantic budget (KiB)"
+                        description={`Hard limit on the total semantic bytes consumed by all channels within one request (default ${bytesToMiB(DEFAULT_OUTPUT_GUARD_SETTINGS.output_guard_max_request_bytes)} MiB, range 256 KiB..65536 KiB)`}
                       >
                         <DraftNumberInput
                           min={256}
@@ -5629,7 +5629,7 @@ export default function Settings() {
               </SettingsSection>
 
               <SettingsSection id="settings-reference" title={t('settings.nav.reference')} description={t('settings.nav.referenceDesc')} icon={<Link2 className="size-4" />}>
-                {/* 只读参考表常驻展开：折叠起来用户找不到端点列表。 */}
+                {/* The read-only reference table stays expanded: if it were collapsed, users could not find the endpoint list. */}
                 <SettingsCard title={t('settings.apiEndpoints')} description={t('settings.nav.endpointsHint')} icon={<Link2 className="size-4" />}>
                     <div className="space-y-3">
                       <div className="flex flex-wrap items-center justify-between gap-2">
@@ -5716,7 +5716,7 @@ export default function Settings() {
           </div>
         </div>
 
-        {/* 只有手动保存字段有改动时才出现的底部操作条；开关/下拉类已自动保存，不需要它。 */}
+        {/* Bottom action bar that appears only when manually saved fields have changed; toggles and dropdowns auto-save, so they do not need it. */}
         {dirtyCount > 0 ? (
           <div
             role="status"

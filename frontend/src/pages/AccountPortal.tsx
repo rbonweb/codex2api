@@ -6,7 +6,6 @@ import {
   ClipboardPaste,
   Copy,
   ExternalLink,
-  Languages,
   Link2,
   Loader2,
   Lock,
@@ -25,8 +24,8 @@ import { cn } from '@/lib/utils'
 
 const EMAIL_RE = /^[^\s@]+@[^\s@]+\.[^\s@]+$/
 
-// 从用户粘贴的重定向地址(通常是打不开的 localhost:1455/auth/callback?code=...&state=...)
-// 中解析出 code 与 state。兼容整段 URL、仅 query 串、带 # 片段等多种粘贴形态。
+// Extracts code and state from the redirect URL the user pasted (usually an unreachable localhost:1455/auth/callback?code=...&state=...).
+// Handles several pasted shapes: a full URL, a bare query string, or one with a # fragment.
 function parseCodeState(input: string): { code: string; state: string } {
   const trimmed = input.trim()
   if (!trimmed) return { code: '', state: '' }
@@ -35,7 +34,7 @@ function parseCodeState(input: string): { code: string; state: string } {
   if (qIndex >= 0) {
     query = trimmed.slice(qIndex + 1)
   } else if (trimmed.includes('=')) {
-    // 粘贴的可能是不带 ? 的裸 query 串
+    // The pasted text may be a bare query string without a leading ?
     query = trimmed
   }
   const hashIndex = query.indexOf('#')
@@ -69,7 +68,7 @@ function StepBadge({ index, active, done }: { index: number; active: boolean; do
 }
 
 export default function AccountPortal() {
-  const { t, i18n } = useTranslation()
+  const { t } = useTranslation()
   const { siteName, siteLogo } = useBranding()
   const logoSrc = siteLogo || DEFAULT_SITE_LOGO
 
@@ -118,7 +117,7 @@ export default function AccountPortal() {
       const res = await api.generateAccountPortalAuthURL({ contact_email: contactEmail.trim() })
       setAuthUrl(res.auth_url)
       setSessionId(res.session_id)
-      // 换邮箱重新生成时清空上一轮授权码,避免误提交。
+      // Clear the previous authorization code when regenerating for a different email, to avoid submitting it by mistake.
       setPastedUrl('')
       setCode('')
       setState('')
@@ -168,7 +167,7 @@ export default function AccountPortal() {
       setCopied(true)
       window.setTimeout(() => setCopied(false), 2000)
     } catch {
-      // 忽略剪贴板失败
+      // Ignore clipboard failures
     }
   }
 
@@ -186,14 +185,6 @@ export default function AccountPortal() {
 
   const toolbar = (
     <div className="flex items-center gap-2">
-      <Button
-        variant="outline"
-        size="icon-sm"
-        onClick={() => i18n.changeLanguage(i18n.language === 'zh' ? 'en' : 'zh')}
-        title={i18n.language === 'zh' ? 'English' : '中文'}
-      >
-        <Languages className="size-4" />
-      </Button>
       <CinematicThemeSwitcher size="compact" />
     </div>
   )

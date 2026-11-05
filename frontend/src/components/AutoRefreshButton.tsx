@@ -6,9 +6,9 @@ import { Button } from "@/components/ui/button";
 import { autoRefreshCountdownStep } from "@/lib/autoRefreshCountdown";
 import { cn } from "@/lib/utils";
 
-// 刷新分裂按钮：左侧手动刷新，右侧下拉选择自动刷新间隔（0 = 关闭）。
-// 定时器与“刷新中”状态都留在组件内部，避免宿主大页面每轮额外重渲染。
-// 自动刷新只在上一轮完成后再排下一轮，页面处于后台时跳过。
+// Split refresh button: manual refresh on the left, a dropdown on the right to pick the auto-refresh interval (0 = off).
+// The timer and the "refreshing" state both stay inside the component, so the host page does not re-render extra on every round.
+// Auto-refresh only schedules the next round after the previous one completes, and is skipped while the page is in the background.
 export function AutoRefreshButton({
   onRefresh,
   onAutoRefresh,
@@ -19,7 +19,7 @@ export function AutoRefreshButton({
 }: {
   onRefresh: () => void;
   onAutoRefresh: () => Promise<unknown>;
-  // 可选间隔（秒），应包含 0 作为「关闭」。
+  // Optional intervals (seconds); should include 0 as "off".
   intervals: readonly number[];
   loadSeconds?: () => number;
   saveSeconds?: (seconds: number) => void;
@@ -32,13 +32,13 @@ export function AutoRefreshButton({
     return intervals.includes(initial) ? initial : 0;
   });
   const [running, setRunning] = useState(false);
-  // 距下一轮自动刷新的剩余秒数，每秒递减；只重渲染本按钮。
+  // Seconds remaining until the next auto-refresh, counting down each second; only re-renders this button.
   const [remaining, setRemaining] = useState(seconds);
   const onAutoRefreshRef = useRef(onAutoRefresh);
   useEffect(() => {
     onAutoRefreshRef.current = onAutoRefresh;
   }, [onAutoRefresh]);
-  // 手动刷新后从完整间隔重新倒计时；自动刷新进行中时由它结束后重排。
+  // After a manual refresh, the countdown restarts from the full interval; if an auto-refresh is in progress, it is rescheduled when that finishes.
   const restartCountdownRef = useRef<(() => void) | null>(null);
 
   useEffect(() => {
@@ -63,7 +63,7 @@ export function AutoRefreshButton({
         wait();
         return;
       }
-      // 页面在后台时不刷新，直接开始下一轮倒计时。
+      // Do not refresh while the page is in the background; start the next countdown directly.
       if (document.hidden) {
         restart();
         return;
@@ -73,7 +73,7 @@ export function AutoRefreshButton({
       try {
         await onAutoRefreshRef.current();
       } catch {
-        // 自动刷新失败不打扰用户，下一轮继续。
+        // An auto-refresh failure does not bother the user; the next round continues.
       } finally {
         refreshing = false;
         if (!stopped) setRunning(false);
@@ -115,7 +115,7 @@ export function AutoRefreshButton({
         <RefreshCw className={cn("size-3.5", running && "animate-spin")} />
         <span className="max-[380px]:hidden">{resolvedLabel}</span>
         {seconds > 0 ? (
-          // 固定最小宽度，秒数从两位变一位时按钮不跳动。
+          // Fixed minimum width, so the button does not jump when the seconds go from two digits to one.
           <span
             aria-hidden="true"
             className="min-w-[2.25rem] rounded bg-primary/10 px-1 text-center text-[11px] font-semibold tabular-nums text-primary"

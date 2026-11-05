@@ -77,7 +77,7 @@ export default function AccountTrendChart() {
 
   useEffect(() => { void fetchData() }, [fetchData])
 
-  // 15 秒自动刷新，与运维页一致
+  // Auto-refresh every 15 seconds, same as the operations page
   useEffect(() => {
     const timer = setInterval(() => { void fetchData() }, 15_000)
     return () => clearInterval(timer)
@@ -116,7 +116,7 @@ export default function AccountTrendChart() {
   return (
     <Card className="py-0">
       <CardContent className="p-6">
-        {/* 标题 + 时间范围切换 */}
+        {/* Title + time range switch */}
         <div className="flex items-start justify-between gap-4 flex-wrap mb-5">
           <div>
             <h3 className="text-base font-semibold text-foreground">
@@ -144,7 +144,7 @@ export default function AccountTrendChart() {
           </div>
         </div>
 
-        {/* 图表区域 */}
+        {/* Chart area */}
         <div className="h-[320px]">
           {loading && displayData.length === 0 ? (
             <div className="flex items-center justify-center h-full text-muted-foreground text-sm">

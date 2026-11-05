@@ -2,14 +2,14 @@ import AccountStatusBar from './AccountStatusBar'
 import { useTranslation } from 'react-i18next'
 import type { AccountHealthBucket } from '../types'
 
-// 「健康状态」条：把账号最近的请求成败分桶渲染成一排色块 + 成功率。
-// 移植自 CLIProxyAPI 的 ProviderStatusBar，改为 Tailwind 实现。
-// 数据来自后端 /api/accounts/health-bars（20 格 × 10 分钟 ≈ 最近 3.3 小时）。
+// "Health status" bar: renders the account's recent request success and failure buckets as a row of color blocks, plus the success rate.
+// Ported from ProviderStatusBar in CLIProxyAPI, reimplemented with Tailwind.
+// Data comes from the backend /api/accounts/health-bars (20 cells × 10 minutes ≈ the last 3.3 hours).
 
 interface StatusBlockDetail {
   success: number
   failure: number
-  rate: number // -1 表示该时段无请求（idle）
+  rate: number // -1 means there were no requests in this period (idle)
   startTime: number
   endTime: number
 }
@@ -21,7 +21,7 @@ interface StatusBarData {
   totalFailure: number
 }
 
-// 0 → 红(#ef4444) → 0.5 → 金黄(#facc15) → 1 → 绿(#22c55e) 的 RGB 线性插值。
+// RGB linear interpolation from 0 → red (#ef4444) → 0.5 → gold (#facc15) → 1 → green (#22c55e).
 const COLOR_STOPS = [
   { r: 239, g: 68, b: 68 },
   { r: 250, g: 204, b: 21 },
@@ -47,8 +47,8 @@ function formatClock(timestamp: number): string {
   return `${h}:${m}`
 }
 
-// statusBarDataFromBuckets 把后端的成败分桶（由旧到新）转换为渲染所需结构。
-// 桶数不足时在头部补空桶（与 endTime=now 对齐）。
+// statusBarDataFromBuckets converts the backend's success and failure buckets (oldest to newest) into the structure needed for rendering.
+// When there are too few buckets, empty buckets are padded at the head (aligned with endTime=now).
 function statusBarDataFromBuckets(
   buckets: AccountHealthBucket[],
   blockCount: number,

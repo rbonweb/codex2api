@@ -8,8 +8,8 @@ import {
 } from "../lib/accountOperationResults";
 import { operationProgressMessage } from "../lib/operationProgressMessage";
 
-// 批量操作（测试/删除/刷新）的流式进度：SSE 读取 + 右上角进度浮层状态机。
-// 从 Codex 账号页抽出，供账号页共用，确保进度条一致。
+// Streaming progress for batch operations (test / delete / refresh): SSE reading + the top-right progress overlay state machine.
+// Extracted from the Codex accounts page and shared by the account pages, so the progress bars stay consistent.
 
 const OPERATION_PROGRESS_FLUSH_INTERVAL_MS = 200;
 
@@ -75,7 +75,7 @@ export async function readOperationSSE(
       try {
         onEvent(JSON.parse(line.slice(6)) as BatchOperationEvent);
       } catch {
-        /* 忽略格式异常的进度帧 */
+        /* Ignore progress frames with a malformed format */
       }
     }
   }
@@ -118,20 +118,20 @@ export async function postAdminSSE(
 export interface UseOperationProgressResult {
   operationProgress: OperationProgressState | null;
   operationResults: AccountOperationResultsState | null;
-  // 发起一次流式批量操作，把进度事件驱动到右上角浮层；返回 complete 事件。
+  // Starts one streaming batch operation and drives progress events into the top-right overlay; returns the complete event.
   runStreamingOperation: (
     path: string,
     body: unknown,
     title: string,
   ) => Promise<BatchOperationEvent | null>;
-  // 直接向浮层喂一个合成进度事件。供非 SSE 的分片式操作(如文件导入按片
-  // 汇报)复用同一个右上角进度条,与流式批量操作视觉一致。
+  // Feeds a synthetic progress event directly into the overlay. For non-SSE chunked operations (such as file import by chunk
+  // reporting) to reuse the same top-right progress bar, visually consistent with streaming batch operations.
   reportOperationEvent: (title: string, event: BatchOperationEvent) => void;
   closeOperationProgress: () => void;
   closeOperationResults: () => void;
 }
 
-// useOperationProgress 封装批量操作的进度浮层状态机（含节流刷新与自动隐藏）。
+// useOperationProgress wraps the progress overlay state machine for batch operations (including throttled refresh and auto-hide).
 export function useOperationProgress(
   showOperationResults = false,
 ): UseOperationProgressResult {

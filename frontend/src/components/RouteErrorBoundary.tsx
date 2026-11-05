@@ -98,13 +98,13 @@ export default class RouteErrorBoundary extends Component<Props, State> {
     const chunkError = isChunkLoadError(error)
     const title =
       this.props.fallbackTitle ??
-      (chunkError ? '页面资源已更新，请刷新' : '页面渲染失败')
+      (chunkError ? 'Page resources have been updated, please refresh' : 'Page failed to render')
     const description =
       this.props.fallbackDescription ??
       (chunkError
-        ? '应用版本已更新，本地缓存的旧资源已不可用。点击下方按钮刷新页面以加载最新版本。'
-        : error.message || '发生了未知错误，请刷新页面或稍后重试。')
-    const retryLabel = this.props.retryLabel ?? '刷新页面'
+        ? 'The app version has been updated and the old locally cached resources are no longer usable. Click the button below to refresh the page and load the latest version.'
+        : error.message || 'An unknown error occurred. Please refresh the page or try again later.')
+    const retryLabel = this.props.retryLabel ?? 'Refresh page'
 
     return (
       <div

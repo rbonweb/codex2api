@@ -43,9 +43,9 @@ test('proxy scoring API exposes profile, async job, latest and history operation
 })
 
 test('proxy scoring docs describe embedded credentials, quota and safety boundaries', () => {
-  for (const token of ['/v3/', 'SCAM_KEY', '每日最多检测数', '受限 DNS 解析', '仅供参考']) {
+  for (const token of ['/v3/', 'SCAM_KEY', 'Max checks per day', 'restricted DNS resolution', 'for reference only']) {
     assert.match(docs, new RegExp(token))
   }
-  assert.doesNotMatch(docs, /页面访问口令/)
-  assert.doesNotMatch(docs, /评分服务 Base URL/)
+  assert.doesNotMatch(docs, /page access (passphrase|password|code)/i)
+  assert.doesNotMatch(docs, /scoring service Base URL/i)
 })

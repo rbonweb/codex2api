@@ -1,6 +1,6 @@
-// 自动刷新倒计时的一步：给定截止时间，返回当前显示的剩余秒数，以及到下一次
-// 秒数变化（或到达截止时间）还要等多久。按截止时间计算而不是累减，
-// 定时器延迟或页面被节流时显示仍然准确。
+// One step of the auto-refresh countdown: given a deadline, returns the remaining seconds to display, and how long until the next
+// change in the displayed seconds (or the deadline itself). It computes from the deadline instead of decrementing,
+// so the display stays accurate when timers are delayed or the page is throttled.
 export function autoRefreshCountdownStep(
   deadline: number,
   now: number,

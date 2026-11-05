@@ -9,7 +9,7 @@ export interface ToastState {
 
 export type AccountStatus = 'active' | 'ready' | 'cooldown' | 'error' | 'refreshing' | 'paused' | 'quota_paused' | string
 export type CodexClientMetadataMode = 'auto' | 'always' | 'off'
-/** Codex 官方出站请求的设备指纹收敛档位，默认 off（不收敛）。 */
+/** Device fingerprint convergence level for official outbound Codex requests, default off (no convergence). */
 export type CodexFingerprintMode = 'off' | 'device' | 'session' | 'single_machine_multi_window' | 'full'
 export type ModelCooldownMode = 'off' | 'fixed' | 'adaptive'
 
@@ -29,7 +29,7 @@ export interface StatsResponse {
   rate_limited: number
   error: number
   today_requests: number
-  // 按上游渠道(codex)拆分的账号与今日请求计数
+  // Account and today's request counts, split by upstream channel (codex)
   channels?: Record<string, StatsChannelCounts>
 }
 
@@ -47,7 +47,7 @@ export type SubscriptionBusinessStatus = 'active' | 'expiring_today' | 'expired'
 export type SubscriptionSyncState = 'confirmed' | 'pending' | 'failed' | 'unknown' | 'unsupported'
 export type SubscriptionAutoRenew = 'enabled' | 'disabled' | 'unsupported' | 'unknown'
 
-/** 订阅状态对象:业务状态(到期判定)与同步状态(数据新鲜度)分开表达。 */
+/** Subscription status object: business status (expiry check) and sync status (data freshness) are expressed separately. */
 export interface SubscriptionStatus {
   business_status: SubscriptionBusinessStatus
   plan?: string
@@ -89,7 +89,7 @@ export interface AccountRow {
   effective_workspace_id?: string
   plan_type: string
   subscription_expires_at?: string
-  /** 服务端按业务时区计算的订阅状态对象;不跟踪订阅的套餐(api/无到期时间的 free)缺省。 */
+  /** Subscription status object calculated by the server in the business timezone; omitted for plans that do not track a subscription (api, or free without an expiry time). */
   subscription?: SubscriptionStatus
   status: AccountStatus
   error_message?: string
@@ -106,7 +106,7 @@ export interface AccountRow {
   codex_client_metadata_mode?: CodexClientMetadataMode
   codex_fingerprint_mode?: CodexFingerprintMode
   timezone?: string
-  /** 账号页跳转地址;空值回退打开 base_url(api-base)。 */
+  /** Account page link; when empty, falls back to opening base_url (api-base). */
   account_href?: string
   custom_headers?: Record<string, string> | null
   health_tier?: string
@@ -121,7 +121,7 @@ export interface AccountRow {
   dynamic_concurrency_limit?: number
   allowed_api_key_ids?: number[]
   tags?: string[]
-  // 通用备注;自助提交的账号会带上「自助提交联系人: ...」这类说明。
+  // General note; accounts submitted through self-service carry a note such as "Self-service submission contact: ...".
   note?: string
   group_ids?: number[]
   scheduler_breakdown?: {
@@ -184,24 +184,24 @@ export interface AccountRow {
   dispatch_count_limited?: boolean
   usage_5h_detail?: AccountUsageWindow
   usage_7d_detail?: AccountUsageWindow
-  // 今日(服务器时区当天 0 点起)网关侧聚合,由 page-stats 补齐。
+  // Today's gateway-side aggregate (from 00:00 in the server timezone), filled in by page-stats.
   usage_today_detail?: AccountUsageWindow
   reset_5h_at?: ISODateString
   reset_7d_at?: ISODateString
   reset_spark_at?: ISODateString
-  // 长窗口(7d 槽)真实类型: "monthly"(free/team 月窗)/"weekly"/未知。
-  // free/team plan 的长窗口实为约 30 天,标签应显示 30d 而非 7d (issue #324)。
+  // Real type of the long window (7d slot): "monthly" (free/team monthly window), "weekly", or unknown.
+  // The long window of free/team plans is actually about 30 days, so the label should show 30d instead of 7d (issue #324).
   usage_window_7d_kind?: 'monthly' | 'weekly' | ''
   usage_window_7d_seconds?: number
   billed_5h?: number
   billed_7d?: number
-  // 官方结算口径的累计成本(美元)。来自 account_daily_usage 快照全窗口,
-  // 与 billed_7d(本地日志算的网关成本)是两套账,列表里并排展示。
+  // Cumulative cost (USD) on the official billing basis. From the full-window account_daily_usage snapshot,
+  // This is a separate ledger from billed_7d (gateway cost computed from local logs); the list shows them side by side.
   official_usd?: number
-  // 兼容旧 page-stats 字段；值与 official_usd 相同,不再表示「只含 7 天」。
+  // Kept for compatibility with the old page-stats field; the value is the same as official_usd and no longer means "7 days only".
   official_usd_7d?: number
-  // 官方快照已成功同步过但上游窗口内没有数据(官方统计有滞后)。
-  // 有这个标记时不再重拉 page-stats,胶囊显示静态"暂无数据"而非转圈。
+  // The official snapshot has synced successfully before, but the upstream window has no data (official stats lag behind).
+  // When this flag is set, page-stats is not fetched again, and the pill shows a static "No data" instead of a spinner.
   official_usage_synced?: boolean
   cooldown_until?: ISODateString
   cooldown_reason?: string
@@ -221,10 +221,10 @@ export interface AccountRow {
   locked?: boolean
   credit_enabled?: boolean
   credit_skip_usage_window?: boolean
-  // using_credits 与 status 并列：用量窗口已打满但积分顶着，status 仍是 active
-  // （确实可调度），这个标记只用于在状态徽章旁并列一个「使用积分」徽章。
+  // using_credits sits alongside status: the usage window is full but credits keep it going, so status is still active
+  // (it is truly schedulable). This flag is only used to show a "Using credits" badge next to the status badge.
   using_credits?: boolean
-  // 图片配额信息
+  // Image quota info
   image_quota_remaining?: number
   image_quota_total?: number
   today_used_count?: number
@@ -298,10 +298,10 @@ export interface AccountLiveStateResponse {
   accounts: Record<string, {
     active_requests: number
     occupied_requests: number
-    // 调度器当前实际执行的并发上限与配置值；旧后端不返回时保留列表里的值。
+    // Concurrency limit the scheduler is actually enforcing and the configured value; keep the list value when an older backend does not return it.
     dynamic_concurrency_limit?: number
     base_concurrency_effective?: number
-    // 运行时用量投影：旧后端缺 key 时保留列表值；显式 null 表示窗口已失效。
+    // Runtime usage projection: keep the list value when an older backend lacks the key; an explicit null means the window is no longer valid.
     status?: AccountStatus
     using_credits?: boolean
     plan_type?: string
@@ -318,7 +318,7 @@ export interface AccountLiveStateResponse {
     usage_percent_7d?: number | null
     reset_7d_at?: ISODateString | null
     codex_usage_updated_at?: ISODateString | null
-    // 最近一次被应用的 WS 配额帧；旧后端不返回，仅用于观测帧摄入。
+    // Most recently applied WS quota frame; older backends do not return it, and it is only used to observe frame ingestion.
     codex_usage_frame_at?: ISODateString
     codex_usage_frame_kind?: string
   }>
@@ -366,7 +366,7 @@ export interface AccountsPageParams {
   healthTier?: 'healthy' | 'warm' | 'risky' | 'banned' | 'attention'
   proxyUrl?: string
   proxyFilter?: 'all' | 'unbound' | 'this' | 'other'
-  /** 订阅状态筛选(Codex 渠道),值见 SUBSCRIPTION_FILTER_OPTIONS。 */
+  /** Subscription status filter (Codex channel); values are listed in SUBSCRIPTION_FILTER_OPTIONS. */
   subscription?: SubscriptionFilter
   sort?: 'requests' | 'today' | 'usage' | 'created_at' | 'updated_at' | 'scheduler_priority' | 'group' | 'risk' | 'dispatch_score' | 'latency_penalty' | 'unauthorized' | 'id'
   order?: 'asc' | 'desc'
@@ -456,7 +456,7 @@ export interface AccountOperationSelector {
   subscription?: SubscriptionFilter
 }
 
-// 单张「主动重置次数」券的有效期明细（issue #322）。
+// Validity details for a single "active reset count" coupon (issue #322).
 export interface ResetCreditItem {
   id: string
   granted_at?: ISODateString
@@ -468,14 +468,14 @@ export interface ResetCreditsDetailResponse {
   credits: ResetCreditItem[]
 }
 
-// AccountHealthBucket 是「健康状态」条单个时间窗口内的请求成败计数。
+// AccountHealthBucket holds the request success and failure counts for a single time window of the health status bar.
 export interface AccountHealthBucket {
   success: number
   failed: number
 }
 
-// AccountHealthBarsResponse 是 GET /api/accounts/health-bars 的响应。
-// buckets 按账号 ID（字符串）映射到由旧到新的 block_count 个时间桶。
+// AccountHealthBarsResponse is the response of GET /api/accounts/health-bars.
+// buckets maps each account ID (string) to block_count time buckets, ordered from oldest to newest.
 export interface AccountHealthBarsResponse {
   buckets: Record<string, AccountHealthBucket[]>
   block_count: number
@@ -496,12 +496,12 @@ export interface InviteResult {
   entrypoint: string
   emails: string[]
   invites?: InviteItem[]
-  // upstream_message 是上游 detail 里的原因（如「此人已收到推荐邀请」），
-  // failed_emails 是被拒的收件人。收件人级被拒与账号资格无关，别报成「账号无资格」。
+  // upstream_message is the reason from the upstream detail (for example "This person has already received a referral invite"),
+  // failed_emails are the rejected recipients. Rejection at the recipient level is unrelated to account eligibility, so do not report it as "account not eligible".
   upstream_message?: string
   failed_emails?: string[]
-  // challenged 为真表示被 Cloudflare 挑战拦下，不是上游的业务结论。
-  // 此时 status_code（通常 403）不能解读成「无资格」，应提示重试。
+  // challenged being true means the request was stopped by a Cloudflare challenge, not a business decision from upstream.
+  // In this case status_code (usually 403) must not be read as "not eligible"; show a retry hint instead.
   challenged?: boolean
   upstream?: unknown
   upstream_raw?: string
@@ -510,12 +510,12 @@ export interface InviteResult {
 export interface InviteResponse {
   ok: boolean
   result: InviteResult
-  // recorded_emails 是本次成功写入邀请记录的邮箱；失败响应中可能缺失。
+  // recorded_emails are the emails whose invite records were written successfully in this request; they may be missing from failed responses.
   recorded_emails?: string[]
 }
 
-// InviteRecipientRecord 是一个已被邀请的收件人。后端按 trim + lower(email)
-// 做唯一约束；前端保留原始 email 仅用于展示，其余字段用于辅助辨认来源与时间。
+// InviteRecipientRecord is one invited recipient. The backend enforces uniqueness on trim + lower(email)
+// as a unique constraint; the frontend keeps the original email for display only, and the other fields help identify the source and time.
 export interface InviteRecipientRecord {
   email: string
   state: string
@@ -527,7 +527,7 @@ export interface InviteRecipientsCheckResponse {
   recipients: InviteRecipientRecord[]
 }
 
-// InviteGrant 是一条奖励条目（邀请人 / 受邀人各一条）。
+// InviteGrant is one reward entry (one each for the inviter and the invitee).
 export interface InviteGrant {
   recipient?: string
   grant_type?: string
@@ -535,8 +535,8 @@ export interface InviteGrant {
   reward_id?: string
 }
 
-// InviteTimeFrameRule 是一条配额规则。capacity_type 区分两种独立上限：
-// send 是发送次数、reward 是能拿到奖励的次数（后者通常远小于前者）。
+// InviteTimeFrameRule is one quota rule. capacity_type distinguishes two independent limits:
+// send is the number of sends and reward is the number of times a reward can be earned (the latter is usually much smaller than the former).
 export interface InviteTimeFrameRule {
   invites_sent: number
   invites_total: number
@@ -545,8 +545,8 @@ export interface InviteTimeFrameRule {
   capacity_type?: string
 }
 
-// InviteEligibility 是 GET /api/accounts/:id/invite/eligibility 的 result。
-// remaining_* 缺失表示上游没给这个字段，与「明确为 0」不同，不要当成配额用尽。
+// InviteEligibility is the result of GET /api/accounts/:id/invite/eligibility.
+// A missing remaining_* field means upstream did not provide it, which differs from an explicit 0, so do not treat it as quota exhausted.
 export interface InviteEligibility {
   ok: boolean
   status_code: number
@@ -571,8 +571,8 @@ export interface InviteEligibility {
   upstream_raw?: string
 }
 
-// InviteCacheMeta 说明这份结果是现拉的还是缓存的，以及取回的时刻。
-// source=upstream 表示刚打过上游；runtime/snapshot 分别来自运行态缓存与数据库快照。
+// InviteCacheMeta says whether this result was fetched live or served from cache, and when it was fetched.
+// source=upstream means upstream was just queried; runtime and snapshot come from the runtime cache and the database snapshot respectively.
 export interface InviteCacheMeta {
   source: 'upstream' | 'runtime' | 'snapshot'
   observed_at?: string
@@ -585,7 +585,7 @@ export interface InviteEligibilityResponse {
   cache?: InviteCacheMeta
 }
 
-// InviteTrackingItem 是一条已发邀请记录。
+// InviteTrackingItem is one sent invite record.
 export interface InviteTrackingItem {
   referral_id?: string
   email?: string
@@ -616,9 +616,9 @@ export interface InviteTrackingResponse {
   cache?: InviteCacheMeta
 }
 
-// InviteGuideAccountPlan 是导入引导里单个账号的邀请收益评估。
-// state 语义：pending=还没探测出结果，eligible=有资格且还有奖励次数，
-// exhausted=有资格但本月奖励次数已用尽（发了也拿不到积分），ineligible=上游判定无资格。
+// InviteGuideAccountPlan is the invite earnings estimate for a single account in the import guide.
+// state meanings: pending = no probe result yet, eligible = eligible and reward attempts remain,
+// exhausted = eligible but this month's reward attempts are used up (sending still earns no credits), ineligible = upstream judged not eligible.
 export type InviteGuideState = 'pending' | 'eligible' | 'exhausted' | 'ineligible'
 
 export interface InviteGuideAccountPlan {
@@ -626,17 +626,17 @@ export interface InviteGuideAccountPlan {
   email?: string
   plan_type?: string
   state: InviteGuideState
-  // remaining_* 缺失表示上游没给这个字段，与「明确为 0」不同。
+  // A missing remaining_* field means upstream did not provide it, which differs from an explicit 0.
   remaining_send_capacity?: number
   remaining_reward_capacity?: number
-  // grant_amount 是邀请人单次能拿到的额度，不含受邀人那一份。
+  // grant_amount is the amount the inviter gets per invite, excluding the invitee's share.
   grant_amount?: number
-  // 本月发送用量，来自资格接口的 time_frame_rules。与下面的 invites_* 不是同一个
-  // 窗口：这是「月」，那是邀请记录的 90 天。
+  // This month's send usage, from time_frame_rules in the eligibility API. It is not the same
+  // window: this is the "month", and the invites_* window is the 90 days of invite records.
   monthly_sent?: number
   monthly_send_total?: number
-  // 近 90 天的实际邀请记录。字段缺失表示「没有跟踪数据」，与「确实是 0」不同——
-  // 导入探测只抓资格不抓记录，多数账号本来就没有这部分数据。
+  // Actual invite records from the last 90 days. A missing field means "no tracking data", which differs from "actually 0" —
+  // The import probe only fetches eligibility and not records, so most accounts never have this data to begin with.
   invites_sent?: number
   invites_accepted?: number
   invites_pending?: number
@@ -686,7 +686,7 @@ export interface AddAccountRequest {
   proxy_url: string
   allow_duplicate?: boolean
   custom_headers?: Record<string, string> | null
-  /** 添加/导入时直接绑定的账号分组；命中已存在账号时不改其分组。 */
+  /** Account group bound directly when adding or importing; when an existing account is matched, its group is not changed. */
   group_ids?: number[]
 }
 
@@ -696,11 +696,11 @@ export interface AddATAccountRequest {
   proxy_url: string
   allow_duplicate?: boolean
   custom_headers?: Record<string, string> | null
-  /** 添加/导入时直接绑定的账号分组；命中已存在账号时不改其分组。 */
+  /** Account group bound directly when adding or importing; when an existing account is matched, its group is not changed. */
   group_ids?: number[]
 }
 
-// Codex Agent Identity auth.json 导入（auth_mode=agentIdentity，动态签名，不存 AT/RT）。
+// Imports a Codex Agent Identity auth.json (auth_mode=agentIdentity, dynamic signing, AT/RT are not stored).
 export interface ImportAgentIdentityRequest {
   name?: string
   auth_json: string
@@ -713,7 +713,7 @@ export interface ImportAgentIdentityResponse {
   email?: string
 }
 
-// Agent Identity auth.json 文件批量导入(每项一个文件的原始 JSON 内容)。
+// Batch import of Agent Identity auth.json files (each item is the raw JSON content of one file).
 export interface AgentIdentityBatchImportRequest {
   files: string[]
   proxy_url?: string
@@ -819,8 +819,8 @@ export interface AccountModelStat {
   user_billed: number
 }
 
-// 官方结算用量（wham daily-workspace-usage-counts 落库后的快照）。
-// 与本地 usage_logs 聚合是两套口径：这份是 OpenAI 侧的权威账单数据。
+// Official settled usage (the snapshot stored from wham daily-workspace-usage-counts).
+// This is a different basis from the local usage_logs aggregate: this one is the authoritative billing data on the OpenAI side.
 export interface WhamDailyUsageSplit {
   client_id?: string
   model?: string
@@ -834,10 +834,10 @@ export interface WhamDailyUsageSplit {
   text_total_tokens?: number
 }
 
-// 单个 (model, speed) 在某一天的份额（wham daily-token-usage-breakdown 落库后按天换算）。
-// share 是当天内部的占比（0~1），只对这一天有意义，不能跨天相加；
-// credits/usd 是后端已按 share 分摊好的当天官方成本，跨天累加用这两个。
-// free 套餐 credits 恒为 0，但 share 仍然有效。speed 为 fast 即 priority 档。
+// Share of a single (model, speed) pair on a given day (from wham daily-token-usage-breakdown, converted per day after it is stored).
+// share is the proportion within that day (0 to 1), only meaningful for that day and not additive across days;
+// credits/usd are the official daily costs the backend has already split by share, so use these two for cross-day totals.
+// Free plans always have 0 credits, but share is still valid. speed of fast means the priority tier.
 export interface WhamDailyUsageBreakdownEntry {
   model: string
   speed: 'standard' | 'fast' | string
@@ -846,7 +846,7 @@ export interface WhamDailyUsageBreakdownEntry {
   usd: number
 }
 
-// 按产品入口（cli / desktop_app / vscode / exec / web …）的当天份额，语义同上。
+// Daily share by product entry point (cli / desktop_app / vscode / exec / web …), same meaning as above.
 export interface WhamDailyUsageSurfaceEntry {
   surface: string
   share: number
@@ -865,21 +865,21 @@ export interface WhamDailyUsageItem {
   cached_input_tokens: number
   output_tokens: number
   total_tokens: number
-  // settled=false 表示这天还在结算（当天 UTC 的行恒为未结算）：token 与 credits 可能
-  // 已经有值，但全天都在变，隔天回补后才稳定。
+  // settled=false means this day is still being settled (rows for the current UTC day are always unsettled): token and credits may
+  // already have values, but they keep changing all day and only stabilize after the next day's backfill.
   settled: boolean
   clients: WhamDailyUsageSplit[]
   models: WhamDailyUsageSplit[]
-  // 模型×速度拆分是否已同步到这一天；旧快照没有这三个字段。
+  // Whether the model × speed breakdown has been synced for this day; older snapshots do not have these three fields.
   breakdown_available?: boolean
   breakdown?: WhamDailyUsageBreakdownEntry[]
   surfaces?: WhamDailyUsageSurfaceEntry[]
 }
 
-// 当前重置周期的官方成本与额度估算。估算 = 本周期已用官方成本 ÷ 实时已用百分比；
-// 百分比是整数，区间按 ±0.5% 推算，低于 10% 时不可靠。
+// Official cost and quota estimate for the current reset period. Estimate = official cost used this period ÷ live used percentage;
+// the percentage is an integer, the range is estimated at ±0.5%, and it is unreliable below 10%.
 export interface WhamDailyUsageCycle {
-  // 窗口信息与实时百分比都拿到了；false 时看 reason。
+  // Both the window info and the live percentage were obtained; when false, check reason.
   available: boolean
   reason?: 'no_window' | 'window_stale' | 'no_percent' | 'no_credits' | 'percent_too_low' | string
   start_at?: string
@@ -890,7 +890,7 @@ export interface WhamDailyUsageCycle {
   used_percent_updated_at?: string
   used_credits: number
   used_usd: number
-  // 本周期内有官方结算数据的天数。
+  // Number of days in this period that have official settlement data.
   days: number
   estimate?: {
     usd: number
@@ -910,14 +910,14 @@ export interface WhamDailyUsageResponse {
     turns: number
   }
   credits_per_usd: number
-  // 上游可回溯的天数（首次同步的深回补窗口），更早的历史只存在于本地快照。
+  // Days upstream can backfill (the deep backfill window of the first sync); older history exists only in the local snapshot.
   retention_days: number
   last_synced_at?: string
-  // counts 端点刷新失败的原因（此时展示的是已存快照）。
+  // Reason the counts endpoint refresh failed (the stored snapshot is shown in this case).
   refresh_error?: string
-  // 仅模型拆分端点刷新失败：counts 已刷新成功，只是按模型的成本可能落后一轮。
+  // Only the per-model breakdown endpoint failed to refresh: counts refreshed successfully, but the per-model costs may lag by one round.
   breakdown_refresh_error?: string
-  // 当前重置周期（7d 或月窗）的已用官方成本与额度估算；只有拿到窗口信息的 Codex OAuth 账号才有。
+  // Official cost used and quota estimate for the current reset period (7d or monthly window); only Codex OAuth accounts that have window info have this.
   cycle?: WhamDailyUsageCycle
 }
 
@@ -1288,11 +1288,11 @@ export interface PromptFilterPatternQuarantine {
 }
 
 
-/** Codex 渠道当前由谁承担出站:resin 为整层覆盖,proxy_chain 表示按 账号 > 分组 > 代理池 > 全局 > 直连 解析。 */
+/** Who currently handles outbound traffic for the Codex channel: resin means a full-layer override, proxy_chain means resolution in the order account > group > proxy pool > global > direct. */
 export interface CodexEgressSummary {
   mode: 'resin' | 'proxy_chain' | string
   resin_enabled: boolean
-  /** 打码后的 Resin 地址(不含 token),仅用于展示。 */
+  /** Masked Resin address (token excluded), for display only. */
   resin_endpoint?: string
   resin_platform_name?: string
 }
@@ -1351,11 +1351,11 @@ export interface SystemSettings {
   codex_ws_busy_patience_sec: number
   codex_ws_stateless_slots: number
   codex_ws_downstream_keepalive_slots: number
-  // GitHub 访问（issue #522）：token 只写不读，响应仅回 configured
+  // GitHub access (issue #522): the token is write-only, and the response only returns configured
   github_token?: string
   github_token_configured?: boolean
   github_proxy_url: string
-  // Codex 过载熔断：窗口内 server_is_overloaded 占比达阈值自动暂停调度
+  // Codex overload circuit breaker: when the share of server_is_overloaded within the window reaches the threshold, scheduling is paused automatically
   codex_overload_pause_enabled: boolean
   codex_overload_threshold_percent: number
   codex_overload_pause_minutes: number
@@ -1381,7 +1381,7 @@ export interface SystemSettings {
   continuous_retry_status_codes: number[]
   continuous_retry_error_codes: string[]
   continuous_retry_max_duration_seconds: number
-  /** 新导入/新建 Codex 账号默认盖上的设备指纹收敛档位（off/device/session/full）。 */
+  /** Device fingerprint convergence level applied by default to newly imported or created Codex accounts (off/device/session/full). */
   codex_fingerprint_default_mode: string
   allow_remote_migration: boolean
   database_driver: string
@@ -1413,7 +1413,7 @@ export interface SystemSettings {
   reasoning_effort_models: string
   resin_url: string
   resin_platform_name: string
-  /** 后端权威的 Codex 出口摘要(只读):Resin 启用时代理池/分组/账号/全局代理对 Codex 渠道均不参与出站。 */
+  /** Authoritative Codex egress summary from the backend (read-only): when Resin is enabled, proxy pool, group, account and global proxies do not take part in outbound traffic for the Codex channel. */
   codex_egress?: CodexEgressSummary
   prompt_filter_enabled: boolean
   prompt_filter_mode: 'monitor' | 'warn' | 'block' | string
@@ -1446,7 +1446,7 @@ export interface SystemSettings {
   codex_synced_desktop_mac_build?: string
   codex_synced_desktop_windows_build?: string
   codex_synced_vscode_build?: string
-  /** 已验证的应用与内置 CLI 配对；只读，不随设置保存。 */
+  /** Verified app and built-in CLI pairings; read-only, not saved with settings. */
   codex_client_versions?: CodexClientVersionTarget[]
   codex_effective_cli_version?: string
   codex_user_agent_config: string
@@ -2521,8 +2521,8 @@ export interface CPAExportEntry {
   last_refresh: string
   refresh_token: string
   /**
-   * 代理三件套只在导出时勾选「包含代理配置」才出现。proxy_enabled 用可选布尔
-   * 区分「文件没带这个字段」（老文件，按启用处理）与「源端显式禁用」。
+   * The three proxy fields only appear when "Include proxy configuration" is ticked on export. proxy_enabled uses an optional boolean
+   * to distinguish "the file does not contain this field" (old files, treated as enabled) from "explicitly disabled at the source".
    */
   proxy_url?: string
   proxy_label?: string
@@ -2601,8 +2601,8 @@ export interface UsageAPIKeyStat {
   user_billed: number
 }
 
-// APIKeyTokenStat 是 /usage/api-keys 端点返回项，比 UsageAPIKeyStat 字段更细
-// （分列 input/output/cached token），且不限条数。
+// APIKeyTokenStat is an item returned by the /usage/api-keys endpoint, with more detailed fields than UsageAPIKeyStat
+// (input/output/cached tokens in separate columns), and the number of items is not limited.
 export interface APIKeyTokenStat {
   api_key_id: number
   api_key_name: string
@@ -2617,15 +2617,15 @@ export interface APIKeyTokenStat {
   user_billed: number
 }
 
-// APIKeyAccountGroup 是上游账号分组的精简展示项（Token 用量明细用）。
+// APIKeyAccountGroup is a condensed display item for upstream account groups (used for token usage details).
 export interface APIKeyAccountGroup {
   id: number
   name: string
   color: string
 }
 
-// APIKeyAccountStat 是 /usage/api-keys/:id/accounts 端点返回项：
-// 某个下游 Key 在时间区间内按上游账号拆分的用量（账号"按 Key 分解"的转置）。
+// APIKeyAccountStat is an item returned by the /usage/api-keys/:id/accounts endpoint:
+// Usage of a downstream Key within a time range, split by upstream account (the transpose of the account "breakdown by Key" view).
 export interface APIKeyAccountStat {
   account_id: number
   account_name: string
@@ -2698,7 +2698,7 @@ export interface UsageLog {
   upstream_turn_state?: string
   id: number
   account_id: number
-  // 上游渠道(codex),写入时固化;历史行回填,可能为空
+  // Upstream channel (codex), fixed at write time; historical rows are backfilled and may be empty
   channel?: string
   client_ip: string
   client_user_agent: string
@@ -2712,9 +2712,9 @@ export interface UsageLog {
   model: string
   effective_model: string
   daybreak_program?: string
-  /** 上游响应自报的模型名（未自报/历史行为空）。 */
+  /** Model name the upstream response reports for itself (empty when not reported or for historical rows). */
   upstream_response_model?: string
-  /** 三态：undefined/null=上游未自报无法比对；true/false=自报与实发是否一致。 */
+  /** Three states: undefined/null = upstream did not report, so it cannot be compared; true/false = whether the reported and actually sent models match. */
   upstream_model_mismatch?: boolean | null
   prompt_tokens: number
   completion_tokens: number
@@ -2872,13 +2872,13 @@ export interface OfficialPricingSyncResult {
 }
 
 /**
- * 单条「该 Key × 某账号分组 / 某账号」的用量上限（issue #439）。
- * 0 或缺省表示该维度不限；超额后默认把该 scope 的账号从调度候选中剔除。
+ * Usage limit for a single "this Key × an account group / an account" pair (issue #439).
+ * 0 or omitted means this dimension is unlimited; when exceeded, by default the accounts in this scope are removed from scheduling candidates.
  */
 export interface APIKeyScopeLimit {
   scope_type: 'group' | 'account'
   scope_id: number
-  /** skip: 剔除该 scope 后继续用其它账号（默认）；reject: 直接 429。 */
+  /** skip: remove this scope and keep using other accounts (default); reject: return 429 directly. */
   on_exhausted?: 'skip' | 'reject'
   cost_5h?: number
   cost_1d?: number
@@ -2889,15 +2889,15 @@ export interface APIKeyScopeLimit {
   token_7d?: number
   token_30d?: number
   requests_1d?: number
-  /** 该 Key 在这条 scope 上的最大在途请求数（进程内软上限）。 */
+  /** Maximum number of in-flight requests for this Key on this scope (soft limit within the process). */
   max_concurrency?: number
-  /** 累计额度：不随时间回落，用完需手动重置。 */
+  /** Cumulative quota: does not decline over time, and must be reset manually once used up. */
   quota_cost?: number
   quota_tokens?: number
   quota_requests?: number
 }
 
-/** 某条 scope 限额在某窗口的当前用量（GET /api/admin/keys/:id/scope-usage）。 */
+/** Current usage of a scope limit within a window (GET /api/admin/keys/:id/scope-usage). */
 export interface APIKeyScopeUsageWindow {
   window: string
   requests: number
@@ -2921,7 +2921,7 @@ export interface APIKeyScopeCumulativeUsage {
   exhausted: boolean
 }
 
-/** 一条 scope 预算被判定耗尽的运行态统计（网关进程内，重启清零）。 */
+/** Runtime statistics for a scope budget that was judged exhausted (in the gateway process, reset to zero on restart). */
 export interface APIKeyScopeSkipStat {
   requests: number
   first_at: string
@@ -2940,7 +2940,7 @@ export interface APIKeyScopeUsageItem {
   skips?: APIKeyScopeSkipStat
 }
 
-/** 列表页用的 scope 预算概览（只给最紧的那个窗口）。 */
+/** Scope budget overview for the list page (shows only the tightest window). */
 export interface APIKeyScopeSummaryItem {
   scope_type: 'group' | 'account'
   scope_id: number
@@ -2988,21 +2988,21 @@ export interface APIKeyLimits {
   cost_limit_5h?: number
   cost_limit_7d?: number
   cost_limit_30d?: number
-  /** 自然日(服务器本地时区)金额上限,零点清零;与滑动窗口语义不同(issue #460)。 */
+  /** Calendar-day amount limit (server local timezone), reset at midnight; semantics differ from a sliding window (issue #460). */
   cost_limit_daily?: number
   token_limit_5h?: number
   token_limit_7d?: number
   token_limit_30d?: number
   token_limit_daily?: number
   disable_image_generation?: boolean
-  /** 图片工具策略：""/"allow" 放行、"strip" 剥离后继续文本请求、"block" 命中即 403。 */
+  /** Image tool policy: ""/"allow" lets it through, "strip" removes images and continues with the text request, "block" returns 403 on a match. */
   image_generation_policy?: "allow" | "strip" | "block"
   upstream_channel?: UpstreamChannel
-  /** 允许该 Key 使用 ChatGPT Live（/v1/live）。新建自动/Codex 渠道 Key 默认开启。 */
+  /** Allows this Key to use ChatGPT Live (/v1/live). Newly created auto/Codex channel Keys have it enabled by default. */
   allow_live?: boolean
-  /** 外部调度模式（issue #831）：请求用 X-Codex2API-Account-ID 指定账号，网关不选号、不换号、不重试。 */
+  /** External scheduling mode (issue #831): requests pick the account with X-Codex2API-Account-ID, and the gateway does not pick, switch or retry accounts. */
   external_scheduler?: boolean
-  /** 分组 / 账号维度的用量预算（issue #439）。 */
+  /** Usage budget at the group / account level (issue #439). */
   scope_limits?: APIKeyScopeLimit[]
   /** Fixed weekly request budgets shared by models matching each rule. */
   model_request_limits?: APIKeyModelRequestLimit[]
@@ -3054,7 +3054,7 @@ export interface PromptFilterNewAPIBinding {
   previous_secret_active: boolean
   previous_secret_expires_at?: ISODateString | null
   updated_at: ISODateString
-  /** 仅在创建或轮换成功的响应中出现，列表和详情接口不会回显明文。 */
+  /** Only appears in responses to a successful create or rotate; the list and detail endpoints never return the plain text. */
   secret?: string
 }
 
@@ -3132,9 +3132,9 @@ export interface PublicAPIKeyWindowUsage {
   requests: number
   tokens: number
   user_billed: number
-  /** 窗口内最早一笔用量时间(无用量时缺省)。 */
+  /** Time of the earliest usage within the window (omitted when there is no usage). */
   oldest_at?: ISODateString
-  /** fixed=自然日固定窗口(reset_at 清零);sliding=滑动窗口(decay_at 开始回落)。 */
+  /** fixed = fixed calendar-day window (reset to zero at reset_at); sliding = sliding window (starts declining at decay_at). */
   window_kind: 'fixed' | 'sliding'
   reset_at?: ISODateString
   decay_at?: ISODateString
@@ -3369,13 +3369,13 @@ export interface OAuthURLResponse {
   session_id: string
 }
 
-// 公开账号自助门户:生成授权链接的响应。
+// Public account self-service portal: response for generating an authorization link.
 export interface AccountPortalAuthURLResponse {
   auth_url: string
   session_id: string
 }
 
-// 公开账号自助门户:提交授权码的响应。
+// Public account self-service portal: response for submitting an authorization code.
 export interface AccountPortalSubmitResponse {
   message: string
 }
@@ -3403,7 +3403,7 @@ export interface ObservedInstructionsSample {
   observed_at: string
 }
 
-// Codex User-Agent 形态目录(设置页搭配选择)与出站身份预览。
+// Codex User-Agent shape catalog (paired selection on the settings page) and outbound identity preview.
 export interface CodexUserAgentCatalogOption {
   value: string
   weight: number

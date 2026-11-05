@@ -2,12 +2,12 @@ import { cn } from "@/lib/utils";
 import type { UpstreamChannel } from "@/types";
 
 /**
- * 渠道品牌图标（Codex）。
+ * Channel brand icon (Codex).
  *
- * 使用 `@lobehub/icons-static-svg`，对齐 `@lobehub/icons` 的 Codex.Avatar 彩色方案，
- * 但不引入 antd / @lobehub/ui peer deps。
+ * Uses `@lobehub/icons-static-svg`, aligned with the Codex.Avatar color scheme of `@lobehub/icons`,
+ * but does not pull in antd / @lobehub/ui peer deps.
  *
- * - Codex：`codex-color.svg`（白底圆角 + 紫蓝渐变 mark，即 Codex.Avatar）
+ * - Codex: `codex-color.svg` (white rounded background + purple-blue gradient mark, i.e. Codex.Avatar)
  */
 const ICON_URLS = import.meta.glob(
   ["../../node_modules/@lobehub/icons-static-svg/icons/codex-color.svg"],

@@ -75,7 +75,7 @@ test("final diagnostics are recognised by duration_ms only", () => {
   assert.equal(formatCodexTestMS(undefined), "—");
 });
 
-test("账号测连只在点击后发送，编辑模型和内容不会自动重测", () => {
+test("account connection test is sent only after a click; editing the model and content does not retest automatically", () => {
   const source = readFileSync(new URL("../components/TestConnectionModal.tsx", import.meta.url), "utf8");
   const file = ts.createSourceFile("TestConnectionModal.tsx", source, ts.ScriptTarget.Latest, true, ts.ScriptKind.TSX);
   let requests = 0;

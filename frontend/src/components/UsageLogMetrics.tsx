@@ -23,8 +23,8 @@ type UsageMetricLog = {
 const usageTableMonoClass = 'font-mono text-[13px] tabular-nums'
 const usageTableBadgeClass = 'text-[13px]'
 
-// 缓存写入图标:取 Lucide (ISC) 的 database-plus,与读取用的 DatabaseZap 成对。
-// 锁定的 lucide-react 1.0.1 还没收录它,升级前在这里按同一路径注册。
+// Cache write icon: uses database-plus from Lucide (ISC), paired with DatabaseZap for reads.
+// The pinned lucide-react 1.0.1 does not include it yet; register it here along the same path before upgrading.
 const DatabasePlus = createLucideIcon('database-plus', [
   ['path', { d: 'M19 16v6', key: 'tddt3s' }],
   ['path', { d: 'M21 12.536V5', key: 'zeza6i' }],
@@ -55,7 +55,7 @@ export function UsageCacheBadges({ log, align = 'end' }: { log: UsageMetricLog; 
     h1: formatTokens(tokens.cacheWrite1hTokens, true),
   })
 
-  // 读/写两枚徽章横排(空间不够再换行),不再竖着堆叠把整行撑高
+  // The read and write badges sit side by side (wrap when there is not enough space) instead of stacking vertically and making the row taller.
   return (
     <div className={cn('flex flex-wrap items-center gap-1', align === 'start' ? 'justify-start' : 'justify-end')}>
       {tokens.cacheReadTokens > 0 && (
@@ -95,7 +95,7 @@ export function TokensPerSecCell({ log }: { log: UsageMetricLog }) {
   )
 }
 
-/** 首字 + 总耗时聚合列：横向双色胶囊，避免把整行撑高。 */
+/** Aggregated column for first token + total time: horizontal two-color pills, so the row does not get taller. */
 export function TimingCell({ log }: { log: UsageMetricLog }) {
   const { t } = useTranslation()
   const firstMs = log.first_token_ms || 0

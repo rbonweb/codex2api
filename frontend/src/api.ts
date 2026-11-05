@@ -134,7 +134,7 @@ export function resetAdminAuthState() {
   window.dispatchEvent(new Event(ADMIN_AUTH_REQUIRED_EVENT))
 }
 
-// RequestInit 扩展:timeoutMs 可选,开启后到时自动 abort 请求。
+// RequestInit extension: timeoutMs is optional; when set, the request is aborted automatically when the time is up.
 type RequestOptions = RequestInit & { timeoutMs?: number }
 
 export class AdminAPIError extends Error {
@@ -178,8 +178,8 @@ async function request<T>(path: string, options: RequestOptions = {}): Promise<T
     headers.set('X-Admin-Key', adminKey)
   }
 
-  // 可选的客户端超时:调用方通过 timeoutMs 显式开启,不传则保持原有“无超时”行为,
-  // 避免影响下载/导出等长耗时接口。仅在调用方未自带 signal 时接管中止逻辑。
+  // Optional client-side timeout: the caller turns it on explicitly with timeoutMs; if not passed, the original "no timeout" behavior is kept,
+  // so long-running endpoints such as downloads and exports are not affected. The abort logic is only taken over when the caller did not bring its own signal.
   const { timeoutMs, ...init } = options
   let timeoutId: ReturnType<typeof setTimeout> | undefined
   if (timeoutMs && timeoutMs > 0 && !init.signal && typeof AbortController !== 'undefined') {
@@ -197,7 +197,7 @@ async function request<T>(path: string, options: RequestOptions = {}): Promise<T
     })
   } catch (err) {
     if (timeoutId !== undefined && err instanceof DOMException && err.name === 'AbortError') {
-      throw new Error('请求超时，请稍后重试')
+      throw new Error('Request timed out, please try again later')
     }
     throw err
   } finally {
@@ -235,8 +235,8 @@ async function requestPublic<T>(path: string, options: RequestInit = {}): Promis
   return (await res.json()) as T
 }
 
-// 公开账号自助门户:无鉴权头,错误体形如 {error:{message}}。
-// 单独实现以便解析嵌套的 message 并携带 HTTP 状态码(供 404「门户未开启」判定)。
+// Public account self-service portal: no auth header, error body shaped like {error:{message}}.
+// Implemented separately so it can parse the nested message and carry the HTTP status code (used to detect 404 "portal not enabled").
 async function requestAccountPortal<T>(path: string, options: RequestInit = {}): Promise<T> {
   const headers = new Headers(options.headers)
   if (options.body !== undefined && options.body !== null && !headers.has('Content-Type')) {
@@ -262,7 +262,7 @@ async function requestAccountPortal<T>(path: string, options: RequestInit = {}):
         message = parsed.message
       }
     } catch {
-      // 保留原始文本
+      // Keep the original text
     }
     const err = new Error(message) as Error & { status?: number }
     err.status = res.status
@@ -337,19 +337,19 @@ async function requestImageStudioPortalBlob(path: string, apiKey: string, option
   return res.blob()
 }
 
-/** 下载物：blob + 服务端给出的文件名与实际导出数量（响应头可能缺省）。 */
+/** Download result: blob + the file name from the server and the actual export count (response headers may be missing). */
 export type NamedBlob = { blob: Blob; filename: string; count?: number }
 
-/** parseContentDispositionFilename 取 Content-Disposition 里的 filename，取不到返回空串。 */
+/** parseContentDispositionFilename gets the filename from Content-Disposition, or returns an empty string if there is none. */
 function parseContentDispositionFilename(header: string | null): string {
   if (!header) return ''
-  // RFC 5987 的 filename*=UTF-8''… 优先，其次普通 filename="…"。
+  // RFC 5987 filename*=UTF-8''… takes priority, then the plain filename="…".
   const encoded = /filename\*=(?:UTF-8|utf-8)''([^;]+)/i.exec(header)
   if (encoded?.[1]) {
     try {
       return decodeURIComponent(encoded[1].trim())
     } catch {
-      // 编码不合法时退回普通 filename
+      // If the encoding is invalid, fall back to the plain filename
     }
   }
   const plain = /filename="?([^";]+)"?/i.exec(header)
@@ -518,13 +518,13 @@ export interface ModelTraceBankUpdateResult extends ModelTraceBankStatus {
 
 export const api = {
   getBranding: () => requestPublic<SiteBranding>('/api/branding'),
-  // 公开账号自助门户:生成 OpenAI 授权链接(无鉴权)。
+  // Public account self-service portal: generates the OpenAI authorization link (no auth).
   generateAccountPortalAuthURL: (data: { contact_email: string }) =>
     requestAccountPortal<AccountPortalAuthURLResponse>('/api/account-portal/generate-auth-url', {
       method: 'POST',
       body: JSON.stringify(data),
     }),
-  // 公开账号自助门户:提交授权码(无鉴权)。
+  // Public account self-service portal: submits the authorization code (no auth).
   submitAccountPortalCode: (data: { session_id: string; code: string; state: string }) =>
     requestAccountPortal<AccountPortalSubmitResponse>('/api/account-portal/submit-code', {
       method: 'POST',
@@ -582,7 +582,7 @@ export const api = {
     requestImageStudioPortal<MessageResponse>(`/assets/${id}`, apiKey, { method: 'DELETE' }),
   getStats: () => request<StatsResponse>('/stats'),
   // channel is a first-class upstream provider filter; omit for all accounts.
-  // view: 'lite' — 只返回身份/绑定字段,跳过用量富化(代理绑定弹窗等场景)。
+  // view: 'lite' — returns only identity and binding fields, skipping usage enrichment (for scenarios such as the proxy binding dialog).
   getAccounts: (params: { channel?: UpstreamChannel; view?: 'lite' } = {}) => {
     const searchParams = new URLSearchParams()
     if (params.channel) searchParams.set('channel', params.channel)
@@ -672,20 +672,20 @@ export const api = {
       reset_7d_at?: string
       reset_spark_at?: string
     }>(`/accounts/${id}/usage/refresh`, { method: 'POST' }),
-  // 订阅状态:GET 只读服务端已算好的状态对象;POST 立即向订阅提供方查一次(绕过后台节流,30s 内重复点会 429)。
+  // Subscription status: GET only reads the status object the server has already computed; POST queries the subscription provider once immediately (bypasses the background throttle; repeated clicks within 30s return 429).
   getAccountSubscription: (id: number, signal?: AbortSignal) =>
     request<{ supported: boolean; subscription?: import('./types').SubscriptionStatus }>(`/accounts/${id}/subscription`, { signal }),
   refreshAccountSubscription: (id: number) =>
     request<import('./types').SubscriptionRefreshResponse>(`/accounts/${id}/subscription/refresh`, { method: 'POST', timeoutMs: 30_000 }),
   updateAccountScheduler: (id: number, data: UpdateAccountSchedulerRequest) =>
     request<MessageResponse>(`/accounts/${id}/scheduler`, { method: 'PATCH', body: JSON.stringify(data) }),
-  // 设置 OAuth 账号的支持模型白名单;空数组表示清空(该账号可调度所有模型)。返回归一化后的白名单。
+  // Sets the supported-model allowlist for an OAuth account; an empty array clears it (the account can then schedule all models). Returns the normalized allowlist.
   updateAccountModels: (id: number, models: string[]) =>
     request<{ models: string[] }>(`/accounts/${id}/models`, { method: 'PATCH', body: JSON.stringify({ models }) }),
-  // 拉取该账号真实的上游模型清单(slug 列表,不落库),供白名单编辑器合并使用。
+  // Fetches the account's real upstream model list (slug list, not stored), for the allowlist editor to merge.
   syncAccountModelsUpstream: (id: number) =>
     request<{ models: string[] }>(`/accounts/${id}/models/sync-upstream`, { method: 'POST' }),
-  // 用账号自身凭据并发探测系统文本模型(已排除 image),返回确认可用的模型及每个模型的判定明细。只读不落库。
+  // Probes the system text models concurrently with the account's own credentials (image models excluded), and returns the models confirmed usable along with the verdict details for each. Read-only, nothing is stored.
   probeAccountModels: (id: number) =>
     request<{
       available: string[];
@@ -731,7 +731,7 @@ export const api = {
     request<{ message: string; cleared: number }>(`/accounts/${id}/model-cooldowns`, {
       method: 'DELETE',
     }),
-  // usage_refreshed 表示重置后的用量探针是否在响应前跑完；false 时调用方应稍后补刷一次。
+  // usage_refreshed indicates whether the usage probe after the reset finished before the response; when false, the caller should refresh once more later.
   resetCredits: (id: number) =>
     request<{
       message: string
@@ -742,7 +742,7 @@ export const api = {
     }>(`/accounts/${id}/reset-credits`, { method: 'POST' }),
   getResetCredits: (id: number) =>
     request<ResetCreditsDetailResponse>(`/accounts/${id}/reset-credits`),
-  // 官方结算用量历史。默认读本地快照；refresh 时先打上游回补保留窗口再返回。
+  // Official billing usage history. Reads the local snapshot by default; with refresh, it first pulls from upstream to backfill the retention window, then returns.
   getWhamDailyUsage: (id: number, days = 30, refresh = false) => {
     const search = new URLSearchParams({ days: String(days) })
     if (refresh) search.set('refresh', '1')
@@ -760,7 +760,7 @@ export const api = {
       body: JSON.stringify({ emails }),
       signal,
     }),
-  // refresh=1 绕过网关的资格/记录缓存直连上游，用于手动刷新与发送邀请后的重拉。
+  // refresh=1 bypasses the gateway's eligibility/record cache and connects directly to upstream, for manual refresh and re-fetching after sending invites.
   getInviteEligibility: (id: number, params?: { program_id?: string; entrypoint?: string; proxy_url?: string; refresh?: boolean }) => {
     const search = new URLSearchParams()
     if (params?.program_id) search.set('program_id', params.program_id)
@@ -780,8 +780,8 @@ export const api = {
     const qs = search.toString()
     return request<InviteTrackingResponse>(`/accounts/${id}/invite/tracking${qs ? `?${qs}` : ''}`)
   },
-  // 导入后的邀请收益评估。emails 是可用受邀邮箱数，传了就按「单次收益高的号优先」
-  // 做贪心分配；不传表示不限，建议次数等于各账号的剩余奖励次数。
+  // Invite revenue evaluation after import. emails is the number of usable invited emails. When passed, allocation is greedy, "accounts with higher single-invite revenue first".
+  // When not passed, there is no limit, and the suggested count equals each account's remaining reward count.
   getInviteGuidePlan: (ids: number[], emails?: number) => {
     const search = new URLSearchParams({ ids: ids.join(',') })
     if (typeof emails === 'number' && emails > 0) search.set('emails', String(emails))
@@ -846,8 +846,8 @@ export const api = {
   getRuntimeStatus: () => request<RuntimeStatusResponse>('/runtime-status'),
   getSystemUpdate: () => request<SystemUpdateInfo>('/system/update', { timeoutMs: 20_000 }),
   performSystemUpdate: () =>
-    // 后端下载上游二进制最长约 10 分钟,客户端给到 11 分钟兜底:既不会误伤慢下载,
-    // 又能保证请求最终有界返回,不会无限期卡在“更新中”。
+    // The backend downloads the upstream binary for up to about 10 minutes; the client sets an 11-minute fallback: this neither cuts off slow downloads,
+    // and guarantees the request returns in bounded time, never stuck indefinitely on "updating".
     request<SystemUpdateResult>('/system/update', { method: 'POST', timeoutMs: 11 * 60_000 }),
   getOpsErrorSummary: (params: {
     start: string
@@ -897,8 +897,8 @@ export const api = {
     const search = buildOpsErrorSearchParams(params)
     return requestBlob(`/ops/errors/export?${search.toString()}`)
   },
-  // 区间统计卡片可携带与 /usage/logs 同一套维度筛选(账号/密钥/模型/端点/搜索等),
-  // 后端会忽略状态类参数;累计字段始终全局。
+  // Range stat cards can carry the same dimension filters as /usage/logs (account/key/model/endpoint/search, etc.),
+  // the backend ignores status-type parameters; cumulative fields are always global.
   getUsageStats: (params: Partial<Omit<UsageLogQueryParams, 'start' | 'end'>> & {
     start?: string
     end?: string
@@ -977,7 +977,7 @@ export const api = {
     sp.set('bucket_minutes', String(params.bucketMinutes))
     return request<{ trend: AccountEventTrendPoint[] }>(`/accounts/event-trend?${sp.toString()}`)
   },
-  // view: 'lite' — 只要密钥行本身,跳过窗口费用/最近使用时间的日志聚合(筛选下拉等场景)。
+  // view: 'lite' — only the key row itself, skipping the log aggregation of window cost and last-used time (scenarios such as filter dropdowns).
   getAPIKeys: (params: { view?: 'lite' } = {}) =>
     request<APIKeysResponse>(params.view ? `/keys?view=${params.view}` : '/keys'),
   getAPIKeyConcurrency: () => request<{ concurrency: Record<string, number> }>('/keys-concurrency'),
@@ -994,15 +994,15 @@ export const api = {
     request<MessageResponse>(`/keys/${id}/reset-quota`, { method: 'POST' }),
   resetAllAPIKeyQuotas: () =>
     request<MessageResponse & { reset_count: number }>('/keys/reset-all-quotas', { method: 'POST' }),
-  // 分组 / 账号维度限额的当前用量（issue #439）。
+  // Current usage of group / account-level limits (issue #439).
   getAPIKeyScopeUsage: (id: number) =>
     request<{ items: APIKeyScopeUsageItem[] }>(`/keys/${id}/scope-usage`),
   getAPIKeyModelRequestUsage: (id: number) =>
     request<{ model_request_usage: APIKeyModelRequestUsage[] }>(`/keys/${id}/model-request-usage`),
-  // 列表页用的全量概览：一次拿到所有 Key 的 scope 预算占比。
+  // Full overview for the list page: gets the scope budget share of all keys in one request.
   getAPIKeysScopeSummary: () =>
     request<{ summary: Record<string, APIKeyScopeSummaryItem[]> }>('/keys-scope-summary'),
-  // 重置某条 scope 的累计额度（累计额度不随时间回落，必须显式重置）。
+  // Resets the cumulative quota of one scope (cumulative quota does not drop back over time, so it must be reset explicitly).
   resetAPIKeyScopeQuota: (id: number, data: { scope_type: 'group' | 'account'; scope_id: number }) =>
     request<MessageResponse>(`/keys/${id}/scope-quota/reset`, {
       method: 'POST',
@@ -1169,7 +1169,7 @@ export const api = {
 		request<{ policy: import('./types').PromptRiskTrustPolicy }>(`/prompt-policy/risk-profiles/${encodeURIComponent(subjectType)}/${encodeURIComponent(subjectKey)}/trust`, { method: 'PUT', body: JSON.stringify(data) }),
 	revokePromptRiskTrust: (subjectType: string, subjectKey: string) =>
 		request<{ policy: import('./types').PromptRiskTrustPolicy }>(`/prompt-policy/risk-profiles/${encodeURIComponent(subjectType)}/${encodeURIComponent(subjectKey)}/trust`, { method: 'DELETE' }),
-	unlockPromptConversation: (lockKey: string, reason = '管理员主动解锁', scope: 'conversation' | 'user_cooldown' = 'conversation') =>
+	unlockPromptConversation: (lockKey: string, reason = 'manually unlocked by admin', scope: 'conversation' | 'user_cooldown' = 'conversation') =>
 		request<{ lock: import('./types').PromptConversationLock; scope: string; unlocked_count: number }>(`/prompt-policy/conversation-locks/${encodeURIComponent(lockKey)}/unlock`, { method: 'POST', body: JSON.stringify({ reason, scope }) }),
   testPromptFilter: (data: { text: string; endpoint?: string; model?: string }) =>
     request<PromptFilterTestResponse>('/prompt-filter/test', { method: 'POST', body: JSON.stringify(data) }),
@@ -1326,8 +1326,8 @@ export const api = {
   cleanError: () =>
     request<{ message: string; cleaned: number }>('/accounts/clean-error', { method: 'POST' }),
   /**
-   * 导出账号凭据。includeProxy 打开后条目里会带上账号绑定的代理 URL，
-   * 而代理 URL 常含明文用户名密码，因此默认关闭、由调用方显式开启。
+   * Exports account credentials. When includeProxy is on, each entry carries the proxy URL bound to the account,
+   * and proxy URLs often contain plaintext usernames and passwords, so it is off by default and the caller must turn it on explicitly.
    */
   exportAccounts: (params: {
     filter: 'healthy' | 'all'
@@ -1341,7 +1341,7 @@ export const api = {
     if (params.includeProxy) sp.set('include_proxy', '1')
     return request<CPAExportEntry[]>(`/accounts/export?${sp.toString()}`)
   },
-  /** 导出回收站账号；ids 为空则导出回收站全部。 */
+  /** Exports recycle-bin accounts; if ids is empty, exports everything in the recycle bin. */
   exportRecycleBinAccounts: (ids?: number[], includeProxy?: boolean) => {
     const sp = new URLSearchParams()
     if (ids && ids.length > 0) sp.set('ids', ids.join(','))
@@ -1411,7 +1411,7 @@ export interface ProxyRow {
   test_latency_ms: number
   test_status: 'untested' | 'success' | 'error'
   risk_score?: ProxyRiskScoreSnapshot | null
-  /** 绑定到该代理的账号数(服务端聚合,前端免拉全量账号)。 */
+  /** Number of accounts bound to this proxy (aggregated on the server, so the frontend does not need to fetch all accounts). */
   bound_count: number
 }
 

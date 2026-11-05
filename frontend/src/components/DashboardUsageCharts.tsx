@@ -79,7 +79,7 @@ export default function DashboardUsageCharts({
   const lastUpdatedAtLabel = formatClockTime(refreshedAt)
   const useFullDate = bucketMinutes >= 360
 
-  // 将服务端聚合数据映射为图表渲染格式（极轻量，无聚合计算）
+  // Maps the server-aggregated data into the chart rendering format (very lightweight, no aggregation computed here)
   const displayData = useMemo(() => {
     if (!serverData) return { timelineData: [] as TimelinePoint[], modelData: [] as ModelRankingPoint[], sampleCount: 0 }
 

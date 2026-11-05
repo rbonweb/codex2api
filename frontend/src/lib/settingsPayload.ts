@@ -1,7 +1,7 @@
 const RESPONSE_CACHE_CONFIG_GENERATION = "response_cache_config_generation";
 const OUTPUT_GUARD_CONFIG_GENERATION = "output_guard_config_generation";
 const CODEX_IMAGES_DEFAULT_MAIN_MODEL = "codex_images_default_main_model";
-// 后端按当前 Resin 配置现算的只读摘要,回写没有意义。
+// Read-only summary the backend computes from the current Resin config; writing it back has no meaning.
 const CODEX_EGRESS = "codex_egress";
 const CODEX_CLIENT_VERSIONS = "codex_client_versions";
 

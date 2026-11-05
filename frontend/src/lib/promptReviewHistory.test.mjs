@@ -5,7 +5,7 @@ import test from 'node:test'
 const source = readFileSync(new URL('../pages/PromptFilter.tsx', import.meta.url), 'utf8')
 const api = readFileSync(new URL('../api.ts', import.meta.url), 'utf8')
 const types = readFileSync(new URL('../types.ts', import.meta.url), 'utf8')
-const zh = JSON.parse(readFileSync(new URL('../locales/zh.json', import.meta.url), 'utf8'))
+const en = JSON.parse(readFileSync(new URL('../locales/en.json', import.meta.url), 'utf8'))
 
 test('model review history has independent filtering and pagination from local audit rows', () => {
   assert.match(source, /usePersistedPageSize\('prompt_review_logs'/)
@@ -22,7 +22,7 @@ test('model review history has independent filtering and pagination from local a
   assert.match(api, /typeof params\.reviewed === 'boolean'/)
   assert.match(api, /search\.set\('review_result', params\.reviewResult\)/)
   assert.doesNotMatch(source, /const loadLogs = useCallback/)
-  assert.equal(zh.promptFilter.sectionRefreshHint, '筛选、翻页和刷新仅更新当前区域。')
+  assert.equal(en.promptFilter.sectionRefreshHint, 'Filters, pagination, and refresh update only this section.')
 })
 
 test('model review history exposes parsed request and response metadata without secrets', () => {
@@ -43,7 +43,7 @@ test('model review history exposes parsed request and response metadata without 
   assert.match(source, /moderation decision:\\s\+\(\\S\+\)/)
   assert.match(source, /moderationCategory \? `\$\{moderationCategory\} `/)
   assert.doesNotMatch(source, /review_api_key.*PromptReviewLogsTable/)
-  assert.match(zh.promptFilter.reviewHistoryDesc, /不保存审核 Key、Authorization 或原始 Payload/)
+  assert.match(en.promptFilter.reviewHistoryDesc, /review keys, Authorization headers, and raw payloads are never persisted/)
 })
 
 test('audit cleanup refreshes overlapping log projections and retains risk profiles', () => {
@@ -57,9 +57,9 @@ test('audit cleanup refreshes overlapping log projections and retains risk profi
   assert.match(source, /Promise\.all\(\[loadReviewLogs\(1\), loadLocalLogs\(1\)\]\)/)
   assert.doesNotMatch(source, /section === 'review'[\s\S]*setReviewLogs\(\[\]\)[\s\S]*else[\s\S]*setLogs\(\[\]\)/)
   assert.match(api, /clearPromptPolicyIncidents: \(\)/)
-  assert.match(zh.promptFilter.cyberIncidentsCleared, /风险画像已保留/)
-  assert.match(zh.promptFilter.reviewLogsCleared, /风险画像已保留/)
-  assert.match(zh.promptFilter.localLogsCleared, /风险画像已保留/)
+  assert.match(en.promptFilter.cyberIncidentsCleared, /risk profiles were retained/)
+  assert.match(en.promptFilter.reviewLogsCleared, /risk profiles were retained/)
+  assert.match(en.promptFilter.localLogsCleared, /risk profiles were retained/)
 })
 
 test('final actions distinguish model-review blocks from local-rule and conversation-lock blocks', () => {
@@ -67,6 +67,6 @@ test('final actions distinguish model-review blocks from local-rule and conversa
   assert.match(source, /review_flagged/)
   assert.match(source, /conversation_cyber_locked/)
   assert.match(source, /promptFilter\.decisionSource/)
-  assert.equal(zh.promptFilter.decisionSource.model, '模型复核拦截')
-  assert.equal(zh.promptFilter.decisionSource.local, '本地规则拦截')
+  assert.equal(en.promptFilter.decisionSource.model, 'Model-review block')
+  assert.equal(en.promptFilter.decisionSource.local, 'Local-rule block')
 })

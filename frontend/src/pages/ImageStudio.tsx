@@ -359,7 +359,7 @@ function isImageJobBusy(job: ImageGenerationJob): boolean {
   return job.status === 'queued' || job.status === 'running'
 }
 
-// 生成中的画布显示已用时；任务结束后停止计时，避免无谓的重渲染。
+// The canvas shows elapsed time while generating; the timer stops when the job ends, to avoid needless re-renders.
 function useElapsedSeconds(startedAt: string | undefined, active: boolean): number | null {
   const [now, setNow] = useState(() => Date.now())
   useEffect(() => {
@@ -1025,7 +1025,7 @@ export default function ImageStudio() {
 
     const params = jobParams(job)
     if (params.input_images?.some(value => value.startsWith('queue-input:'))) {
-      showToast('参考图临时文件已清理，请重新选择参考图后生成', 'error'); return
+      showToast('The reference image temp file was cleaned up; select the reference image again and generate', 'error'); return
     }
     const nextModel = params.model || 'gpt-image-2'
     const nextSize = normalizeImageSizeForModel(nextModel, params.size || 'auto')

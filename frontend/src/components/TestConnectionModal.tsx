@@ -1,6 +1,6 @@
-// 账号测连弹窗(Codex 与 Agent-Identity 账号)。
-// 消费 GET /api/admin/accounts/:id/test 的 SSE:test_start → content* → diagnostics /
-// test_complete / error;codex_diagnostics 可能挂在任意事件上,读到 SSE 关闭再刷新列表。
+// Account connection test modal (for Codex and Agent-Identity accounts).
+// Consumes the SSE from GET /api/admin/accounts/:id/test: test_start → content* → diagnostics /
+// test_complete / error; codex_diagnostics may be attached to any event, so read until the SSE closes before refreshing the list.
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { useTranslation } from "react-i18next";
 import {
@@ -77,8 +77,8 @@ interface TestEvent {
   model?: string;
   success?: boolean;
   error?: string;
-  // Codex/Responses 测连诊断:首帧只有响应头信息,流结束后的最终帧带 duration_ms,
-  // 且可能出现在 test_complete/error 之后,因此要读到 SSE 关闭再刷新列表。
+  // Codex/Responses connection test diagnostics: the first frame only has response header info; the final frame after the stream ends carries duration_ms,
+  // and it may arrive after test_complete/error, so read until the SSE closes before refreshing the list.
   codex_diagnostics?: CodexTestDiagnostics;
 }
 
@@ -115,7 +115,7 @@ export default function TestConnectionModal({
   const [detectorOpen, setDetectorOpen] = useState(false);
   const [activationOpen, setActivationOpen] = useState(false);
   const [testContent, setTestContent] = useState("hi");
-  // 跨重测保留:同步后自动重测仍被拒时,据此提示"已同步仍失败"而不是再次引导同步。
+  // Kept across retests: when an automatic retest after sync is still rejected, this is used to show "sync done, still failing" instead of prompting sync again.
   const [versionSync, setVersionSync] = useState<{
     status: "idle" | "syncing" | "updated" | "latest" | "error";
     cliVersion?: string;
@@ -251,8 +251,8 @@ export default function TestConnectionModal({
 
             try {
               const event: TestEvent = JSON.parse(trimmed.slice(6));
-              // 请求阶段失败时后端不单发 diagnostics 帧,而是把诊断挂在 error 事件上,
-              // 因此不分事件类型,带了就收。
+              // When the request phase fails, the backend does not send a separate diagnostics frame; instead it attaches the diagnostics to the error event,
+              // so it accepts them regardless of event type whenever they are present.
               if (event.codex_diagnostics) {
                 setDiagnostics(event.codex_diagnostics);
               }
@@ -303,8 +303,8 @@ export default function TestConnectionModal({
         }
 
         if (receivedTerminalEvent) {
-          // 等服务端关闭 SSE 后再刷新列表：后端会在连接结束时提交状态并失效
-          // 账号快照，提前刷新会重新读到“未采样”的旧缓存。
+          // Wait for the server to close the SSE before refreshing the list: the backend commits the status and invalidates
+          // the account snapshot when the connection ends; refreshing early would re-read the old "not sampled" cache.
           markSettled();
         } else {
           setStatus("error");
@@ -445,8 +445,8 @@ export default function TestConnectionModal({
       percent: clampCodexTestPercent(window.used_percent),
       reset: formatCodexTestReset(window.reset_after_seconds),
     }));
-  // 安全缓冲单独成行:x-codex-safety-buffering-faster-model 只是官方 CLI 的备用切换
-  // 目标,混在响应头表里容易被误读成"实际回答模型"。
+  // The safety buffer gets its own row: x-codex-safety-buffering-faster-model is only the official CLI's fallback switch
+  // target; mixed into the response header table it is easily misread as the "model that actually answered".
   const safetyBuffering = (() => {
     if (!diagnostics) return undefined;
     const enabled = diagnostics.safety_buffering_enabled;

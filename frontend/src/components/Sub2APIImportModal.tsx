@@ -114,7 +114,7 @@ export default function Sub2APIImportModal({
         }),
       });
       if (res.headers.get("content-type")?.includes("text/event-stream")) {
-        // 关闭当前 modal,把 SSE 交回 Accounts 页面统一进度展示
+        // Close the current modal and hand the SSE stream back to the Accounts page, which shows unified progress.
         onClose();
         await onImportStart(res);
       } else {

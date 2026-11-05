@@ -15,8 +15,8 @@ import { Input } from "@/components/ui/input";
 
 const PROXY_SCHEMES = ["http:", "https:", "socks5:", "socks5h:"];
 
-// 与代理页 validateProxyInput 同一套规则：入池的和绑账号的必须一个口径，
-// 否则会出现"池里进不去、却能绑到账号上"的错配。
+// Same rules as validateProxyInput on the proxies page: what enters the pool and what binds to an account must agree,
+// otherwise a proxy could be rejected by the pool yet still bindable to an account.
 function isValidProxyInput(url: string): boolean {
   const trimmed = url.trim();
   if (!trimmed) return false;
@@ -36,7 +36,7 @@ export interface ProxyQuickEditorAccount {
 
 interface AccountProxyQuickEditorProps {
   account: ProxyQuickEditorAccount | null;
-  /** 账号显示名由各页自己的命名规则决定（Codex 用邮箱）。 */
+  /** The account display name follows each page's own naming rule (Codex uses the email). */
   accountLabel: string;
   proxies: ProxyRow[];
   ctx: ProxyBindingContext;
@@ -44,8 +44,8 @@ interface AccountProxyQuickEditorProps {
   onSaved: () => void | Promise<void>;
 }
 
-// 只改 proxy_url 一个字段的小弹窗：从账号列表的代理徽章直达，省掉"进编辑页→
-// 翻到网络那一栏→连带提交整张表单"的绕路。
+// A small dialog that edits only proxy_url: opened straight from the proxy badge in the account list,
+// saving the detour of opening the edit page, scrolling to the network section and submitting the whole form.
 export default function AccountProxyQuickEditor({
   account,
   accountLabel,
@@ -54,7 +54,7 @@ export default function AccountProxyQuickEditor({
   onClose,
   onSaved,
 }: AccountProxyQuickEditorProps) {
-  const { t, i18n } = useTranslation();
+  const { t } = useTranslation();
   const { showToast } = useToast();
 
   const [value, setValue] = useState("");
@@ -77,11 +77,7 @@ export default function AccountProxyQuickEditor({
     if (!trimmed || testing) return;
     setTesting(true);
     try {
-      const result = await api.testProxy(
-        trimmed,
-        undefined,
-        i18n.language?.startsWith("zh") ? "zh-CN" : "en",
-      );
+      const result = await api.testProxy(trimmed, undefined, "en");
       if (!result.success) {
         showToast(
           t("accounts.proxyTestFailed", {

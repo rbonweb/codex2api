@@ -12,8 +12,8 @@ import {
 } from "../lib/accountProxyBinding";
 import { cn } from "@/lib/utils";
 
-// 账号列表里的代理徽章：一眼看出这个号在走谁的出口，以及它是不是已经没有出口了。
-// 判定全在 lib/accountProxyBinding，本组件只负责配色与文案。
+// Proxy badge in the account list: shows at a glance which egress this account goes through, and whether it no longer has an egress at all.
+// All the verdicts live in lib/accountProxyBinding; this component only handles colors and copy.
 const TONE: Record<AccountProxyBindingKind, string> = {
   resin:
     "bg-emerald-50 text-emerald-700 ring-emerald-600/20 dark:bg-emerald-950 dark:text-emerald-300 dark:ring-emerald-400/20",
@@ -50,7 +50,7 @@ export default function AccountProxyBadge({
   const shortName = formatProxyShortName(binding.proxy, binding.url);
   const egress = formatProxyEgressSummary(binding.proxy);
   const latency = binding.proxy?.test_latency_ms ?? 0;
-  // 提示里的 URL 一律打掉账密：列表 hover 不是"我要看凭据"的动作。
+  // Always strip credentials from the URL in the tooltip: hovering over the list is not an action for "I want to see the credentials".
   const safeURL = formatProxyDisplayURL(binding.url);
 
   let text: string;
@@ -85,7 +85,7 @@ export default function AccountProxyBadge({
       break;
     case "pool":
       text = t("accounts.proxyBadgePool");
-      // 用 total 而不是 count：i18next 见到 count 会先去找 _one/_other 复数键。
+      // Use total rather than count: i18next looks for the _one/_other plural keys first when it sees count.
       tip = t("accounts.proxyTipPool", { total: ctx.poolSize });
       break;
     case "global":

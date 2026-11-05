@@ -9,7 +9,6 @@ import {
   type ChangeEvent,
 } from 'react'
 import { createPortal } from 'react-dom'
-import { useTranslation } from 'react-i18next'
 import { Check, ChevronDown, Search, X } from 'lucide-react'
 import { cn } from '@/lib/utils'
 
@@ -45,9 +44,9 @@ const DROPDOWN_GAP = 6
 const DROPDOWN_MAX_HEIGHT = 280
 const VIEWPORT_PADDING = 8
 
-// Radix Dialog 的 react-remove-scroll 会在 document capture 阶段对
-// 弹层外（含 createPortal 到 body 的下拉）的 wheel/touchmove 调 preventDefault，
-// 导致 overflow 容器无法原生滚动。手动改 scrollTop，兼容 Dialog 内外。
+// Radix Dialog's react-remove-scroll calls preventDefault on wheel/touchmove events
+// outside the overlay (including dropdowns portaled to body) during the document capture phase,
+// so overflow containers cannot scroll natively. Set scrollTop manually to work both inside and outside a Dialog.
 function applyManualScroll(el: HTMLElement, deltaX: number, deltaY: number): boolean {
   const canScrollY = el.scrollHeight > el.clientHeight + 1
   const canScrollX = el.scrollWidth > el.clientWidth + 1
@@ -90,8 +89,6 @@ export default function ChipInput({
   className = '',
   dropUp,
 }: ChipInputProps) {
-  const { i18n } = useTranslation()
-  const isZh = (i18n.language || '').toLowerCase().startsWith('zh')
   const [draft, setDraft] = useState('')
   const [showDropdown, setShowDropdown] = useState(false)
   const [position, setPosition] = useState<DropdownPosition | null>(null)
@@ -372,16 +369,10 @@ export default function ChipInput({
               <Search className="size-3.5 shrink-0 text-muted-foreground" />
               <span className="min-w-0 truncate text-[11px] font-medium text-muted-foreground">
                 {draft.trim()
-                  ? isZh
-                    ? `筛选 “${draft.trim()}” · ${availableOptions.length} 项`
-                    : `Filter “${draft.trim()}” · ${availableOptions.length}`
+                  ? `Filter “${draft.trim()}” · ${availableOptions.length}`
                   : value.length > 0
-                    ? isZh
-                      ? `已选 ${value.length} · 还可选 ${availableOptions.length}（可多选）`
-                      : `${value.length} selected · ${availableOptions.length} left · multi-select`
-                    : isZh
-                      ? `可选 ${availableOptions.length} 项 · 可多选 · 留空 = 全部`
-                      : `${availableOptions.length} options · multi-select · empty = all`}
+                    ? `${value.length} selected · ${availableOptions.length} left · multi-select`
+                    : `${availableOptions.length} options · multi-select · empty = all`}
               </span>
             </div>
             <div
@@ -402,12 +393,8 @@ export default function ChipInput({
               {availableOptions.length === 0 ? (
                 <div className="px-3 py-6 text-center text-xs text-muted-foreground">
                   {draft.trim()
-                    ? isZh
-                      ? '无匹配项，可直接回车添加自定义值'
-                      : 'No match — press Enter to add custom value'
-                    : isZh
-                      ? '没有更多可选项'
-                      : 'No more options'}
+                    ? 'No match — press Enter to add custom value'
+                    : 'No more options'}
                 </div>
               ) : (
                 <div className="space-y-0.5">
@@ -426,8 +413,8 @@ export default function ChipInput({
                             : 'text-foreground hover:bg-accent/70 hover:text-accent-foreground',
                         )}
                         onMouseEnter={() => setHighlightIndex(index)}
-                        // pointerdown 在 target 阶段 commit，早于 document 的 outside dismiss，
-                        // 避免 portal 场景下菜单先被关掉、click 永远收不到。
+                        // Commit on pointerdown at the target phase, before the document's outside-dismiss,
+                        // so a portaled menu is not closed first and the click is never received.
                         onPointerDown={(event) => {
                           event.preventDefault()
                           event.stopPropagation()
@@ -466,7 +453,7 @@ export default function ChipInput({
                   }}
                 >
                   <span className="truncate">
-                    {isZh ? `添加 “${draft.trim()}”` : `Add “${draft.trim()}”`}
+                    {`Add “${draft.trim()}”`}
                   </span>
                 </button>
               </div>
@@ -513,8 +500,8 @@ export default function ChipInput({
                   e.stopPropagation()
                 }}
                 className="inline-flex size-5 shrink-0 items-center justify-center rounded-md text-primary/80 transition-colors hover:bg-primary/20 hover:text-primary"
-                aria-label={isZh ? `删除 ${chip}` : `Remove ${chip}`}
-                title={isZh ? '删除' : 'Remove'}
+                aria-label={`Remove ${chip}`}
+                title={'Remove'}
               >
                 <X className="size-3.5" strokeWidth={2.25} />
               </button>
@@ -544,7 +531,7 @@ export default function ChipInput({
           onFocus={() => {
             if (hasOptions) setShowDropdown(true)
           }}
-          placeholder={value.length === 0 ? placeholder : isZh ? '继续添加…' : 'Add more…'}
+          placeholder={value.length === 0 ? placeholder : 'Add more…'}
           disabled={disabled}
           className="min-w-[6rem] flex-1 bg-transparent py-0.5 text-sm outline-none placeholder:text-muted-foreground disabled:cursor-not-allowed"
         />

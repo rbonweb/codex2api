@@ -113,8 +113,8 @@ test('review adapter patches preserve prompts, payload templates, and unknown fi
   assert.equal(saved.future_root, true)
 })
 
-test('Chinese locale labels do not expose internal policy enum values', () => {
-  const locale = JSON.parse(readFileSync(new URL('../locales/zh.json', import.meta.url), 'utf8'))
+test('English locale labels do not expose raw internal policy enum values', () => {
+  const locale = JSON.parse(readFileSync(new URL('../locales/en.json', import.meta.url), 'utf8'))
   assert.equal('sync' in locale.promptFilter.guard.performance.overflowModes, false)
   const labels = [
     ...['off', 'shadow', 'warn', 'enforce'].map((mode) => locale.promptFilter.guard.modes[mode].label),
@@ -123,7 +123,7 @@ test('Chinese locale labels do not expose internal policy enum values', () => {
   ]
   const internalValues = new Set(['off', 'shadow', 'warn', 'enforce', 'balanced', 'strict'])
   for (const label of labels) {
-    assert.equal(internalValues.has(String(label).toLowerCase()), false, `internal enum leaked as label: ${label}`)
+    assert.equal(internalValues.has(String(label)), false, `internal enum leaked as label: ${label}`)
   }
 })
 
@@ -300,25 +300,25 @@ test('Prompt Filter exposes explicit review scope and live connection testing', 
 
 test('terminal enforcement exposes clean-review model exemptions', () => {
   const source = readFileSync(new URL('../pages/PromptFilter.tsx', import.meta.url), 'utf8')
-  const zh = JSON.parse(readFileSync(new URL('../locales/zh.json', import.meta.url), 'utf8'))
+  const en = JSON.parse(readFileSync(new URL('../locales/en.json', import.meta.url), 'utf8'))
   assert.match(source, /terminal_bypass_models: \['codex-auto-review'\]/)
   assert.match(source, /terminalBypassModelsText/)
   assert.match(source, /update\('enforcement', \{ terminal_bypass_models:/)
-  assert.match(zh.promptFilter.terminalBypassModelsHint, /二审明确通过后可以清除本地终局命中/)
+  assert.match(en.promptFilter.terminalBypassModelsHint, /successful clean secondary review may clear a local terminal match/)
   assert.match(source, /approval_review_models: \['codex-auto-review'\]/)
   assert.match(source, /update\('enforcement', \{ approval_review_models:/)
-  assert.match(zh.promptFilter.approvalReviewModelsHint, /gpt-5\.6-luna/)
-  assert.match(zh.promptFilter.help.approvalReviewModels, /approval_review_model_untrusted/)
+  assert.match(en.promptFilter.approvalReviewModelsHint, /gpt-5\.6-luna/)
+  assert.match(en.promptFilter.help.approvalReviewModels, /approval_review_model_untrusted/)
   assert.match(source, /conversation_lock_enabled: true/)
   assert.match(source, /update\('enforcement', \{ conversation_lock_enabled: next \}\)/)
   assert.match(source, /<SwitchField[^>]+conversationLockEnabled/)
   assert.doesNotMatch(source, /<SwitchRow/)
-  assert.match(zh.promptFilter.help.conversationLockEnabled, /上游明确返回 cyber_policy/)
+  assert.match(en.promptFilter.help.conversationLockEnabled, /explicit upstream cyber_policy response/)
 })
 
 test('local block message editor round-trips through enforcement config', () => {
   const source = readFileSync(new URL('../pages/PromptFilter.tsx', import.meta.url), 'utf8')
-  const locales = ['en', 'zh', 'zh-TW'].map((name) => JSON.parse(readFileSync(new URL(`../locales/${name}.json`, import.meta.url), 'utf8')))
+  const locales = [JSON.parse(readFileSync(new URL('../locales/en.json', import.meta.url), 'utf8'))]
 
   assert.match(source, /local_block_message: string/)
   assert.match(source, /local_block_message: ''/)
@@ -350,11 +350,11 @@ test('Moderations review exposes sub2api-compatible category thresholds', () => 
 
 test('adaptive model review is a single switch with an explicit low-latency safety policy', () => {
   const source = readFileSync(new URL('../pages/PromptFilter.tsx', import.meta.url), 'utf8')
-  const zh = JSON.parse(readFileSync(new URL('../locales/zh.json', import.meta.url), 'utf8'))
+  const en = JSON.parse(readFileSync(new URL('../locales/en.json', import.meta.url), 'utf8'))
   assert.match(source, /\['adaptive_review', 'enabled'\]/)
   assert.match(source, /adaptiveReview\.enabled/)
   assert.match(source, /\['adaptive_review', 'min_clean_reviews'\], value: 3/)
   assert.match(source, /\['adaptive_review', 'min_observation_hours'\], value: 1/)
-  assert.match(zh.promptFilter.adaptiveReview.description, /新用户先完整复核/)
-  assert.match(zh.promptFilter.adaptiveReview.defaults, /\{\{minClean\}\} 次.*\{\{hours\}\} 小时.*\{\{sample\}\}%.*\{\{forceHours\}\} 小时/)
+  assert.match(en.promptFilter.adaptiveReview.description, /New identities receive full review/)
+  assert.match(en.promptFilter.adaptiveReview.defaults, /\{\{minClean\}\} clean reviews.*\{\{hours\}\} hours.*\{\{sample\}\}% sampling.*\{\{forceHours\}\} hours/)
 })

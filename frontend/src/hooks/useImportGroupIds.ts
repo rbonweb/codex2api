@@ -16,10 +16,10 @@ function readStored(): number[] {
 }
 
 /**
- * useImportGroupIds 记住「导入/添加账号时选择的分组」。
+ * useImportGroupIds remembers the group selected when importing or adding accounts.
  *
- * 批量导入往往是同一批分组，每次都重选很烦；选择存在 localStorage 里，跨页面与刷新后都保持。分组被删掉后本地记录会失效，因此提供 prune 让调用方在拿到
- * 分组列表后剔除已不存在的 ID——否则提交时会被后端以「分组不存在」400 掉。
+ * Batch imports often use the same set of groups, and reselecting them every time is annoying; the selection is kept in localStorage and persists across pages and refreshes. When a group is deleted, the local record becomes invalid, so prune is provided to let the caller, once it has the
+ * group list, remove IDs that no longer exist; otherwise the backend rejects the submission with a 400 (group does not exist).
  */
 export function useImportGroupIds(): {
   groupIds: number[]
@@ -33,7 +33,7 @@ export function useImportGroupIds(): {
       if (groupIds.length === 0) localStorage.removeItem(STORAGE_KEY)
       else localStorage.setItem(STORAGE_KEY, JSON.stringify(groupIds))
     } catch {
-      // localStorage 不可用（隐私模式等）时只是不记住，不影响功能
+      // When localStorage is unavailable (private mode, etc.), the selection is simply not remembered; functionality is not affected.
     }
   }, [groupIds])
 

@@ -428,13 +428,13 @@ const BindAccountRow = memo(function BindAccountRow({
 });
 
 export default function Proxies() {
-  const { t, i18n } = useTranslation();
+  const { t } = useTranslation();
   const { showToast } = useToast();
   const { confirm, confirmDialog } = useConfirmDialog();
   const [proxies, setProxies] = useState<ProxyRow[]>([]);
   const [loading, setLoading] = useState(true);
   const [poolEnabled, setPoolEnabled] = useState(false);
-  // Resin 启用时代理池对 Codex 渠道整层失效,页面顶部必须明说(issue #679)。
+  // When Resin is enabled, the proxy pool is entirely ineffective for the Codex channel, so the top of the page must say so plainly (issue #679).
   const [codexEgress, setCodexEgress] = useState<CodexEgressSummary | null>(null);
   const [showAdd, setShowAdd] = useState(false);
   const [addInput, setAddInput] = useState("");
@@ -496,7 +496,7 @@ export default function Proxies() {
   const [balanceMaxPerProxy, setBalanceMaxPerProxy] = useState("");
   const [balanceSubmitting, setBalanceSubmitting] = useState(false);
 
-  const ipApiLang = i18n.language?.startsWith("zh") ? "zh-CN" : "en";
+  const ipApiLang = "en";
 
   const reloadAccounts = useCallback(async () => {
     if (!bindingProxy) return;
@@ -836,7 +836,7 @@ export default function Proxies() {
   const pollRiskJob = useCallback(async (jobID: string) => {
     if (riskPollCancelledRef.current) return;
     try {
-      // 只取上次游标之后的增量：检测完一条就把分数合并进表格对应行，并短暂高亮。
+      // Fetch only the increments after the last cursor: each time one check finishes, merge its score into the matching table row and briefly highlight it.
       const next = await api.getProxyRiskScoringJob(jobID, riskPollSeqRef.current);
       riskPollSeqRef.current = Math.max(riskPollSeqRef.current, next.last_seq ?? 0);
       const items = next.items ?? [];
@@ -1326,7 +1326,7 @@ export default function Proxies() {
         }
       />
 
-      {/* 批量测试进度条 */}
+      {/* Batch test progress bar */}
       {testAllLoading && testAllTotal > 0 ? (
         <div className="rounded-xl border border-primary/20 bg-primary/5 p-3.5 space-y-2">
           <div className="flex items-center justify-between text-xs font-semibold">
@@ -1439,7 +1439,7 @@ export default function Proxies() {
         </Card>
       )}
 
-      {/* Stats （点击快捷筛选） */}
+      {/* Stats (click to quick-filter) */}
       {loading ? (
         <div
           className="grid grid-cols-2 gap-3 min-[520px]:grid-cols-4 sm:gap-4"
@@ -2047,7 +2047,7 @@ export default function Proxies() {
             </div>
           ) : null}
           <div className="grid gap-4 sm:grid-cols-3">
-            <label className="space-y-1.5"><span className="text-xs font-semibold text-muted-foreground">{t("proxies.riskProfileName")}</span><Input value={riskProfileDraft.name} onChange={(event) => setRiskProfileDraft((current) => ({ ...current, name: event.target.value }))} placeholder="Scamalytics 主账号" /></label>
+            <label className="space-y-1.5"><span className="text-xs font-semibold text-muted-foreground">{t("proxies.riskProfileName")}</span><Input value={riskProfileDraft.name} onChange={(event) => setRiskProfileDraft((current) => ({ ...current, name: event.target.value }))} placeholder="Scamalytics main account" /></label>
             <label className="space-y-1.5"><span className="text-xs font-semibold text-muted-foreground">{t("proxies.riskScamalyticsHost")}</span><Input value={riskProfileDraft.scamalytics_host} onChange={(event) => setRiskProfileDraft((current) => ({ ...current, scamalytics_host: event.target.value }))} placeholder="api11.scamalytics.com" className="font-mono" /></label>
             <label className="space-y-1.5"><span className="text-xs font-semibold text-muted-foreground">{t("proxies.riskScamalyticsUser")}</span><Input value={riskProfileDraft.scamalytics_user} onChange={(event) => setRiskProfileDraft((current) => ({ ...current, scamalytics_user: event.target.value }))} placeholder="username" /></label>
           </div>
@@ -2143,7 +2143,7 @@ export default function Proxies() {
         </div>
       </Modal>
 
-      {/* 一键均衡绑定 */}
+      {/* One-click balanced binding */}
       <Modal
         show={showBalance}
         title={t("proxies.balanceModalTitle")}
@@ -2253,7 +2253,7 @@ export default function Proxies() {
         </div>
       </Modal>
 
-      {/* 绑定账号到代理 */}
+      {/* Bind accounts to a proxy */}
       <Modal
         show={Boolean(bindingProxy)}
         title={t("proxies.bindModalTitle")}

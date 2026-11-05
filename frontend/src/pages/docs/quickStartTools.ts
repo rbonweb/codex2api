@@ -17,12 +17,7 @@ export type QuickTool = {
   templateLabel?: string;
 };
 
-export type DocsLocale = "zh" | "en";
-
-const toolBlurb = (locale: DocsLocale, zh: string, en: string) =>
-  locale === "zh" ? zh : en;
-
-export function buildQuickTools(locale: DocsLocale): QuickTool[] {
+export function buildQuickTools(): QuickTool[] {
   return [
     {
       id: "cc-switch",
@@ -30,11 +25,7 @@ export function buildQuickTools(locale: DocsLocale): QuickTool[] {
       badge: "Desktop",
       iconHue: "bg-fuchsia-500/12 text-fuchsia-600 dark:text-fuchsia-400",
       glyph: "CS",
-      blurb: toolBlurb(
-        locale,
-        "Codex 多账号切换器，一键唤起并写入配置。",
-        "Multi-account launcher for Codex. Import config with one click.",
-      ),
+      blurb: "Multi-account launcher for Codex. Import config with one click.",
       kind: "protocol",
       url: "ccswitch",
     },
@@ -44,11 +35,8 @@ export function buildQuickTools(locale: DocsLocale): QuickTool[] {
       badge: "CLI",
       iconHue: "bg-emerald-500/12 text-emerald-600 dark:text-emerald-400",
       glyph: "CX",
-      blurb: toolBlurb(
-        locale,
-        "官方 OpenAI Responses CLI，写入 config.toml 即可。",
+      blurb:
         "Official OpenAI Responses CLI. Paste the generated config.toml and go.",
-      ),
       kind: "config",
       template: `model_provider = "OpenAI"
 model = "gpt-5.5"
@@ -74,11 +62,8 @@ goals = true`,
       badge: "Desktop",
       iconHue: "bg-rose-500/12 text-rose-600 dark:text-rose-400",
       glyph: "CY",
-      blurb: toolBlurb(
-        locale,
-        "点击按钮唤起桌面应用并自动导入 OpenAI 凭据。",
+      blurb:
         "Launch the desktop app and import OpenAI credentials automatically.",
-      ),
       kind: "protocol",
       url: "cherrystudio://providers/api-keys?v=1&data={cherryConfig}",
     },
@@ -88,11 +73,7 @@ goals = true`,
       badge: "Web",
       iconHue: "bg-sky-500/12 text-sky-600 dark:text-sky-400",
       glyph: "LC",
-      blurb: toolBlurb(
-        locale,
-        "在浏览器中打开 Lobe Chat 并预填 OpenAI 设置。",
-        "Open Lobe Chat in the browser with OpenAI settings prefilled.",
-      ),
+      blurb: "Open Lobe Chat in the browser with OpenAI settings prefilled.",
       kind: "protocol",
       url: 'https://chat-preview.lobehub.com/?settings={"keyVaults":{"openai":{"apiKey":"{key}","baseURL":"{address}/v1"}}}',
     },
@@ -102,11 +83,8 @@ goals = true`,
       badge: "Mobile",
       iconHue: "bg-amber-500/12 text-amber-600 dark:text-amber-400",
       glyph: "OC",
-      blurb: toolBlurb(
-        locale,
-        "唤起 iOS / macOS 客户端并加入服务器配置。",
+      blurb:
         "Launch the iOS/macOS client and join the server configuration directly.",
-      ),
       kind: "protocol",
       url: "opencat://team/join?domain={address}&token={key}",
     },

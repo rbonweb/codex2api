@@ -59,52 +59,52 @@ export default function IntelligenceRunDialog({
     >
       <DialogContent className="sm:max-w-3xl">
         <DialogHeader>
-          <DialogTitle>检测详情 #{id}</DialogTitle>
+          <DialogTitle>Intelligence check details #{id}</DialogTitle>
           <DialogDescription>
-            保存本次题目、判定配置和最终可见答案。
+            Saves this run's questions, verdict configuration, and final visible answer.
           </DialogDescription>
         </DialogHeader>
         {error && (
           <div role="alert" className="text-destructive">
             {error}
             <Button variant="outline" onClick={() => setRetry((n) => n + 1)}>
-              重试
+              Retry
             </Button>
           </div>
         )}
-        {!run && !error && <p className="text-muted-foreground">正在加载…</p>}
+        {!run && !error && <p className="text-muted-foreground">Loading...</p>}
         {run && (
           <div className="space-y-4 text-sm">
             <dl className="grid grid-cols-2 gap-3 sm:grid-cols-3">
               {[
-                ["账号", `${run.account_name} (#${run.account_id})`],
-                ["结果", intelligenceLabels[run.status]],
-                ["请求模型", run.model],
-                ["响应模型", run.response_model || "—"],
-                ["推理强度", run.reasoning_effort || "默认"],
+                ["Account", `${run.account_name} (#${run.account_id})`],
+                ["Result", intelligenceLabels[run.status]],
+                ["Request model", run.model],
+                ["Response model", run.response_model || "—"],
+                ["Reasoning effort", run.reasoning_effort || "Default"],
                 [
-                  "判定方式",
-                  { answer: "仅答案", latency: "仅耗时", both: "答案和耗时" }[
+                  "Verdict method",
+                  { answer: "Answer only", latency: "Latency only", both: "Answer and latency" }[
                     run.judge_mode
                   ],
                 ],
                 [
-                  "耗时 / 阈值",
+                  "Latency / threshold",
                   `${run.duration_ms ?? 0} / ${run.question.max_duration_ms} ms`,
                 ],
-                ["配置版本", String(run.config_revision)],
-                ["发起方式", run.source === "manual" ? "手动" : "自动"],
+                ["Config revision", String(run.config_revision)],
+                ["Source", run.source === "manual" ? "Manual" : "Automatic"],
                 [
-                  "输入 / 输出 / 推理 token",
+                  "Input / output / reasoning tokens",
                   `${run.input_tokens} / ${run.output_tokens} / ${run.reasoning_tokens}`,
                 ],
                 [
-                  "开始时间",
+                  "Start time",
                   run.started_at
                     ? new Date(run.started_at).toLocaleString()
-                    : "尚未开始",
+                    : "Not started yet",
                 ],
-                ["处置", intelligenceLabels[run.action] || run.action || "无"],
+                ["Action", intelligenceLabels[run.action] || run.action || "None"],
               ].map(([label, value]) => (
                 <div key={label}>
                   <dt className="text-xs text-muted-foreground">{label}</dt>
@@ -119,13 +119,13 @@ export default function IntelligenceRunDialog({
               </pre>
             </div>
             <p>
-              预期答案：<code>{run.question.expected_answer}</code> · 匹配方式：
+              Expected answer: <code>{run.question.expected_answer}</code> · Match method:
               {run.question.match_mode}
             </p>
             <div>
-              <h3 className="mb-1 font-medium">最终答案</h3>
+              <h3 className="mb-1 font-medium">Final answer</h3>
               <pre className="max-h-72 overflow-auto whitespace-pre-wrap break-words rounded-lg border bg-muted/30 p-3 font-sans">
-                {run.output || "暂无答案"}
+                {run.output || "No answer yet"}
               </pre>
             </div>
             {run.action_message && (
@@ -142,7 +142,7 @@ export default function IntelligenceRunDialog({
             {run.effective_context && (
               <details>
                 <summary className="cursor-pointer text-muted-foreground">
-                  生效出站配置
+                  Effective outbound configuration
                 </summary>
                 <pre className="mt-2 whitespace-pre-wrap break-words text-xs">
                   {JSON.stringify(run.effective_context, null, 2)}

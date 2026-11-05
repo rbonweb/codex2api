@@ -1,10 +1,10 @@
 /**
- * 号池可支撑时间（Pool Runway）与限流压力预测。
- * 从 AccountRateLimitRecoveryChart 抽出，供账号页与 Dashboard 共用。
+ * How long the account pool can last (Pool Runway) and rate-limit pressure forecast.
+ * Extracted from AccountRateLimitRecoveryChart, shared by the account page and the Dashboard.
  *
- * - 负载口径：当前 RPM 下何时供应不足 / 高压
- * - 额度口径：按 usage% 线性外推批量限流风险
- * - 展示：剩余 x 小时 / 1 天+（issue #383 产品化）
+ * - Load view: when supply falls short or pressure is high at the current RPM
+ * - Quota view: linearly extrapolate the batch rate-limit risk from usage%
+ * - Display: x hours left / 1 day+ (productized from issue #383)
  */
 
 import type { AccountPressureForecastAnalysis, AccountRow } from '../types'
@@ -38,13 +38,13 @@ export interface PoolRunway {
   kind: RunwayKind
   state: RunwayState
   remainingMs: number | null
-  /** 剩余整小时数（ceil）；kind=hours 时有意义 */
+  /** Whole hours left (ceil); only meaningful when kind=hours */
   remainingHours: number | null
   riskLevel: RiskLevel
   pressureAt: number | null
   windowKey: RecoveryWindow
   adviceCode: RunwayAdviceCode
-  /** 建议补充的可调度账号数（0 表示不需要） */
+  /** Suggested number of additional schedulable accounts (0 means none needed) */
   suggestedAddAccounts: number
   forecast: PressureForecast
   lowConfidence: boolean
@@ -238,7 +238,7 @@ export function estimatePressureForecast(
   }
 }
 
-/** 从预测结果生成运维可读的 Runway（剩余 x 小时 / 1 天+）。 */
+/** Builds an ops-readable runway from the forecast (x hours left / 1 day+). */
 export function buildPoolRunway(
   forecast: PressureForecast,
   nowMs: number,
@@ -298,8 +298,8 @@ export function buildPoolRunway(
 }
 
 /**
- * 计算 7d（主）与可选 5h，取更紧迫的压力时刻作为号池 runway。
- * Dashboard 默认用此函数。
+ * Computes 7d (primary) and optional 5h, and takes the more urgent pressure moment as the pool runway.
+ * The Dashboard uses this function by default.
  */
 export function selectPoolRunway(
   accounts: AccountRow[],
@@ -327,7 +327,7 @@ export function selectPoolRunway(
     '5h',
   )
 
-  // 优先有明确压力时刻的；都有则取更早的
+  // Prefer a window with a clear pressure moment; if both have one, take the earlier
   const primaryAt = primary.pressureAt
   const secondaryAt = secondary.pressureAt
   if (primaryAt == null && secondaryAt == null) {
@@ -400,10 +400,10 @@ function suggestAddAccounts(forecast: PressureForecast): number {
   const minForRpm = forecast.rpm > 0
     ? Math.ceil(forecast.rpm / (avgConc * rpmPerSlot))
     : 0
-  // 维持当前 RPM 需要 minForRpm；再留 20% 缓冲
+  // Keeping the current RPM needs minForRpm; then keep a 20% buffer
   const target = minForRpm > 0 ? Math.ceil(minForRpm * 1.2) : 0
   if (target <= forecast.dispatchableAccounts) {
-    // 额度燃尽路径：按 threshold 提示补齐
+    // Quota burn-down path: top up according to the threshold hint
     if (forecast.predictedAt != null && forecast.riskLevel !== 'low') {
       return Math.max(1, Math.min(5, Math.ceil(forecast.dispatchableAccounts * 0.15)))
     }
@@ -434,7 +434,7 @@ export function isInSupplyPool(account: AccountRow, windowKey: RecoveryWindow): 
   return true
 }
 
-/** 5h 为可选窗口：无 usage 快照则不参与燃尽预测（issue #382）。 */
+/** The 5h window is optional: without a usage snapshot it does not take part in the burn-down forecast (issue #382). */
 export function hasBurnPrediction(account: AccountRow, windowKey: RecoveryWindow): boolean {
   const status = (account.status || '').toLowerCase()
   if (status === 'unauthorized') return false
@@ -543,7 +543,7 @@ export function getDefaultWindowMs(windowKey: RecoveryWindow): number {
   return windowKey === '5h' ? 5 * HOUR_MS : 7 * DAY_MS
 }
 
-/** 按账号真实长窗口长度（月窗 ~30d / 周窗 7d），避免 team 被当成 7d。 */
+/** Uses each account's real long-window length (monthly ~30d / weekly 7d), so a team account is not treated as 7d. */
 export function getAccountWindowMs(account: AccountRow, windowKey: RecoveryWindow): number {
   if (windowKey === '5h') return 5 * HOUR_MS
   const sec = account.usage_window_7d_seconds

@@ -25,10 +25,10 @@ interface AccountQuotaDistributionChartProps {
   onRefreshAnalysis?: () => Promise<void> | void
   onProbeStarted?: () => void
   onProbeError?: (message: string) => void
-  /** 描述/空态文案的 i18n key 覆写(带 {{sampled}}/{{total}} 插值);默认 Codex 文案。 */
+  /** Overrides the i18n key for the description/empty-state copy (with {{sampled}}/{{total}} interpolation); the default is the Codex copy. */
   descKey?: string
   emptyKey?: string
-  /** 是否显示「立即采样」探针按钮(探针是 Codex 用量链路,其他渠道应隐藏)。 */
+  /** Whether to show the "Sample now" probe button (the probe is part of the Codex usage path; other channels should hide it). */
   showProbe?: boolean
 }
 
@@ -104,7 +104,7 @@ export default function AccountQuotaDistributionChart({
       try {
         await onRefreshAnalysis?.()
       } catch {
-        // 轮询失败不打断进度条，等下一拍。
+        // A failed poll does not interrupt the progress bar; wait for the next tick.
       }
       let running = false
       try {
@@ -232,7 +232,7 @@ export default function AccountQuotaDistributionChart({
                     axisLine={{ stroke: gridColor }}
                     tickLine={{ stroke: gridColor }}
                     allowDecimals={false}
-                    // 账号数轴上限贴合实际账号数(采样总数),不再固定放大到 4。
+                    // The account-count axis max now fits the actual number of accounts (total sampled) instead of always scaling up to 4.
                     domain={[0, Math.max(1, distribution.total)]}
                     width={44}
                   />

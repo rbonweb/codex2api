@@ -9,26 +9,26 @@ const entries = [
   {
     id: "qs-tools",
     section: "quick-start",
-    title: "客户端配置",
+    title: "Client configuration",
     summary: "Codex CLI Claude Code",
   },
   {
     id: "api-images-gen",
     section: "model-api",
-    title: "生成图片 /v1/images/generations",
+    title: "Generate images /v1/images/generations",
     summary: "GPT Image 2.5 quality xhigh",
     method: "POST",
   },
   {
     id: "authentication",
     section: "development",
-    title: "地址与认证",
+    title: "URLs & authentication",
     summary: "API Key / Base URL",
   },
   {
     id: "client-mapping",
     section: "admin-api",
-    title: "模型映射",
+    title: "Model mapping",
     summary: "Claude Codex",
   },
 ];

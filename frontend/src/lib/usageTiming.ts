@@ -19,7 +19,7 @@ export function computeOutputTokensPerSec(log: UsageTimingLog): number | null {
   if (log.first_token_ms > 0 && log.first_token_ms < log.duration_ms) {
     generationMs = log.duration_ms - log.first_token_ms
   }
-  // 首字过于接近结束时改用总耗时，避免极短窗口夸大吞吐。
+  // When the first token comes too close to the end, use the total duration instead, so a very short window does not inflate throughput.
   if (generationMs < MIN_GENERATION_WINDOW_MS) generationMs = log.duration_ms
   if (generationMs <= 0) return null
   return outputTokens / (generationMs / MS_PER_SECOND)

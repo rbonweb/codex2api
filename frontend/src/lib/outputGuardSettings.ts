@@ -38,9 +38,9 @@ export function isOutputGuardKey(key: string): boolean {
 }
 
 /**
- * 整表单保存前剔除 guard 写入字段：guard 只允许走自动保存（按 key 打补丁）
- * 路径。整表单提交会把手动打开页面时读到的陈旧快照连同新一轮 generation
- * 一起上送，可能覆盖其他管理员刚改过、甚至刚关闭的 guard 配置。
+ * Before a full-form save, guard write fields are removed: guard may only go through autosave (patching by key)
+ * path. A full-form submit sends the stale snapshot read when the page was opened manually, together with the new generation
+ * and may overwrite guard settings that another admin just changed or even just turned off.
  */
 export function omitOutputGuardFields<T extends object>(settings: T): T {
   const payload = { ...settings }
@@ -56,10 +56,10 @@ export function validateOutputGuardHierarchy(settings: {
   output_guard_max_request_bytes: number
 }): string | null {
   if (settings.output_guard_max_tool_argument_bytes > settings.output_guard_max_channel_bytes) {
-    return '工具参数上限不能大于单通道上限 (tool <= channel)'
+    return 'tool argument limit cannot be greater than channel limit (tool <= channel)'
   }
   if (settings.output_guard_max_channel_bytes > settings.output_guard_max_request_bytes) {
-    return '单通道上限不能大于单请求上限 (channel <= request)'
+    return 'channel limit cannot be greater than request limit (channel <= request)'
   }
   return null
 }
@@ -72,28 +72,28 @@ export function validateOutputGuardRanges(settings: {
 }): string | null {
   const tool = settings.output_guard_max_tool_argument_bytes
   if (tool !== undefined && (tool < MIN_OUTPUT_GUARD_TOOL_BYTES || tool > MAX_OUTPUT_GUARD_TOOL_BYTES)) {
-    return `工具参数字节范围必须在 ${MIN_OUTPUT_GUARD_TOOL_BYTES} ~ ${MAX_OUTPUT_GUARD_TOOL_BYTES} 之间`
+    return `tool argument byte range must be between ${MIN_OUTPUT_GUARD_TOOL_BYTES} and ${MAX_OUTPUT_GUARD_TOOL_BYTES}`
   }
   const deltas = settings.output_guard_max_tool_argument_deltas
   if (deltas !== undefined && (deltas < MIN_OUTPUT_GUARD_TOOL_DELTAS || deltas > MAX_OUTPUT_GUARD_TOOL_DELTAS)) {
-    return `工具 Delta 次数必须在 ${MIN_OUTPUT_GUARD_TOOL_DELTAS} ~ ${MAX_OUTPUT_GUARD_TOOL_DELTAS} 之间`
+    return `tool Delta count must be between ${MIN_OUTPUT_GUARD_TOOL_DELTAS} and ${MAX_OUTPUT_GUARD_TOOL_DELTAS}`
   }
   const channel = settings.output_guard_max_channel_bytes
   if (channel !== undefined && (channel < MIN_OUTPUT_GUARD_CHANNEL_BYTES || channel > MAX_OUTPUT_GUARD_CHANNEL_BYTES)) {
-    return `单通道字节范围必须在 ${MIN_OUTPUT_GUARD_CHANNEL_BYTES} ~ ${MAX_OUTPUT_GUARD_CHANNEL_BYTES} 之间`
+    return `channel byte range must be between ${MIN_OUTPUT_GUARD_CHANNEL_BYTES} and ${MAX_OUTPUT_GUARD_CHANNEL_BYTES}`
   }
   const request = settings.output_guard_max_request_bytes
   if (request !== undefined && (request < MIN_OUTPUT_GUARD_REQUEST_BYTES || request > MAX_OUTPUT_GUARD_REQUEST_BYTES)) {
-    return `单请求字节范围必须在 ${MIN_OUTPUT_GUARD_REQUEST_BYTES} ~ ${MAX_OUTPUT_GUARD_REQUEST_BYTES} 之间`
+    return `request byte range must be between ${MIN_OUTPUT_GUARD_REQUEST_BYTES} and ${MAX_OUTPUT_GUARD_REQUEST_BYTES}`
   }
   return null
 }
 
 /**
- * 从响应或表单中保留 guard 字段：
- * 比较服务器响应的 output_guard_config_generation 与本地 generation。
- * 若服务器响应更新（更大），说明其他管理员在页面打开期间修改了 guard，采纳服务器 guard 字段与 generation；
- * 否则保留本地表单的 guard 字段与 generation（保持对在途 autosave 的保护）。
+ * Keeps guard fields from the response or the form:
+ * Compares the server response's output_guard_config_generation with the local generation.
+ * If the server response is newer (larger), another admin changed guard while the page was open, so the server guard fields and generation are adopted;
+ * otherwise the local form's guard fields and generation are kept (this protects an autosave still in flight).
  */
 export function preserveOutputGuardFields<T extends object>(
   updated: T,
@@ -123,12 +123,12 @@ export function preserveOutputGuardFields<T extends object>(
 }
 
 /**
- * 手动保存成功时刷新确认快照：
- * 1. 把非 guard 字段从表单复制到确认快照；
- * 2. 若服务器响应中的 output_guard_config_generation 大于确认快照中的 generation，
- *    说明服务器已提交并确认了更新的 guard 配置，确认快照同步采纳服务器响应中的 guard 字段与 generation；
- * 3. 否则保留确认快照中已有的 guard 字段与 generation，
- *    避免把在途 autosave 的未确认 guard 值带进确认快照（该 autosave 失败时回滚会恢复被拒值）。
+ * On a successful manual save, refresh the confirmed snapshot:
+ * 1. Copy the non-guard fields from the form to the confirmed snapshot;
+ * 2. If the output_guard_config_generation in the server response is greater than the generation in the confirmed snapshot,
+ *    the server has committed and confirmed a newer guard config, so the confirmed snapshot also adopts the guard fields and generation from the server response;
+ * 3. Otherwise keep the guard fields and generation already in the confirmed snapshot,
+ *    so an unconfirmed guard value from an in-flight autosave does not enter the confirmed snapshot (if that autosave fails, the rollback would restore the rejected value).
  */
 export function preserveConfirmedGuardFields<T extends object>(
   currentForm: T,

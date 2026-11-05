@@ -11,8 +11,8 @@ import { useToast } from "../hooks/useToast";
 import { getErrorMessage } from "../utils/error";
 import { cn } from "@/lib/utils";
 
-// ProxyUrlInput 带内嵌清空按钮的代理 URL 输入框。各渠道账号弹窗的代理字段共用,
-// 手填与从代理池选择写的是同一个 value,X 一键清空两者。
+// ProxyUrlInput is a proxy URL input with a built-in clear button. It is shared by the proxy fields of every channel's account dialog;
+// typing a URL and picking one from the proxy pool write the same value, and the X clears both in one click.
 export function ProxyUrlInput({
   value,
   onChange,
@@ -51,12 +51,12 @@ export function ProxyUrlInput({
   );
 }
 
-// ProxyField 是账号表单里唯一的代理选择字段:
-//   第一行:手动填写代理 URL + 「测试」按钮(调 /proxies/test 验证连通与落地地点)
-//   第二行:从代理池下拉选择(含地点/绑定数/空闲优先;池为空时给禁用占位与引导)
-//   第三行:当前值命中池内节点时给一句关联提示——账号与节点按 URL 关联,
-//          在「代理」页改节点地址会同步到所有绑定账号,删除则自动解绑。
-// 各渠道的添加/编辑弹窗都必须用它,不要再各页自造导致体验割裂。
+// ProxyField is the only proxy selection field in the account form:
+//   Row 1: type a proxy URL manually + a "Test" button (calls /proxies/test to verify connectivity and exit location)
+//   Row 2: pick from the proxy pool dropdown (shows location and bound count, idle first; when the pool is empty, a disabled placeholder with guidance)
+//   Row 3: when the current value matches a pool node, a hint about the link: accounts and nodes are linked by URL,
+//          so editing a node's address on the Proxies page updates every bound account, and deleting it unbinds them automatically.
+// The add/edit dialogs of every channel must use it; do not build per-page copies that make the experience inconsistent.
 export function ProxyField({
   value,
   onChange,
@@ -71,9 +71,9 @@ export function ProxyField({
   value: string;
   onChange: (value: string) => void;
   proxies: ProxyRow[];
-  /** 字段标题;传空串则不渲染标题(由外层自行摆放)。 */
+  /** Field title; pass an empty string to render no title (the caller places it). */
   label?: string;
-  /** 标题样式覆盖,便于与所在弹窗相邻字段的标题风格对齐。 */
+  /** Title style override, to match the title style of neighbouring fields in the dialog. */
   labelClassName?: string;
   /** Override the association hint for fields that copy a URL without binding. */
   linkedHint?: string;
@@ -81,12 +81,12 @@ export function ProxyField({
   disabled?: boolean;
   className?: string;
 }) {
-  const { t, i18n } = useTranslation();
+  const { t } = useTranslation();
   const { showToast } = useToast();
   const [testing, setTesting] = useState(false);
 
   const trimmed = value.trim();
-  // 当前值是否命中代理池节点:命中即"关联"态,提示用户改节点会级联。
+  // Whether the current value matches a proxy pool node: if so it is "linked", and the user is told that editing the node cascades.
   const linked = useMemo(
     () => (trimmed ? proxies.find((p) => p.url === trimmed) : undefined),
     [proxies, trimmed],
@@ -100,8 +100,7 @@ export function ProxyField({
     }
     setTesting(true);
     try {
-      const lang = i18n.language?.startsWith("zh") ? "zh-CN" : "en";
-      const res = await api.testProxy(url, undefined, lang);
+      const res = await api.testProxy(url, undefined, "en");
       if (!res.success) {
         showToast(
           t("accounts.proxyTestFailed", { error: res.error || t("accounts.proxyTestUnknownError") }),
@@ -154,8 +153,8 @@ export function ProxyField({
       {proxies.length > 0 ? (
         <ProxyPoolSelect className="w-full" proxies={proxies} value={value} onSelect={onChange} disabled={disabled} />
       ) : (
-        // 代理池为空时仍显示一个禁用占位下拉 + 引导,让"从代理池选择"始终可见,
-        // 避免让用户误以为该功能缺失(池条目来自「代理」页)。
+        // When the pool is empty, still show a disabled placeholder dropdown + guidance so "pick from the proxy pool" is always visible,
+        // and users do not assume the feature is missing (pool entries come from the Proxies page).
         <div className="flex h-9 w-full items-center justify-between rounded-md border border-dashed border-input bg-muted/20 px-2.5 text-xs text-muted-foreground/70">
           <span>{t("accounts.proxyPoolEmpty")}</span>
           <span className="opacity-60">▾</span>

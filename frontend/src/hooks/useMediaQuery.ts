@@ -1,9 +1,9 @@
 import { useEffect, useState } from 'react'
 
 /**
- * useMediaQuery 订阅一个 CSS media query 的匹配状态。
- * 用于"桌面表格 / 移动卡片"这类互斥视图按视口只渲染一份,
- * 替代两份都渲染再用 CSS 隐藏的写法(大列表下是双倍渲染成本)。
+ * useMediaQuery subscribes to the match state of a CSS media query.
+ * It is used for mutually exclusive views such as "desktop table / mobile cards", rendering only one copy per viewport,
+ * instead of rendering both and hiding one with CSS (on large lists, that doubles the rendering cost).
  */
 export function useMediaQuery(query: string): boolean {
   const [matches, setMatches] = useState(() =>
@@ -21,7 +21,7 @@ export function useMediaQuery(query: string): boolean {
   return matches
 }
 
-/** Tailwind lg 断点(1024px),与 data-table-shell 的 hidden lg:block 保持一致。 */
+/** Tailwind lg breakpoint (1024px), kept consistent with data-table-shell's hidden lg:block. */
 export function useIsDesktop(): boolean {
   return useMediaQuery('(min-width: 1024px)')
 }

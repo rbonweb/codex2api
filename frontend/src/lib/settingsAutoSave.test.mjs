@@ -12,7 +12,7 @@ test("auto-save rollback restores the last server-confirmed value instead of the
     output_guard_max_channel_bytes: 2 * 1024 * 1024,
     site_name: "CodexProxy",
   };
-  // blur 提交前按下的草稿值已经同步进 settingsFormRef，但服务器从未确认过它。
+  // The draft value typed before the blur commit is already synced into settingsFormRef, but the server has never confirmed it.
   const typedDraft = {
     output_guard_max_channel_bytes: 3 * 1024 * 1024,
     site_name: "CodexProxy",
@@ -106,7 +106,7 @@ test("confirmed settings merge with field versions ignores stale out-of-order re
     },
   };
 
-  // 请求 2 先到达并确认（例如 channel_bytes 变为 8MB）
+  // Request 2 arrives first and is confirmed (for example channel_bytes becomes 8MB)
   confirmedState = mergeConfirmedSettingsWithVersions(
     confirmedState.confirmed,
     confirmedState.confirmedVersions,
@@ -123,7 +123,7 @@ test("confirmed settings merge with field versions ignores stale out-of-order re
     3,
   );
 
-  // 请求 1（旧响应，例如 version 2，带旧值 4MB）后到达
+  // Request 1 (the old response, for example version 2, with the old value 4MB) arrives later
   const afterStaleResponse = mergeConfirmedSettingsWithVersions(
     confirmedState.confirmed,
     confirmedState.confirmedVersions,
@@ -131,7 +131,7 @@ test("confirmed settings merge with field versions ignores stale out-of-order re
     { output_guard_max_channel_bytes: 2 }, // version 2 < 3
   );
 
-  // 必须保持为新值 8MB，不能被旧响应 4MB 覆盖
+  // It must stay at the new value 8MB and must not be overwritten by the old response's 4MB
   assert.equal(
     afterStaleResponse.confirmed?.output_guard_max_channel_bytes,
     8 * 1024 * 1024,
@@ -142,13 +142,13 @@ test("confirmed settings merge with field versions ignores stale out-of-order re
     3,
   );
 
-  // 另一个字段（如 request_bytes，version 2 > 1）正常合并
+  // Another field (such as request_bytes, version 2 > 1) merges normally
   const multiFieldResponse = mergeConfirmedSettingsWithVersions(
     afterStaleResponse.confirmed,
     afterStaleResponse.confirmedVersions,
     {
-      output_guard_max_channel_bytes: 4 * 1024 * 1024, // 旧的 version 2，仍被忽略
-      output_guard_max_request_bytes: 16 * 1024 * 1024, // 新的 version 2 > 1，被接受
+      output_guard_max_channel_bytes: 4 * 1024 * 1024, // old version 2, still ignored
+      output_guard_max_request_bytes: 16 * 1024 * 1024, // new version 2 > 1, accepted
     },
     {
       output_guard_max_channel_bytes: 2,
@@ -194,10 +194,10 @@ test("confirmed settings merge uses output_guard_config_generation to resolve ou
     },
   };
 
-  // 场景：两个 channel-bytes 保存重叠。
-  // 请求 A (先发, client version 2) 后写，服务器提交后生成 version 2 (4MiB, generation 3)
-  // 请求 B (后发, client version 3) 先写，服务器提交后生成 version 1 (8MiB, generation 2)
-  // 客户端先收到请求 B 的响应 (8MiB, generation 2)
+  // Scenario: two channel-bytes saves overlap.
+  // Request A (sent first, client version 2) is written last; after the server commits it, it produces version 2 (4MiB, generation 3)
+  // Request B (sent later, client version 3) is written first; after the server commits it, it produces version 1 (8MiB, generation 2)
+  // The client receives request B's response first (8MiB, generation 2)
   confirmedState = mergeConfirmedSettingsWithVersions(
     confirmedState.confirmed,
     confirmedState.confirmedVersions,
@@ -211,8 +211,8 @@ test("confirmed settings merge uses output_guard_config_generation to resolve ou
   assert.equal(confirmedState.confirmed?.output_guard_max_channel_bytes, 8 * 1024 * 1024);
   assert.equal(confirmedState.confirmed?.output_guard_config_generation, 2);
 
-  // 客户端后收到请求 A 的响应 (4MiB, generation 3, client requestedVersion 2 < 3)
-  // 虽然 client version 2 < 3，但服务器端的 output_guard_config_generation 3 > 2，证明请求 A 是服务器最终提交值
+  // The client receives request A's response later (4MiB, generation 3, client requestedVersion 2 < 3)
+  // Although client version 2 < 3, the server's output_guard_config_generation 3 > 2 shows that request A is the value the server finally committed
   confirmedState = mergeConfirmedSettingsWithVersions(
     confirmedState.confirmed,
     confirmedState.confirmedVersions,
@@ -223,7 +223,7 @@ test("confirmed settings merge uses output_guard_config_generation to resolve ou
     { output_guard_max_channel_bytes: 2 }, // client requestedVersion 2
   );
 
-  // 客户端基线必须采纳服务器最终提交值 4MiB，而不是被请求顺序丢弃保留 8MiB
+  // The client baseline must adopt the server's final committed value 4MiB, not keep 8MiB by discarding it based on request order
   assert.equal(
     confirmedState.confirmed?.output_guard_max_channel_bytes,
     4 * 1024 * 1024,
@@ -231,7 +231,7 @@ test("confirmed settings merge uses output_guard_config_generation to resolve ou
   );
   assert.equal(confirmedState.confirmed?.output_guard_config_generation, 3);
 
-  // 反向验证：如果再收到一个旧 generation 的响应（例如 generation 1），则必须丢弃
+  // Reverse check: if another response with an old generation arrives (for example generation 1), it must be discarded
   const afterOlderGen = mergeConfirmedSettingsWithVersions(
     confirmedState.confirmed,
     confirmedState.confirmedVersions,
@@ -239,7 +239,7 @@ test("confirmed settings merge uses output_guard_config_generation to resolve ou
       output_guard_max_channel_bytes: 2 * 1024 * 1024,
       output_guard_config_generation: 1,
     },
-    { output_guard_max_channel_bytes: 4 }, // client version 即使更大也不接受
+    { output_guard_max_channel_bytes: 4 }, // not accepted even if the client version is larger
   );
 
   assert.equal(afterOlderGen.confirmed?.output_guard_max_channel_bytes, 4 * 1024 * 1024);

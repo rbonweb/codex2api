@@ -108,7 +108,7 @@ export default function SchedulerBoard() {
   const selectedTotal = data.summary?.total ?? 0
   const selectedAvailable = data.summary?.active ?? 0
 
-  // 筛选/排序变更时重置页码
+  // Reset the page number when filters or sorting change
   useEffect(() => {
     setPage(1)
   }, [channel, tierFilter, sortBy])

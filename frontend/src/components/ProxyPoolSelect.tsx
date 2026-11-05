@@ -9,7 +9,7 @@ import { cn } from "@/lib/utils";
 interface ProxyPoolSelectProps {
   proxies: ProxyRow[];
   onSelect: (url: string) => void;
-  /** 当前已选代理 URL(受控回显);与某条代理 URL 一致时该项高亮并在触发器回显。 */
+  /** Currently selected proxy URL (controlled display); when it matches a proxy URL, that item is highlighted and echoed in the trigger. */
   value?: string;
   disabled?: boolean;
   className?: string;
@@ -27,7 +27,7 @@ interface DropdownPosition {
   openUp: boolean;
 }
 
-// Radix Dialog 的 remove-scroll 会拦截 portal 菜单上的原生滚轮,手动驱动 scrollTop。
+// Radix Dialog's remove-scroll intercepts native wheel events on the portal menu, so scrollTop is driven manually.
 function applyManualScroll(el: HTMLElement, deltaY: number): boolean {
   if (el.scrollHeight <= el.clientHeight + 1 || deltaY === 0) return false;
   const maxTop = el.scrollHeight - el.clientHeight;
@@ -37,11 +37,11 @@ function applyManualScroll(el: HTMLElement, deltaY: number): boolean {
   return true;
 }
 
-// ProxyPoolSelect 是账号表单里"从代理池选一条代理"的下拉。
-// 自定义渲染:每项用徽章展示 📍地点 + 空闲(绿)/已绑定 N(琥珀),空闲优先置顶;
-// 选中后触发器回显所选代理(label/url + 地点),让用户明确知道选了哪条。
-// 列表通过 portal 以 fixed 定位挂到 body:该字段常出现在弹窗底部,若用 absolute
-// 会被弹窗 body 的 overflow 裁掉、压在 footer 按钮下;空间不够时自动向上翻。
+// ProxyPoolSelect is the dropdown in the account form for "pick one proxy from the proxy pool".
+// Custom rendering: each item shows a badge with 📍location + idle (green) / bound N (amber); idle items are sorted to the top,
+// after selection the trigger echoes the chosen proxy (label/url + location), so the user knows exactly which one was picked.
+// The list is portaled to body with fixed positioning: this field often sits at the bottom of a dialog, and with absolute positioning
+// it would be clipped by the dialog body's overflow and sit under the footer buttons; when there is not enough space it flips upward automatically.
 export function ProxyPoolSelect({
   proxies,
   onSelect,
@@ -93,9 +93,9 @@ export function ProxyPoolSelect({
       if (rootRef.current?.contains(target) || dropdownRef.current?.contains(target)) return;
       setOpen(false);
     };
-    // Radix Dialog 在 capture 阶段就处理了 Escape;这里只负责收起下拉,
-    // "按 Esc 不要顺带关掉弹窗"由 DialogContent 的 onEscapeKeyDown 依据
-    // data-select-dropdown 是否在场来阻止。
+    // Radix Dialog handles Escape in the capture phase; here we only close the dropdown,
+    // and "pressing Esc should not also close the dialog" is enforced by DialogContent's onEscapeKeyDown, based on
+    // whether data-select-dropdown is present.
     const onEsc = (e: KeyboardEvent) => {
       if (e.key === "Escape") setOpen(false);
     };
@@ -120,7 +120,7 @@ export function ProxyPoolSelect({
     };
   }, [open, computePosition]);
 
-  // 空闲(bound_count=0)优先,其余按绑定数升序,负载最轻的排前面。
+  // Idle (bound_count=0) first; the rest in ascending bound count, so the least loaded come first.
   const sorted = useMemo(
     () => [...proxies].sort((a, b) => (a.bound_count ?? 0) - (b.bound_count ?? 0)),
     [proxies],

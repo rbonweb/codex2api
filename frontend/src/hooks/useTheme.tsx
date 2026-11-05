@@ -891,8 +891,8 @@ function runThemeTransition(e: MouseEvent | undefined, apply: () => void) {
   )
 
   if (document.startViewTransition) {
-    // 冻结元素级颜色过渡：View Transition 的"新画面"是活文档,若放任全页
-    // 几千个 200ms transition-colors 同时跑,扫过期间会逐帧重绘导致卡顿。
+    // Freeze element-level color transitions: the View Transition "new view" is a live document, and if the whole page is left
+    // with thousands of 200ms transition-colors running at once, the sweep would repaint frame by frame and stutter.
     root.classList.add('theme-switching')
     const transition = document.startViewTransition(() => {
       apply()
@@ -919,7 +919,7 @@ function runThemeTransition(e: MouseEvent | undefined, apply: () => void) {
   }
 }
 
-// Provider：把主题状态提升到全局，避免 Layout 与 ThemeSettings 各持一份导致 UI 不同步。
+// Provider: lifts the theme state to the global level, so Layout and ThemeSettings do not each hold a copy that leaves the UI out of sync.
 export function ThemeProvider({ children }: { children: ReactNode }) {
   const [themeMode, setThemeModeState] = useState<ThemeMode>(getInitialThemeMode)
   const [theme, setThemeState] = useState<Theme>(() => resolveTheme(getInitialThemeMode()))
