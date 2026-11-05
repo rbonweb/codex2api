@@ -11,8 +11,8 @@ import (
 	"github.com/gorilla/websocket"
 )
 
-// TestDiscardConnectionClosesAndRemovesFromPool 验证 DiscardConnection 关闭底层连接
-// 并把连接/会话从池中移除。
+// TestDiscardConnectionClosesAndRemovesFromPool verifies that DiscardConnection closes the underlying connection
+// and removes the connection and its session from the pool.
 func TestDiscardConnectionClosesAndRemovesFromPool(t *testing.T) {
 	manager := NewManager()
 	t.Cleanup(manager.Stop)
@@ -42,8 +42,8 @@ func TestDiscardConnectionClosesAndRemovesFromPool(t *testing.T) {
 	}
 }
 
-// TestDiscardConnectionKeepsReplacedConnection 验证 DiscardConnection 使用
-// CompareAndDelete 精确删除：当池中同 PoolKey 已被替换为新连接时，丢弃旧连接不得误删新连接。
+// TestDiscardConnectionKeepsReplacedConnection verifies that DiscardConnection uses
+// CompareAndDelete for exact deletion: when the same PoolKey in the pool has already been replaced by a new connection, discarding the old connection must not wrongly delete the new one.
 func TestDiscardConnectionKeepsReplacedConnection(t *testing.T) {
 	manager := NewManager()
 	t.Cleanup(manager.Stop)
@@ -55,7 +55,7 @@ func TestDiscardConnectionKeepsReplacedConnection(t *testing.T) {
 	oldConn := &WsConnection{session: oldSession, PoolKey: key}
 	oldConn.SetState(StateConnected)
 
-	// 池中已被替换为同 PoolKey 的新连接
+	// The pool has already replaced it with a new connection under the same PoolKey
 	newSession := NewSession(1, manager)
 	newSession.SetConnected(true)
 	newConn := &WsConnection{session: newSession, PoolKey: key}
@@ -92,8 +92,8 @@ func TestStartHeartbeatSkipsRetiredConnection(t *testing.T) {
 	}
 }
 
-// TestWsResponseCloseDiscardsBrokenConnection 验证读流标记 connBroken 后，Close()
-// 销毁坏连接并移出连接池，而不是归还复用。
+// TestWsResponseCloseDiscardsBrokenConnection verifies that after the read stream marks connBroken, Close()
+// destroys the broken connection and removes it from the pool, instead of returning it for reuse.
 func TestWsResponseCloseDiscardsBrokenConnection(t *testing.T) {
 	manager := NewManager()
 	t.Cleanup(manager.Stop)
@@ -128,8 +128,8 @@ func TestWsResponseCloseDiscardsBrokenConnection(t *testing.T) {
 	}
 }
 
-// TestWsResponseCloseReleasesHealthyConnection 验证正常完成(读到终止边界且未标记
-// connBroken)的响应关闭后，连接仍留在池中、保持 connected，可被后续请求复用。
+// TestWsResponseCloseReleasesHealthyConnection verifies that a response completed normally (the read reached the terminal boundary and was not marked
+// connBroken) keeps the connection in the pool after close, still connected, so later requests can reuse it.
 func TestWsResponseCloseReleasesHealthyConnection(t *testing.T) {
 	manager := NewManager()
 	t.Cleanup(manager.Stop)
@@ -161,9 +161,9 @@ func TestWsResponseCloseReleasesHealthyConnection(t *testing.T) {
 	}
 }
 
-// TestWsResponseCloseDiscardsIncompleteStream 验证读流未消费到终止边界(下游断开、
-// ctx 取消等提前退出)时，Close() 销毁连接而不是归还池——上游可能仍在该连接上
-// 推送残留帧，复用会把上一个请求的响应串给下一个用户 (issue #308)。
+// TestWsResponseCloseDiscardsIncompleteStream verifies that when the read stream was not consumed to the terminal boundary (the downstream disconnected,
+// ctx cancelled, or another early exit), Close() destroys the connection instead of returning it to the pool — the upstream may still push leftover frames on that connection
+// and reuse would send the previous request's response to the next user (issue #308).
 func TestWsResponseCloseDiscardsIncompleteStream(t *testing.T) {
 	manager := NewManager()
 	t.Cleanup(manager.Stop)
@@ -178,7 +178,7 @@ func TestWsResponseCloseDiscardsIncompleteStream(t *testing.T) {
 	manager.connections.Store(key, wc)
 	manager.sessions.Store(key, session)
 
-	// 既没有 markStreamCompleted 也没有 markConnBroken：模拟流中途被放弃
+	// Neither markStreamCompleted nor markConnBroken was called: simulate the stream being abandoned midway
 	wsResp := &WsResponse{conn: wc, pendingReq: pr, sessionID: "session-1", manager: manager}
 
 	if err := wsResp.Close(); err != nil {
@@ -192,14 +192,14 @@ func TestWsResponseCloseDiscardsIncompleteStream(t *testing.T) {
 	}
 }
 
-// TestHandleMessageDownstreamWriteFailureMarksConnBroken 复现 issue #308 的触发链路：
-// 下游写入失败(callback 返回 false，如 broken pipe / 客户端断开)时，handleMessage
-// 返回 io.EOF 让 ReadStream 结束，但必须标记 connBroken，使 Close() 销毁连接。
+// TestHandleMessageDownstreamWriteFailureMarksConnBroken reproduces the trigger path of issue #308:
+// when the downstream write fails (the callback returns false, such as broken pipe or a client disconnect), handleMessage
+// returns io.EOF so that ReadStream ends, but it must mark connBroken so that Close() destroys the connection.
 func TestHandleMessageDownstreamWriteFailureMarksConnBroken(t *testing.T) {
 	r := &WsResponse{}
 
 	err := r.handleMessage([]byte(`{"type":"response.output_text.delta","delta":"stale"}`), func(data []byte) bool {
-		return false // 模拟 pw.Write 失败
+		return false // simulate pw.Write failure
 	})
 	if err != io.EOF {
 		t.Fatalf("handleMessage = %v, want io.EOF", err)
@@ -213,9 +213,9 @@ func TestHandleMessageDownstreamWriteFailureMarksConnBroken(t *testing.T) {
 	}
 }
 
-// TestReadStreamDownstreamWriteStopDiscardsConnection 端到端复现 issue #308：
-// 上游持续推送帧，下游中途写入失败，ReadStream 正常返回(nil)，但 Close() 必须把
-// 连接从池中移除并关闭底层 socket，绝不能留在池中被下一个请求复用。
+// TestReadStreamDownstreamWriteStopDiscardsConnection reproduces issue #308 end to end:
+// the upstream keeps pushing frames, the downstream write fails midway, ReadStream returns normally (nil), but Close() must
+// remove the connection from the pool and close the underlying socket; it must never stay in the pool to be reused by the next request.
 func TestReadStreamDownstreamWriteStopDiscardsConnection(t *testing.T) {
 	upgrader := websocket.Upgrader{CheckOrigin: func(r *http.Request) bool { return true }}
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
@@ -225,7 +225,7 @@ func TestReadStreamDownstreamWriteStopDiscardsConnection(t *testing.T) {
 			return
 		}
 		defer conn.Close()
-		// 模拟上一个响应的多帧输出：下游在第一帧后就断开
+		// Simulate multi-frame output of the previous response: the downstream disconnects after the first frame
 		for range 3 {
 			if err := conn.WriteMessage(websocket.TextMessage, []byte(`{"type":"response.output_text.delta","delta":"stale"}`)); err != nil {
 				return
@@ -261,7 +261,7 @@ func TestReadStreamDownstreamWriteStopDiscardsConnection(t *testing.T) {
 		readErrChan: make(chan error, 1),
 	}
 
-	// 下游第一帧就写失败（模拟 broken pipe / 客户端断开）
+	// The downstream write fails on the first frame (simulating broken pipe / client disconnect)
 	err = wsResp.ReadStream(func(data []byte) bool { return false })
 	if err != nil {
 		t.Fatalf("ReadStream: %v (downstream stop is treated as end of stream)", err)
@@ -281,9 +281,9 @@ func TestReadStreamDownstreamWriteStopDiscardsConnection(t *testing.T) {
 	}
 }
 
-// TestReadStreamDiscardsConnectionOnAbnormalClose 端到端验证 issue #267 场景：
-// 上游发送 close 1009 (message too big) 后，ReadStream 返回 read error 并标记坏连接，
-// Close() 把连接从池中移除并关闭底层 socket（避免复用与 CLOSE_WAIT 滞留）。
+// TestReadStreamDiscardsConnectionOnAbnormalClose verifies the issue #267 scenario end to end:
+// after the upstream sends close 1009 (message too big), ReadStream returns a read error and marks the connection as broken,
+// and Close() removes the connection from the pool and closes the underlying socket (avoiding reuse and CLOSE_WAIT buildup).
 func TestReadStreamDiscardsConnectionOnAbnormalClose(t *testing.T) {
 	upgrader := websocket.Upgrader{CheckOrigin: func(r *http.Request) bool { return true }}
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
@@ -293,7 +293,7 @@ func TestReadStreamDiscardsConnectionOnAbnormalClose(t *testing.T) {
 			return
 		}
 		defer conn.Close()
-		// 模拟上游异常关闭：发送 close 1009 (message too big)
+		// Simulate an abnormal upstream close: send close 1009 (message too big)
 		deadline := time.Now().Add(time.Second)
 		_ = conn.WriteControl(
 			websocket.CloseMessage,

@@ -34,7 +34,7 @@ func TestAccountWaitSignalClosedByPoolChanges(t *testing.T) {
 		t.Fatal("different accounts must not share a wait signal")
 	}
 
-	// 在途请求结束 → 唤醒
+	// In-flight request ends → wake up
 	session := NewSession(accountID, manager)
 	pr := session.AddPendingRequest("session-1")
 	session.RemovePendingRequest(pr.RequestID)
@@ -45,7 +45,7 @@ func TestAccountWaitSignalClosedByPoolChanges(t *testing.T) {
 		t.Fatal("another account's waiters were woken by an unrelated release")
 	}
 
-	// 连接销毁 → 唤醒
+	// Connection destroyed → wake up
 	second := manager.accountWaitSignal(accountID)
 	if second == first {
 		t.Fatal("signal must be replaced after it fires")
@@ -56,7 +56,7 @@ func TestAccountWaitSignalClosedByPoolChanges(t *testing.T) {
 		t.Fatal("DiscardConnection did not wake account waiters")
 	}
 
-	// 拨号占位归还 → 唤醒
+	// Dial placeholder returned → wake up
 	third := manager.accountWaitSignal(accountID)
 	capacity := manager.reserveAccountConnectionCapacity(connectionCapacityRequest{accountID: accountID, limit: connectionLimit(capacityChat)})
 	if capacity == nil {
@@ -67,7 +67,7 @@ func TestAccountWaitSignalClosedByPoolChanges(t *testing.T) {
 		t.Fatal("capacity release did not wake account waiters")
 	}
 
-	// 没有等待者时 notify 是空操作，不应留下条目。
+	// With no waiters, notify is a no-op and must not leave an entry.
 	manager.notifyAccountWaiters(accountID)
 	manager.waitNotifyMu.Lock()
 	_, lingering := manager.waitNotify[accountID]
@@ -77,8 +77,8 @@ func TestAccountWaitSignalClosedByPoolChanges(t *testing.T) {
 	}
 }
 
-// 被同会话在途请求占住的连接一旦空闲，排队的 acquire 应立即拿到它，
-// 而不是等到下一次指数退避到期（封顶 AcquireMaxBackoff）。
+// Once a connection held by an in-flight request in the same session becomes idle, a queued acquire should get it immediately,
+// instead of waiting for the next exponential backoff to expire (capped at AcquireMaxBackoff).
 func TestAcquireConnectionWakesImmediatelyWhenBusySessionReleases(t *testing.T) {
 	manager := NewManager()
 	t.Cleanup(manager.Stop)
@@ -100,8 +100,8 @@ func TestAcquireConnectionWakesImmediatelyWhenBusySessionReleases(t *testing.T) 
 		done <- result{wc: wc, pr: pr, err: err, at: time.Now()}
 	}()
 
-	// 让等待者进入退避封顶区间（10+20+40+80+160=310ms 后每次等 200ms），
-	// 在两次轮询之间释放：无唤醒机制时要再等到下一个 200ms 边界。
+	// Let the waiter enter the capped backoff range (after 10+20+40+80+160=310ms it waits 200ms each time),
+	// Release between two polls: without the wake-up mechanism it would have to wait for the next 200ms boundary.
 	time.Sleep(AcquireMaxBackoff*2 + 160*time.Millisecond)
 	releasedAt := time.Now()
 	busy.session.RemovePendingRequest(blocking.RequestID)

@@ -16,7 +16,7 @@ func TestProcessCPUTimerLinux(t *testing.T) {
 	if timer.GetrusageFailed() {
 		t.Fatalf("Getrusage failed during timer start")
 	}
-	// 执行足够的 CPU 密集计算，确保产生正的 CPU 测量值
+	// Run enough CPU-heavy work to ensure a positive CPU measurement
 	sum := 0
 	for i := 0; i < 5000000; i++ {
 		sum += i ^ (i >> 1)
@@ -44,7 +44,7 @@ func TestNonRepeatingPRNG(t *testing.T) {
 		t.Fatalf("PRNG with same seed should be deterministic")
 	}
 
-	// 验证在 8192 字节滑动窗口内无短周期 (1 <= p <= 256)
+	// Verify there is no short period (1 <= p <= 256) within the 8192-byte sliding window
 	for p := 1; p <= 256; p++ {
 		match := true
 		for i := p; i < 8192; i++ {
@@ -77,7 +77,7 @@ func TestCalculatePercentileAndMedian(t *testing.T) {
 }
 
 func TestValidateTTFTAndCPUGates(t *testing.T) {
-	// 1. 正常合格样本 (Green)
+	// 1. Normal passing sample (Green)
 	valid := TTFTAndCPUBenchmarkResult{
 		BaselineP95TTFTMs: 15.0,
 		GuardP95TTFTMs:    22.0,
@@ -90,12 +90,12 @@ func TestValidateTTFTAndCPUGates(t *testing.T) {
 		t.Fatalf("expected valid gates to pass, got: %v", err)
 	}
 
-	// 2. 基线 CPU <= 0 视作无效实验 FAIL (Red)
+	// 2. Baseline CPU <= 0 is treated as an invalid experiment, FAIL (Red)
 	invalidBase := TTFTAndCPUBenchmarkResult{
 		BaselineP95TTFTMs: 15.0,
 		GuardP95TTFTMs:    22.0,
 		TTFTDeltaMs:       7.0,
-		BaselineCPUMs:     0.0, // 无效！
+		BaselineCPUMs:     0.0, // invalid!
 		GuardCPUMs:        1.0,
 		CPUIncreaseRatio:  0.0,
 	}
@@ -104,13 +104,13 @@ func TestValidateTTFTAndCPUGates(t *testing.T) {
 		t.Fatalf("expected baseline <= 0 to fail as invalid experiment, got: %v", err)
 	}
 
-	// 2b. guard CPU <= 0 同样是无效实验：ratio 会被算成 -1（-100%）并静默通过。
+	// 2b. guard CPU <= 0 is likewise an invalid experiment: the ratio is computed as -1 (-100%) and silently passes.
 	invalidGuard := TTFTAndCPUBenchmarkResult{
 		BaselineP95TTFTMs: 15.0,
 		GuardP95TTFTMs:    22.0,
 		TTFTDeltaMs:       7.0,
 		BaselineCPUMs:     10.0,
-		GuardCPUMs:        0.0, // 无效！
+		GuardCPUMs:        0.0, // invalid!
 		CPUIncreaseRatio:  -1.0,
 	}
 	err = ValidateTTFTAndCPUGates(invalidGuard)
@@ -122,7 +122,7 @@ func TestValidateTTFTAndCPUGates(t *testing.T) {
 		t.Fatalf("expected negative guard CPU to fail as invalid experiment, got: %v", err)
 	}
 
-	// 3. TTFT 增量超标 FAIL (Red)
+	// 3. TTFT increment exceeds the limit, FAIL (Red)
 	badTTFT := TTFTAndCPUBenchmarkResult{
 		BaselineP95TTFTMs: 10.0,
 		GuardP95TTFTMs:    25.0,
@@ -136,7 +136,7 @@ func TestValidateTTFTAndCPUGates(t *testing.T) {
 		t.Fatalf("expected TTFT delta > 10ms to fail, got: %v", err)
 	}
 
-	// 4. CPU 增量超标 FAIL (Red)
+	// 4. CPU increment exceeds the limit, FAIL (Red)
 	badCPU := TTFTAndCPUBenchmarkResult{
 		BaselineP95TTFTMs: 10.0,
 		GuardP95TTFTMs:    15.0,
@@ -171,24 +171,24 @@ func TestValidateTTFTAndCPUGates(t *testing.T) {
 }
 
 func TestValidateLinearScalingRatio(t *testing.T) {
-	// 1. 合格样本 (Green: 10ms -> 22ms [2.2x] -> 48ms [2.18x])
+	// 1. Passing sample (Green: 10ms -> 22ms [2.2x] -> 48ms [2.18x])
 	if err := ValidateLinearScalingRatio(10.0, 22.0, 48.0); err != nil {
 		t.Fatalf("expected linear scaling to pass, got: %v", err)
 	}
 
-	// 2. 超标样本 (Red: 10ms -> 30ms [3.0x > 2.5])
+	// 2. Over-limit sample (Red: 10ms -> 30ms [3.0x > 2.5])
 	err := ValidateLinearScalingRatio(10.0, 30.0, 60.0)
 	if err == nil || !strings.Contains(err.Error(), "linearity ratio (1MiB->2MiB) failed") {
 		t.Fatalf("expected ratio > 2.5 to fail, got: %v", err)
 	}
 
-	// 3. 无效样本 (Red: cpu1MiB <= 0)
+	// 3. Invalid sample (Red: cpu1MiB <= 0)
 	err = ValidateLinearScalingRatio(0.0, 20.0, 40.0)
 	if err == nil || !strings.Contains(err.Error(), "all CPU median samples must be > 0") {
 		t.Fatalf("expected non-positive CPU to fail, got: %v", err)
 	}
 
-	// 4. NaN / Inf 校验拒绝 (Red)
+	// 4. NaN / Inf validation rejection (Red)
 	nan := math.NaN()
 	err = ValidateLinearScalingRatio(nan, nan, nan)
 	if err == nil || !strings.Contains(err.Error(), "NaN or Inf") {

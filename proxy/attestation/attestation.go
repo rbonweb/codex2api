@@ -1,4 +1,4 @@
-// Package attestation 统一 Codex 桌面协议的证明生成与失败状态。
+// Package attestation unifies proof generation and failure state for the Codex desktop protocol.
 package attestation
 
 import "context"
@@ -17,7 +17,7 @@ const (
 	GenerationFailed        = 4
 )
 
-// Signals 是各平台共用的账号设备画像，不包含真实硬件证明。
+// Signals is the account device profile shared by all platforms and does not include real hardware attestation.
 type Signals struct {
 	Languages     []string
 	Locale        string
@@ -33,7 +33,7 @@ type Request struct {
 	Signals  Signals
 }
 
-// NativeResult 保留原生 supported 与 token 缺失的区别，对应错误码 3 和 4。
+// NativeResult keeps the difference between native supported and a missing token, corresponding to error codes 3 and 4.
 type NativeResult struct {
 	Supported   bool     `json:"supported"`
 	TokenBase64 *string  `json:"tokenBase64,omitempty"`
@@ -59,7 +59,7 @@ type tokenResult struct {
 	latencyMS *float64
 }
 
-// Generate 跟随出站平台；Linux 等平台默认不启用自动证明。
+// Generate follows the outbound platform; on Linux and other platforms automatic attestation is disabled by default.
 func (s *Service) Generate(ctx context.Context, request Request) (string, error) {
 	if err := ctx.Err(); err != nil {
 		return "", err

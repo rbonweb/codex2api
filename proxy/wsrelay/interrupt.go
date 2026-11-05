@@ -10,7 +10,7 @@ import (
 	"github.com/tidwall/gjson"
 )
 
-// interrupt 直接写当前已提交租约，不能复用 response.create 的租约提交入口。
+// interrupt writes directly to the currently committed lease, and cannot reuse the response.create lease commit entry point.
 func (r *WsResponse) interrupt(payload []byte) error {
 	r.mu.Lock()
 	defer r.mu.Unlock()
@@ -75,7 +75,7 @@ func isInterruptCompletion(payload []byte) bool {
 	return false
 }
 
-// 保留原始事件顺序；终态先到时继续读确认，避免污染下一轮租约。
+// Keep the original event order; when the terminal state arrives first, keep reading to confirm, to avoid polluting the next round's lease.
 func (r *WsResponse) handleInterruptMessage(payload []byte, callback func([]byte) bool) (bool, error) {
 	eventType := gjson.GetBytes(payload, "type").String()
 	r.mu.Lock()

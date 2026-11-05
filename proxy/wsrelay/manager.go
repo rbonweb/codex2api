@@ -16,9 +16,9 @@ import (
 	"github.com/gorilla/websocket"
 )
 
-// ==================== 连接池管理器 ====================
+// ==================== Connection pool manager ====================
 
-// ConnectionState 连接状态
+// ConnectionState is the connection state.
 type ConnectionState int32
 
 const (
@@ -28,55 +28,55 @@ const (
 	StateClosing      ConnectionState = 3
 )
 
-// WsConnection WebSocket 连接包装
+// WsConnection wraps a WebSocket connection.
 type WsConnection struct {
-	// WebSocket 连接
+	// WebSocket connection
 	conn *websocket.Conn
 
-	// 握手时实际发送给上游的 User-Agent。连接复用时每个请求沿用该值，
-	// 不能用当前配置重新推导，否则设置变更后会记录并未发送的 UA。
+	// The User-Agent actually sent upstream during the handshake. When the connection is reused, each request keeps this value,
+	// it must not be re-derived from the current config, otherwise after a settings change it would record a UA that was never sent.
 	upstreamUserAgent      string
 	upstreamUserAgentKnown bool
 	upstreamClientIdentity string
-	// 握手时发送的 Version 头，供上游"模型不支持"时判断是否为客户端版本闸。
+	// The Version header sent during the handshake, used to tell whether an upstream "model not supported" error comes from the client version gate.
 	upstreamVersion string
 
-	// 创建/复用该连接的账号。请求并发由调度层独立管理，
-	// response_id 复用按共享连接槽位预算收敛无绑定的空闲连接。
+	// The account that created or reuses this connection. Request concurrency is managed independently by the scheduling layer,
+	// response_id reuse narrows idle connections without a binding down to the shared connection slot budget.
 	account *auth.Account
 
-	// 会话
+	// Session
 	session *Session
 
-	// 连接 URL
+	// Connection URL
 	URL string
 
-	// 连接池键
+	// Connection pool key
 	PoolKey string
 
-	// 连接状态
+	// Connection state
 	state atomic.Int32
 
 	capacitySlot atomic.Pointer[connectionCapacitySlot]
 	closeCause   atomic.Pointer[connectionCloseCause]
 
-	// 最后业务使用时间，心跳和空闲元数据不续期。
+	// Last business use time; heartbeats and idle metadata do not renew it.
 	lastUsed atomic.Int64
 
-	// 最近入站活动时间（数据帧/对端 Ping/Pong 回执，UnixNano）。仅供 probe
-	// 免往返判断：近期有入站即 TCP 双向可证活。0 表示尚无入站，probe 走完整
-	// 往返。刻意不并入 lastUsed，避免对端 Ping 顺带延长空闲逐出。
+	// Most recent inbound activity time (data frame / peer Ping / Pong reply, UnixNano). Only for probe
+	// lets probe skip a round trip: recent inbound activity proves TCP is alive in both directions. 0 means no inbound activity yet, so probe does the full
+	// round trip. Deliberately not merged into lastUsed, so a peer Ping does not incidentally extend idle eviction.
 	lastInbound atomic.Int64
 
-	// 创建时间（UnixNano），用于连接年龄判断（上游有 60 分钟连接寿命上限）。
-	// 构造后不再修改；为 0 表示未知（测试用字面量构造），视为未到龄。
+	// Creation time (UnixNano), used for connection age checks (the upstream caps connection lifetime at 60 minutes).
+	// Not changed after construction; 0 means unknown (test literals) and is treated as not yet over age.
 	createdAt int64
 
-	// 写操作锁
+	// Write operation lock
 	writeMu sync.Mutex
 
-	// 永久 reader、业务帧 lease 与探活状态。读取状态按需初始化，兼容测试中
-	// 通过字面量构造且没有底层 socket 的 WsConnection。
+	// Permanent reader, business frame lease and probe state. The state is initialized on demand, to stay compatible with tests
+	// that build a WsConnection as a literal with no underlying socket.
 	readStateOnce       sync.Once
 	readPumpOnce        sync.Once
 	readFailureOnce     sync.Once
@@ -89,19 +89,19 @@ type WsConnection struct {
 	probePayload  string
 	probeResult   chan struct{}
 
-	// 底层 socket 与断开回调只关闭/调用一次。
+	// The underlying socket and the disconnect callback are closed/called only once.
 	closeOnce          sync.Once
 	closeErr           error
 	disconnectNotified atomic.Bool
 
-	// HTTP 握手响应
+	// HTTP handshake response
 	httpResp *http.Response
 
-	// 连接关闭回调
+	// Connection close callback
 	onDisconnected func(accountID int64)
 
-	// 永久 reader 失败回调。Manager 使用指针级 CompareAndDelete 精确移除
-	// 当前连接，避免误删同 PoolKey 下已经重建的连接。
+	// Permanent reader failure callback. Manager uses a pointer-level CompareAndDelete to remove exactly
+	// the current connection, so it does not wrongly delete a connection under the same PoolKey that was already rebuilt.
 	onReadFailure func(wc *WsConnection)
 
 	// Protected by the owning Manager's respConnMu. Once removed from the pool,
@@ -140,7 +140,7 @@ func configureWebsocketDialerProxy(dialer *websocket.Dialer, rawProxyURL string)
 	return nil
 }
 
-// NewWsConnection 创建 WebSocket 连接
+// NewWsConnection creates a WebSocket connection.
 func NewWsConnection(conn *websocket.Conn, session *Session, wsURL string) *WsConnection {
 	wc := &WsConnection{
 		conn:      conn,
@@ -153,7 +153,7 @@ func NewWsConnection(conn *websocket.Conn, session *Session, wsURL string) *WsCo
 	return wc
 }
 
-// Touch 同步更新连接和会话的最后业务使用时间。
+// Touch synchronously updates the last business use time of the connection and session.
 func (wc *WsConnection) Touch() {
 	wc.lastUsed.Store(time.Now().UnixNano())
 	if wc.session != nil {
@@ -162,12 +162,12 @@ func (wc *WsConnection) Touch() {
 	}
 }
 
-// touchInbound 记录一次入站活动（数据帧/对端 Ping/我方 Ping 的 Pong 回执）。
+// touchInbound records one inbound activity (data frame / peer Ping / Pong reply to our Ping).
 func (wc *WsConnection) touchInbound() {
 	wc.lastInbound.Store(time.Now().UnixNano())
 }
 
-// recentInboundWithin 最近 window 内是否有入站活动。
+// recentInboundWithin reports whether there was inbound activity within the last window.
 func (wc *WsConnection) recentInboundWithin(window time.Duration) bool {
 	ts := wc.lastInbound.Load()
 	if ts == 0 {
@@ -176,7 +176,7 @@ func (wc *WsConnection) recentInboundWithin(window time.Duration) bool {
 	return time.Since(time.Unix(0, ts)) <= window
 }
 
-// IsExpired 只对曾用于聊天的连接执行业务空闲回收；空白槽位正常保活。
+// IsExpired only applies business idle reclamation to connections that were used for chat; blank slots are kept alive normally.
 func (wc *WsConnection) IsExpired() bool {
 	if !weakNetworkModeEnabled() && (wc.session == nil || !wc.session.hasUserContext()) {
 		return false
@@ -185,8 +185,8 @@ func (wc *WsConnection) IsExpired() bool {
 	return time.Since(lastUsed) >= connectionIdleTimeout()
 }
 
-// IsOverAge 检查连接是否超过当前模式的最大寿命。到龄连接不能再接新请求：
-// 默认模式提前规避上游 60 分钟硬限制；弱网模式使用更短窗口主动轮换。
+// IsOverAge checks whether the connection exceeds the maximum lifetime of the current mode. An over-age connection can no longer take new requests:
+// default mode avoids the upstream 60-minute hard limit early; weak-network mode uses a shorter window and rotates actively.
 func (wc *WsConnection) IsOverAge() bool {
 	if wc.createdAt == 0 {
 		return false
@@ -194,12 +194,12 @@ func (wc *WsConnection) IsOverAge() bool {
 	return time.Since(time.Unix(0, wc.createdAt)) > connectionMaxLifetime()
 }
 
-// IsConnected 检查是否已连接
+// IsConnected checks whether it is connected.
 func (wc *WsConnection) IsConnected() bool {
 	return wc.state.Load() == int32(StateConnected)
 }
 
-// Close 安全关闭连接
+// Close closes the connection safely.
 func (wc *WsConnection) Close() error {
 	if wc == nil {
 		return nil
@@ -220,12 +220,12 @@ func (wc *WsConnection) Close() error {
 	return wc.closeErr
 }
 
-// SetState 设置连接状态
+// SetState sets the connection state.
 func (wc *WsConnection) SetState(state ConnectionState) {
 	wc.state.Store(int32(state))
 }
 
-// WriteMessage 安全写入消息
+// WriteMessage writes a message safely.
 func (wc *WsConnection) WriteMessage(messageType int, data []byte) error {
 	wc.writeMu.Lock()
 	defer wc.writeMu.Unlock()
@@ -251,72 +251,72 @@ func (wc *WsConnection) WriteMessage(messageType int, data []byte) error {
 	return writeErr
 }
 
-// HTTPResponse 返回 HTTP 握手响应
+// HTTPResponse returns the HTTP handshake response.
 func (wc *WsConnection) HTTPResponse() *http.Response {
 	return wc.httpResp
 }
 
-// ==================== 连接池管理器 ====================
+// ==================== Connection pool manager ====================
 
-// Manager WebSocket 连接池管理器
+// Manager is the WebSocket connection pool manager.
 type Manager struct {
-	// 连接池（accountID -> *WsConnection）
+	// Connection pool (accountID -> *WsConnection)
 	connections sync.Map
 
-	// 会话池（accountID -> *Session）
+	// Session pool (accountID -> *Session)
 	sessions sync.Map
 
-	// 拨号器配置
+	// Dialer config
 	dialer *websocket.Dialer
 
-	// 清理定时器
+	// Cleanup timer
 	cleanupTicker *time.Ticker
 	stopCleanup   chan struct{}
 	stopOnce      sync.Once
 
-	// 连接回调
+	// Connection callbacks
 	onConnected    func(accountID int64, session *Session)
 	onDisconnected func(accountID int64)
 
-	// 读写锁保护回调设置
+	// Read-write lock guarding the callback settings
 	mu sync.RWMutex
 
-	// pool key 级别串行化，避免同一逻辑 session 在 acquire 阶段竞争同一条连接
+	// Serializes at the pool key level, so the same logical session does not compete for the same connection during acquire
 	keyLocks refCountedLockRegistry[string]
-	// 账号级串行化连接获取，确保跨 session/pool key 创建连接时仍能严格执行
-	// 每账号连接上限，避免大量短会话各留一条空闲连接。
+	// Serializes connection acquisition per account, so the per-account limit is still strictly enforced when connections are created across sessions/pool keys
+	// Per-account connection limit, so many short sessions do not each leave an idle connection behind.
 	accountLocks    refCountedLockRegistry[int64]
 	capacityMu      sync.Mutex
 	connectionSlots map[int64]map[*connectionCapacitySlot]*WsConnection
 
-	// 账号级等待唤醒：busy/容量等待者在同账号连接释放、销毁、新建或在途请求结束时
-	// 立即被唤醒重新选连，不再空等整个退避间隔（最多 AcquireMaxBackoff）。
-	// 每次 notify 关闭并替换当前 channel；只有等待者存在时才有条目。
+	// Per-account wakeup for waiters: busy/capacity waiters are woken on the same account when a connection is released, destroyed or created, or an in-flight request ends,
+	// and re-pick a connection right away instead of waiting out the whole backoff interval (at most AcquireMaxBackoff).
+	// Each notify closes and replaces the current channel; an entry exists only while waiters exist.
 	waitNotifyMu sync.Mutex
 	waitNotify   map[int64]chan struct{}
 
-	// response_id -> 连接 绑定（续链亲和）。上游 chatgpt backend 无服务端存储时，
-	// previous_response_id 的上下文只存活在产生该响应的那条 WS 连接里；带续链 ID
-	// 的请求必须回到原连接，落到别的槽位会得到 "previous response not found"。
-	// 参考 sub2api openai_ws_state_store 的 BindResponseConn/GetResponseConn。
+	// response_id -> connection binding (continuation affinity). When the upstream chatgpt backend has no server-side storage,
+	// the context for previous_response_id only lives on the WS connection that produced that response; a request with a continuation ID
+	// must go back to the original connection; landing on another slot would get "previous response not found".
+	// Modeled on sub2api openai_ws_state_store's BindResponseConn/GetResponseConn.
 	respConnMu       sync.Mutex
 	respConnBindings map[string]responseConnBinding
 
-	// 可选的探活函数（用于测试替换），nil 时使用默认 probeConnection
+	// Optional probe function (for test replacement); when nil, the default probeConnection is used
 	probeFunc func(wc *WsConnection) bool
 
-	// 可选的保活 Ping 函数（用于测试替换），nil 时使用默认 SendHeartbeat
+	// Optional keepalive ping function (for test replacement); when nil, the default SendHeartbeat is used
 	keepalivePingFunc func(wc *WsConnection) error
 
-	// 测试钩子：连接写入池后、首个 pending/read lease 建立前触发。
+	// Test hook: fires after a connection is written to the pool and before the first pending/read lease is set up.
 	afterConnectionStored func(wc *WsConnection)
 }
 
-// responseConnBinding 记录某个 response_id 由哪条连接产出。
-// conn 指针同时用作身份校验：同 poolKey 下连接被重建后旧绑定自动失效。
-// apiKey 为产出该响应的下游 API Key（明文，仅存内存），lookup 时要求匹配，
-// 防止跨 Key 用他人 response_id 定向挤上他人连接（与 response cache 的
-// owner 隔离同一原则）。
+// responseConnBinding records which connection produced a given response_id.
+// The conn pointer doubles as an identity check: when a connection under the same poolKey is rebuilt, the old binding becomes invalid automatically.
+// apiKey is the downstream API key that produced the response (plaintext, kept in memory only); lookup requires a match,
+// to stop another key from using someone else's response_id to target and squeeze onto their connection (the same principle as the response cache's
+// owner isolation).
 type responseConnBinding struct {
 	conn       *WsConnection
 	sessionKey string
@@ -327,24 +327,24 @@ type responseConnBinding struct {
 }
 
 const (
-	// responseConnBindingTTL 续链绑定的存活时间。上游空闲连接本身在 IdleTimeout
-	// (30min) 后被清理，绑定活得再久也无意义，与其对齐。
+	// responseConnBindingTTL is how long a continuation binding lives. Upstream idle connections are themselves cleaned up after IdleTimeout
+	// (30min), so a binding living longer would be pointless; align it with that.
 	responseConnBindingTTL = IdleTimeout
-	// responseConnBindingMaxEntries 绑定表上限，防止内存膨胀。
+	// responseConnBindingMaxEntries is the binding table limit, to prevent memory bloat.
 	responseConnBindingMaxEntries = 4096
 )
 
-// wsWriteBufferPool 在所有上游 WS 连接间共享写缓冲，降低高并发下的内存占用。
+// wsWriteBufferPool shares write buffers across all upstream WS connections, reducing memory use under high concurrency.
 var wsWriteBufferPool = &sync.Pool{}
 
-// NewManager 创建连接池管理器
+// NewManager creates the connection pool manager.
 func NewManager() *Manager {
 	m := &Manager{
 		dialer: &websocket.Dialer{
 			HandshakeTimeout:  HandshakeTimeout,
 			EnableCompression: true,
-			// 上游 Codex WS 帧可达 48-91KB，默认 4KB 缓冲会导致单帧多轮 syscall；
-			// 调大到 64KB 减少读写循环次数，写缓冲走共享池复用。
+			// Upstream Codex WS frames can reach 48-91KB; the default 4KB buffer would need multiple syscall rounds per frame;
+			// raising it to 64KB reduces read/write loop iterations, and write buffers are reused from the shared pool.
 			ReadBufferSize:  64 * 1024,
 			WriteBufferSize: 64 * 1024,
 			WriteBufferPool: wsWriteBufferPool,
@@ -356,14 +356,14 @@ func NewManager() *Manager {
 		stopCleanup: make(chan struct{}),
 	}
 
-	// 启动后台清理
+	// Start background cleanup
 	m.cleanupTicker = time.NewTicker(30 * time.Second)
 	go m.cleanupLoop()
 
 	return m
 }
 
-// cleanupLoop 定期清理过期连接
+// cleanupLoop periodically cleans up expired connections.
 func (m *Manager) cleanupLoop() {
 	for {
 		select {
@@ -376,10 +376,10 @@ func (m *Manager) cleanupLoop() {
 	}
 }
 
-// evictExpired 清理过期连接和会话（含到龄且空闲的连接，主动轮转避免撞上游寿命上限）。
-// 有在途请求的连接/会话一律跳过：IsExpired 只看 lastUsed/LastActiveAt，上游长思考
-// 或 pong 丢失时会把活跃对象误判为空闲，直接 Close 会把在途流同秒批量截断
-// （issue #436）；等在途收尾（读路径业务帧静默上限 ActiveReadMaxTurnSilence 兜底）后下一轮再清。
+// evictExpired cleans up expired connections and sessions (including over-age idle connections, rotated proactively to avoid hitting the upstream lifetime limit).
+// Connections/sessions with in-flight requests are always skipped: IsExpired only looks at lastUsed/LastActiveAt, and during long upstream reasoning
+// or a lost pong would misjudge an active object as idle; calling Close directly would cut off all in-flight streams in the same second
+// (issue #436); clean up in the next round after in-flight work finishes (the read path's business-frame silence cap ActiveReadMaxTurnSilence is the backstop).
 func (m *Manager) evictExpired() {
 	m.connections.Range(func(key, value any) bool {
 		wc := value.(*WsConnection)
@@ -410,7 +410,7 @@ func (m *Manager) evictExpired() {
 	m.trimAllIdleChatConnections()
 }
 
-// Stop 停止管理器
+// Stop stops the manager.
 func (m *Manager) Stop() {
 	m.stopOnce.Do(func() {
 		close(m.stopCleanup)
@@ -418,7 +418,7 @@ func (m *Manager) Stop() {
 	})
 }
 
-// closeAll 关闭所有连接
+// closeAll closes all connections.
 func (m *Manager) closeAll() {
 	m.closeCapacityConnections()
 	m.connections.Range(func(key, value any) bool {
@@ -438,28 +438,28 @@ func (m *Manager) closeAll() {
 	})
 }
 
-// SetOnConnected 设置连接回调
+// SetOnConnected sets the connection callback.
 func (m *Manager) SetOnConnected(fn func(accountID int64, session *Session)) {
 	m.mu.Lock()
 	m.onConnected = fn
 	m.mu.Unlock()
 }
 
-// SetOnDisconnected 设置断开回调
+// SetOnDisconnected sets the disconnect callback.
 func (m *Manager) SetOnDisconnected(fn func(accountID int64)) {
 	m.mu.Lock()
 	m.onDisconnected = fn
 	m.mu.Unlock()
 }
 
-// getOnDisconnected 获取断开回调
+// getOnDisconnected returns the disconnect callback.
 func (m *Manager) getOnDisconnected() func(accountID int64) {
 	m.mu.RLock()
 	defer m.mu.RUnlock()
 	return m.onDisconnected
 }
 
-// getOnConnected 获取连接回调
+// getOnConnected returns the connect callback.
 func (m *Manager) getOnConnected() func(accountID int64, session *Session) {
 	m.mu.RLock()
 	defer m.mu.RUnlock()
@@ -523,8 +523,8 @@ func (m *Manager) accountWaitSignal(accountID int64) <-chan struct{} {
 	return ch
 }
 
-// notifyAccountWaiters 唤醒该账号所有等待中的 acquire：连接释放/销毁/新建、在途请求结束、
-// 拨号占位归还时调用。没有等待者时是一次 map 查找。
+// notifyAccountWaiters wakes all acquire calls waiting on this account: connection released/destroyed/created, in-flight request finished,
+// or a dial placeholder returned. With no waiters it is a single map lookup.
 func (m *Manager) notifyAccountWaiters(accountID int64) {
 	if m == nil {
 		return
@@ -540,7 +540,7 @@ func (m *Manager) notifyAccountWaiters(accountID int64) {
 	}
 }
 
-// waitForAccountChange 等待账号池变化、退避到期或上下文取消，返回实际等待时长。
+// waitForAccountChange waits for an account pool change, backoff expiry or context cancellation, and returns the actual wait duration.
 func waitForAccountChange(ctx context.Context, wake <-chan struct{}, backoff time.Duration) (time.Duration, error) {
 	start := time.Now()
 	timer := time.NewTimer(backoff)
@@ -554,8 +554,8 @@ func waitForAccountChange(ctx context.Context, wake <-chan struct{}, backoff tim
 	return time.Since(start), nil
 }
 
-// AcquireConnection 获取或创建连接
-// 仅在同一逻辑 session 且连接空闲时复用，避免不同会话共用一条已握手连接。
+// AcquireConnection gets or creates a connection.
+// Reuses only within the same logical session and when the connection is idle, so different sessions do not share one handshaken connection.
 func (m *Manager) AcquireConnection(
 	ctx context.Context,
 	account *auth.Account,
@@ -576,16 +576,16 @@ func (m *Manager) AcquireConnection(
 	var busyOverflowAttempted bool
 
 	for {
-		// 先取唤醒信号再检查池状态：检查之后发生的释放/销毁一定会关闭这个 channel。
+		// Take the wakeup signal before checking the pool state: any release/destroy after the check will necessarily close this channel.
 		wake := m.accountWaitSignal(account.ID())
 		lock.Lock()
 		if v, ok := m.connections.Load(key); ok {
 			wc := v.(*WsConnection)
 			if canReuseConnection(wc) {
-				// 发送 Ping 探活，确认连接真正存活
+				// Send a ping probe to confirm the connection is really alive
 				if m.probe(wc) {
-					// 网络 probe 不持有账号锁。同账号其它 pool key 可以并行探活；
-					// probe 期间连接可能被账号容量裁剪，因此拿锁后必须复验。
+					// The network probe does not hold the account lock. Other pool keys on the same account can probe in parallel;
+					// during the probe the connection may be trimmed by account capacity, so it must be re-checked after taking the lock.
 					accountLock.Lock()
 					current, exists := m.connections.Load(key)
 					if !exists || current != wc || !canReuseConnection(wc) {
@@ -610,31 +610,31 @@ func (m *Manager) AcquireConnection(
 					}
 					continue
 				}
-				// 探活失败，清理死连接
+				// Probe failed; clean up the dead connection
 				m.discardConnectionFor(wc, closeProbeFailed)
 				lock.Unlock()
 				continue
 			}
 			if wc.session != nil && wc.session.PendingCount() > 0 {
 				lock.Unlock()
-				// 连接被同 session 的前一个请求占用：指数退避轮询等待其空闲，
-				// 累计等待超过上限则返回错误，避免无界阻塞与固定间隔空转抢锁。
-				// 到龄连接也会走到这里等在途请求结束，结束后下一轮循环轮转重建。
+				// The connection is held by the previous request of the same session: poll with exponential backoff until it is idle,
+				// return an error once the cumulative wait exceeds the limit, to avoid unbounded blocking and fixed-interval spinning that competes for the lock.
+				// Over-age connections also end up here, waiting for in-flight requests to finish; after that, the next loop round rotates and rebuilds them.
 				//
-				// 短等待(patience)后可溢出到同账号的兄弟槽位（issue #413，默认关闭）：
-				// 前一请求长时间流式输出时，同会话的并发请求不再等满整个上限。
-				// 只尝试一次；失败（容量满/拨号失败）回落到继续等待，最坏情况与关闭时一致。
+				// After a short wait (patience), it can overflow to a sibling slot on the same account (issue #413, off by default):
+				// when the previous request streams output for a long time, concurrent requests in the same session no longer wait the full limit.
+				// Tries only once; on failure (capacity full / dial failed) it falls back to waiting, and the worst case matches the disabled behavior.
 				if !busyOverflowAttempted && busyOverflowEnabled() && waited >= busyOverflowPatience() && !isBusyOverflowSessionKey(sessionKey) {
 					busyOverflowAttempted = true
 					if owc, opr, ok := m.tryAcquireBusyOverflow(ctx, account, wsURL, sessionKey, headers, proxyOverride); ok {
-						log.Printf("[WS] busy session 溢出到同账号兄弟连接 (account=%d, waited=%s)", account.ID(), waited.Round(time.Millisecond))
+						log.Printf("[WS] busy session overflowed to a sibling connection on the same account (account=%d, waited=%s)", account.ID(), waited.Round(time.Millisecond))
 						return owc, opr, nil
 					}
 				}
 				if maxWait := busyAcquireMaxWait(); waited >= maxWait {
 					return nil, nil, fmt.Errorf("acquire websocket connection timed out after %s waiting for busy session", maxWait)
 				}
-				// 在途请求结束（RemovePendingRequest）或连接被销毁时立即唤醒，退避只是兜底。
+				// Wakes immediately when an in-flight request ends (RemovePendingRequest) or the connection is destroyed; backoff is only the fallback.
 				slept, waitErr := waitForAccountChange(ctx, wake, wait)
 				if waitErr != nil {
 					return nil, nil, waitErr
@@ -657,8 +657,8 @@ func (m *Manager) AcquireConnection(
 			lock.Unlock()
 			return nil, nil, m.connectionCapacityError(account.ID(), kind)
 		}
-		// 实体连接已登记，拨号期间释放账号锁，其他 session 可继续取连。
-		// 空白连接的拨号登记占用预算；聊天推理不占空闲保留额度。
+		// The real connection is registered; the account lock is released during dialing so other sessions can keep acquiring connections.
+		// Dialing a blank connection registers against the budget; chat reasoning does not use the idle reserve quota.
 		accountLock.Unlock()
 
 		wc, err := m.createConnection(ctx, connectionDialRequest{account: account, url: wsURL, sessionKey: sessionKey, headers: headers, proxyOverride: proxyOverride, capacity: capacity})
@@ -667,7 +667,7 @@ func (m *Manager) AcquireConnection(
 			return nil, nil, err
 		}
 
-		// 存储新连接并立即占位 pending request，避免返回后才记账产生竞态
+		// Store the new connection and immediately reserve a pending request, to avoid a race from accounting only after return
 		m.connections.Store(key, wc)
 		if m.afterConnectionStored != nil {
 			m.afterConnectionStored(wc)
@@ -706,11 +706,11 @@ func (m *Manager) AcquireConnection(
 	}
 }
 
-// tryAcquireBusyOverflow 在 busy session 等待超过 patience 后，尝试在同账号的有界
-// overflow 槽位（<sessionKey>#ovf-N）上复用空闲兄弟连接或新建一条（issue #413）。
-// 单遍、尽力而为：槽位也在忙则换下一个；账号容量满或拨号/租约失败即放弃，调用方
-// 回落到继续等待原连接——失败路径不会比不开启 overflow 更差。
-// 兄弟连接正常入池，由既有的 IdleTimeout/容量裁剪回收。
+// tryAcquireBusyOverflow, after a busy session has waited longer than patience, tries to use a bounded
+// overflow slot (<sessionKey>#ovf-N) on the same account to reuse an idle sibling connection or create one (issue #413).
+// Single pass, best effort: if that slot is also busy, move to the next one; if account capacity is full or dialing/lease fails, give up, and the caller
+// falls back to waiting for the original connection; a failed attempt is never worse than having overflow disabled.
+// Sibling connections enter the pool normally and are reclaimed by the existing IdleTimeout/capacity trimming.
 func (m *Manager) tryAcquireBusyOverflow(
 	ctx context.Context,
 	account *auth.Account,
@@ -758,11 +758,11 @@ func (m *Manager) tryAcquireBusyOverflow(
 				}
 				m.discardConnectionFor(wc, closeProbeFailed)
 			} else if wc.session != nil && wc.session.PendingCount() > 0 {
-				// 兄弟槽位也在忙：换下一个槽位
+				// The sibling slot is also busy: move to the next slot
 				lock.Unlock()
 				continue
 			} else {
-				// 死/到龄/过期连接：清掉腾出槽位，下方直接新建
+				// Dead/over-age/expired connection: clear it to free the slot, and create a new one directly below
 				m.discardConnectionFor(wc, connectionExpiryReason(wc))
 			}
 		}
@@ -774,7 +774,7 @@ func (m *Manager) tryAcquireBusyOverflow(
 		}
 		capacity := m.reserveAccountConnectionCapacity(connectionCapacityRequest{accountID: account.ID(), limit: accountLimit, protectedKey: key, kind: kind})
 		if capacity == nil {
-			// 账号连接容量已满：不为 overflow 挤占更多连接，放弃降级回到等待
+			// Account connection capacity is full: do not take more connections for overflow; give up and fall back to waiting
 			accountLock.Unlock()
 			lock.Unlock()
 			return nil, nil, false
@@ -783,7 +783,7 @@ func (m *Manager) tryAcquireBusyOverflow(
 		wc, err := m.createConnection(ctx, connectionDialRequest{account: account, url: wsURL, sessionKey: slotSession, headers: headers, proxyOverride: proxyOverride, capacity: capacity})
 		if err != nil {
 			lock.Unlock()
-			log.Printf("[WS] busy overflow 新建连接失败，回落等待原连接 (account=%d): %v", account.ID(), err)
+			log.Printf("[WS] busy overflow failed to create a connection, falling back to waiting for the original connection (account=%d): %v", account.ID(), err)
 			return nil, nil, false
 		}
 		m.connections.Store(key, wc)
@@ -811,9 +811,9 @@ func (m *Manager) tryAcquireBusyOverflow(
 	return nil, nil, false
 }
 
-// StatelessConnectionSlots 无显式会话的请求在每个 (account, cacheKey) 维度下
-// 复用的持久连接槽位数。槽位内空闲连接直接复用,避免每个请求都重新握手——
-// 持续高 RPM 下逐请求握手会触发上游 WS 握手限流（bad handshake → 503）。
+// StatelessConnectionSlots: for requests without an explicit session, under each (account, cacheKey) dimension,
+// the number of persistent connection slots reused. Idle connections within a slot are reused directly, avoiding a new handshake per request —
+// under sustained high RPM, per-request handshakes trigger upstream WS handshake rate limiting (bad handshake → 503).
 const StatelessConnectionSlots = 8
 
 // maxCreateLeaseAttempts bounds retries when a freshly completed handshake is
@@ -825,9 +825,9 @@ const maxCreateLeaseAttempts = 3
 // already queued with the handshake before returning a newly reserved lease.
 const newConnectionReadFailureGrace = 5 * time.Millisecond
 
-// AcquireReusableConnection 在固定槽位内复用或创建连接，返回实际使用的 session key。
-// 第一遍只复用已存在且空闲的连接；第二遍在空槽位新建持久连接；槽位全忙时回退到
-// fallbackKey 的临时连接。空白预热共用账号空白预算；聊天收尾后按空闲上限保留。
+// AcquireReusableConnection reuses or creates a connection within a fixed slot, and returns the session key actually used.
+// The first pass only reuses existing idle connections; the second pass creates a persistent connection in an empty slot; when all slots are busy it falls back to
+// a temporary connection under fallbackKey. Blank warm-ups share the account's blank budget; after chat finishes, connections are kept up to the idle cap.
 func (m *Manager) AcquireReusableConnection(
 	ctx context.Context,
 	account *auth.Account,
@@ -846,7 +846,7 @@ func (m *Manager) AcquireReusableConnection(
 	}
 	accountLock, releaseAccountLock := m.accountLock(account.ID())
 	defer releaseAccountLock()
-	// 第一遍：复用空闲连接（探活失败或已断开的顺手清理，让第二遍可以补位）
+	// First pass: reuse idle connections (clean up any that fail the probe or are already disconnected along the way, so the second pass can fill the slot)
 	for i := 0; i < slots; i++ {
 		slotSession := fmt.Sprintf("%s#%d", baseKey, i)
 		key := m.poolKey(account.ID(), wsURL, slotSession, proxyURL)
@@ -889,7 +889,7 @@ func (m *Manager) AcquireReusableConnection(
 		}
 		lock.Unlock()
 	}
-	// 第二遍：在空槽位新建持久连接
+	// Second pass: create persistent connections in empty slots
 	for i := 0; i < slots; i++ {
 		slotSession := fmt.Sprintf("%s#%d", baseKey, i)
 		key := m.poolKey(account.ID(), wsURL, slotSession, proxyURL)
@@ -943,7 +943,7 @@ func (m *Manager) AcquireReusableConnection(
 		}
 		return wc, pr, slotSession, nil
 	}
-	// 槽位全忙：回退一次性连接
+	// All slots busy: fall back to a one-off connection
 	wc, pr, err := m.AcquireConnection(ctx, account, wsURL, fallbackKey, headers, proxyOverride)
 	return wc, pr, fallbackKey, err
 }
@@ -980,9 +980,9 @@ func canReuseConnection(wc *WsConnection) bool {
 	return wc.session.PendingCount() == 0 && wc.readPumpReusable()
 }
 
-// isRotatableOverAge 连接已到龄且当前无在途请求，可安全轮转（销毁重建）。
-// 到龄但仍有在途请求的连接不动：50 分钟阈值留了 10 分钟余量，在途流仍能正常
-// 收完，等其结束后再轮转，避免掐断在途响应。
+// isRotatableOverAge reports whether a connection is over age and has no in-flight requests, so it can be safely rotated (destroyed and rebuilt).
+// An over-age connection that still has in-flight requests is left alone: the 50-minute threshold leaves a 10-minute margin, so in-flight streams can still finish normally
+// and it is rotated after they end, to avoid cutting off in-flight responses.
 func isRotatableOverAge(wc *WsConnection) bool {
 	if wc == nil || !wc.IsOverAge() {
 		return false
@@ -990,19 +990,19 @@ func isRotatableOverAge(wc *WsConnection) bool {
 	return wc.session == nil || wc.session.PendingCount() == 0
 }
 
-// probeConnection 发送 Ping 检测连接是否真正存活
+// probeConnection sends a ping to check whether the connection is really alive.
 func probeConnection(wc *WsConnection) bool {
 	return probeConnectionWithTimeout(wc, defaultProbeTimeout)
 }
 
-// probeRecencyWindow 内有入站活动（数据帧/对端 Ping/Pong 回执）的连接免
-// Ping-Pong 往返探活。往返探活在 keyLock 内串行、每次复用叠加一个上游 RTT，
-// 请求刚完成后的热复用（最常见路径）不该为此买单；近期入站已证明 TCP 双向
-// 存活，且 lease/队列干净由 readPumpReusable 另行把关。窗口取心跳间隔：
-// 半开连接最坏在窗口过期后的下一次 probe 或 send 失败重试中被识别。
+// A connection with inbound activity (data frame / peer Ping / Pong reply) within probeRecencyWindow skips the
+// ping-pong round-trip probe. Round-trip probes run serially under keyLock, and each reuse adds one upstream RTT,
+// so hot reuse right after a request completes (the most common path) should not pay for that; recent inbound activity has already proven TCP is alive in both directions
+// and the lease/queue cleanliness is checked separately by readPumpReusable. The window is set to the heartbeat interval:
+// a half-open connection is at worst detected on the next probe after the window expires, or on a send failure retry.
 const probeRecencyWindow = HeartbeatPingInterval
 
-// probe 调用探活函数（支持测试替换）
+// probe calls the probe function (supports test replacement)
 func (m *Manager) probe(wc *WsConnection) bool {
 	m.mu.RLock()
 	fn := m.probeFunc
@@ -1016,13 +1016,13 @@ func (m *Manager) probe(wc *WsConnection) bool {
 	return probeConnection(wc)
 }
 
-// wsCompressionSeen 记录本进程已上报过的 permessage-deflate 协商结果
-// (bit0=已见协商成功,bit1=已见未协商)。拨号器一直在 offer 压缩,但协商是否
-// 成功此前没有任何可见信号;结果由上游部署与出站链路(直连/Resin)决定,按
-// 结果去重、每种只报一次,混合链路下也不会逐连接刷日志。
+// wsCompressionSeen records the permessage-deflate negotiation results this process has already reported
+// (bit0 = negotiated successfully was seen, bit1 = not negotiated was seen). The dialer always offers compression, but whether negotiation succeeds
+// had no visible signal before; the result depends on the upstream deployment and the outbound path (direct / Resin). Results are deduplicated by
+// result, each kind reported once, so even on a mixed path the log is not flooded connection by connection.
 var wsCompressionSeen atomic.Int32
 
-// logCompressionNegotiation 上报本次握手的 permessage-deflate 协商结果。
+// logCompressionNegotiation reports the permessage-deflate negotiation result of this handshake.
 func logCompressionNegotiation(resp *http.Response, accountID int64) {
 	if resp == nil {
 		return
@@ -1042,13 +1042,13 @@ func logCompressionNegotiation(resp *http.Response, accountID int64) {
 		}
 	}
 	if bit == 1 {
-		log.Printf("[WS] 上游已协商 permessage-deflate,帧压缩生效 (account=%d, extensions=%q)", accountID, extensions)
+		log.Printf("[WS] upstream negotiated permessage-deflate, frame compression is active (account=%d, extensions=%q)", accountID, extensions)
 	} else {
-		log.Printf("[WS] 上游未协商 permessage-deflate,帧走明文 (account=%d)", accountID)
+		log.Printf("[WS] upstream did not negotiate permessage-deflate, frames are sent in plaintext (account=%d)", accountID)
 	}
 }
 
-// ReleaseConnection 释放连接（归还池）
+// ReleaseConnection releases a connection (returns it to the pool).
 func (m *Manager) ReleaseConnection(wc *WsConnection) {
 	if wc == nil {
 		return
@@ -1060,7 +1060,7 @@ func (m *Manager) ReleaseConnection(wc *WsConnection) {
 	wc.Touch()
 }
 
-// RemoveConnection 移除连接
+// RemoveConnection removes a connection.
 func (m *Manager) RemoveConnection(accountID int64, wsURL string, sessionKey string, proxyURL string) {
 	key := m.poolKey(accountID, wsURL, sessionKey, proxyURL)
 	if v, ok := m.connections.LoadAndDelete(key); ok {
@@ -1075,11 +1075,11 @@ func (m *Manager) RemoveConnection(accountID int64, wsURL string, sessionKey str
 	m.notifyAccountWaiters(accountID)
 }
 
-// DiscardConnection 关闭并从连接池移除一条坏连接。
-// 用于上游 WS 异常路径(read error / close 1006/1009/1011 / broken pipe / unexpected EOF)：
-// 关闭底层 socket 解决 CLOSE_WAIT 滞留，并把连接从 connections/sessions 移除，
-// 避免坏连接被 ReleaseConnection 归还后又被 canReuseConnection 误判为可复用。
-// 使用 CompareAndDelete 按本连接精确删除，防止误删同 PoolKey 下已重建的新连接。
+// DiscardConnection closes a bad connection and removes it from the connection pool.
+// Used on upstream WS error paths (read error / close 1006/1009/1011 / broken pipe / unexpected EOF):
+// it closes the underlying socket to clear lingering CLOSE_WAIT, and removes the connection from connections/sessions,
+// so a bad connection returned by ReleaseConnection is not later misjudged as reusable by canReuseConnection.
+// It uses CompareAndDelete to delete exactly this connection, so it does not wrongly delete a new connection under the same PoolKey that was already rebuilt.
 func (m *Manager) DiscardConnection(wc *WsConnection) {
 	if wc == nil {
 		return
@@ -1140,7 +1140,7 @@ func (m *Manager) evictResponseConnBindingsLocked(now time.Time) {
 	}
 }
 
-// BindResponseConn 记录 response_id 由哪条连接产出（续链亲和）。
+// BindResponseConn records which connection produced a response_id (continuation affinity).
 func (m *Manager) BindResponseConn(responseID string, wc *WsConnection, sessionKey string, accountID int64, apiKey string) {
 	m.bindResponseConn(responseID, responseConnBinding{conn: wc, sessionKey: sessionKey, accountID: accountID, apiKey: apiKey})
 }
@@ -1168,13 +1168,13 @@ func (m *Manager) bindResponseConn(responseID string, binding responseConnBindin
 	if m.respConnBindings == nil {
 		m.respConnBindings = make(map[string]responseConnBinding, 64)
 	}
-	// store:false 只承诺连接上的最新响应可续链，旧绑定必须失效。
+	// store:false only guarantees that the latest response on the connection can be continued, so old bindings must be invalidated.
 	for id, binding := range m.respConnBindings {
 		if binding.conn == wc {
 			delete(m.respConnBindings, id)
 		}
 	}
-	// 有界保护：先清一轮过期项，仍超限则拒绝新增（旧绑定比新绑定更可能被续链）。
+	// Bounded guard: first clear one round of expired entries; if still over the limit, reject new additions (old bindings are more likely to be continued than new ones).
 	if len(m.respConnBindings) >= responseConnBindingMaxEntries {
 		m.evictResponseConnBindingsLocked(now)
 	}
@@ -1184,9 +1184,9 @@ func (m *Manager) bindResponseConn(responseID string, binding responseConnBindin
 	}
 }
 
-// lookupResponseConn 返回 response_id 绑定的连接及其池内 sessionKey。
-// 绑定过期、账号/API Key 不匹配、连接已断开/被重建（池内同 key 已非同一指针）
-// 时返回 nil。
+// lookupResponseConn returns the connection bound to a response_id and its sessionKey in the pool.
+// The binding has expired, the account/API key does not match, or the connection has been disconnected or rebuilt (the same key in the pool is no longer the same pointer)
+// returns nil.
 func (m *Manager) lookupResponseConn(responseID string, accountID int64, apiKey string) (*WsConnection, string) {
 	responseID = strings.TrimSpace(responseID)
 	if m == nil || responseID == "" {
@@ -1209,9 +1209,9 @@ func (m *Manager) lookupResponseConn(responseID string, accountID int64, apiKey 
 	return binding.conn, binding.sessionKey
 }
 
-// AcquirePreferredConnection 尝试独占 response_id 绑定的原连接（续链亲和）。
-// 成功返回 (连接, pendingRequest, 池内 sessionKey)；绑定失效或连接忙时返回 nil，
-// 此单次尝试保留兼容入口；生产续链通过 acquireContinuation 有界等待。
+// AcquirePreferredConnection tries to take exclusive ownership of the original connection bound to a response_id (continuation affinity).
+// On success it returns (connection, pendingRequest, sessionKey in the pool); if the binding is invalid or the connection is busy it returns nil,
+// this single attempt is kept as a compatibility entry point; production continuation waits with a bound through acquireContinuation.
 func (m *Manager) AcquirePreferredConnection(responseID string, accountID int64, apiKey string) (*WsConnection, *PendingRequest, string) {
 	return m.acquirePreferredConnection(websocketContinuation{responseID: responseID, accountID: accountID, apiKey: apiKey})
 }
@@ -1228,7 +1228,7 @@ func (m *Manager) acquirePreferredConnection(input websocketContinuation) (*WsCo
 	defer releaseKeyLock()
 	lock.Lock()
 	defer lock.Unlock()
-	// pool-key 加锁后复验：期间可能被其他请求占用或销毁。
+	// Re-check after taking the pool-key lock: in the meantime it may have been taken by another request or destroyed.
 	if v, exists := m.connections.Load(wc.PoolKey); !exists || v != wc {
 		return nil, nil, ""
 	}
@@ -1242,8 +1242,8 @@ func (m *Manager) acquirePreferredConnection(input websocketContinuation) (*WsCo
 		m.DiscardConnection(wc)
 		return nil, nil, ""
 	}
-	// probe 可能等待网络，不能占用账号锁。拿到账号锁后再次复验，防止
-	// probe 期间连接被其它 pool key 的容量裁剪安全回收。
+	// The probe may wait on the network, so it must not hold the account lock. Re-check after taking the account lock, to prevent
+	// the connection being safely reclaimed by capacity trimming from another pool key during the probe.
 	accountLock.Lock()
 	defer accountLock.Unlock()
 	current, _ := m.lookupContinuationConn(input)
@@ -1262,12 +1262,12 @@ func (m *Manager) acquirePreferredConnection(input websocketContinuation) (*WsCo
 	return wc, pr, sessionKey
 }
 
-// poolKey 生成连接池键
+// poolKey generates the connection pool key.
 func (m *Manager) poolKey(accountID int64, wsURL string, sessionKey string, proxyURL string) string {
 	return fmt.Sprintf("%d|%s|%s|%s", accountID, wsURL, strings.TrimSpace(sessionKey), strings.TrimSpace(proxyURL))
 }
 
-// GetSession 获取会话
+// GetSession gets a session.
 func (m *Manager) GetSession(accountID int64, wsURL string, sessionKey string, proxyURL string) (*Session, bool) {
 	if v, ok := m.sessions.Load(m.poolKey(accountID, wsURL, sessionKey, proxyURL)); ok {
 		return v.(*Session), true
@@ -1275,7 +1275,7 @@ func (m *Manager) GetSession(accountID int64, wsURL string, sessionKey string, p
 	return nil, false
 }
 
-// ConnectionCount 获取连接数量
+// ConnectionCount returns the number of connections.
 func (m *Manager) ConnectionCount() int {
 	count := 0
 	m.connections.Range(func(key, value any) bool {
@@ -1285,7 +1285,7 @@ func (m *Manager) ConnectionCount() int {
 	return count
 }
 
-// SessionCount 获取会话数量
+// SessionCount returns the number of sessions.
 func (m *Manager) SessionCount() int {
 	count := 0
 	m.sessions.Range(func(key, value any) bool {
@@ -1295,7 +1295,7 @@ func (m *Manager) SessionCount() int {
 	return count
 }
 
-// ReplaceConnection 替换连接（用于重连）
+// ReplaceConnection replaces a connection (used for reconnection).
 func (m *Manager) ReplaceConnection(
 	ctx context.Context,
 	account *auth.Account,
@@ -1304,14 +1304,14 @@ func (m *Manager) ReplaceConnection(
 	headers http.Header,
 	proxyOverride string,
 ) (*WsConnection, *PendingRequest, error) {
-	// 先移除旧连接
+	// Remove the old connection first
 	m.RemoveConnection(account.ID(), wsURL, sessionKey, requestProxyKey(ctx, account, proxyOverride))
 
-	// 创建新连接
+	// Create the new connection
 	return m.AcquireConnection(ctx, account, wsURL, sessionKey, headers, proxyOverride)
 }
 
-// SendHeartbeat 发送心跳 Ping
+// SendHeartbeat sends a heartbeat ping.
 func (m *Manager) SendHeartbeat(wc *WsConnection) error {
 	wc.writeMu.Lock()
 	defer wc.writeMu.Unlock()
@@ -1323,24 +1323,24 @@ func (m *Manager) SendHeartbeat(wc *WsConnection) error {
 	deadline := time.Now().Add(10 * time.Second)
 	err := wc.conn.WriteControl(websocket.PingMessage, []byte{}, deadline)
 	if err != nil {
-		// 写路径故障 ≠ 读路径已死：有在途请求时只摘池禁止新复用，不关 socket、
-		// 不动 session——强关会把连接上全部在途流同秒截断（issue #436）。socket 的
-		// 最终关闭由读路径兜底（pump 读错误时 onReadFailure→DiscardConnection，
-		// 或上游 60 分钟连接寿命到期关闭）。
+		// A write-path failure does not mean the read path is dead: with in-flight requests, the connection is only removed from the pool to block new reuse; the socket is not closed,
+		// and the session is left alone; a forced close would cut off all in-flight streams on the connection in the same second (issue #436). The socket's
+		// final close is handled by the read path as a fallback (on a pump read error, onReadFailure → DiscardConnection,
+		// or the upstream closes it when the 60-minute connection lifetime expires).
 		if wc.session != nil && wc.session.PendingCount() > 0 {
-			log.Printf("WebSocket Ping 失败 (account %d)，连接摘出池子，在途请求留给读路径裁决: %v", wc.session.AccountID, err)
+			log.Printf("WebSocket ping failed (account %d), connection removed from the pool, in-flight requests left to the read path to decide: %v", wc.session.AccountID, err)
 			m.removeConnectionFromPool(wc)
 			return err
 		}
-		log.Printf("WebSocket Ping 失败 (account %d): %v", wc.session.AccountID, err)
+		log.Printf("WebSocket ping failed (account %d): %v", wc.session.AccountID, err)
 		m.DiscardConnection(wc)
 		return err
 	}
 	return nil
 }
 
-// removeConnectionFromPool 只把连接从池中摘除（阻止后续复用），不关闭底层 socket、
-// 不停在途请求。CompareAndDelete 按连接指针精确删除，防止误删同 PoolKey 下已重建的新连接。
+// removeConnectionFromPool only removes the connection from the pool (preventing later reuse); it does not close the underlying socket,
+// and does not stop in-flight requests. CompareAndDelete deletes exactly by connection pointer, so it does not wrongly delete a new connection under the same PoolKey that was already rebuilt.
 func (m *Manager) removeConnectionFromPool(wc *WsConnection) {
 	if wc == nil || wc.PoolKey == "" {
 		return
@@ -1352,7 +1352,7 @@ func (m *Manager) removeConnectionFromPool(wc *WsConnection) {
 	m.removeResponseConnBindings(wc)
 }
 
-// StartHeartbeat 启动连接心跳
+// StartHeartbeat starts connection heartbeats.
 func (m *Manager) StartHeartbeat(wc *WsConnection) {
 	if wc == nil || wc.session == nil || !wc.IsConnected() || !wc.session.IsConnected() {
 		return
@@ -1362,11 +1362,11 @@ func (m *Manager) StartHeartbeat(wc *WsConnection) {
 	})
 }
 
-// 全局管理器实例
+// Global manager instance
 var globalManager *Manager
 var managerOnce sync.Once
 
-// GetManager 获取全局管理器实例
+// GetManager returns the global manager instance.
 func GetManager() *Manager {
 	managerOnce.Do(func() {
 		globalManager = NewManager()
@@ -1374,7 +1374,7 @@ func GetManager() *Manager {
 	return globalManager
 }
 
-// ShutdownManager 关闭全局管理器
+// ShutdownManager shuts down the global manager.
 func ShutdownManager() {
 	if globalManager != nil {
 		globalManager.Stop()

@@ -98,7 +98,7 @@ func (wc *WsConnection) logClose() {
 	if used := wc.lastUsed.Load(); used > 0 {
 		idle = time.Since(time.Unix(0, used))
 	}
-	log.Printf("[WS] 连接关闭 account=%d connection=%p source=%s reason=%s code=%d bound=%t pending=%d age_ms=%d idle_ms=%d connections=%d chat_idle_limit=%d blank_limit=%d",
+	log.Printf("[WS] connection closed account=%d connection=%p source=%s reason=%s code=%d bound=%t pending=%d age_ms=%d idle_ms=%d connections=%d chat_idle_limit=%d blank_limit=%d",
 		accountID, wc, cause.source, cause.reason, cause.code, cause.bound, pending, age.Milliseconds(), idle.Milliseconds(), remaining, connectionLimit(capacityChat), connectionLimit(capacityBlank))
 }
 
@@ -109,6 +109,6 @@ func (m *Manager) connectionCapacityError(accountID int64, kind connectionCapaci
 	default:
 	}
 	limit := connectionLimit(kind)
-	log.Printf("[WS] 新建连接容量拒绝 account=%d budget=%s connections=%d limit=%d", accountID, kind.String(), m.budgetConnectionCount(connectionCapacityRequest{accountID: accountID, kind: kind}), limit)
+	log.Printf("[WS] new connection rejected by capacity limit account=%d budget=%s connections=%d limit=%d", accountID, kind.String(), m.budgetConnectionCount(connectionCapacityRequest{accountID: accountID, kind: kind}), limit)
 	return &proxy.UpstreamWSConnectionCapacityError{Limit: limit}
 }

@@ -7,12 +7,12 @@ import (
 )
 
 const (
-	// WeakNetworkIdleTimeout 限制弱网模式下连接空闲后的复用窗口。较短窗口可减少
-	// VPN、住宅代理或 NAT 已悄然回收 socket 后仍命中旧连接的概率。
+	// WeakNetworkIdleTimeout limits the reuse window after a connection goes idle in weak-network mode. A shorter window reduces
+	// the chance of hitting an old connection after a VPN, residential proxy, or NAT has quietly reclaimed the socket.
 	WeakNetworkIdleTimeout = 15 * time.Second
 
-	// WeakNetworkMaxConnLifetime 定期轮换弱网链路上的长连接，避免连接在中间网络
-	// 状态老化后继续被复用。
+	// WeakNetworkMaxConnLifetime periodically rotates long connections on weak links, to avoid connections
+	// continuing to be reused after the state on the intermediate network has aged.
 	WeakNetworkMaxConnLifetime = 3 * time.Minute
 )
 

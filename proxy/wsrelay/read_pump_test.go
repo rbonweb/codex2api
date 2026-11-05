@@ -582,9 +582,9 @@ func TestReadMessageLivenessFailedProbeRescuedByFreshInbound(t *testing.T) {
 	_, wc := newReadPumpTestConnection(t, func(conn *websocket.Conn) {
 		var peerPingOnce sync.Once
 		conn.SetPingHandler(func(string) error {
-			// 吞掉探针 Ping(不回 Pong),改发一个对端 Ping:客户端 Ping handler
-			// 会 touchInbound,但探针等的匹配 Pong 永远不来。只有 read_pump 的
-			// 探针失败后复检 recentInbound 这条救援分支能救活本测试的流。
+			// Swallow the probe's Ping (no Pong reply) and instead send a Ping from the peer: the client Ping handler
+			// calls touchInbound, but the probe's matching Pong never arrives. Only the rescue branch of rechecking recentInbound
+			// after a probe failure can save this test's stream.
 			peerPingOnce.Do(func() {
 				_ = conn.WriteControl(websocket.PingMessage, []byte("peer-ping"), time.Now().Add(time.Second))
 			})
@@ -613,8 +613,8 @@ func TestReadMessageLivenessFailedProbeRescuedByFreshInbound(t *testing.T) {
 
 	<-serverReady
 	commitReadPumpTestLease(t, wc, "probe-rescued")
-	// 窗口(300ms)远大于探针超时(50ms):探针失败时,探针期间收到的对端 Ping
-	// 在复检处仍然新鲜,必须触发救援而不是杀掉活流。
+	// The window (300ms) is much larger than the probe timeout (50ms): when the probe fails, a Ping from the peer received during the probe
+	// is still fresh at the recheck and must trigger a rescue rather than kill a live stream.
 	_, payload, err := wc.readMessageWithLiveness(20*time.Millisecond, 300*time.Millisecond, 50*time.Millisecond, time.Minute)
 	if err != nil {
 		t.Fatalf("failed probe with fresh inbound at re-check killed a live stream: %v", err)
@@ -631,8 +631,8 @@ func TestReadMessageLivenessPeerCloseDuringProbeReturnsRealError(t *testing.T) {
 
 	_, wc := newReadPumpTestConnection(t, func(conn *websocket.Conn) {
 		conn.SetPingHandler(func(string) error {
-			// 探针进行中对端死亡:必须把真实 close code 归因给消费者
-			// (下游 1009 HTTP 降级等判断依赖它),而不是泛化的 liveness 错误。
+			// The peer dies while the probe is in progress: the real close code must be attributed to the consumer
+			// (downstream 1009 HTTP degradation and similar decisions depend on it), not a generic liveness error.
 			return conn.WriteControl(
 				websocket.CloseMessage,
 				websocket.FormatCloseMessage(websocket.CloseInternalServerErr, "died during probe"),
@@ -676,7 +676,7 @@ func TestReadMessageLivenessSilenceCapFailsDespiteLiveTransport(t *testing.T) {
 		}()
 		close(serverReady)
 
-		// 持续心跳让传输层始终"活着",但永不发业务帧:静默上限必须兜底收尾。
+		// Continuous heartbeats keep the transport always "alive", but never send business frames: the silence limit must act as the backstop and wrap up.
 		ticker := time.NewTicker(5 * time.Millisecond)
 		defer ticker.Stop()
 		for {
@@ -1361,7 +1361,7 @@ func TestReadPumpDropsIdleMetadataFrame(t *testing.T) {
 				<-holdOpen
 			})
 
-			// 丢弃路径以 touchInbound 收尾：入站时间戳置位即代表帧已消费完毕
+			// The drop path finishes with touchInbound: setting the inbound timestamp means the frame has been fully consumed,
 			waitForReadPumpCondition(t, func() bool { return wc.lastInbound.Load() != 0 }, "idle metadata frame was not consumed")
 			if !wc.IsConnected() {
 				t.Fatal("idle metadata frame must not poison the connection")
@@ -1790,13 +1790,13 @@ func TestPreservePeerCloseCauseHasBoundedWait(t *testing.T) {
 	}
 }
 
-// newProbeDeafTestConnection 建一条"探活失聪"连接：服务端吞掉一切 Ping 不回
-// Pong（覆盖 gorilla 默认自动回复），Ping-Pong 往返 probe 必然超时失败。
-// 用于区分 probe 的两条路径：免往返（近期入站）与完整往返。
+// newProbeDeafTestConnection builds a "probe-deaf" connection: the server swallows every Ping and does not reply with
+// a Pong (overriding gorilla's default auto-reply), so a Ping-Pong round trip by the probe always times out and fails.
+// It is used to distinguish the two probe paths: the no-round-trip path (recent inbound) and the full round trip.
 func newProbeDeafTestConnection(t *testing.T) (*Manager, *WsConnection) {
 	t.Helper()
 	return newReadPumpTestConnection(t, func(conn *websocket.Conn) {
-		conn.SetPingHandler(func(string) error { return nil }) // 吞 Ping 不回 Pong
+		conn.SetPingHandler(func(string) error { return nil }) // swallow Pings, do not reply with Pong
 		for {
 			if _, _, err := conn.ReadMessage(); err != nil {
 				return
@@ -1805,8 +1805,8 @@ func newProbeDeafTestConnection(t *testing.T) (*Manager, *WsConnection) {
 	})
 }
 
-// TestProbeSkipsRoundtripAfterRecentInbound 近期有入站活动的干净连接免
-// Ping-Pong 往返：请求刚完成后的热复用不为探活付一个上游 RTT（锁内串行）。
+// TestProbeSkipsRoundtripAfterRecentInbound: a clean connection with recent inbound activity skips the
+// Ping-Pong round trip: a hot reuse right after a request completes does not pay one upstream RTT for the probe (serialized under the lock).
 func TestProbeSkipsRoundtripAfterRecentInbound(t *testing.T) {
 	manager, wc := newProbeDeafTestConnection(t)
 
@@ -1816,8 +1816,8 @@ func TestProbeSkipsRoundtripAfterRecentInbound(t *testing.T) {
 	}
 }
 
-// TestWeakNetworkProbeRequiresRoundtripAfterRecentInbound 验证弱网模式不会因最近
-// 收到过业务帧而跳过探活；每次复用都必须拿到本次 Ping 对应的 Pong（issue #442）。
+// TestWeakNetworkProbeRequiresRoundtripAfterRecentInbound verifies that weak-network mode does not skip the probe because a business frame
+// was recently received; every reuse must get the Pong matching this Ping (issue #442).
 func TestWeakNetworkProbeRequiresRoundtripAfterRecentInbound(t *testing.T) {
 	setWeakNetworkModeForTest(t, true)
 	manager, wc := newProbeDeafTestConnection(t)
@@ -1828,8 +1828,8 @@ func TestWeakNetworkProbeRequiresRoundtripAfterRecentInbound(t *testing.T) {
 	}
 }
 
-// TestProbeRoundtripsWhenInboundStale 入站活动过期后 probe 回退完整往返；
-// 对端不回 Pong 时按超时判死，不能凭旧活跃放行。
+// TestProbeRoundtripsWhenInboundStale: once inbound activity goes stale, the probe falls back to a full round trip;
+// if the peer does not reply with a Pong, it is judged dead on timeout, and old activity must not be used to let it pass.
 func TestProbeRoundtripsWhenInboundStale(t *testing.T) {
 	manager, wc := newProbeDeafTestConnection(t)
 
@@ -1839,8 +1839,8 @@ func TestProbeRoundtripsWhenInboundStale(t *testing.T) {
 	}
 }
 
-// TestProbeRecentInboundDoesNotMaskDirtyLease 近期活跃不豁免 lease/队列检查：
-// 有在途 lease 的连接即便刚有入站也不能被判定为可复用。
+// TestProbeRecentInboundDoesNotMaskDirtyLease: recent activity does not exempt the lease/queue checks:
+// a connection with an in-flight lease cannot be judged reusable even if it just received inbound traffic.
 func TestProbeRecentInboundDoesNotMaskDirtyLease(t *testing.T) {
 	manager, wc := newProbeDeafTestConnection(t)
 

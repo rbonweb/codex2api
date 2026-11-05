@@ -61,13 +61,13 @@ func TestPrepareWebsocketHeadersUsesConfiguredDefaultsAndBetaFeatures(t *testing
 	if got := headers.Get("Chatgpt-Account-Id"); got != "42" {
 		t.Fatalf("Chatgpt-Account-Id = %q", got)
 	}
-	// 握手会话头已改为真实客户端形态：build_websocket_headers 发 session-id /
-	// thread-id / x-client-request-id，不发下划线写法，也没有 Conversation_id。
+	// The handshake session headers now use the real client shape: build_websocket_headers sends session-id /
+	// thread-id / x-client-request-id, not the underscore spelling, and there is no Conversation_id.
 	if got := headers.Get("Session-Id"); got != "session-123" {
 		t.Fatalf("Session-Id = %q", got)
 	}
 	if got := headers.Get("Thread-Id"); got != "session-123" {
-		t.Fatalf("Thread-Id = %q, want 与 session 同值", got)
+		t.Fatalf("Thread-Id = %q, want same value as session", got)
 	}
 	if got := headers.Get("Conversation_id"); got != "" {
 		t.Fatalf("Conversation_id = %q, want empty", got)
@@ -77,7 +77,7 @@ func TestPrepareWebsocketHeadersUsesConfiguredDefaultsAndBetaFeatures(t *testing
 	}
 }
 
-// TestPrepareWebsocketHeadersUsesProjectAttestation 验证 WS 证明仅由本项目生成。
+// TestPrepareWebsocketHeadersUsesProjectAttestation verifies that the WS attestation is generated only by this project.
 func TestPrepareWebsocketHeadersUsesProjectAttestation(t *testing.T) {
 	exec := NewExecutor()
 	acc := &auth.Account{DBID: 42, AccountID: "42", CustomHeaders: map[string]string{
@@ -136,13 +136,13 @@ func TestPrepareWebsocketHeadersSendsRoutingHintFromBody(t *testing.T) {
 		t.Fatalf("X-Codex-Routing-Hint = %q, want priority hint from final WS body", got)
 	}
 
-	// 无 body 时不发。
+	// Not sent when there is no body.
 	headers = exec.prepareWebsocketHeaders(context.Background(), "token-123", account, "42", "session-123", "api-key-1", nil, http.Header{}, []byte(`{"model":"gpt-5.6-sol","service_tier":"ultrafast"}`), "")
 	if got := headers.Get("X-Codex-Routing-Hint"); got != "model=gpt-5.6-sol;tier=ultrafast" {
 		t.Fatalf("Ultrafast routing hint = %q", got)
 	}
 
-	// 无 body 时不发。
+	// Not sent when there is no body.
 	headers = exec.prepareWebsocketHeaders(context.Background(), "token-123", account, "42", "session-123", "api-key-1", nil, http.Header{}, nil, "")
 	if got := headers.Get("X-Codex-Routing-Hint"); got != "" {
 		t.Fatalf("X-Codex-Routing-Hint = %q, want empty without body", got)
@@ -179,10 +179,10 @@ func TestPrepareWebsocketHeadersSendsUserAgentByDefault(t *testing.T) {
 		t.Fatalf("Session-Id = %q", got)
 	}
 	if got := headers.Get("Thread-Id"); got != "session-123" {
-		t.Fatalf("Thread-Id = %q, want 与 session 同值", got)
+		t.Fatalf("Thread-Id = %q, want same value as session", got)
 	}
 	if got := headers.Get("Conversation_id"); got != "" {
-		t.Fatalf("Conversation_id = %q, want empty（真实握手头里没有这个头）", got)
+		t.Fatalf("Conversation_id = %q, want empty (the real handshake headers do not have this header)", got)
 	}
 }
 
@@ -489,10 +489,10 @@ func TestSendRequestWritesResponseCreatePayloadDirectly(t *testing.T) {
 	}
 }
 
-// TestResolveHandshakeSessionID 验证握手头 Session_id/Conversation_id 的取值策略。
-// 该头逐连接冻结、复用连接时永不更新，因此 stateless 复用连接绝不能携带任何
-// 单个请求的身份，否则第一个请求的会话身份会泄漏给后续复用该连接的所有用户
-// （跨用户上下文污染，"用户2串到用户1的上下文"）。
+// TestResolveHandshakeSessionID verifies the value policy for the handshake headers Session_id/Conversation_id.
+// These headers are frozen per connection and never updated when the connection is reused, so a reused stateless connection must never carry any
+// single request's identity, otherwise the first request's session identity leaks to all later users who reuse that connection
+// (cross-user context pollution, "user 2 context bleeding into user 1").
 func TestResolveHandshakeSessionID(t *testing.T) {
 	t.Run("explicit session keeps original behavior", func(t *testing.T) {
 		got := resolveHandshakeSessionID("session-123", "route-key", []byte(`{"prompt_cache_key":"whatever"}`))
@@ -502,8 +502,8 @@ func TestResolveHandshakeSessionID(t *testing.T) {
 	})
 
 	t.Run("stateless isolated mode must not send any session identity", func(t *testing.T) {
-		// 默认隔离模式：帧体是每请求随机 prompt_cache_key，poolRouteKey 非空。
-		// 若把随机 key 冻结进握手头，复用连接的后续用户都会顶着第一个请求的身份。
+		// Default isolation mode: the frame body has a random prompt_cache_key per request, and poolRouteKey is non-empty.
+		// If the random key were frozen into the handshake headers, every later user of the reused connection would carry the first request's identity.
 		got := resolveHandshakeSessionID("stateless-abc", "route-key", []byte(`{"prompt_cache_key":"per-request-random-uuid"}`))
 		if got != "" {
 			t.Fatalf("headerSessionID = %q, want empty (no connection-level session identity)", got)
@@ -525,8 +525,8 @@ func TestResolveHandshakeSessionID(t *testing.T) {
 	})
 }
 
-// TestPrepareWebsocketHeadersOmitsSessionHeadersWhenEmpty 验证 headerSessionID 为空时
-// 不发送 Session_id/Conversation_id 握手头（隔离模式的 stateless 复用连接）。
+// TestPrepareWebsocketHeadersOmitsSessionHeadersWhenEmpty verifies that when headerSessionID is empty,
+// the Session_id/Conversation_id handshake headers are not sent (stateless reused connections in isolation mode).
 func TestPrepareWebsocketHeadersOmitsSessionHeadersWhenEmpty(t *testing.T) {
 	exec := NewExecutor()
 
@@ -574,10 +574,10 @@ func TestShouldRetryWebsocketSendError(t *testing.T) {
 	}
 }
 
-// TestPrepareWebsocketHeadersConvergesForwardedClientRequestID 是 HTTP 侧
-// TestApplyCodexRequestHeadersConvergesForwardedClientRequestID 的 WS 对照：
-// 握手头有自己的一份透传列表和组装顺序，同一组不变量必须独立锁定，
-// 否则 issue #536 的泄漏会只在 WS 路径上复活。
+// TestPrepareWebsocketHeadersConvergesForwardedClientRequestID is the WS counterpart of the HTTP-side
+// TestApplyCodexRequestHeadersConvergesForwardedClientRequestID test:
+// The handshake headers have their own pass-through list and assembly order, so the same set of invariants must be locked down independently,
+// otherwise the issue #536 leak would come back only on the WS path.
 func TestPrepareWebsocketHeadersConvergesForwardedClientRequestID(t *testing.T) {
 	const (
 		clientUUID    = "01a00e75-8856-7542-89bf-35812620690f"
@@ -591,7 +591,7 @@ func TestPrepareWebsocketHeadersConvergesForwardedClientRequestID(t *testing.T) 
 		`:0","request_kind":"turn","workspaces":{"` + workspacePath +
 		`":{"associated_remote_urls":{"origin":"` + remoteURL + `"},"latest_git_commit_hash":"` + commitHash + `","has_changes":false}}}`
 
-	// 复刻真实 codex-tui 的握手头集合（见 wss://chatgpt.com/backend-api/codex/responses）。
+	// Replicate the handshake header set of the real codex-tui (see wss://chatgpt.com/backend-api/codex/responses).
 	ginHeaders := http.Header{}
 	ginHeaders.Set("X-Codex-Turn-Metadata", rawMetadata)
 	ginHeaders.Set("Session-Id", clientUUID)
@@ -609,19 +609,19 @@ func TestPrepareWebsocketHeadersConvergesForwardedClientRequestID(t *testing.T) 
 	} else if got == "" {
 		t.Fatal("X-Client-Request-Id was dropped, want a converged value")
 	}
-	// 握手的会话键归调用方决定，收敛默认不得介入（对齐需显式开
-	// CODEX_SESSION_HEADER_ALIGN_CONVERGED）。头名换成真实形态，取值语义不变。
+	// The caller decides the handshake session key, and convergence defaults must not intervene (aligning requires explicitly enabling
+	// CODEX_SESSION_HEADER_ALIGN_CONVERGED). The header names are switched to the real shape, and the value semantics stay unchanged.
 	if got := headers.Get("Session-Id"); got != "upstream-session-id" {
 		t.Fatalf("Session-Id = %q, want the caller value untouched", got)
 	}
-	// thread-id 必须与已收敛的 x-client-request-id 同值，否则两个头各说各话。
+	// thread-id must equal the converged x-client-request-id, otherwise the two headers would disagree.
 	if got, want := headers.Get("Thread-Id"), headers.Get("X-Client-Request-Id"); got != want {
-		t.Fatalf("Thread-Id = %q, want 等于 X-Client-Request-Id %q", got, want)
+		t.Fatalf("Thread-Id = %q, want equal to X-Client-Request-Id %q", got, want)
 	}
 	if got := headers.Get("Conversation_id"); got != "" {
 		t.Fatalf("Conversation_id = %q, want empty", got)
 	}
-	// 下游没发 installation 头，出站也不该凭空多出一个。
+	// The downstream did not send an installation header, so the outbound request should not gain one out of nowhere.
 	if got := headers.Get("X-Codex-Installation-Id"); got != "" {
 		t.Fatalf("X-Codex-Installation-Id = %q, want unset", got)
 	}
@@ -640,7 +640,7 @@ func TestPrepareWebsocketHeadersConvergesForwardedClientRequestID(t *testing.T) 
 }
 
 func TestPrepareWebsocketHeadersGeneratedDesktopClientSendsMatchingOriginator(t *testing.T) {
-	// issue #653：WS 握手与 HTTP 路径同规则，生成 UA 时 Originator 跟随生成的客户端前缀。
+	// issue #653: the WS handshake follows the same rule as the HTTP path, where Originator follows the generated client prefix when a UA is generated.
 	t.Setenv("CODEX_WS_SEND_USER_AGENT", "true")
 	prev := proxy.CurrentRuntimeSettings()
 	normalized, err := proxy.NormalizeCodexUserAgentConfigJSON(`{"client_name":"Codex Desktop","client_version":"0.153.3","os_name":"Windows","os_version":"10.0.26100","arch":"x86_64","terminal":"unknown"}`)
@@ -718,7 +718,7 @@ func TestSingleMachineFingerprintWebsocketBodyAndHeaders(t *testing.T) {
 	}
 }
 
-// prepareWebsocketHeaders 是测试辅助：忽略身份解析错误，只断言组装出的握手头。
+// prepareWebsocketHeaders is a test helper: it ignores identity resolution errors and only asserts the assembled handshake headers.
 func (e *Executor) prepareWebsocketHeaders(ctx context.Context, accessToken string, account *auth.Account, accountID, sessionID, apiKey string, deviceCfg *proxy.DeviceProfileConfig, ginHeaders http.Header, wsBody []byte, affinityKey string) http.Header {
 	headers, _ := e.prepareWebsocketHeadersChecked(ctx, accessToken, account, accountID, sessionID, apiKey, deviceCfg, ginHeaders, wsBody, affinityKey)
 	return headers

@@ -5,8 +5,8 @@ import (
 	"time"
 )
 
-// 一次性池键连接（stateless fallback）不应在容量裁剪时挤掉可复用的槽位连接，
-// 也不应在无续链绑定时归还池占位（issue #520）。
+// A one-off pool-key connection (stateless fallback) should not evict reusable slot connections during capacity trimming,
+// and should not return its pool placeholder when there is no continuation binding (issue #520).
 
 func newPooledConn(t *testing.T, manager *Manager, accountID int64, sessionID, poolKey string, lastUsed time.Time) *WsConnection {
 	t.Helper()
@@ -29,7 +29,7 @@ func TestSortIdleForEvictionPrefersOneShotConns(t *testing.T) {
 
 	idle := []idleAccountConnection{
 		{wc: slotOld, lastUsed: 100},
-		{wc: oneShot, lastUsed: 300}, // 最新使用，但池键一次性
+		{wc: oneShot, lastUsed: 300}, // most recently used, but its pool key is one-off
 		{wc: slotMid, lastUsed: 200},
 	}
 	sortIdleForEviction(idle)
@@ -79,7 +79,7 @@ func TestChatInferenceReservationDoesNotConsumeIdleRetention(t *testing.T) {
 	newPooledConn(t, manager, 1, "det-key#0", slotKey, now.Add(-2*time.Minute))
 	newPooledConn(t, manager, 1, "stateless-11111111-aaaa-bbbb-cccc-000000000003", oneShotKey, now)
 
-	// 两条空闲连接未超保留上限，新增推理不要求它们让位。
+	// The two idle connections are under the reserve cap, so the new reasoning request does not require them to make room.
 	if !manager.ensureAccountConnectionCapacity(connectionCapacityRequest{accountID: 1, limit: 3, extraPending: 1}) {
 		t.Fatal("inference should start without evicting retained idle connections")
 	}
@@ -120,7 +120,7 @@ func TestCloseKeepsBoundOneShotConn(t *testing.T) {
 	sessionID := "stateless-11111111-aaaa-bbbb-cccc-000000000005"
 	key := manager.poolKey(1, "wss://example.test/responses", sessionID, "")
 	conn := newPooledConn(t, manager, 1, sessionID, key, time.Now())
-	// 续链绑定存活：连接是该 response_id 上下文的唯一载体，必须归还池。
+	// The continuation binding is alive: the connection is the only carrier of that response_id context, so it must be returned to the pool.
 	manager.BindResponseConn("resp_bind_1", conn, sessionID, 1, "key-1")
 
 	resp := &WsResponse{conn: conn, manager: manager, sessionID: sessionID, apiKey: "key-1"}
