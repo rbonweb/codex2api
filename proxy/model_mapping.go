@@ -235,15 +235,15 @@ func usageEffectiveModelForMapping(originalModel string, effectiveModel string, 
 	return effectiveModel
 }
 
-// compactOpenAIModelSuffix 是 newapi 等聚合网关为 /responses/compact 请求追加的模型名
-// 后缀。例如 newapi 把 gpt-5.4 路由到 compact 端点时会发送 gpt-5.4-openai-compact，
-// 而真实 Codex 上游只认识基础模型名 gpt-5.4。
+// compactOpenAIModelSuffix is the model-name suffix that aggregation gateways such as newapi append to /responses/compact requests.
+// For example, when newapi routes gpt-5.4 to the compact endpoint it sends gpt-5.4-openai-compact,
+// but the real Codex upstream only recognizes the base model name gpt-5.4.
 const compactOpenAIModelSuffix = "-openai-compact"
 
-// stripCompactModelSuffix 去除 compact 模型名上的 -openai-compact 后缀，返回去除后的
-// 模型名与是否发生改写。供显式 /v1/responses/compact 及普通 /v1/responses 中的
-// compaction_trigger 使用：让 newapi 侧渠道仍能以 gpt-5.4-openai-compact 命名，
-// 而 codex2api 内部按 gpt-5.4 校验与转发上游。
+// stripCompactModelSuffix removes the -openai-compact suffix from a compact model name and returns the stripped
+// model name and whether a rewrite happened. It is used by explicit /v1/responses/compact and by /v1/responses with
+// compaction_trigger: it lets newapi-side channels still be named gpt-5.4-openai-compact,
+// while codex2api validates and forwards upstream as gpt-5.4 internally.
 func stripCompactModelSuffix(model string) (string, bool) {
 	trimmed := strings.TrimSpace(model)
 	if trimmed == "" {
@@ -259,8 +259,8 @@ func stripCompactModelSuffix(model string) (string, bool) {
 	return stripped, true
 }
 
-// stripCompactModelSuffixFromBody 若请求体的 model 带 -openai-compact 后缀则去除，
-// 返回改写后的 body、去后缀的模型名与是否改写。JSON 无效或无 model 字段时原样返回。
+// stripCompactModelSuffixFromBody removes the -openai-compact suffix if the request body's model carries it,
+// returning the rewritten body, the stripped model name, and whether it was rewritten. Invalid JSON or a missing model field returns the input unchanged.
 func stripCompactModelSuffixFromBody(rawBody []byte) ([]byte, string, bool) {
 	model := strings.TrimSpace(gjson.GetBytes(rawBody, "model").String())
 	stripped, ok := stripCompactModelSuffix(model)
@@ -274,10 +274,10 @@ func stripCompactModelSuffixFromBody(rawBody []byte) ([]byte, string, bool) {
 	return updated, stripped, true
 }
 
-// compactMappingCandidate 是 compact 请求做模型映射时的一个尝试名。synthetic 标记
-// 该名字是内部拼出的 <model>-openai-compact 别名（客户端并未真的发它）：这类别名
-// 只允许命中显式以 -openai-compact 结尾的规则，避免 "gpt-*"、"*" 之类通用规则被
-// 合成别名劫持、压过基础名本应命中的规则。
+// compactMappingCandidate is one attempted name when mapping the model of a compact request. synthetic marks
+// a name that was built internally as a <model>-openai-compact alias (the client never actually sent it):
+// such an alias may only match rules that explicitly end in -openai-compact, so generic rules such as "gpt-*" or "*"
+// are not hijacked by a synthetic alias and do not override a rule that the base name should have matched.
 type compactMappingCandidate struct {
 	model     string
 	synthetic bool
@@ -317,8 +317,8 @@ func compactMappingCandidates(models ...string) []compactMappingCandidate {
 	return candidates
 }
 
-// compactAliasScopedRules 过滤出显式针对 -openai-compact 别名的规则（From 以该
-// 后缀结尾，含 "*-openai-compact" 这类通配）。合成别名只在这些规则里匹配。
+// compactAliasScopedRules filters for rules that explicitly target the -openai-compact alias (From ends with that
+// suffix, including wildcards such as "*-openai-compact"). Synthetic aliases match only against these rules.
 func compactAliasScopedRules(rules []modelMappingRule) []modelMappingRule {
 	scoped := make([]modelMappingRule, 0, len(rules))
 	for _, rule := range rules {
@@ -329,10 +329,10 @@ func compactAliasScopedRules(rules []modelMappingRule) []modelMappingRule {
 	return scoped
 }
 
-// normalizeCompactMappingTarget 剥离映射目标上的 -openai-compact 后缀。无论 compact
-// 语义最终走显式 /v1/responses/compact，还是为了保留 SSE 而走带 compaction_trigger
-// 的 /v1/responses，该后缀都只是入站别名约定；把它原样转发会让上游按字面模型名
-// 查找而失败（中转模型列表里的 xxx-openai-compact 通常只是路由标记）。
+// normalizeCompactMappingTarget strips the -openai-compact suffix from a mapping target. Whether the compact
+// semantics finally go to the explicit /v1/responses/compact, or to /v1/responses with compaction_trigger to keep SSE,
+// that suffix is only an inbound alias convention. Forwarding it verbatim makes the upstream look up the literal model name and fail
+// (xxx-openai-compact in relay model lists is usually just a routing marker).
 func normalizeCompactMappingTarget(model string) string {
 	if base, stripped := stripCompactModelSuffix(model); stripped {
 		return base

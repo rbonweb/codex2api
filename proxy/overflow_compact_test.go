@@ -56,8 +56,8 @@ func TestCompactOverflowResponsesBody_KeepsSystemAndTail(t *testing.T) {
 	}`
 
 	h := &Handler{}
-	// body 无 model 字段：摘要调用被跳过，走省略标记退化路径，
-	// 使该测试不依赖真实上游。
+	// The body has no model field: the summary call is skipped and the omitted-marker degradation path is taken,
+	// so this test does not depend on a real upstream.
 	got, ok := h.compactOverflowResponsesBody(context.Background(), []byte(body))
 	if !ok {
 		t.Fatal("expected compaction to succeed")
@@ -110,7 +110,7 @@ func TestCompactOverflowResponsesBody_RepairsCutToolPairs(t *testing.T) {
 	if !ok {
 		t.Fatal("expected compaction to succeed")
 	}
-	// 不论切点落在哪，产出必须不含孤儿 *_call_output（上游会 400）。
+	// Wherever the cut point falls, the output must not contain an orphan *_call_output (upstream would return 400).
 	var orphan bool
 	items := gjson.GetBytes(got, "input").Array()
 	calls := map[string]bool{}
@@ -169,24 +169,24 @@ func TestShouldDeferPreContentSSEEvent(t *testing.T) {
 		passthrough      bool
 		want             bool
 	}{
-		// 开关关闭:preflight 元数据与生命周期事件均缓冲(v2.5.9 基线)
+		// Switch off: preflight metadata and lifecycle events are both buffered (v2.5.9 baseline)
 		{"off_rate_limits_deferred", "codex.rate_limits", false, false, false, true},
 		{"off_codex_metadata_deferred", "codex.response.metadata", false, false, false, true},
 		{"off_http_metadata_deferred", "response.metadata", false, false, false, true},
 		{"off_created_deferred", "response.created", false, false, false, true},
 		{"off_in_progress_deferred", "response.in_progress", false, false, false, true},
-		// 开关开启:preflight 元数据立即写出,生命周期事件仍缓冲
+		// Switch on: preflight metadata is written out immediately, lifecycle events are still buffered
 		{"on_rate_limits_passthrough", "codex.rate_limits", false, false, true, false},
 		{"on_codex_metadata_passthrough", "codex.response.metadata", false, false, true, false},
 		{"on_http_metadata_passthrough", "response.metadata", false, false, true, false},
 		{"on_created_still_deferred", "response.created", false, false, true, true},
 		{"on_in_progress_still_deferred", "response.in_progress", false, false, true, true},
-		// 内容开始后不再缓冲,与开关状态无关
+		// No buffering once content starts, regardless of the switch state
 		{"content_seen_off", "codex.rate_limits", true, false, false, false},
 		{"content_seen_on", "response.created", true, false, true, false},
-		// 终态后不再缓冲
+		// No buffering after the terminal state
 		{"terminal_off", "response.in_progress", false, true, false, false},
-		// 内容/失败事件从不缓冲
+		// Content and failure events are never buffered
 		{"delta_never_deferred", "response.output_text.delta", false, false, false, false},
 		{"failed_never_deferred", "response.failed", false, false, false, false},
 	}
@@ -201,8 +201,8 @@ func TestShouldDeferPreContentSSEEvent(t *testing.T) {
 	}
 }
 
-// 模型摘要不可用时的退化：此前整段旧对话静默蒸发，现在必须附带一段可读的
-// 原文摘录，让续写模型仍能看到用户目标与关键事实。
+// Degradation when the model summary is unavailable: before, the whole old conversation silently evaporated; now it must come with a readable
+// verbatim excerpt, so the continuing model can still see the user goal and key facts.
 func TestCompactOverflowResponsesBody_FallbackKeepsVerbatimDigest(t *testing.T) {
 	t.Setenv("CODEX_OVERFLOW_COMPACT_TAIL_KB", "1")
 
@@ -218,7 +218,7 @@ func TestCompactOverflowResponsesBody_FallbackKeepsVerbatimDigest(t *testing.T) 
 	}`
 
 	h := &Handler{}
-	// 无 model 字段 => 摘要调用被跳过，直接走退化路径，不依赖真实上游。
+	// No model field => the summary call is skipped and the degradation path is taken directly, without depending on a real upstream.
 	got, ok := h.compactOverflowResponsesBody(context.Background(), []byte(body))
 	if !ok {
 		t.Fatal("expected compaction to succeed")
@@ -237,18 +237,18 @@ func TestCompactOverflowResponsesBody_FallbackKeepsVerbatimDigest(t *testing.T) 
 
 func TestOverflowCompactFallbackTextDegradesToMarkerWhenEmpty(t *testing.T) {
 	text, mode := overflowCompactFallbackText(nil)
-	if text != overflowCompactOmittedMarker || mode != "省略标记" {
+	if text != overflowCompactOmittedMarker || mode != "omitted marker" {
 		t.Fatalf("empty head fallback = %q / %q", text, mode)
 	}
 	digest, mode := overflowCompactFallbackText([]any{
 		map[string]any{"type": "message", "role": "user", "content": []any{map[string]any{"type": "input_text", "text": "deploy target is prod-eu"}}},
 	})
-	if !strings.Contains(digest, "deploy target is prod-eu") || mode != "机械摘录" {
+	if !strings.Contains(digest, "deploy target is prod-eu") || mode != "mechanical excerpt" {
 		t.Fatalf("digest fallback = %q / %q", digest, mode)
 	}
 }
 
-// 只有"摘要调用自身超窗"才值得缩量重试；其余失败换个体积也是同样结果。
+// Only "the summary call itself overflowed" is worth a shrink-and-retry; any other failure gives the same result at any size.
 func TestOverflowSummaryFailedForContextWindow(t *testing.T) {
 	cases := []struct {
 		name   string

@@ -489,7 +489,7 @@ func (d *ModelTraceDetector) Analyze(outputs []ModelTraceOutput) (ModelTraceRepo
 		valid = append(valid, validOutput{numbers: numbers, counts: counts, scores: scores})
 	}
 	if len(valid) == 0 {
-		return ModelTraceReport{}, errors.New("没有可用回答：上游拒答或回答被严重截断")
+		return ModelTraceReport{}, errors.New("no usable answer: upstream refused or the answer was severely truncated")
 	}
 
 	modelCount := len(d.bank.Models)
@@ -560,7 +560,7 @@ func (d *ModelTraceDetector) Analyze(outputs []ModelTraceOutput) (ModelTraceRepo
 		UsedOutputs: len(valid), Results: results, Diagnostics: diagnostics,
 		Calibration:      ModelTraceCalibrationResult{Queries: calibrationQueries, Beta: calibration.Beta, CVAccuracy: calibration.CVAccuracy},
 		FamilyPrediction: winningFamily, FamilyPredictionName: familyNames[winningFamily], FamilyProbability: familyProbabilities[winningFamily],
-		FamilyProbabilities: familyResults, Method: "统一全局稳健数字指纹", CandidateScope: "closed_set",
+		FamilyProbabilities: familyResults, Method: "unified global robust numeric fingerprint", CandidateScope: "closed_set",
 		BankSchema: d.bank.Schema, Source: "ModelTrace", SourceURL: ModelTraceSourceURL, SourceRevision: d.revision,
 	}, nil
 }

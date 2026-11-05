@@ -12,7 +12,7 @@ import (
 	"github.com/tidwall/gjson"
 )
 
-// resetLearnedResponsesLiteSupport 清空学习表并注册恢复，避免测试间串味。
+// resetLearnedResponsesLiteSupport clears the learned table and registers a restore, to avoid cross-test contamination.
 func resetLearnedResponsesLiteSupport(t *testing.T) {
 	t.Helper()
 	learnedResponsesLiteSupport.Lock()
@@ -66,11 +66,11 @@ func TestRecordResponsesLiteSupportFromManifest(t *testing.T) {
 	if supports, known := responsesLiteSupportForModel("gpt-5.7-nova"); !known || !supports {
 		t.Fatalf("gpt-5.7-nova = (%t,%t), want learned true", supports, known)
 	}
-	// 清单是上游真值，学习结果覆盖内置种子。
+	// The manifest is the upstream source of truth; learned results override the builtin seed.
 	if supports, known := responsesLiteSupportForModel("gpt-5.6-sol"); !known || supports {
 		t.Fatalf("gpt-5.6-sol = (%t,%t), want learned override to false", supports, known)
 	}
-	// 字段缺失/非布尔的条目保持未知。
+	// Entries whose field is missing or non-boolean stay unknown.
 	if _, known := responsesLiteSupportForModel("gpt-5.8-missing-flag"); known {
 		t.Fatalf("gpt-5.8-missing-flag should stay unknown")
 	}
@@ -78,7 +78,7 @@ func TestRecordResponsesLiteSupportFromManifest(t *testing.T) {
 		t.Fatalf("gpt-5.8-bad-flag should stay unknown")
 	}
 
-	// 非法/空清单不 panic、不改状态。
+	// An invalid or empty manifest must not panic or change state.
 	RecordResponsesLiteSupportFromManifest(nil)
 	RecordResponsesLiteSupportFromManifest([]byte(`{"models":"nope"}`))
 }
@@ -107,8 +107,7 @@ func TestGateResponsesLiteForModel(t *testing.T) {
 	}
 }
 
-
-// stubWebsocketExecute 桩掉 WS 执行器并捕获帧体/握手头，t.Cleanup 自动还原。
+// stubWebsocketExecute stubs out the WS executor and captures the frame body and handshake headers; t.Cleanup restores them automatically.
 func stubWebsocketExecute(t *testing.T, capturedBody *[]byte, capturedHeaders *http.Header) {
 	t.Helper()
 	previousExec := WebsocketExecuteFunc
@@ -122,10 +121,10 @@ func stubWebsocketExecute(t *testing.T, capturedBody *[]byte, capturedHeaders *h
 	}
 }
 
-// 锁死 ExecuteRequest 的门禁位置（headline 修复路径，issue「gpt-5.5 + lite 必 400」）：
-// 下游带 lite 信号、模型已被入口映射改写成已知非 lite 模型时，WS 帧体不得携带
-// 标记、HTTP 请求不得携带 lite 头。若门禁被移到 payload 规则改写之前或从任一
-// 传输分支上掉线，本测试失败。
+// Locks the position of the ExecuteRequest gate (the headline fix path, issue "gpt-5.5 + lite always 400"):
+// when the downstream carries a lite signal and the model has already been rewritten by the entry mapping to a known non-lite model, the WS frame body must not carry
+// the marker, and the HTTP request must not carry the lite header. If the gate is moved to before the payload rule rewrite, or dropped from either
+// transport branch, this test fails.
 func TestExecuteRequestGateStripsLiteOnBothTransports(t *testing.T) {
 	resetLearnedResponsesLiteSupport(t)
 
@@ -133,7 +132,7 @@ func TestExecuteRequestGateStripsLiteOnBothTransports(t *testing.T) {
 	downstream.Set(codexResponsesLiteHeader, "true")
 	account := &auth.Account{DBID: 9, AccessToken: "at-9", AccountID: "acct-9"}
 
-	// WS 路径
+	// WS path
 	var wsBody []byte
 	wsHeaders := make(http.Header)
 	stubWebsocketExecute(t, &wsBody, &wsHeaders)
@@ -149,7 +148,7 @@ func TestExecuteRequestGateStripsLiteOnBothTransports(t *testing.T) {
 		t.Fatalf("WS handshake headers carried %s = %q, want stripped", codexResponsesLiteHeader, got)
 	}
 
-	// HTTP 路径（Resin 反代指向测试服务器）
+	// HTTP path (Resin reverse proxy pointed at the test server)
 	liteHeader := make(chan string, 1)
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		liteHeader <- r.Header.Get(codexResponsesLiteHeader)
@@ -170,8 +169,8 @@ func TestExecuteRequestGateStripsLiteOnBothTransports(t *testing.T) {
 	}
 }
 
-// 锁死 lite 签名在 payload 规则改写之后采集：规则给 lite 能力模型注入的 WS 标记
-// 必须到达上游帧体。若签名回退到规则前采集，注入会被 prepare 的清理分支静默删除。
+// Locks in that the lite signature is captured after the payload rule rewrite: the WS marker that the rule injects for a lite-capable model
+// must reach the upstream frame body. If the signature falls back to being captured before the rule, the injection would be silently deleted by prepare's cleanup branch.
 func TestExecuteRequestPayloadRuleInjectedLiteMarkerSurvives(t *testing.T) {
 	resetLearnedResponsesLiteSupport(t)
 	withPayloadRules(t, `{"override":[{"models":["gpt-5.6-sol"],"params":{"client_metadata.ws_request_header_x_openai_internal_codex_responses_lite":"true"}}]}`)

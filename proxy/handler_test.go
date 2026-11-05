@@ -67,7 +67,7 @@ func TestSupportedModelsIncludeLatestRequestedModels(t *testing.T) {
 }
 
 func TestSupportedModelsExcludeBelowGPT52(t *testing.T) {
-	// 5.3 只保留 spark；gpt-5.3-codex、gpt-5.2 及更低模型已下线。
+	// Only spark is kept for 5.3; gpt-5.3-codex, gpt-5.2 and lower models are retired.
 	for _, model := range []string{
 		"gpt-5", "gpt-5-codex", "gpt-5-codex-mini",
 		"gpt-5.1", "gpt-5.1-codex", "gpt-5.1-codex-mini", "gpt-5.1-codex-max",
@@ -245,8 +245,8 @@ func TestRealtimeWebSocketTranslatesTextConversationToResponses(t *testing.T) {
 	}
 	select {
 	case gotBody := <-bodyCh:
-		// 顶层 type 信封在 prepare 阶段剥离（HTTP 上游不接受，issue #548）；
-		// WS 出站帧的 type 由 wsrelay 的 prepareWebsocketBody 统一重设，不在此边界。
+		// The top-level type envelope is stripped in the prepare stage (the HTTP upstream does not accept it, issue #548);
+		// the type of outbound WS frames is reset uniformly by prepareWebsocketBody in wsrelay, not at this boundary.
 		if gjson.GetBytes(gotBody, "type").Exists() {
 			t.Fatalf("upstream body should not carry envelope type: %s", gotBody)
 		}
@@ -468,8 +468,8 @@ func TestResponsesWebSocketForwardsResponsesEvents(t *testing.T) {
 	}
 	select {
 	case gotBody := <-bodyCh:
-		// 顶层 type 信封在 prepare 阶段剥离（HTTP 上游不接受，issue #548）；
-		// WS 出站帧的 type 由 wsrelay 的 prepareWebsocketBody 统一重设，不在此边界。
+		// The top-level type envelope is stripped in the prepare stage (the HTTP upstream does not accept it, issue #548);
+		// the type of outbound WS frames is reset uniformly by prepareWebsocketBody in wsrelay, not at this boundary.
 		if gjson.GetBytes(gotBody, "type").Exists() {
 			t.Fatalf("upstream body should not carry envelope type: %s", gotBody)
 		}
@@ -515,10 +515,10 @@ func TestResponsesWebSocketForwardsResponsesEvents(t *testing.T) {
 	}
 }
 
-// TestResponsesWebSocket1009FallbackStripsEnvelopeType 覆盖 issue #548：native WS
-// ingress 收到上游 close 1009 后降级 HTTP，fallback 请求体必须剥掉 WS 事件信封的
-// 顶层 type（HTTP 上游会 400 Unsupported parameter: type），嵌套 type 保持完整；
-// 同时 1009 体积喂给体积路由，后续同尺寸请求直接首发 HTTP 不再进 WS。
+// TestResponsesWebSocket1009FallbackStripsEnvelopeType covers issue #548: native WS
+// ingress downgrades to HTTP after the upstream sends close 1009, and the fallback request body must strip the WS event envelope's
+// top-level type (the HTTP upstream returns 400 Unsupported parameter: type), while nested type stays intact;
+// the 1009 payload size is also fed to the size router, so later requests of the same size go straight to HTTP and no longer enter WS.
 func TestResponsesWebSocket1009FallbackStripsEnvelopeType(t *testing.T) {
 	gin.SetMode(gin.TestMode)
 
@@ -569,7 +569,7 @@ func TestResponsesWebSocket1009FallbackStripsEnvelopeType(t *testing.T) {
 	}
 	defer conn.Close()
 
-	// 大输入让 1009 时的体积达到体积路由的学习样本下限（64KB）。
+	// A large input makes the size at 1009 reach the size router's learning sample minimum (64KB).
 	bigText := strings.Repeat("issue548 ", 8192)
 	payload := fmt.Sprintf(`{"type":"response.create","model":"gpt-5.5","input":[{"type":"message","role":"user","content":[{"type":"input_text","text":"%s"}]}]}`, bigText)
 
@@ -609,11 +609,11 @@ func TestResponsesWebSocket1009FallbackStripsEnvelopeType(t *testing.T) {
 		t.Fatal("timed out waiting for HTTP fallback request")
 	}
 	if got := atomic.LoadInt32(&wsCalls); got != 1 {
-		t.Fatalf("wsCalls = %d, want 1 (WS 尝试一次后降级 HTTP)", got)
+		t.Fatalf("wsCalls = %d, want 1 (WS tried once, then downgraded to HTTP)", got)
 	}
 	readTurnEvents("turn-1")
 
-	// 第二帧同体积：体积路由已从 1009 学习阈值，应直接首发 HTTP，WS 调用数不变。
+	// The second frame has the same size: the size router has learned the 1009 threshold, so it should go straight to HTTP and the WS call count stays the same.
 	if err := conn.WriteMessage(websocket.TextMessage, []byte(payload)); err != nil {
 		t.Fatalf("write second request: %v", err)
 	}
@@ -626,14 +626,14 @@ func TestResponsesWebSocket1009FallbackStripsEnvelopeType(t *testing.T) {
 		t.Fatal("timed out waiting for size-routed HTTP request")
 	}
 	if got := atomic.LoadInt32(&wsCalls); got != 1 {
-		t.Fatalf("wsCalls = %d, want 1 (体积路由应跳过第二次 WS 尝试)", got)
+		t.Fatalf("wsCalls = %d, want 1 (the size router should skip the second WS attempt)", got)
 	}
 	readTurnEvents("turn-2")
 }
 
-// TestResponsesWebSocket1009FallbackExpandsPreviousResponseFromCache 覆盖 issue #548
-// 的续链缺口：HTTP fallback 前若本地响应缓存命中 previous_response_id，历史应展开进
-// input[] 并剥离续链 id，避免 executor 出站删除该字段时静默丢失上游会话历史。
+// TestResponsesWebSocket1009FallbackExpandsPreviousResponseFromCache covers issue #548
+// chain-continuation gap: if the local response cache hits previous_response_id before the HTTP fallback, the history should be expanded into
+// input[] and the chain id stripped, so that the upstream session history is not silently lost when the executor drops that field on outbound.
 func TestResponsesWebSocket1009FallbackExpandsPreviousResponseFromCache(t *testing.T) {
 	gin.SetMode(gin.TestMode)
 
@@ -646,7 +646,7 @@ func TestResponsesWebSocket1009FallbackExpandsPreviousResponseFromCache(t *testi
 	})
 	globalWSSizeRouter = websocketSizeRouter{}
 
-	// 匿名请求的缓存归属是 "anon"；历史含 function_call 才会入缓存。
+	// The cache owner of anonymous requests is "anon"; history is cached only when it contains a function_call.
 	cacheCompletedResponse("anon",
 		[]byte(`[{"type":"message","role":"user","content":[{"type":"input_text","text":"earlier"}]}]`),
 		[]byte(`{"type":"response.completed","response":{"id":"resp_issue548","output":[{"type":"function_call","call_id":"call_548","name":"lookup","arguments":"{}"}]}}`))
@@ -822,8 +822,8 @@ func TestResponsesWebSocketContinuationKeepsBoundAccountPastBoundedLimit(t *test
 	}
 }
 
-// 上游认不出续链 id 时（换号、上游未落库、跨实例等），网关应剥离
-// previous_response_id 降级重试一次，而不是把 400 甩给客户端（issue #400）。
+// When the upstream does not recognize the chain id (account switch, upstream did not persist it, cross-instance, etc.), the gateway should strip
+// previous_response_id and retry once in degraded mode, instead of passing the 400 on to the client (issue #400).
 func TestResponsesWebSocketContinuationDegradesWhenUpstreamRejectsPreviousResponse(t *testing.T) {
 	resetResponseCacheForTest()
 	t.Cleanup(resetResponseCacheForTest)
@@ -883,7 +883,7 @@ func TestResponsesWebSocketContinuationDegradesWhenUpstreamRejectsPreviousRespon
 			},
 		},
 		{
-			// WS 上游把同一个错误发成流内先导 error 帧 + response.failed。
+			// The WS upstream sends the same error as an in-stream leading error frame plus response.failed.
 			name: "in-stream response.failed",
 			rejected: func() *http.Response {
 				sse := "data: {\"type\":\"error\",\"code\":\"previous_response_not_found\",\"message\":\"Previous response with id 'resp_stale' not found.\"}\n\n" +
@@ -896,8 +896,8 @@ func TestResponsesWebSocketContinuationDegradesWhenUpstreamRejectsPreviousRespon
 			},
 		},
 		{
-			// 真实 ChatGPT WS 几乎总会先推 rate_limits / metadata。本机 2004 还开了
-			// loose + preflight passthrough，这两帧会先落到客户端。降级不能被它们挡住。
+			// The real ChatGPT WS almost always pushes rate_limits / metadata first. This machine's 2004 also enabled
+			// loose + preflight passthrough, so these two frames reach the client first. The downgrade must not be blocked by them.
 			name:      "in-stream response.failed after preflight",
 			preflight: true,
 			rejected: func() *http.Response {
@@ -997,8 +997,8 @@ func TestResponsesWebSocketContinuationDegradesWhenUpstreamRejectsPreviousRespon
 	}
 }
 
-// 绑定账号被本次请求硬排除（限流等）后，续链请求不应死等它 30 秒再整轮失败：
-// 剥离 previous_response_id 后换号继续。
+// After the bound account is hard-excluded for this request (rate limit, etc.), a chain-continuation request should not wait on it for 30 seconds and then fail the whole round:
+// strip previous_response_id and continue on another account.
 func TestResponsesWebSocketContinuationDegradesWhenBoundAccountExcluded(t *testing.T) {
 	resetResponseCacheForTest()
 	t.Cleanup(resetResponseCacheForTest)
@@ -1019,7 +1019,7 @@ func TestResponsesWebSocketContinuationDegradesWhenBoundAccountExcluded(t *testi
 		defer mu.Unlock()
 		servedAccounts = append(servedAccounts, account.ID())
 		if gjson.GetBytes(requestBody, "previous_response_id").String() != "" {
-			// 绑定账号（1 号）被限流：硬排除后本次请求不会再选到它。
+			// The bound account (no. 1) is rate limited: after the hard exclusion, this request will not select it again.
 			return &http.Response{
 				StatusCode: http.StatusTooManyRequests,
 				Header:     make(http.Header),
@@ -1061,7 +1061,7 @@ func TestResponsesWebSocketContinuationDegradesWhenBoundAccountExcluded(t *testi
 		t.Fatalf("write request: %v", err)
 	}
 
-	// 降级必须在等待窗口（30s）之前发生，否则这一轮会超时。
+	// The downgrade must happen before the wait window (30s), otherwise this round times out.
 	_ = conn.SetReadDeadline(time.Now().Add(10 * time.Second))
 	_, event, err := conn.ReadMessage()
 	if err != nil {
@@ -1172,7 +1172,7 @@ func TestResponsesWebSocketFlushesSkeletonBeforeContent(t *testing.T) {
 		WebsocketExecuteFunc = previousExec
 		ApplyRuntimeSettings(previousSettings)
 	})
-	// 配置首字超时使 ttftGuard != nil，启用首包前缓冲路径；取足够大的值避免误触发。
+	// Setting a first-token timeout makes ttftGuard != nil and enables the buffer-before-first-packet path; use a large enough value to avoid false triggers.
 	nextSettings := previousSettings
 	nextSettings.FirstTokenTimeoutSec = 60
 	ApplyRuntimeSettings(nextSettings)
@@ -1181,10 +1181,10 @@ func TestResponsesWebSocketFlushesSkeletonBeforeContent(t *testing.T) {
 	WebsocketExecuteFunc = func(ctx context.Context, account *auth.Account, requestBody []byte, sessionID string, proxyOverride string, apiKey string, deviceCfg *DeviceProfileConfig, headers http.Header, poolRouteKey string) (*http.Response, error) {
 		pr, pw := io.Pipe()
 		go func() {
-			// 骨架帧先到：created（生命周期，缓冲）+ output_item.added（结构帧，触发 flush）。
+			// Skeleton frames arrive first: created (lifecycle, buffered) + output_item.added (structural frame, triggers flush).
 			_, _ = pw.Write([]byte(`data: {"type":"response.created","response":{}}` + "\n\n"))
 			_, _ = pw.Write([]byte(`data: {"type":"response.output_item.added","item":{"type":"reasoning"}}` + "\n\n"))
-			// 在内容到来前阻塞：issue #207 修复前，客户端会一直卡到首个内容才收到任何帧。
+			// Block until content arrives: before the issue #207 fix, the client stayed stuck until the first content before receiving any frame.
 			<-release
 			_, _ = pw.Write([]byte(`data: {"type":"response.output_text.delta","delta":"hi"}` + "\n\n"))
 			_, _ = pw.Write([]byte(`data: {"type":"response.completed","response":{"usage":{"input_tokens":1,"output_tokens":1,"total_tokens":2}}}` + "\n\n"))
@@ -1213,7 +1213,7 @@ func TestResponsesWebSocketFlushesSkeletonBeforeContent(t *testing.T) {
 		t.Fatalf("write request: %v", err)
 	}
 
-	// 内容尚未发送（mock 仍阻塞在 <-release），客户端此时就应已收到骨架帧。
+	// Content has not been sent yet (the mock is still blocked on <-release), so the client should already have received the skeleton frames at this point.
 	_ = conn.SetReadDeadline(time.Now().Add(2 * time.Second))
 	_, first, err := conn.ReadMessage()
 	if err != nil {
@@ -1230,7 +1230,7 @@ func TestResponsesWebSocketFlushesSkeletonBeforeContent(t *testing.T) {
 		t.Fatalf("second relayed event = %q, want response.output_item.added", et)
 	}
 
-	// 放行内容，确认其余事件照常透传。
+	// Release the content and confirm the other events still pass through as usual.
 	close(release)
 	_, third, err := conn.ReadMessage()
 	if err != nil {
@@ -1528,7 +1528,7 @@ func TestResponsesHTTPIngressFallsBackToHTTPWhenForcedWebsocketMessageTooBig(t *
 	upstream := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		httpCalls++
 		httpAccountIDs <- r.Header.Get("X-Resin-Account")
-		// 出站会话头已改为真实客户端形态（连字符 session-id），见 ApplyCodexSessionHeaders。
+		// The outbound session header now uses the real client form (hyphenated session-id), see ApplyCodexSessionHeaders.
 		httpSessionIDs <- r.Header.Get("Session-Id")
 		httpLiteHeaders <- r.Header.Get("X-OpenAI-Internal-Codex-Responses-Lite")
 		requestBody := readUpstreamRequestBody(r)
@@ -1608,8 +1608,8 @@ func TestResponsesHTTPIngressFallsBackToHTTPWhenForcedWebsocketMessageTooBig(t *
 	}
 }
 
-// TestResponsesHTTPIngressKeepsDownstreamAliveDuringUpstreamSilence 验证 HTTP SSE
-// 入站请求在上游静默期间仍向下游发送保活。
+// TestResponsesHTTPIngressKeepsDownstreamAliveDuringUpstreamSilence verifies that an HTTP SSE
+// inbound request still sends keepalives downstream while the upstream is silent.
 func TestResponsesHTTPIngressKeepsDownstreamAliveDuringUpstreamSilence(t *testing.T) {
 	gin.SetMode(gin.TestMode)
 
@@ -1706,7 +1706,7 @@ func TestResponsesSkipsWebsocketWhenBodyReachesLearnedTooBigThreshold(t *testing
 	store.AddAccount(account)
 	handler := NewHandler(store, nil, &config.Config{AllowAnonymousV1: true}, nil)
 
-	// 预置学习状态:任何体积的请求都视为达到已知 1009 阈值
+	// Preset the learning state: requests of any size are treated as having reached the known 1009 threshold
 	globalWSSizeRouter = websocketSizeRouter{minTooBig: 1, learnedAt: time.Now()}
 
 	body := []byte(`{"model":"gpt-5.5","input":"hello","stream":true}`)
@@ -1722,7 +1722,7 @@ func TestResponsesSkipsWebsocketWhenBodyReachesLearnedTooBigThreshold(t *testing
 		t.Fatalf("status = %d, body = %q", recorder.Code, recorder.Body.String())
 	}
 	if wsCalls != 0 {
-		t.Fatalf("wsCalls = %d, want 0 (体积路由应完全跳过 WS)", wsCalls)
+		t.Fatalf("wsCalls = %d, want 0 (the size router should skip WS entirely)", wsCalls)
 	}
 	if httpCalls != 1 {
 		t.Fatalf("httpCalls = %d, want 1", httpCalls)
@@ -2191,7 +2191,7 @@ func TestConcurrencySaturatedPoolReturnsDistinctError(t *testing.T) {
 			if code := gjson.Get(recorder.Body.String(), "error.code").String(); code != ErrorCodeAccountPoolConcurrencySaturated {
 				t.Fatalf("code = %q, want %q; body=%s", code, ErrorCodeAccountPoolConcurrencySaturated, recorder.Body.String())
 			}
-			if message := gjson.Get(recorder.Body.String(), "error.message").String(); !strings.Contains(message, "并发窗口已满") {
+			if message := gjson.Get(recorder.Body.String(), "error.message").String(); !strings.Contains(message, "concurrency window is full") {
 				t.Fatalf("message = %q, want concurrency window text", message)
 			}
 			if retryAfter := recorder.Header().Get("Retry-After"); retryAfter != "1" {
@@ -2227,20 +2227,20 @@ func TestUsageLogAndClientErrorsOmitUnstructuredUpstreamBodies(t *testing.T) {
 }
 
 func TestUsageLogFailureMessageKeepsGatewayDiagnostics(t *testing.T) {
-	// 断流类诊断是网关自产纯文本，必须保留原文而不是退化成裸状态码（issue #524）。
-	diag := "上游流读取失败: stream error: stream ID 277; INTERNAL_ERROR; received from peer [上游帧 147, 下游写阻塞 0ms, 距上游末帧 52484ms]"
+	// Stream-break diagnostics are plain text produced by the gateway itself; keep the original text instead of degrading to a bare status code (issue #524).
+	diag := "upstream stream read failed: stream error: stream ID 277; INTERNAL_ERROR; received from peer [upstream frames 147, downstream write blocked 0ms, 52484ms since the last upstream frame]"
 	got := usageLogFailureMessage(logStatusUpstreamStreamBreak, diag)
 	if !strings.Contains(got, "INTERNAL_ERROR") || !strings.Contains(got, "stream ID 277") {
 		t.Fatalf("usageLogFailureMessage() dropped diagnostics: %q", got)
 	}
 
-	// 诊断文本包含上游 JSON 错误帧时仍走结构化提取。
+	// When the diagnostic text contains an upstream JSON error frame, structured extraction still applies.
 	jsonDiag := `{"error":{"code":"rate_limit_exceeded","message":"Too many requests"}}`
 	if got := usageLogFailureMessage(http.StatusTooManyRequests, jsonDiag); got != "rate_limit_exceeded · Too many requests" {
 		t.Fatalf("usageLogFailureMessage() json path = %q", got)
 	}
 
-	// 空文本仍回落裸状态码。
+	// Empty text still falls back to the bare status code.
 	if got := usageLogFailureMessage(http.StatusBadGateway, "  "); got != "HTTP 502" {
 		t.Fatalf("usageLogFailureMessage() empty = %q", got)
 	}
@@ -3013,65 +3013,65 @@ func TestAppendMissingResponseImageOutputsAnnotatesExistingOutput(t *testing.T) 
 func TestAccountFilterForModelRespectsAccountModelWhitelist(t *testing.T) {
 	filter := accountFilterForModel("gpt-5.6-sol")
 	if !filter(&auth.Account{PlanType: "plus"}) {
-		t.Fatal("空白名单账号应放行任意模型")
+		t.Fatal("an account with an empty allowlist should allow any model")
 	}
 	if !filter(&auth.Account{PlanType: "pro", Models: []string{"GPT-5.6-SOL", "gpt-5.3-codex"}}) {
-		t.Fatal("白名单命中（大小写不敏感）应放行")
+		t.Fatal("an allowlist hit (case-insensitive) should be allowed")
 	}
 	restricted := &auth.Account{PlanType: "plus", Models: []string{"gpt-5.3-codex"}}
 	if filter(restricted) {
-		t.Fatal("白名单未包含请求模型时应拒绝")
+		t.Fatal("a request model not in the allowlist should be rejected")
 	}
 	if !accountFilterForModel("gpt-5.3-codex")(restricted) {
-		t.Fatal("白名单内模型应放行")
+		t.Fatal("a model in the allowlist should be allowed")
 	}
 	if !accountFilterForModel("")(restricted) {
-		t.Fatal("无模型信息的请求不应被白名单拦截")
+		t.Fatal("a request with no model information should not be blocked by the allowlist")
 	}
 }
 
 func TestIsCodexModelUnsupportedError(t *testing.T) {
 	unsupported := []byte(`{"error":{"message":"The 'gpt-5.6-sol' model is not supported when using Codex with a ChatGPT account.","type":"invalid_request_error"}}`)
 	if !isCodexModelUnsupportedError(unsupported) {
-		t.Fatal("应识别模型不支持错误")
+		t.Fatal("the model-not-supported error should be recognized")
 	}
 	unknownProvider := []byte(`{"error":{"type":"upstream_error","message":"unknown provider for model gpt-5.6-sol"}}`)
 	if !isCodexModelUnsupportedError(unknownProvider) {
-		t.Fatal("应识别中转上游缺少模型提供商错误")
+		t.Fatal("the relay upstream missing-model-provider error should be recognized")
 	}
 	if isCodexModelUnsupportedError([]byte(`{"error":{"message":"Invalid value for 'temperature'","type":"invalid_request_error"}}`)) {
-		t.Fatal("普通 invalid_request 不应命中")
+		t.Fatal("a plain invalid_request should not match")
 	}
 	if isCodexModelUnsupportedError(nil) {
-		t.Fatal("空 body 不应命中")
+		t.Fatal("an empty body should not match")
 	}
 
 	general, rate := 0, 0
 	if !shouldRetryHTTPStatus(http.StatusBadRequest, unsupported, &general, &rate, 2, 1) {
-		t.Fatal("模型不支持的 400 应可换号重试")
+		t.Fatal("a 400 for an unsupported model should be retryable on another account")
 	}
 	general, rate = 0, 0
 	if !shouldRetryHTTPStatus(http.StatusBadRequest, unknownProvider, &general, &rate, 2, 1) {
-		t.Fatal("中转上游缺少模型提供商的 400 应可换号重试")
+		t.Fatal("a 400 for a relay upstream missing its model provider should be retryable on another account")
 	}
 	general, rate = 0, 0
 	if shouldRetryHTTPStatus(http.StatusBadRequest, []byte(`{"error":{"message":"bad request"}}`), &general, &rate, 2, 1) {
-		t.Fatal("普通 400 不应重试")
+		t.Fatal("a plain 400 should not be retried")
 	}
 }
 
 func TestResponseFailedModelUnsupportedRetryable(t *testing.T) {
 	payload := []byte(`{"type":"response.failed","response":{"error":{"code":"invalid_request_error","message":"The 'gpt-5.6-sol' model is not supported when using Codex with a ChatGPT account."}}}`)
 	if !responseFailedRetryable(payload) {
-		t.Fatal("模型不支持的 response.failed 应视为可换号重试")
+		t.Fatal("a response.failed for an unsupported model should be treated as retryable on another account")
 	}
 	unknownProvider := []byte(`{"type":"response.failed","response":{"status_code":400,"error":{"type":"upstream_error","message":"unknown provider for model gpt-5.6-sol"}}}`)
 	if !responseFailedRetryable(unknownProvider) {
-		t.Fatal("中转上游缺少模型提供商的 response.failed 应视为可换号重试")
+		t.Fatal("a response.failed for a relay upstream missing its model provider should be treated as retryable on another account")
 	}
 	plain := []byte(`{"type":"response.failed","response":{"error":{"code":"invalid_request_error","message":"Invalid value for 'temperature'"}}}`)
 	if responseFailedRetryable(plain) {
-		t.Fatal("普通 invalid_request 的 response.failed 不应重试")
+		t.Fatal("a response.failed for a plain invalid_request should not be retried")
 	}
 }
 
@@ -3347,7 +3347,7 @@ func TestGeneric402DoesNotLinkWorkspaceSiblings(t *testing.T) {
 	}
 }
 
-// TestAgentRuntimeDeleted403MarksAccountBanned 验证代理请求会将 runtime 已删除的账号标记为封禁。
+// TestAgentRuntimeDeleted403MarksAccountBanned verifies that a proxy request marks an account whose runtime has been deleted as banned.
 func TestAgentRuntimeDeleted403MarksAccountBanned(t *testing.T) {
 	store := auth.NewStore(nil, nil, &database.SystemSettings{MaxConcurrency: 2, TestConcurrency: 1, TestModel: "gpt-5.5"})
 	account := &auth.Account{DBID: 42, AccessToken: "at", Status: auth.StatusReady, HealthTier: auth.HealthTierHealthy}
@@ -3490,7 +3490,7 @@ func TestSendFinalUpstreamError_UsageLimitMissingTimeFields(t *testing.T) {
 	ctx, _ := gin.CreateTestContext(recorder)
 
 	handler := &Handler{}
-	// usage_limit_reached 但不含 resets_at / resets_in_seconds
+	// usage_limit_reached but without resets_at / resets_in_seconds
 	body := []byte(`{"error":{"type":"usage_limit_reached","message":"limit reached"}}`)
 
 	handler.sendFinalUpstreamError(ctx, http.StatusTooManyRequests, body)
@@ -3498,12 +3498,12 @@ func TestSendFinalUpstreamError_UsageLimitMissingTimeFields(t *testing.T) {
 	if recorder.Code != http.StatusServiceUnavailable {
 		t.Fatalf("status = %d, want %d", recorder.Code, http.StatusServiceUnavailable)
 	}
-	// 无 resets_in_seconds 时不应设置 Retry-After
+	// Retry-After must not be set when there is no resets_in_seconds
 	if got := recorder.Header().Get("Retry-After"); got != "" {
 		t.Fatalf("Retry-After = %q, want empty (no resets_in_seconds)", got)
 	}
 
-	// 验证零值字段不出现在响应中
+	// Verify zero-value fields do not appear in the response
 	var raw map[string]map[string]any
 	if err := json.Unmarshal(recorder.Body.Bytes(), &raw); err != nil {
 		t.Fatalf("decode: %v", err)
@@ -3531,7 +3531,7 @@ func TestSendFinalUpstreamError_Non429StatusPassthrough(t *testing.T) {
 
 	handler.sendFinalUpstreamError(ctx, http.StatusInternalServerError, body)
 
-	// 非 429 直接透传原状态码
+	// Non-429 responses pass the original status code through directly
 	if recorder.Code != http.StatusInternalServerError {
 		t.Fatalf("status = %d, want %d", recorder.Code, http.StatusInternalServerError)
 	}
@@ -3567,9 +3567,9 @@ func TestSendFinalUpstreamError_UsageLimitRewrites500(t *testing.T) {
 	}
 }
 
-// TestSendFinalUpstreamError_UpstreamUnauthorizedRemappedTo503 验证上游账号 401
-// (OAuth token 失效)重试耗尽后改写为 503 池级错误，不原样以 401 透传给客户端，
-// 避免客户端误判自己的 API key 失效 (issue #323)。
+// TestSendFinalUpstreamError_UpstreamUnauthorizedRemappedTo503 verifies that an upstream account 401
+// (OAuth token expired), after retries are exhausted, is rewritten to a 503 pool-level error and not passed through to the client as 401,
+// so the client does not wrongly conclude that its own API key has expired (issue #323).
 func TestSendFinalUpstreamError_UpstreamUnauthorizedRemappedTo503(t *testing.T) {
 	gin.SetMode(gin.TestMode)
 
@@ -3598,8 +3598,8 @@ func TestSendFinalUpstreamError_UpstreamUnauthorizedRemappedTo503(t *testing.T) 
 	}
 }
 
-// TestSendFinalUpstreamError_MissingScope401Passthrough 验证 missing_scope 类 401
-// 仍按原状态码透传(它是可保留在池中的良性 401，不应被当作账号鉴权失效改写)。
+// TestSendFinalUpstreamError_MissingScope401Passthrough verifies that a missing_scope-type 401
+// is still passed through with its original status code (it is a benign 401 that can stay in the pool and should not be rewritten as an account authentication failure).
 func TestSendFinalUpstreamError_MissingScope401Passthrough(t *testing.T) {
 	gin.SetMode(gin.TestMode)
 
@@ -3616,34 +3616,34 @@ func TestSendFinalUpstreamError_MissingScope401Passthrough(t *testing.T) {
 	}
 }
 
-// TestShouldRetryHTTPStatus403 验证上游 403 现在参与换号重试（issue #396），
-// 受 general-retry 预算限制。
+// TestShouldRetryHTTPStatus403 verifies that an upstream 403 now takes part in account-switch retries (issue #396),
+// subject to the general-retry budget.
 func TestShouldRetryHTTPStatus403(t *testing.T) {
 	if !isRetryableStatus(http.StatusForbidden) {
-		t.Fatal("403 应被视为可重试状态")
+		t.Fatal("403 should be treated as a retryable status")
 	}
 	generalRetries := 0
 	rateLimitRetries := 0
 	if !shouldRetryHTTPStatus(http.StatusForbidden, nil, &generalRetries, &rateLimitRetries, 2, 1) {
-		t.Fatal("首个 403（未达上限）应可重试")
+		t.Fatal("the first 403 (below the limit) should be retryable")
 	}
 	if !shouldRetryHTTPStatus(http.StatusForbidden, nil, &generalRetries, &rateLimitRetries, 2, 1) {
-		t.Fatal("第二个 403（仍未达上限）应可重试")
+		t.Fatal("the second 403 (still below the limit) should be retryable")
 	}
 	if shouldRetryHTTPStatus(http.StatusForbidden, nil, &generalRetries, &rateLimitRetries, 2, 1) {
-		t.Fatal("达到 general 重试上限后 403 不应再重试")
+		t.Fatal("after the general retry limit is reached, a 403 should not be retried")
 	}
 	if generalRetries != 2 {
 		t.Fatalf("generalRetries = %d, want 2", generalRetries)
 	}
 	if rateLimitRetries != 0 {
-		t.Fatalf("403 不应消耗限流预算，rateLimitRetries = %d, want 0", rateLimitRetries)
+		t.Fatalf("403 should not consume the rate-limit budget, rateLimitRetries = %d, want 0", rateLimitRetries)
 	}
 }
 
-// TestSendFinalUpstreamError_Forbidden403RemappedTo503 验证上游账号 403（额度/套餐/
-// 工作区受限）重试耗尽后改写为 503 池级错误，不原样以 403 透传（issue #396），
-// 避免客户端误判自身无权限而停工。
+// TestSendFinalUpstreamError_Forbidden403RemappedTo503 verifies that an upstream account 403 (quota/plan/
+// workspace restricted), after retries are exhausted, is rewritten to a 503 pool-level error and not passed through as 403 (issue #396),
+// so the client does not wrongly conclude it lacks permission and stop working.
 func TestSendFinalUpstreamError_Forbidden403RemappedTo503(t *testing.T) {
 	gin.SetMode(gin.TestMode)
 
@@ -3659,7 +3659,7 @@ func TestSendFinalUpstreamError_Forbidden403RemappedTo503(t *testing.T) {
 		handler.sendFinalUpstreamError(ctx, http.StatusForbidden, body)
 
 		if recorder.Code != http.StatusServiceUnavailable {
-			t.Fatalf("body=%s status = %d, want %d (上游 403 不应以客户端 403 透传)", body, recorder.Code, http.StatusServiceUnavailable)
+			t.Fatalf("body=%s status = %d, want %d (an upstream 403 should not be passed through as a client 403)", body, recorder.Code, http.StatusServiceUnavailable)
 		}
 		var payload struct {
 			Error struct {
@@ -3973,7 +3973,7 @@ func TestApply429CooldownUsageLimitUpdatesFreePlanMetadata(t *testing.T) {
 	dbPath := filepath.Join(t.TempDir(), "codex2api.db")
 	db, err := database.New("sqlite", dbPath)
 	if err != nil {
-		t.Fatalf("database.New 返回错误: %v", err)
+		t.Fatalf("database.New returned error: %v", err)
 	}
 	defer db.Close()
 
@@ -3981,7 +3981,7 @@ func TestApply429CooldownUsageLimitUpdatesFreePlanMetadata(t *testing.T) {
 		"plan_type": "pro",
 	}, "")
 	if err != nil {
-		t.Fatalf("InsertAccountWithCredentials 返回错误: %v", err)
+		t.Fatalf("InsertAccountWithCredentials returned error: %v", err)
 	}
 
 	store := auth.NewStore(db, nil, &database.SystemSettings{MaxConcurrency: 2, TestConcurrency: 1, TestModel: "gpt-5.5"})
@@ -4011,7 +4011,7 @@ func TestApply429CooldownUsageLimitUpdatesFreePlanMetadata(t *testing.T) {
 
 	row, err := db.GetAccountByID(ctx, id)
 	if err != nil {
-		t.Fatalf("GetAccountByID 返回错误: %v", err)
+		t.Fatalf("GetAccountByID returned error: %v", err)
 	}
 	if got := row.GetCredential("plan_type"); got != "free" {
 		t.Fatalf("persisted plan_type = %q, want free", got)
@@ -4323,7 +4323,7 @@ func TestSyncCodexUsageStateCreditAccountSkips7dUsageLimit(t *testing.T) {
 		CreditEnabled:         true,
 		CreditSkipUsageWindow: true,
 	}
-	// 信用开关现在还要求当下确实有积分可花，快照缺失会按「没有积分」处理。
+	// The credits switch now also requires that credits are actually available to spend right now; a missing snapshot is treated as "no credits".
 	account.SetCreditBalance("1000.0000000000", true, false, false)
 	resp := &http.Response{Header: make(http.Header)}
 	resp.Header.Set("x-codex-primary-used-percent", "20")
@@ -4341,8 +4341,8 @@ func TestSyncCodexUsageStateCreditAccountSkips7dUsageLimit(t *testing.T) {
 	if result.Usage7dRateLimited {
 		t.Fatalf("Usage7dRateLimited = true, want false for credit account")
 	}
-	// 窗口打满但积分顶着：显示仍是限流，调度侧不受影响，
-	// 前端据 UsingCredits 在限流徽章后面挂一个积分徽章。
+	// The window is full but credits are still available: the display is still rate limited and scheduling is unaffected,
+	// the frontend attaches a credits badge behind the rate-limit badge based on UsingCredits.
 	if got := account.RuntimeStatus(); got != "rate_limited" {
 		t.Fatalf("RuntimeStatus() = %q, want rate_limited for credit account", got)
 	}
@@ -4391,7 +4391,7 @@ func TestSyncCodexUsageStateTeamMemberNullBalanceCreditsSkips7dUsageLimit(t *tes
 		CreditEnabled:         true,
 		CreditSkipUsageWindow: true,
 	}
-	// Team 成员 has_credits=true 且 balance=null (无显式数值)
+	// Team member has_credits=true and balance=null (no explicit value)
 	account.SetCreditBalanceDetails(nil, true, false, false, nil, "")
 	resp := &http.Response{Header: make(http.Header)}
 	resp.Header.Set("x-codex-primary-used-percent", "20")
@@ -4485,7 +4485,7 @@ func TestSyncCodexUsageStateSparseCreditsHeadersObservation(t *testing.T) {
 	}
 }
 
-// issue #382：响应头仅有 7d 时清除陈旧 5h；完全无用量头时保留 5h。
+// issue #382: when the response headers have only 7d, clear the stale 5h; when there are no usage headers at all, keep the 5h.
 func TestSyncCodexUsageState_Clears5hWhenOnly7dHeaders(t *testing.T) {
 	ctx := context.Background()
 	dbPath := filepath.Join(t.TempDir(), "codex2api.db")
@@ -4555,7 +4555,7 @@ func TestSyncCodexUsageState_Preserves5hWhenNoUsageHeaders(t *testing.T) {
 
 	resp := &http.Response{Header: make(http.Header)}
 	resp.Header.Set("x-codex-plan-type", "plus")
-	// 无 primary/secondary 用量头：可能是中间件剥头，不能误清 5h
+	// No primary/secondary usage headers: they may have been stripped by middleware, so the 5h must not be wrongly cleared
 
 	result := SyncCodexUsageState(store, account, resp)
 	if result.Cleared5h {
@@ -4671,14 +4671,14 @@ func TestAuthMiddlewareSetsAPIKeyContext(t *testing.T) {
 	dbPath := filepath.Join(t.TempDir(), "codex2api.db")
 	db, err := database.New("sqlite", dbPath)
 	if err != nil {
-		t.Fatalf("database.New 返回错误: %v", err)
+		t.Fatalf("database.New returned error: %v", err)
 	}
 	defer db.Close()
 
 	key := "sk-test-auth-1234567890"
 	id, err := db.InsertAPIKey(context.Background(), "Team A", key)
 	if err != nil {
-		t.Fatalf("InsertAPIKey 返回错误: %v", err)
+		t.Fatalf("InsertAPIKey returned error: %v", err)
 	}
 
 	handler := NewHandler(nil, db, nil, nil)
@@ -4710,7 +4710,7 @@ func TestAuthMiddlewareSetsAPIKeyContext(t *testing.T) {
 		Raw    string `json:"raw"`
 	}
 	if err := json.Unmarshal(recorder.Body.Bytes(), &payload); err != nil {
-		t.Fatalf("json.Unmarshal 返回错误: %v", err)
+		t.Fatalf("json.Unmarshal returned error: %v", err)
 	}
 
 	if payload.ID != id {
@@ -4727,22 +4727,22 @@ func TestAuthMiddlewareSetsAPIKeyContext(t *testing.T) {
 	}
 }
 
-// Gemini 原生客户端(google-genai SDK、ADK、聚合网关的 Gemini 渠道)默认用
-// x-goog-api-key 传密钥,/v1beta 必须认它;?key= 查询串不认。
+// Native Gemini clients (the google-genai SDK, ADK, and the Gemini channel of aggregator gateways) send the key by default with
+// x-goog-api-key, so /v1beta must accept it; the ?key= query string is not accepted.
 func TestAuthMiddlewareAcceptsGoogleAPIKeyHeader(t *testing.T) {
 	gin.SetMode(gin.TestMode)
 
 	dbPath := filepath.Join(t.TempDir(), "codex2api.db")
 	db, err := database.New("sqlite", dbPath)
 	if err != nil {
-		t.Fatalf("database.New 返回错误: %v", err)
+		t.Fatalf("database.New returned error: %v", err)
 	}
 	defer db.Close()
 
 	key := "sk-test-goog-1234567890"
 	id, err := db.InsertAPIKey(context.Background(), "Gemini client", key)
 	if err != nil {
-		t.Fatalf("InsertAPIKey 返回错误: %v", err)
+		t.Fatalf("InsertAPIKey returned error: %v", err)
 	}
 
 	handler := NewHandler(nil, db, nil, nil)
@@ -4764,13 +4764,13 @@ func TestAuthMiddlewareAcceptsGoogleAPIKeyHeader(t *testing.T) {
 		Raw string `json:"raw"`
 	}
 	if err := json.Unmarshal(recorder.Body.Bytes(), &payload); err != nil {
-		t.Fatalf("json.Unmarshal 返回错误: %v", err)
+		t.Fatalf("json.Unmarshal returned error: %v", err)
 	}
 	if payload.ID != id || payload.Raw != key {
 		t.Fatalf("api key context = %+v, want id %d / raw %q", payload, id, key)
 	}
 
-	// 查询串形态不接受:密钥会进 URL 与访问日志。
+	// The query-string form is not accepted: the key would end up in the URL and the access log.
 	req = httptest.NewRequest(http.MethodGet, "/v1beta/models?key="+key, nil)
 	recorder = httptest.NewRecorder()
 	router.ServeHTTP(recorder, req)
@@ -4872,7 +4872,7 @@ func TestAuthMiddlewareRejectsExpiredAPIKey(t *testing.T) {
 	dbPath := filepath.Join(t.TempDir(), "codex2api.db")
 	db, err := database.New("sqlite", dbPath)
 	if err != nil {
-		t.Fatalf("database.New 返回错误: %v", err)
+		t.Fatalf("database.New returned error: %v", err)
 	}
 	defer db.Close()
 
@@ -4882,7 +4882,7 @@ func TestAuthMiddlewareRejectsExpiredAPIKey(t *testing.T) {
 		Key:       key,
 		ExpiresAt: sql.NullTime{Time: time.Now().Add(-time.Hour), Valid: true},
 	}); err != nil {
-		t.Fatalf("InsertAPIKeyWithOptions 返回错误: %v", err)
+		t.Fatalf("InsertAPIKeyWithOptions returned error: %v", err)
 	}
 
 	handler := NewHandler(nil, db, nil, nil)
@@ -4909,7 +4909,7 @@ func TestAuthMiddlewareRejectsQuotaExhaustedAPIKey(t *testing.T) {
 	dbPath := filepath.Join(t.TempDir(), "codex2api.db")
 	db, err := database.New("sqlite", dbPath)
 	if err != nil {
-		t.Fatalf("database.New 返回错误: %v", err)
+		t.Fatalf("database.New returned error: %v", err)
 	}
 	defer db.Close()
 
@@ -4920,7 +4920,7 @@ func TestAuthMiddlewareRejectsQuotaExhaustedAPIKey(t *testing.T) {
 		QuotaLimit: 0.01,
 		QuotaUsed:  0.01,
 	}); err != nil {
-		t.Fatalf("InsertAPIKeyWithOptions 返回错误: %v", err)
+		t.Fatalf("InsertAPIKeyWithOptions returned error: %v", err)
 	}
 
 	handler := NewHandler(nil, db, nil, nil)
@@ -4987,7 +4987,7 @@ func TestAuthMiddlewareUsesRuntimeAPIKeyCache(t *testing.T) {
 		Raw  string `json:"raw"`
 	}
 	if err := json.Unmarshal(recorder.Body.Bytes(), &payload); err != nil {
-		t.Fatalf("json.Unmarshal 返回错误: %v", err)
+		t.Fatalf("json.Unmarshal returned error: %v", err)
 	}
 	if payload.ID != 42 || payload.Name != "Cached Team" || payload.Raw != key {
 		t.Fatalf("payload = %#v", payload)
@@ -5037,8 +5037,8 @@ func TestApplyAffinityGroupRoutingDisabledKeepsExistingFilter(t *testing.T) {
 	}
 }
 
-// TestApplyAffinityGroupRoutingExcludesSplitGroupsWhenNoAllowedGroups 覆盖最常见的配置：
-// Key 不限分组。此时带指纹的请求必须避开分流组，否则分流组照样接真 Codex 流量，隔离等于没做。
+// TestApplyAffinityGroupRoutingExcludesSplitGroupsWhenNoAllowedGroups covers the most common configuration:
+// the key is not limited to any group. In this case, fingerprinted requests must avoid the split groups, otherwise the split groups still take real Codex traffic and the isolation does nothing.
 func TestApplyAffinityGroupRoutingExcludesSplitGroupsWhenNoAllowedGroups(t *testing.T) {
 	c, _ := gin.CreateTestContext(httptest.NewRecorder())
 	c.Set(contextAPIKeyRow, &database.APIKeyRow{
@@ -5062,8 +5062,8 @@ func TestApplyAffinityGroupRoutingExcludesSplitGroupsWhenNoAllowedGroups(t *test
 	}
 }
 
-// TestApplyAffinityGroupRoutingKeepsInnerFilter 分组门必须叠加在既有 filter 之上，
-// 不能把模型/冷却/预算这些闸门盖掉。
+// TestApplyAffinityGroupRoutingKeepsInnerFilter requires the group gate to be layered on top of the existing filter,
+// and must not override the model, cooldown and budget gates.
 func TestApplyAffinityGroupRoutingKeepsInnerFilter(t *testing.T) {
 	c, _ := gin.CreateTestContext(httptest.NewRecorder())
 	c.Set(contextAPIKeyRow, &database.APIKeyRow{
@@ -5132,7 +5132,7 @@ func TestResponsesWebSocketStripsInjectedImageTool(t *testing.T) {
 
 	select {
 	case gotBody := <-bodyCh:
-		// 整个请求体不应再出现 image_generation（工具与桥接 instructions 均已剥离）。
+		// image_generation should no longer appear anywhere in the request body (the tools and the bridged instructions have both been stripped).
 		if strings.Contains(string(gotBody), "image_generation") {
 			t.Fatalf("websocket upstream body should not mention image_generation: %s", gotBody)
 		}
@@ -5141,9 +5141,9 @@ func TestResponsesWebSocketStripsInjectedImageTool(t *testing.T) {
 	}
 }
 
-// TestResolveAPIKeyDistinguishesDBFailureFrom404 验证 resolveAPIKey 区分三态：
-// 命中、查无此 key、DB 故障。DB 故障(如连接耗尽 "too many clients")必须返回
-// 非 nil error，让中间件回 503 而非误报 401 invalid_api_key (issue #323)。
+// TestResolveAPIKeyDistinguishesDBFailureFrom404 verifies that resolveAPIKey distinguishes three states:
+// hit, key not found, and DB failure. A DB failure (such as connection exhaustion, "too many clients") must return
+// a non-nil error, so the middleware returns 503 instead of wrongly reporting 401 invalid_api_key (issue #323).
 func TestResolveAPIKeyDistinguishesDBFailureFrom404(t *testing.T) {
 	ctx := context.Background()
 	dbPath := filepath.Join(t.TempDir(), "codex2api.db")
@@ -5158,19 +5158,19 @@ func TestResolveAPIKeyDistinguishesDBFailureFrom404(t *testing.T) {
 
 	h := &Handler{db: db, configKeys: map[string]bool{}}
 
-	// 1. 命中
+	// 1. Hit
 	row, ok, resolveErr := h.resolveAPIKey("sk-valid-123")
 	if !ok || resolveErr != nil || row == nil {
 		t.Fatalf("valid key: row=%v ok=%v err=%v, want hit", row, ok, resolveErr)
 	}
 
-	// 2. 查无此 key → (nil,false,nil)，中间件据此回 401
+	// 2. Key not found → (nil,false,nil), and the middleware returns 401 based on this
 	row, ok, resolveErr = h.resolveAPIKey("sk-does-not-exist")
 	if ok || resolveErr != nil || row != nil {
 		t.Fatalf("missing key: row=%v ok=%v err=%v, want (nil,false,nil)", row, ok, resolveErr)
 	}
 
-	// 3. DB 故障(关闭连接后查询出错) → err 非 nil，中间件据此回 503
+	// 3. DB failure (the query errors after the connection is closed) → err is non-nil, and the middleware returns 503 based on this
 	if err := db.Close(); err != nil {
 		t.Fatalf("db.Close: %v", err)
 	}
@@ -5183,9 +5183,9 @@ func TestResolveAPIKeyDistinguishesDBFailureFrom404(t *testing.T) {
 	}
 }
 
-// 上游错误体可能用顶层字符串 error 字段({"code":"...","error":"文本"})。
-// 解析器此前只认 error.message 对象形态,导致这类 400 对用户只显示裸的
-// "Upstream returned status 400",根因全靠翻容器日志。
+// An upstream error body may use a top-level string error field ({"code":"...","error":"text"}).
+// The parser previously accepted only the error.message object form, so these 400s showed users only the bare
+// "Upstream returned status 400", and the root cause could only be found by digging through container logs.
 func TestUsageLogErrorMessageStringErrorField(t *testing.T) {
 	got := usageLogErrorMessage(400, []byte(`{"code":"invalid-argument","error":"The function name tool_search is reserved for the tool_search tool"}`))
 	want := "invalid-argument · The function name tool_search is reserved for the tool_search tool"
@@ -5193,12 +5193,12 @@ func TestUsageLogErrorMessageStringErrorField(t *testing.T) {
 		t.Fatalf("string error not extracted: got %q want %q", got, want)
 	}
 
-	// 对象形态不受影响。
+	// The object form is unaffected.
 	if got := usageLogErrorMessage(400, []byte(`{"error":{"message":"object form","code":"bad"}}`)); got != "bad · object form" {
 		t.Fatalf("object error form regressed: %q", got)
 	}
 
-	// error 为对象但无 message 时不得把整个 JSON 打进 message。
+	// When error is an object without message, the whole JSON must not be put into message.
 	if got := usageLogErrorMessage(400, []byte(`{"error":{"foo":"bar"}}`)); got != "HTTP 400" {
 		t.Fatalf("object error without message must fall back: %q", got)
 	}
@@ -5226,8 +5226,8 @@ func TestCodexUnsupportedModelFromBody(t *testing.T) {
 	}
 }
 
-// 带用量头但没有 reached-type 的响应要清掉之前学到的 workspace hard-stop，
-// 否则工作区充值后积分顶替永远回不来。(issue #662 审查)
+// A response with usage headers but no reached-type must clear the previously learned workspace hard-stop,
+// otherwise credits topped up after a workspace recharge never take over again. (issue #662 review)
 func TestSyncCodexUsageStateClearsStaleWorkspaceHardStop(t *testing.T) {
 	account := &auth.Account{
 		AccessToken:           "at",
@@ -5248,7 +5248,7 @@ func TestSyncCodexUsageStateClearsStaleWorkspaceHardStop(t *testing.T) {
 		t.Fatal("UsageWindowLimitsIgnored = true under workspace hard stop, want false")
 	}
 
-	// 无 x-codex 头的响应（比如 5xx）不改变判断。
+	// A response without x-codex headers (such as a 5xx) does not change the decision.
 	if result := SyncCodexUsageState(nil, account, &http.Response{Header: make(http.Header)}); result.UsageWindowLimitsIgnored {
 		t.Fatal("response without usage headers cleared the hard stop")
 	}
@@ -5262,7 +5262,7 @@ func TestSyncCodexUsageStateClearsStaleWorkspaceHardStop(t *testing.T) {
 	}
 }
 
-// sparse credits 头不完整（只有 balance）时整组丢弃，不能把 wham 的正确快照盖成「没积分」。
+// When the sparse credits headers are incomplete (only balance), the whole group is dropped; it must not overwrite wham's correct snapshot with "no credits".
 func TestSyncCodexUsageStateIgnoresPartialCreditsHeaders(t *testing.T) {
 	account := &auth.Account{
 		AccessToken:           "at",

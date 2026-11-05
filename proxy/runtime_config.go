@@ -19,19 +19,19 @@ const (
 	StreamFlushPolicyImmediate = "immediate"
 	StreamFlushPolicyCoalesce  = "coalesce"
 
-	// FirstTokenModeStrict 已退役：首字统计统一按宽松口径(loose)记录，
-	// 常量仅保留给旧配置/旧库值的兼容归一化。
+	// FirstTokenModeStrict is retired: first-token stats are now always recorded on the loose basis,
+	// the constant is kept only for compatibility normalization of old configuration and old stored values.
 	FirstTokenModeStrict = "strict"
 	FirstTokenModeLoose  = "loose"
 
 	BillingTierPolicyActual    = "actual"
 	BillingTierPolicyRequested = "requested"
 
-	// RequestIsolationMode 取值：
-	//   isolated   —— 无显式会话的请求默认按"每请求"隔离上游身份（默认）；
-	//   per-api-key —— 无显式会话的请求按下游 API Key 共享上游身份（恢复 v2 旧行为，
-	//                  保留隐式 prompt cache 命中）。
-	// 用环境变量 CODEX_REQUEST_ISOLATION_MODE 覆盖默认值。
+	// RequestIsolationMode values:
+	//   isolated   — requests without an explicit session isolate the upstream identity per request (the default);
+	//   per-api-key — requests without an explicit session share the upstream identity by downstream API Key (restores the old v2 behavior,
+	//                  keeping implicit prompt cache hits).
+	// Override the default with the environment variable CODEX_REQUEST_ISOLATION_MODE.
 	RequestIsolationModeIsolated  = "isolated"
 	RequestIsolationModePerAPIKey = "per-api-key"
 
@@ -45,8 +45,8 @@ const (
 	defaultFirstTokenTimeoutSec  = 0
 	maxFirstTokenTimeoutSec      = 600
 	defaultBillingTierPolicy     = BillingTierPolicyActual
-	// defaultCodexRequestCompression 对齐真实 Codex CLI：它对 ChatGPT 后端的
-	// HTTP /responses 请求体默认 zstd 压缩，所以网关默认也压。
+	// defaultCodexRequestCompression matches the real Codex CLI: for HTTP /responses request bodies to the ChatGPT backend it compresses with zstd by default,
+	// so the gateway also compresses by default.
 	defaultCodexRequestCompression = true
 	defaultCodexWSHideErrors       = true
 	defaultCodexWSSilentRetry      = true
@@ -69,99 +69,99 @@ type RuntimeSettings struct {
 	CodexMinCLIVersion    string
 	CodexUserAgentConfig  string
 	CodexTelemetryEnabled bool
-	// CodexTelemetryTimingDebug 打开模拟遥测的临时计时探针（仅打日志，默认关闭）。
+	// CodexTelemetryTimingDebug enables the temporary timing probe of simulated telemetry (logs only, off by default).
 	CodexTelemetryTimingDebug bool
-	// CodexImagesMainModel 为空时沿用环境变量或内置生图文本驱动模型。
+	// CodexImagesMainModel: when empty, falls back to the environment variable or the built-in image-generation text-driving model.
 	CodexImagesMainModel  string
 	StreamFlushPolicy     string
 	StreamFlushIntervalMS int
 	FirstTokenMode        string
 	FirstTokenTimeoutSec  int
 	BillingTierPolicy     string
-	// ModelsListReadMaxBytes 是上游 /v1/models 与 Codex 模型清单成功响应的读取上限。
+	// ModelsListReadMaxBytes is the read limit for successful responses from the upstream /v1/models and the Codex model list.
 	ModelsListReadMaxBytes int64
-	CodexForceWebsocket    bool // 强制 Codex 上游走 WebSocket（默认 false）
-	// CodexRequestCompression 对 HTTP /responses 请求体做 zstd 压缩（默认 true，
-	// 与真实 Codex CLI 一致）。与 CodexForceWebsocket 正交：WS 路径走
-	// permessage-deflate（拨号器已开启），本项只作用于 HTTP 路径，两者可同时生效。
+	CodexForceWebsocket    bool // force the Codex upstream to use WebSocket (default false)
+	// CodexRequestCompression zstd-compresses the HTTP /responses request body (default true,
+	// consistent with the real Codex CLI). It is orthogonal to CodexForceWebsocket: the WS path uses
+	// permessage-deflate (the dialer has it enabled); this item only applies to the HTTP path, and both can take effect together.
 	CodexRequestCompression bool
-	// CodexWSWeakNetworkMode 对 VPN/住宅代理等不稳定链路采用保守复用：
-	// 缩短空闲/最大寿命、每次复用都做真实 Ping/Pong，并暂停空闲保活（默认 false）。
+	// CodexWSWeakNetworkMode takes a conservative approach to reuse for unstable links such as VPN / residential proxies:
+	// shorten idle and max lifetime, do a real Ping/Pong on every reuse, and pause idle keepalive (default false).
 	CodexWSWeakNetworkMode bool
-	CodexWSHideErrors      bool                           // 隐藏 Codex WS 上游原始错误（默认 true）
-	CodexWSSilentRetry     bool                           // 首包前 Codex WS 上游错误静默换号重试（默认 true）
-	CodexWSSilentRetries   int                            // Codex WS 静默换号最大重试次数（默认 2）
-	ContinuousRetryPolicy  database.ContinuousRetryPolicy // 上游错误持续重试选择器（默认关闭）
-	CodexWSSizeRouter      bool                           // 1009 自学习体积路由：超大请求直接首发 HTTP（默认 true）
-	CodexWSBusyMaxWaitSec  int                            // busy session/容量等待的累计上限秒数（默认 30，issue #413）
-	CodexWSBusyOverflow    bool                           // busy session 溢出到同账号兄弟连接（默认 false）
-	CodexWSBusyPatienceSec int                            // 触发溢出前的短等待秒数（默认 2）
-	// CodexWSStatelessSlots 限制每账号的空白连接预算及通用池扫描窗口。
+	CodexWSHideErrors      bool                           // hide raw Codex WS upstream errors (default true)
+	CodexWSSilentRetry     bool                           // on a Codex WS upstream error before the first packet, silently retry on a different account (default true)
+	CodexWSSilentRetries   int                            // maximum number of silent account-switch retries for Codex WS (default 2)
+	ContinuousRetryPolicy  database.ContinuousRetryPolicy // selector for continuous retry on upstream errors (default off)
+	CodexWSSizeRouter      bool                           // 1009 self-learning size routing: oversized requests are sent over HTTP first (default true)
+	CodexWSBusyMaxWaitSec  int                            // cumulative upper limit in seconds for busy session/capacity waits (default 30, issue #413)
+	CodexWSBusyOverflow    bool                           // busy session overflows to a sibling connection on the same account (default false)
+	CodexWSBusyPatienceSec int                            // short wait in seconds before overflow is triggered (default 2)
+	// CodexWSStatelessSlots limits the per-account blank connection budget and the scan window of the shared pool.
 	CodexWSStatelessSlots int
-	// CodexWSDownstreamKeepaliveSlots 独立限制每账号输出收尾后保留的空闲聊天连接。
+	// CodexWSDownstreamKeepaliveSlots separately limits the idle chat connections kept per account after output finishes.
 	CodexWSDownstreamKeepaliveSlots int
-	// GithubToken 用于 api.github.com 请求的 Personal Access Token（提升 API 限流配额；
-	// 只发给 api.github.com，绝不发给镜像或其他主机；空表示未配置，issue #522）。
+	// GithubToken is the Personal Access Token used for api.github.com requests (raises the API rate-limit quota;
+	// sent only to api.github.com, never to mirrors or other hosts; empty means not configured, issue #522).
 	GithubToken string
-	// GithubProxyURL GitHub 域名专用出站代理；空表示回落调用方的默认代理（issue #522）。
+	// GithubProxyURL is the outbound proxy dedicated to GitHub domains; empty means fall back to the caller's default proxy (issue #522).
 	GithubProxyURL string
-	// Codex 过载熔断：单账号滑动窗口内 server_is_overloaded 错误占比达到阈值且样本数
-	// 足够时，自动暂停该账号调度一段时间（默认关闭）。
+	// Codex overload circuit breaker: when, within a single account's sliding window, the share of server_is_overloaded errors reaches the threshold and the sample count
+	// is sufficient, scheduling for that account is automatically paused for a period (default off).
 	CodexOverloadPauseEnabled     bool
-	CodexOverloadThresholdPercent int // 触发比例（%），默认 20
-	CodexOverloadPauseMinutes     int // 暂停时长（分钟），默认 30
-	CodexOverloadWindowMinutes    int // 统计窗口（分钟），默认 5
-	// OverflowAutoCompact 上下文超窗时自动摘要旧轮次并重试一次（实验性，默认 false，issue #415）。
-	// 全局开关与 per-key limits.auto_compact_overflow 为「或」关系。
+	CodexOverloadThresholdPercent int // trigger ratio (%), default 20
+	CodexOverloadPauseMinutes     int // pause duration (minutes), default 30
+	CodexOverloadWindowMinutes    int // statistics window (minutes), default 5
+	// OverflowAutoCompact: when the context overflows the window, automatically summarize old turns and retry once (experimental, default false, issue #415).
+	// The global switch and the per-key limits.auto_compact_overflow are combined with OR.
 	OverflowAutoCompact bool
-	// CompactViaResponses 把 /v1/responses/compact 对官方 Codex OAuth 账号的透传
-	// 改写为 /responses + compaction_trigger 的 body-signal 形态并聚合为一次性 JSON
-	// （上游已下线专用 compact 端点，默认 false）。中转账号不受影响。
+	// CompactViaResponses rewrites the pass-through of /v1/responses/compact for official Codex OAuth accounts
+	// into the body-signal form of /responses + compaction_trigger and aggregates it into a single JSON response
+	// (the upstream has retired the dedicated compact endpoint; default false). Relay accounts are not affected.
 	CompactViaResponses bool
-	// CodexPreflightSSEPassthrough 将前置元数据事件（codex.rate_limits /
-	// codex.response.metadata / response.metadata）立即透传下游而不缓冲到首个内容
-	// 事件（旧版兼容，默认 false，issue #425）。开启后首内容前会提前提交 200，
-	// 该窗口内的 response.failed 只能以 SSE failed 帧下发，真实错误码/静默换号/
-	// 超窗压缩重试均不可用。
+	// CodexPreflightSSEPassthrough passes the preflight metadata events (codex.rate_limits /
+	// codex.response.metadata / response.metadata) straight through to the downstream instead of buffering them up to the first content
+	// event (legacy compatibility, default false, issue #425). When on, a 200 is committed early before the first content,
+	// so a response.failed inside that window can only be sent as an SSE failed frame; real error codes, silent account switching,
+	// and overflow-compaction retries are not available.
 	CodexPreflightSSEPassthrough bool
-	// FirstTokenExcludesWsAcquire 落库的 first_token_ms 是否扣除本次 attempt 的
-	// WS 取连耗时（默认 false，保持含取连的原口径；原始值 = first_token_ms + ws_acquire_ms）。
+	// FirstTokenExcludesWsAcquire decides whether the stored first_token_ms subtracts this attempt's
+	// WS acquisition time (default false, keeping the original basis that includes acquisition; raw value = first_token_ms + ws_acquire_ms).
 	FirstTokenExcludesWsAcquire bool
-	// CodexContinueThinking 检测到上游按 518n-2 指纹截断思考时自动续想并折叠成单响应（默认 false）。
+	// CodexContinueThinking: when the upstream is detected truncating thinking with the 518n-2 fingerprint, automatically continue thinking and fold it into a single response (default false).
 	CodexContinueThinking  bool
-	CodexContinueMaxRounds int // 单次请求最大续想轮数，含首轮（默认 8，范围 1-32）
-	// RequestIsolationMode 控制无显式会话请求的上游身份隔离粒度（isolated|per-api-key，默认 isolated）。
+	CodexContinueMaxRounds int // maximum continue-thinking rounds for a single request, including the first round (default 8, range 1-32)
+	// RequestIsolationMode controls the granularity of upstream identity isolation for requests without an explicit session (isolated|per-api-key, default isolated).
 	RequestIsolationMode string
-	// CodexSyncedCLIVersion 是从 openai/codex releases 同步到的最新 Codex CLI 版本；
-	// 用于抬升出站 UA / manifest 的模拟版本，绝不低于内置常量，空表示未同步。
+	// CodexSyncedCLIVersion is the latest Codex CLI version synced from openai/codex releases;
+	// used to raise the simulated version of the outbound UA / manifest; never lower than the built-in constant; empty means not synced.
 	CodexSyncedCLIVersion          string
 	CodexSyncedDesktopMacBuild     string
 	CodexSyncedDesktopWindowsBuild string
 	CodexSyncedVSCodeBuild         string
-	// CodexCLIVersionSyncEnabled 控制后台定时同步 Codex CLI 版本（默认 true）。
+	// CodexCLIVersionSyncEnabled controls the background scheduled sync of the Codex CLI version (default true).
 	CodexCLIVersionSyncEnabled bool
-	// CodexCLIVersionSyncIntervalHours 定时同步间隔（小时，默认 12，范围 1-720）。
+	// CodexCLIVersionSyncIntervalHours is the scheduled sync interval (hours, default 12, range 1-720).
 	CodexCLIVersionSyncIntervalHours int
-	// AutoResetCreditsEnabled 控制 Plus/Pro 主动重置次数的临期自动消费（默认 false）。
+	// AutoResetCreditsEnabled controls the automatic use of Plus/Pro reset credits when they are about to expire (default false).
 	AutoResetCreditsEnabled             bool
 	AutoResetCreditsOnExhaustionEnabled bool
-	// AutoResetCreditsBeforeExpiryMin 是进入自动消费窗口的提前分钟数（默认 60）。
+	// AutoResetCreditsBeforeExpiryMin is how many minutes before expiry the auto-use window opens (default 60).
 	AutoResetCreditsBeforeExpiryMin int
-	// AutoActivate5hWindowEnabled 控制 5h 窗口重置后是否发送一次最小真实 /responses 启动下一轮窗口（默认 false，issue #581）。
+	// AutoActivate5hWindowEnabled controls whether, after the 5h window resets, a minimal real /responses is sent once to start the next window (default false, issue #581).
 	AutoActivate5hWindowEnabled bool
-	// UTLSShutdownTimeoutMin 是 uTLS（CODEX_TRANSPORT_MODE=utls_chrome）连接被摘出
-	// 连接池后，等待其上在途 stream 收尾的上限（分钟，默认 30，范围 1-240）。
-	// 超时则强制关闭，保证异常挂死的 stream 不会把连接永久留住（issue #446）。
+	// UTLSShutdownTimeoutMin is the upper limit on waiting for in-flight streams on a uTLS connection (CODEX_TRANSPORT_MODE=utls_chrome) to finish after the connection is removed
+	// from the connection pool (minutes, default 30, range 1-240).
+	// After the timeout it is force-closed, so a stream that hangs abnormally cannot keep the connection forever (issue #446).
 	UTLSShutdownTimeoutMin int
 }
 
-// UTLSShutdownTimeout 返回 uTLS 连接优雅关闭的等待上限。
+// UTLSShutdownTimeout returns the upper limit for a graceful uTLS connection shutdown wait.
 func (s RuntimeSettings) UTLSShutdownTimeout() time.Duration {
 	return time.Duration(database.NormalizeUTLSShutdownTimeoutMinutes(s.UTLSShutdownTimeoutMin)) * time.Minute
 }
 
-// IsolateRequestsByDefault 返回是否对无显式会话的请求默认按每请求隔离上游身份。
-// 仅 per-api-key 模式返回 false（恢复按 API Key 共享缓存的旧行为）。
+// IsolateRequestsByDefault returns whether requests without an explicit session are isolated per request by default.
+// Only the per-api-key mode returns false (restoring the old behavior of sharing the cache by API Key).
 func (s RuntimeSettings) IsolateRequestsByDefault() bool {
 	return NormalizeRequestIsolationMode(s.RequestIsolationMode) != RequestIsolationModePerAPIKey
 }
@@ -210,14 +210,14 @@ func DefaultRuntimeSettings() RuntimeSettings {
 	}
 }
 
-// defaultRequestIsolationMode 从环境变量解析默认隔离模式；缺省为按每请求隔离。
-// CODEX_REQUEST_ISOLATION_MODE=per-api-key（或 per_api_key / shared / cache）可切回旧的
-// 按 API Key 共享缓存行为，作为依赖隐式缓存命中的部署的逃生阀。
+// defaultRequestIsolationMode parses the default isolation mode from the environment variable; when unset it isolates per request.
+// CODEX_REQUEST_ISOLATION_MODE=per-api-key (or per_api_key / shared / cache) switches back to the old
+// behavior of sharing the cache per API Key, as an escape valve for deployments that depend on implicit cache hits.
 func defaultRequestIsolationMode() string {
 	return NormalizeRequestIsolationMode(os.Getenv("CODEX_REQUEST_ISOLATION_MODE"))
 }
 
-// NormalizeRequestIsolationMode 归一化隔离模式，空/未知值回落到 isolated。
+// NormalizeRequestIsolationMode normalizes the isolation mode; empty or unknown values fall back to isolated.
 func NormalizeRequestIsolationMode(mode string) string {
 	switch strings.ToLower(strings.TrimSpace(mode)) {
 	case RequestIsolationModePerAPIKey, "per_api_key", "per-apikey", "shared", "cache":
@@ -251,8 +251,8 @@ func NormalizeStreamFlushPolicy(policy string) string {
 	}
 }
 
-// NormalizeFirstTokenMode 统一返回宽松口径：严格首字开关已取消，旧库/旧请求里
-// 残留的 strict 或任意非法值都按 loose 生效。
+// NormalizeFirstTokenMode always returns the loose basis: the strict first-token switch has been removed, and old stored or old request
+// values that still carry strict or any invalid value take effect as loose.
 func NormalizeFirstTokenMode(_ string) string {
 	return FirstTokenModeLoose
 }
@@ -396,9 +396,9 @@ func ApplyRuntimeSettingsFromSystem(settings *database.SystemSettings) RuntimeSe
 		next.AutoResetCreditsBeforeExpiryMin = settings.AutoResetCreditsBeforeExpiryMin
 		next.AutoActivate5hWindowEnabled = settings.AutoActivate5hWindowEnabled
 		next.UTLSShutdownTimeoutMin = settings.UTLSShutdownTimeoutMinutes
-		// Payload 重写规则不进 RuntimeSettings（编译后独立存放），此处顺带完成启动种子。
+		// Payload rewrite rules are not part of RuntimeSettings (they are stored separately after compilation); the startup seed is also done here.
 		if err := SetPayloadRulesJSON(settings.PayloadRules); err != nil {
-			log.Printf("payload_rules 配置解析失败，已忽略: %v", err)
+			log.Printf("failed to parse payload_rules config, ignored: %v", err)
 		}
 	}
 	return storeRuntimeSettings(next)
@@ -410,8 +410,8 @@ func ApplyRuntimeSettings(settings RuntimeSettings) RuntimeSettings {
 	return storeRuntimeSettings(settings)
 }
 
-// UpdateRuntimeSettings 在与完整设置写入共享的临界区内更新运行时配置。
-// 后台任务应使用这个函数只修改自己拥有的字段，避免旧快照覆盖管理员刚保存的设置。
+// UpdateRuntimeSettings updates the runtime config inside the same critical section as the full settings write.
+// Background tasks should use this function to modify only the fields they own, so that a stale snapshot does not overwrite settings the admin has just saved.
 func UpdateRuntimeSettings(update func(RuntimeSettings) RuntimeSettings) RuntimeSettings {
 	runtimeSettingsUpdateMu.Lock()
 	defer runtimeSettingsUpdateMu.Unlock()
@@ -456,7 +456,7 @@ func currentFirstTokenTimeout() time.Duration {
 	return time.Duration(seconds) * time.Second
 }
 
-// codexContinueThinkingSettings 返回续想折叠开关与最大轮数（一次快照读取）。
+// codexContinueThinkingSettings returns the continue-thinking fold switch and the maximum rounds (read from one snapshot).
 func codexContinueThinkingSettings() (bool, int) {
 	s := CurrentRuntimeSettings()
 	return s.CodexContinueThinking, s.CodexContinueMaxRounds

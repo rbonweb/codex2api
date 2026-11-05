@@ -26,16 +26,16 @@ const (
 	responsesWSSessionPreemptWatchInterval = 2 * time.Second
 	responsesWSSessionPreemptCacheTimeout  = 2 * time.Second
 	responsesWSSessionPreemptHandoffWait   = 2 * time.Second
-	// responsesWSSessionPreemptCloseGrace 是被抢占连接从关闭帧写出到上下文被取消的最长等待：
-	// 关闭帧一开始就写，其余时间只是等写完成，到点直接取消。
+	// responsesWSSessionPreemptCloseGrace is the longest wait for a preempted connection, from writing its close frame until its context is cancelled:
+	// The close frame is written right away; for the rest of the time we only wait for the write to finish, then cancel at the deadline.
 	responsesWSSessionPreemptCloseGrace    = time.Second
 	responsesWSSessionPreemptedCloseReason = "session preempted by a newer connection"
 )
 
 type responsesWSSessionPreemptContextKey struct{}
 
-// responsesWSSessionPreemptState 随抢占上下文传递：preempted 在关闭帧发出前就置位，
-// 让旧连接在被取消之前遇到的读写错误也能归类为"被抢占"。
+// responsesWSSessionPreemptState travels with the preemption context: preempted is set before the close frame is sent,
+// so that read and write errors the old connection hits before it is cancelled can also be classified as "preempted".
 type responsesWSSessionPreemptState struct {
 	preempted atomic.Bool
 }
@@ -226,10 +226,10 @@ func (h *Handler) beginResponsesWSSessionPreemption(ctx context.Context, c *gin.
 	return h.beginResponsesWSSessionPreemptionWithNotify(ctx, c, rawBody, identity, nil)
 }
 
-// beginResponsesWSSessionPreemptionWithNotify 与 beginResponsesWSSessionPreemption 相同，
-// 另外登记 notifyPreempted：本连接被更新的连接取代时，先调用它给旧客户端发带原因的
-// 关闭帧，再取消上下文。客户端因此拿到 1013 立即重试，而不是在裸 1006 断开后
-// 静默等到自己的空闲超时。
+// beginResponsesWSSessionPreemptionWithNotify is the same as beginResponsesWSSessionPreemption,
+// but also registers notifyPreempted: when this connection is replaced by a newer one, it is called first to send the old client a close frame with a reason,
+// then cancels the context. The client therefore gets 1013 and retries at once, instead of waiting after a bare 1006 disconnect
+// and silently waiting until its own idle timeout.
 func (h *Handler) beginResponsesWSSessionPreemptionWithNotify(ctx context.Context, c *gin.Context, rawBody []byte, identity requestSessionIdentity, notifyPreempted func()) (context.Context, func(), bool) {
 	if ctx == nil {
 		ctx = context.Background()
@@ -255,8 +255,8 @@ func (h *Handler) beginResponsesWSSessionPreemptionWithNotify(ctx context.Contex
 				cancel(errResponsesWSSessionPreempted)
 				return
 			}
-			// 取消会让旧连接的处理循环立刻退出并 Close 底层 socket，关闭帧必须先于
-			// 取消写出；通知在独立协程里做，不阻塞取代它的新连接。
+			// Cancelling makes the old connection's processing loop exit at once and close the underlying socket, so the close frame must go out before
+			// the cancel; the notification runs in its own goroutine so it does not block the new connection that replaces it.
 			notified := make(chan struct{})
 			go func() {
 				defer close(notified)

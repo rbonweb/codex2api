@@ -38,7 +38,7 @@ type modelsDevProvider struct {
 
 var modelsDevFirstPartyProviders = []string{"openai", "xai", "anthropic", "google"}
 
-// convertModelsDevPricing 优先使用规范模型 ID，仅合并第一方供应商数据。
+// convertModelsDevPricing prefers canonical model IDs and merges only first-party provider data.
 func convertModelsDevPricing(providers map[string]modelsDevProvider) map[string]database.ModelPricingOverride {
 	models := mergeModelsDevProviders(providers, modelsDevFirstPartyProviders)
 	ids := make([]string, 0, len(models))
@@ -70,7 +70,7 @@ func convertModelsDevPricing(providers map[string]modelsDevProvider) map[string]
 	return out
 }
 
-// mergeModelsDevProviders 按供应商优先级合并，禁止把转售商的同名模型混入。
+// mergeModelsDevProviders merges by provider priority and forbids mixing same-named models from resellers.
 func mergeModelsDevProviders(providers map[string]modelsDevProvider, names []string) map[string]modelsDevModel {
 	merged := make(map[string]modelsDevModel)
 	for _, name := range names {
@@ -89,7 +89,7 @@ func mergeModelsDevProviders(providers map[string]modelsDevProvider, names []str
 	return merged
 }
 
-// modelsDevModelToOverride 保留 Fast 价格，缺少的 Fast 长上下文档位不自行推算。
+// modelsDevModelToOverride keeps the Fast price; missing Fast long-context tiers are not inferred on their own.
 func modelsDevModelToOverride(model modelsDevModel) database.ModelPricingOverride {
 	price := modelsDevCostToOverride(*model.Cost)
 	if fast := model.Experimental.Modes["fast"].Cost; fast != nil {
@@ -103,7 +103,7 @@ func modelsDevModelToOverride(model modelsDevModel) database.ModelPricingOverrid
 	return price
 }
 
-// modelsDevCostToOverride 使用数据源明确声明的上下文阈值。
+// modelsDevCostToOverride uses the context thresholds that the data source explicitly declares.
 func modelsDevCostToOverride(cost modelsDevCost) database.ModelPricingOverride {
 	price := database.ModelPricingOverride{Input: cost.Input, CachedInput: cost.CacheRead, Output: cost.Output, CacheWrite5m: cost.CacheWrite}
 	for _, tier := range cost.Tiers {

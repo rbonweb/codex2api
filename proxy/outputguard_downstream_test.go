@@ -239,8 +239,8 @@ func TestApplyDownstreamWriteDeadline(t *testing.T) {
 	}
 }
 
-// newGinTestWriter 返回一个实现了 gin.ResponseWriter 的测试 writer，仅用于
-// deadline spy 的嵌入目标。
+// newGinTestWriter returns a test writer that implements gin.ResponseWriter, used only as
+// the embedding target of the deadline spy.
 func newGinTestWriter(rec *httptest.ResponseRecorder) gin.ResponseWriter {
 	c, _ := gin.CreateTestContext(rec)
 	return c.Writer

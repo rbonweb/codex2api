@@ -7,7 +7,7 @@ import (
 	"github.com/codex2api/database"
 )
 
-// validateSyncedPricing 校验同步数据的数值、缓存关系和必要计费档位。
+// validateSyncedPricing validates the numeric values, cache relationships, and required billing tiers of synced data.
 func validateSyncedPricing(model string, price database.ModelPricingOverride, complete bool) error {
 	groups := [][3]float64{
 		{price.Input, price.CachedInput, price.Output},
@@ -33,29 +33,29 @@ func validateSyncedPricing(model string, price database.ModelPricingOverride, co
 	return validateRequiredPricing(model, price, groups[:len(groups)-1])
 }
 
-// validatePricingExtras 校验不属于 token 三元组的价格和上下文阈值。
+// validatePricingExtras validates prices and context thresholds that are not part of the token triple.
 func validatePricingExtras(price database.ModelPricingOverride) error {
 	for _, value := range []float64{price.MediaUnitCost, price.ImageUnitPrice, price.CacheWrite5m, price.CacheWrite1h} {
 		if !validPricingNumber(value) {
-			return fmt.Errorf("价格必须为有限的非负数")
+			return fmt.Errorf("price must be a finite non-negative number")
 		}
 	}
 	if price.LongContextThresholdTokens < 0 {
-		return fmt.Errorf("长上下文阈值不能为负数")
+		return fmt.Errorf("long-context threshold cannot be negative")
 	}
 	return nil
 }
 
-// validateRequiredPricing 校验自动同步所需的完整价格，手动部分覆盖不走此分支。
+// validateRequiredPricing validates the complete prices required for automatic sync; manual partial overrides do not go through this branch.
 func validateRequiredPricing(model string, price database.ModelPricingOverride, groups [][3]float64) error {
 	if database.MediaBillingUnit(model) != "" {
 		if price.MediaUnitCost <= 0 {
-			return fmt.Errorf("媒体单位成本缺失")
+			return fmt.Errorf("media unit cost is missing")
 		}
 		return nil
 	}
 	if price.Input <= 0 || price.Output <= 0 {
-		return fmt.Errorf("输入或输出价格缺失")
+		return fmt.Errorf("input or output price is missing")
 	}
 	if err := validateCompletePricingGroups(groups); err != nil {
 		return err
@@ -63,47 +63,47 @@ func validateRequiredPricing(model string, price database.ModelPricingOverride, 
 	return validateLongContextPricing(model, price)
 }
 
-// validateCompletePricingGroups 拒绝只有缓存价或只有输入价的不完整计费档位。
+// validateCompletePricingGroups rejects incomplete billing tiers that have only a cache price or only an input price.
 func validateCompletePricingGroups(groups [][3]float64) error {
 	for _, group := range groups {
 		if group[0] == 0 && group[1] == 0 && group[2] == 0 {
 			continue
 		}
 		if group[0] <= 0 || group[2] <= 0 {
-			return fmt.Errorf("计费档位的输入或输出价格缺失")
+			return fmt.Errorf("input or output price is missing for the billing tier")
 		}
 	}
 	return nil
 }
 
-// validatePricingGroup 防止把输出价或缓存写入价写入缓存读取字段。
+// validatePricingGroup prevents output prices or cache-write prices from being written to the cache-read field.
 func validatePricingGroup(group [3]float64) error {
 	for _, value := range group {
 		if !validPricingNumber(value) {
-			return fmt.Errorf("价格必须为有限的非负数")
+			return fmt.Errorf("price must be a finite non-negative number")
 		}
 	}
 	if group[0] > 0 && group[1] > group[0] {
-		return fmt.Errorf("缓存读取价格高于对应输入价格")
+		return fmt.Errorf("cache read price is higher than the corresponding input price")
 	}
 	return nil
 }
 
-// validPricingNumber 拒绝负价、NaN 和无穷大。
+// validPricingNumber rejects negative prices, NaN, and infinity.
 func validPricingNumber(value float64) bool {
 	return value >= 0 && !math.IsNaN(value) && !math.IsInf(value, 0)
 }
 
-// validateLongContextPricing 拒绝缺少已知长上下文价格的同步条目，防止混入旧默认档位。
+// validateLongContextPricing rejects synced entries that lack the known long-context prices, to prevent old default tiers from being mixed in.
 func validateLongContextPricing(model string, price database.ModelPricingOverride) error {
 	base := database.GetDefaultModelPricing(model)
 	knownModel := database.PricingManagementModelKey(model) == database.CanonicalBillingModelKey(model)
 	requiresLong := (knownModel && base.LongInputPricePerMToken > 0) || price.LongContextThresholdTokens > 0
 	if requiresLong && (price.InputLong <= 0 || price.OutputLong <= 0) {
-		return fmt.Errorf("长上下文输入或输出价格缺失")
+		return fmt.Errorf("long-context input or output price is missing")
 	}
 	if price.InputLong > 0 && price.LongContextThresholdTokens <= 0 && base.LongInputPricePerMToken <= 0 {
-		return fmt.Errorf("长上下文价格缺少分档阈值")
+		return fmt.Errorf("long-context price is missing its tier threshold")
 	}
 	return nil
 }

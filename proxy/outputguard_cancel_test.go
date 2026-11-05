@@ -40,7 +40,7 @@ func TestGuardTerminationPrecedesDownstreamLock(t *testing.T) {
 	closer := &recordingCloser{}
 	coordinator := NewGuardTerminationCoordinator(rg, upstreamCancel, closer)
 
-	// 下游写锁在整个 guard 终止流程中保持占用：终止协调必须完全不受它影响。
+	// The downstream write lock stays held throughout the whole guard termination flow: termination coordination must be entirely unaffected by it.
 	var downstreamMu sync.Mutex
 	downstreamMu.Lock()
 	var discardCalls int32
@@ -143,9 +143,9 @@ func TestOverlayGuardOutcomePreservesIdentity(t *testing.T) {
 	if rawOutcome.logStatusCode != logStatusClientClosed {
 		t.Fatalf("raw outcome want 499, got %d", rawOutcome.logStatusCode)
 	}
-	// 模拟断流分类残留的账号/请求级标记：guard 终态必须把它们全部清零，
-	// 否则 2596/5120/6021 等分支仍会按普通上游故障处理（容量降载重试、
-	// 模型不支持换号、请求级归因、WS 鉴权探针）。
+	// Simulate account- and request-level markers left over by the disconnect classifier: the guard terminal state must clear all of them,
+	// otherwise the 2596/5120/6021 branches would still be handled as ordinary upstream failures (capacity-degrade retry,
+	// switching accounts on model-unsupported errors, request-level attribution, WS auth probe).
 	rawOutcome.capacityShed = true
 	rawOutcome.modelUnsupported = true
 	rawOutcome.requestScoped = true
@@ -162,7 +162,7 @@ func TestOverlayGuardOutcomePreservesIdentity(t *testing.T) {
 		t.Fatalf("unexpected failure identity: %+v", finalOutcome)
 	}
 
-	// 未触发时保持原 outcome 完全不变。
+	// When not triggered, the original outcome must remain completely unchanged.
 	untripped := outputguard.NewRequestGuard(cfg)
 	if got := OverlayGuardOutcome(rawOutcome, untripped); !reflect.DeepEqual(got, rawOutcome) {
 		t.Fatalf("untripped guard must not alter outcome: %+v", got)

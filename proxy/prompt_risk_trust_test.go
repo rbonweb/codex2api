@@ -172,11 +172,11 @@ func TestPromptRiskTrustReviewLeaseExpiryReleaseAndSweep(t *testing.T) {
 	if promptRiskTrustAcquireReviewLease(key, t0.Add(time.Second)) {
 		t.Fatal("in-window acquire must fail")
 	}
-	// 过期后必须能经 CompareAndSwap 分支重新拿到 lease。
+	// After expiry, it must be possible to take the lease again through the CompareAndSwap branch.
 	if !promptRiskTrustAcquireReviewLease(key, t0.Add(promptRiskTrustReviewLeaseDuration+time.Second)) {
 		t.Fatal("expired lease must be re-acquirable")
 	}
-	// 审查失败释放后,同 subject 应立即可重试,而不是等满租期。
+	// After a failed review releases it, the same subject should be able to retry at once, not wait out the full lease.
 	promptRiskTrustReleaseReviewLease(key)
 	if !promptRiskTrustAcquireReviewLease(key, t0.Add(promptRiskTrustReviewLeaseDuration+2*time.Second)) {
 		t.Fatal("released lease must be immediately acquirable")

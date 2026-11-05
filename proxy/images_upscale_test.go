@@ -16,7 +16,7 @@ import (
 	"github.com/tidwall/gjson"
 )
 
-// sizedPNGBase64 生成指定尺寸的纯色 PNG,模拟上游返回的基础分辨率图。
+// sizedPNGBase64 generates a solid-color PNG of the given size, simulating the base-resolution image that upstream returns.
 func sizedPNGBase64(t *testing.T, width, height int) string {
 	t.Helper()
 	img := image.NewRGBA(image.Rect(0, 0, width, height))
@@ -73,7 +73,7 @@ func TestImageUpscalePlanForRequest(t *testing.T) {
 	}
 }
 
-// 2K 别名:上游基础图 512x512,最终返回必须是物理 2048x2048(issue #477)。
+// 2K alias: the upstream base image is 512x512, and the final result must be a physical 2048x2048 (issue #477).
 func TestCollectImagesResponseUpscales2KAlias(t *testing.T) {
 	upstream := imagesCompletedSSE(sizedPNGBase64(t, 512, 512), "2048x2048")
 	plan := imageUpscalePlan{Scale: "2k", RequestedSize: "2048x2048"}
@@ -97,7 +97,7 @@ func TestCollectImagesResponseUpscales2KAlias(t *testing.T) {
 	}
 }
 
-// 4K 横图:上游 16:9 基础图要被拉到精确 3840x2160。
+// 4K landscape: the upstream 16:9 base image must be stretched to exactly 3840x2160.
 func TestCollectImagesResponseUpscales4KLandscape(t *testing.T) {
 	upstream := imagesCompletedSSE(sizedPNGBase64(t, 640, 360), "3840x2160")
 	plan := imageUpscalePlan{Scale: "4k", RequestedSize: "3840x2160"}
@@ -112,7 +112,7 @@ func TestCollectImagesResponseUpscales4KLandscape(t *testing.T) {
 	}
 }
 
-// 用户显式传入的非预设合法尺寸是权威目标,不被别名默认值覆盖。
+// A legal non-preset size explicitly passed by the user is the authoritative target and is not overridden by alias defaults.
 func TestCollectImagesResponseHonorsExplicitCustomSize(t *testing.T) {
 	upstream := imagesCompletedSSE(sizedPNGBase64(t, 400, 400), "1600x1600")
 	plan := imageUpscalePlan{Scale: "4k", RequestedSize: "1600x1600"}
@@ -141,7 +141,7 @@ func TestCollectImagesResponsePadsMismatchedSourceToExactCustomSize(t *testing.T
 	}
 }
 
-// 上游已达标时不重编码,原始字节原样返回。
+// When upstream already meets the target, the image is not re-encoded; the original bytes are returned as-is.
 func TestApplyImageUpscalePlanSkipsWhenAlreadyAtTarget(t *testing.T) {
 	b64 := sizedPNGBase64(t, 2048, 2048)
 	results := applyImageUpscalePlan(context.Background(), imageUpscalePlan{Scale: "2k", RequestedSize: "2048x2048"}, []imageCallResult{{Result: b64}})
@@ -150,7 +150,7 @@ func TestApplyImageUpscalePlanSkipsWhenAlreadyAtTarget(t *testing.T) {
 	}
 }
 
-// 超分失败(不可解码的图)降级返回上游原图,而不是让整个请求失败。
+// If upscaling fails (an undecodable image), degrade to the original upstream image instead of failing the whole request.
 func TestApplyImageUpscalePlanFailureFallsBack(t *testing.T) {
 	notImage := base64.StdEncoding.EncodeToString([]byte("definitely not an image payload"))
 	results := applyImageUpscalePlan(context.Background(), imageUpscalePlan{Scale: "4k", RequestedSize: "3840x2160"}, []imageCallResult{{Result: notImage, Width: 3, Height: 4}})
@@ -159,7 +159,7 @@ func TestApplyImageUpscalePlanFailureFallsBack(t *testing.T) {
 	}
 }
 
-// 未启用计划(普通 gpt-image-2)完全不动结果。
+// When no plan is enabled (plain gpt-image-2), the result is left completely untouched.
 func TestApplyImageUpscalePlanDisabledNoop(t *testing.T) {
 	b64 := sizedPNGBase64(t, 64, 64)
 	results := applyImageUpscalePlan(context.Background(), imageUpscalePlan{}, []imageCallResult{{Result: b64}})
@@ -168,7 +168,7 @@ func TestApplyImageUpscalePlanDisabledNoop(t *testing.T) {
 	}
 }
 
-// 流式路径:completed 事件里的最终图也要是目标物理尺寸。
+// Streaming path: the final image in the completed event must also be the target physical size.
 func TestStreamImagesResponseUpscalesCompletedEvent(t *testing.T) {
 	gin.SetMode(gin.TestMode)
 	upstream := imagesCompletedSSE(sizedPNGBase64(t, 256, 256), "2048x2048")

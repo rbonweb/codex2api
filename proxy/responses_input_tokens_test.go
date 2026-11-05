@@ -10,8 +10,8 @@ import (
 	"github.com/tidwall/gjson"
 )
 
-// TestLocalInputTokensEndpointReturnsInputTokens 覆盖 issue #238：本地 token 计数
-// 兼容端点对合法请求返回 200 + 正数 input_tokens，对非法 JSON 返回 400。
+// TestLocalInputTokensEndpointReturnsInputTokens covers issue #238: the local token counting
+// compatibility endpoint returns 200 + a positive input_tokens for a valid request, and 400 for invalid JSON.
 func TestLocalInputTokensEndpointReturnsInputTokens(t *testing.T) {
 	gin.SetMode(gin.TestMode)
 	h := &Handler{}
@@ -29,7 +29,7 @@ func TestLocalInputTokensEndpointReturnsInputTokens(t *testing.T) {
 		t.Fatalf("input_tokens = %q, want positive; body=%s", got.Raw, rec.Body.String())
 	}
 
-	// 非法 JSON → 400
+	// Invalid JSON → 400
 	rec = httptest.NewRecorder()
 	ctx, _ = gin.CreateTestContext(rec)
 	ctx.Request = httptest.NewRequest(http.MethodPost, "/", strings.NewReader("not json"))

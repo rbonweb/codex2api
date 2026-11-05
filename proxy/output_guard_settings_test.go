@@ -373,7 +373,7 @@ func TestOutputGuardStreamReadinessGate(t *testing.T) {
 	}
 }
 
-// blockingOutputGuardSettingsReader 模拟数据库读挂起，直到 ctx 超时/取消。
+// blockingOutputGuardSettingsReader simulates a database read that hangs until ctx times out or is cancelled.
 type blockingOutputGuardSettingsReader struct{}
 
 func (blockingOutputGuardSettingsReader) GetOutputGuardSettings(ctx context.Context) (database.OutputGuardSettings, error) {
@@ -381,10 +381,10 @@ func (blockingOutputGuardSettingsReader) GetOutputGuardSettings(ctx context.Cont
 	return database.OutputGuardSettings{}, ctx.Err()
 }
 
-// TestLoadOutputGuardSettingsFailureRecordsSyncError 验证冷启动加载失败（父 ctx
-// 超时/取消）同样记录 LastSyncError，使 outputGuardHTTPGateArmed 在首次后台
-// 轮询前保持门禁并按 503 拦截。修复前父 ctx 超时路径会跳过记录，冷启动到首次
-// 轮询（约 5s）期间 HTTP 请求会以 guard 关闭状态放行。
+// TestLoadOutputGuardSettingsFailureRecordsSyncError verifies that a cold-start load failure (parent ctx
+// timeout or cancellation) also records LastSyncError, so that outputGuardHTTPGateArmed, before the first background
+// poll, keeps the gate in place and blocks with 503. Before the fix, the parent-ctx timeout path skipped the record, so from cold start to the first
+// poll (about 5s), HTTP requests were let through with the guard off.
 func TestLoadOutputGuardSettingsFailureRecordsSyncError(t *testing.T) {
 	cases := []struct {
 		name string

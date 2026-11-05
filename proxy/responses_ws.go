@@ -29,7 +29,7 @@ const (
 	responsesWSFirstMessageTimeout        = 30 * time.Second
 	responsesWSWriteTimeout               = 30 * time.Second
 	responsesWSOverloadWriteTimeout       = time.Second
-	responsesWSFriendlyUpstreamErr        = "上游服务临时繁忙，请稍后重试"
+	responsesWSFriendlyUpstreamErr        = "upstream service is temporarily busy, please try again later"
 	newAPIPolicyWebSocketEventField       = "__newapi_policy_event_id"
 	newAPIPolicyWebSocketCapabilityHeader = "X-Codex2API-Policy-Event-ID"
 	newAPIPolicyWebSocketCapabilityV1     = "v1"
@@ -57,23 +57,23 @@ func (e *responsesWSRetryableStreamError) Error() string {
 	return e.outcome.failureMessage
 }
 
-// responsesWSContinuationNotFoundError 表示上游认不出请求里的 previous_response_id。
-// 续链 id 只在创建它的账号上存在，除了换号外，上游侧的响应丢失/未落库也会走到这里。
-// 外层循环据此把请求降级为自包含请求重试一次，而不是把 400 直接甩给客户端（issue #400）。
+// responsesWSContinuationNotFoundError indicates that upstream cannot recognise the previous_response_id in the request.
+// The continuation id exists only on the account that created it; besides account switching, responses that are lost or not persisted upstream also end up here.
+// The outer loop uses this to downgrade the request to a self-contained request and retry once, rather than passing the 400 straight to the client (issue #400).
 type responsesWSContinuationNotFoundError struct{}
 
 func (e *responsesWSContinuationNotFoundError) Error() string {
 	return "upstream rejected previous_response_id"
 }
 
-// isPreviousResponseNotFoundBody 识别上游的 previous_response_not_found 错误，
-// 同时兼容 HTTP 错误体与流内 response.failed / error 帧两种载荷形态。
+// isPreviousResponseNotFoundBody recognises the upstream previous_response_not_found error,
+// and handles both payload shapes: the HTTP error body and the in-stream response.failed / error frame.
 func isPreviousResponseNotFoundBody(payload []byte) bool {
 	if len(payload) == 0 {
 		return false
 	}
-	// {"error":{...}} / {"response":{"error":{...}}} 归一化后取 error.*；
-	// 裸 error 帧（{"type":"error","code":...,"message":...}）再看顶层字段。
+	// {"error":{...}} / {"response":{"error":{...}}} after normalisation, take error.*;
+	// a bare error frame ({"type":"error","code":...,"message":...}) checks the top-level fields.
 	body := responseFailedErrorBody(payload)
 	for _, path := range []string{"error.code", "code"} {
 		if strings.EqualFold(strings.TrimSpace(gjson.GetBytes(body, path).String()), "previous_response_not_found") {
@@ -308,10 +308,10 @@ func stripNewAPIPolicyWebSocketEventID(payload []byte) ([]byte, string) {
 	return cleaned, eventID
 }
 
-// forwardResponsesWebSocketTurn 处理 WebSocket 传输上的一个 Responses 会话轮次：每个
-// response.create 都是独立的逻辑请求，先做内存准入、Key 绑定与配额复核并重置上一帧的
-// 安全上下文，再归一化请求体、在重试循环内带排除项重新选号转发；可恢复的失败按协议写回错误
-// 帧并保留连接，需要关闭连接的致命失败才返回 close error。
+// forwardResponsesWebSocketTurn handles one Responses session turn on the WebSocket transport: each
+// response.create is an independent logical request. It first does in-memory admission, key binding and quota re-check, and resets the security context from the previous frame,
+// then normalises the request body, and re-selects an account inside the retry loop with exclusions before forwarding. Recoverable failures are written back as protocol error
+// frames while the connection is kept; only fatal failures that require closing the connection return a close error.
 func (h *Handler) forwardResponsesWebSocketTurn(c *gin.Context, conn *websocket.Conn, rawPayload []byte, policyEventID string, options *responsesWSForwardOptions) (returnErr error) {
 	defer releasePromptRequestFrameBody(c)
 	reservation, admitted := security.TryAcquireRequestMemory(int64(len(rawPayload)))
@@ -376,12 +376,12 @@ func (h *Handler) forwardResponsesWebSocketTurn(c *gin.Context, conn *websocket.
 	}
 
 	if len(rawBody) > security.MaxRequestBodySize {
-		apiErr = api.NewAPIError(api.ErrCodeInvalidRequest, "请求体过大", api.ErrorTypeInvalidRequest)
+		apiErr = api.NewAPIError(api.ErrCodeInvalidRequest, "request body too large", api.ErrorTypeInvalidRequest)
 		_ = writeResponsesWSErrorForContext(c, conn, apiErr)
 		return newResponsesWSCloseError(websocket.CloseMessageTooBig, apiErr.Message, apiErr)
 	}
 	if err := security.ValidateModelName(model); err != nil {
-		apiErr = api.NewAPIError(api.ErrCodeInvalidParameter, "model 参数无效", api.ErrorTypeInvalidRequest)
+		apiErr = api.NewAPIError(api.ErrCodeInvalidParameter, "invalid model parameter", api.ErrorTypeInvalidRequest)
 		_ = writeResponsesWSErrorForContext(c, conn, apiErr)
 		return newResponsesWSCloseError(websocket.ClosePolicyViolation, apiErr.Message, err)
 	}
@@ -436,7 +436,7 @@ func (h *Handler) forwardResponsesWebSocketTurn(c *gin.Context, conn *websocket.
 	}
 	markResponsesWSContinuationCapable(respCacheOwner, rawBody)
 	ruleIdentity := h.payloadRuleIdentity(c)
-	// 上下文压缩轮豁免首字超时看门狗（issue #381）：压缩首帧天然慢，超时换号无益。
+	// The context-compaction turn is exempt from the first-token timeout watchdog (issue #381): the first frame of a compaction is naturally slow, so switching accounts on timeout does not help.
 	bodySignalCompact := compactionMeta.ProtocolTriggered
 	reasoningEffort := extractReasoningEffort(rawBody)
 	serviceTier := extractServiceTier(rawBody)
@@ -445,8 +445,8 @@ func (h *Handler) forwardResponsesWebSocketTurn(c *gin.Context, conn *websocket.
 	}
 
 	codexBody, naturalImageIntent := prepareResponsesWebSocketTurnBody(rawBody)
-	// 生成前固定祖先；原生 WS 必要时读共享快照，历史合并与序列化保持按需执行。
-	// strip 策略：剥离图片工具能力声明后作为普通文本请求继续（issue #411）。
+	// Fix the ancestor before generation; native WS reads the shared snapshot when necessary, and history merging and serialisation still run on demand.
+	// strip policy: after stripping the image-tool capability declaration, continue as an ordinary text request (issue #411).
 	codexBody = applyImageGenerationStripPolicy(c, codexBody)
 	if err := validateResponsesImageGenerationSizes(codexBody); err != nil {
 		apiErr = api.NewAPIError(api.ErrCodeInvalidParameter, err.Error(), api.ErrorTypeInvalidRequest)
@@ -474,8 +474,8 @@ func (h *Handler) forwardResponsesWebSocketTurn(c *gin.Context, conn *websocket.
 	// Only a request that passed payload, prompt-policy and API-key admission may
 	// replace the active owner. Claim before concurrency/account acquisition so
 	// the old request can release those leases for the new one.
-	// 被更新的连接取代时先给本连接发 1013 关闭帧再取消：Codex 客户端据此立即重试，
-	// 而不是在裸 1006 断开后静默等到自己的空闲超时。
+	// When superseded by a newer connection, first send a 1013 close frame to this connection and then cancel: Codex clients use it to retry immediately,
+	// rather than silently waiting until their own idle timeout after a bare 1006 disconnect.
 	notifyPreempted := func() {
 		if streamID := c.GetString(responsesWSStreamContextKey); streamID != "" {
 			_ = writeResponsesWSErrorForStream(conn, api.NewAPIError(api.ErrCodeServiceUnavailable, responsesWSSessionPreemptedCloseReason, api.ErrorTypeServer), streamID, responsesWSOverloadWriteTimeout)
@@ -507,8 +507,8 @@ func (h *Handler) forwardResponsesWebSocketTurn(c *gin.Context, conn *websocket.
 	accountFilter = h.withRequestModelCooldownFilter(c, c.Request.Context(), effectiveModel, accountFilter)
 	accountFilter = applyAffinityGroupRouting(c, sessionIdentity, accountFilter)
 	accountFilter = h.applyScopeBudgetFilter(c, accountFilter)
-	// resolveCompactionAffinity 只在已知来源相互冲突时报错；缓存故障按未知
-	// 来源处理，保持正常调度。
+	// resolveCompactionAffinity only errors when the known sources conflict; a cache failure is treated as an unknown
+	// source, keeping normal scheduling.
 	compactionAffinity, compactionAffinityErr := h.resolveCompactionAffinity(c.Request.Context(), rawBody)
 	if compactionAffinityErr != nil {
 		apiErr = compactionProvenanceConflictAPIError()
@@ -518,7 +518,7 @@ func (h *Handler) forwardResponsesWebSocketTurn(c *gin.Context, conn *websocket.
 	if compactionAffinity.Known {
 		accountFilter = compactionDomainFilter(compactionAffinity.CompatibilityDomain, accountFilter)
 	}
-	// scope 并发位在选中账号后才能占，请求退出时统一释放（issue #439 v2）。
+	// The scope concurrency slot can only be taken after the account is selected, and is released uniformly when the request exits (issue #439 v2).
 	defer h.ReleaseAPIKeyScopeConcurrency(c)
 
 	reqGuard := outputguard.NewRequestGuard(nativeGuardCoreConfig())
@@ -568,9 +568,9 @@ func (h *Handler) forwardResponsesWebSocketTurn(c *gin.Context, conn *websocket.
 	var lastRetryableUpstreamErr *api.APIError
 	retryExclusions := newRetryAccountExclusions()
 	invalidEncryptedContentRetried := false
-	// 官方 Codex 每个 turn 都使用新的 ModelClientSession，并只在同一 turn 的
-	// 后续请求里回送 x-codex-turn-state。只有该信号和既有绑定同时存在时，才允许
-	// 忽略本地 WHAM 100% 快照；previous_response_id 本身不足以证明这是活跃 turn。
+	// Official Codex uses a new ModelClientSession for every turn, and only echoes x-codex-turn-state in
+	// subsequent requests of the same turn. Only when this signal and the existing binding are both present is it allowed to
+	// ignore the local WHAM 100% snapshot; previous_response_id alone is not enough to prove that this is an active turn.
 	continuationPinned := turnContinuation && turnHasBinding
 	continuationDegraded := false
 	quotaFailover := false
@@ -597,9 +597,9 @@ func (h *Handler) forwardResponsesWebSocketTurn(c *gin.Context, conn *websocket.
 	preserveContinuationBinding := func() bool {
 		return continuationPinned || (hasPreviousResponse && !continuationDegraded)
 	}
-	// 续链 id 上游已经明确不认识时，turn-state 钉号不能再挡住降级：
-	// 钉死只约束「别换号」，不该把 previous_response_not_found 原样甩给
-	// Codex CLI（它几乎每轮都带回 x-codex-turn-state，#541）。
+	// When the continuation id is explicitly unknown upstream, the turn-state account pinning must not block the downgrade:
+	// pinning only forbids "switching accounts", and should not throw previous_response_not_found straight at
+	// Codex CLI (which carries back x-codex-turn-state almost every turn, #541).
 	canDegradeContinuation := func() bool {
 		return hasPreviousResponse && !continuationDegraded
 	}
@@ -612,7 +612,7 @@ func (h *Handler) forwardResponsesWebSocketTurn(c *gin.Context, conn *websocket.
 	}()
 
 	dispatchPolicy := dispatchPolicyForModel(effectiveModel)
-	// Responses WS 入口与 compact 入口一致：selectionOptionsForCandidatePool(..., true) 不沿用请求渠道作为 Provider。
+	// The Responses WS entry is consistent with the compact entry: selectionOptionsForCandidatePool(..., true) does not carry the request channel over as the Provider.
 	selectionOpts := selectionOptionsForCandidatePool(c, effectiveModel, dispatchPolicy, true)
 	var affinityGuard auth.SessionAffinityGuard
 	var selectionErr error
@@ -644,10 +644,10 @@ func (h *Handler) forwardResponsesWebSocketTurn(c *gin.Context, conn *websocket.
 				}
 			}
 			if !continuationPinned && hasPreviousResponse && !continuationDegraded {
-				// 绑定账号已被本次请求硬排除（上一轮 429/5xx 等）时不必再等它 30s：
-				// 排除在本请求内不会解除，直接剥离 previous_response_id 换号。
-				// 这与 turn-state 的 WHAM 例外无关：即使不是活跃 turn，旧续链
-				// id 也不能被带到一个明确不同的账号上反复失败。
+				// When the bound account has already been hard-excluded by this request (a 429/5xx from the previous turn, etc.), do not wait 30s for it:
+				// exclusions do not lift within this request, so strip previous_response_id and switch accounts directly.
+				// This is unrelated to the turn-state WHAM exception: even if this is not an active turn, an old continuation
+				// id must not be carried onto a clearly different account to fail repeatedly.
 				if boundID, bound := h.store.SessionAffinityAccountID(affinityKey); bound {
 					if exclude := retryExclusions.ForSelection(); exclude[boundID] {
 						if contextErr := degradeContinuation(fmt.Sprintf("bound account %d excluded by this request", boundID), attempt+1); contextErr != nil {
@@ -662,7 +662,7 @@ func (h *Handler) forwardResponsesWebSocketTurn(c *gin.Context, conn *websocket.
 			if account != nil {
 				stickyProxyURL = account.GetProxyURL()
 			} else if continuationPinned {
-				// 续链重试同样传 SelectionOptions，避免重试把渠道上下文丢掉。
+				// The continuation retry also passes SelectionOptions, so that the retry does not drop the channel context.
 				account, stickyProxyURL, selectionErr = h.nextRetryAccountForContinuationWithSelection(c.Request.Context(), affinityKey, apiKeyID, retryExclusions, accountFilter, selectionOpts)
 			} else if !quotaAffinityReleased || h.quotaFailoverHasCandidate(affinityKey, apiKeyID, retryExclusions.ForSelection(), accountFilter, dispatchPolicy) {
 				account, stickyProxyURL, affinityGuard, selectionErr = h.nextRetryAccountForSessionWithDispatchGuard(c.Request.Context(), affinityKey, apiKeyID, retryExclusions, accountFilter, selectionOpts)
@@ -681,10 +681,10 @@ func (h *Handler) forwardResponsesWebSocketTurn(c *gin.Context, conn *websocket.
 			} else if (lastStatusCode == http.StatusTooManyRequests && len(lastBody) > 0) || lastFailureModelUnsupported(lastStatusCode, lastBody) {
 				apiErr = responsesWSUpstreamAPIError(lastStatusCode, lastBody)
 			} else if msg := scopeBudgetExhaustedMessage(c); msg != "" {
-				// 候选被 scope 预算剔空（issue #439）：按限流语义回帧，而不是「无可用账号」。
+				// Candidates were emptied by the scope budget (issue #439): reply with rate-limit semantics, not "no available account".
 				apiErr = api.NewAPIError(api.ErrCodeRateLimitReached, msg, api.ErrorTypeRateLimit)
 			} else if limited := h.store.UsageLimitedCandidateSummary(apiKeyID, retryExclusions.ForSelection(), accountFilter, dispatchPolicy); limited.Found {
-				// WS 帧没有 Retry-After 头，瞬时 throttle 的等待秒数写进文案。
+				// WS frames have no Retry-After header, so the wait seconds for a transient throttle are written into the message text.
 				apiErr = api.NewAPIError(api.ErrCodeRateLimitReached, usageLimitedPoolMessages(limited).Chinese, api.ErrorTypeRateLimit)
 			} else if h.accountPoolConcurrencySaturated(apiKeyID, retryExclusions.ForSelection(), accountFilter, dispatchPolicy) {
 				apiErr = api.NewAPIError(api.ErrorCode(ErrorCodeAccountPoolConcurrencySaturated), concurrencySaturatedMessageZH, api.ErrorTypeServer)
@@ -740,25 +740,25 @@ func (h *Handler) forwardResponsesWebSocketTurn(c *gin.Context, conn *websocket.
 			lastUpstreamCancel()
 		}
 		upstreamCtx, upstreamCancel := newDrainableUpstreamContext(c.Request.Context(), upstreamDrainTimeout)
-		// 身份按 attempt 附加实际选中账号维度：account_* 门随重试换号重新匹配（issue #410）。
+		// The identity is attached to each attempt with the dimension of the account actually selected: account_* gates are re-matched when a retry switches accounts (issue #410).
 		attemptIdentity := ruleIdentity.WithSelectedAccount(account, h.store)
 		upstreamCtx = WithPayloadRuleIdentity(upstreamCtx, attemptIdentity)
 		lastUpstreamCancel = upstreamCancel
 		ttftGuard := newFirstTokenTimeoutGuard(firstTokenTimeoutForRequest(currentFirstTokenTimeout(), bodySignalCompact), upstreamCancel)
 		useWebsocket := !wsHTTPFallback.ForceHTTP()
-		// 生图请求改走 HTTP 上游（客户端仍是 WS）：WebSocket 上游传输大体积
-		// 图片数据会卡死（issue #220）；自然语言生图意图也需保留图片工具（issue #288）。
+		// Image-generation requests are routed to the HTTP upstream instead (the client is still WS): a WebSocket upstream transfer of large image data
+		// hangs (issue #220); a natural-language image-generation intent also needs to keep the image tool (issue #288).
 		if useWebsocket && (responsesBodyRequestsImageGeneration(rawBody) || naturalImageIntent) {
 			useWebsocket = false
 		}
-		// 体积达到已学习的 1009 阈值时直接首发 HTTP,跳过 WS 必败等待(issue #404)。
+		// When the body size reaches the learned 1009 threshold, go straight to HTTP on first send, skipping the WS wait that is sure to fail (issue #404).
 		if useWebsocket && globalWSSizeRouter.PreferHTTP(len(codexBody)) {
 			useWebsocket = false
 			if attempt == 0 {
-				log.Printf("[WS] 请求体 %dKB 达到已学习的 1009 体积阈值，直接走 HTTP 上游 (endpoint=/v1/responses, ingress=ws)", len(codexBody)/1024)
+				log.Printf("[WS] request body %dKB reached the learned 1009 size threshold, going directly to the HTTP upstream (endpoint=/v1/responses, ingress=ws)", len(codexBody)/1024)
 			}
 		}
-		// WebSocket 上游下剥离自动注入的图片工具，防止模型自主生图卡死。
+		// On the WebSocket upstream, strip the automatically injected image tool, to prevent the model from hanging when it generates images on its own.
 		upstreamBody := codexBody
 		attemptReplay := turnReplay
 		if useWebsocket {
@@ -773,18 +773,18 @@ func (h *Handler) forwardResponsesWebSocketTurn(c *gin.Context, conn *websocket.
 				h.store.Release(account)
 				return writeResponsesWSRecoveryErrorForContext(c, conn, contextErr)
 			}
-			// 降级时快照已经算过一次，直接复用展开后的 input，不再二次过滤。
+			// The snapshot was already computed once at the time of degradation; reuse the expanded input directly, without filtering again.
 			attemptReplay = newResponsesWSReplaySourceFromRecovery(responsesInputRaw(upstreamBody), turnReplay)
 			attemptReplay.setAccount(account)
 			if lost {
 				attemptReplay = nil
 			}
 		}
-		// service_tier 记账按 payload 规则改写后的值归因（覆写 service_tier 的规则才生效）。
+		// service_tier accounting is attributed by the value after payload rule rewriting (only rules that override service_tier take effect).
 		serviceTier = EffectiveRequestedServiceTier(upstreamBody, effectiveModel, downstreamHeaders, attemptIdentity)
-		// 在 useWebsocket 最终确定后再派生上游身份键：与 handler.go 的
-		// Responses/ChatCompletions 路径一致——无显式会话默认每请求隔离上游身份，
-		// WS 路径交给 ExecuteRequest 的 stateless 槽位池处理。
+		// Derive the upstream identity key only after useWebsocket is finally determined: consistent with the handler.go
+		// Responses/ChatCompletions path: with no explicit session, each request isolates its upstream identity by default,
+		// and on the WS path the stateless slot pool of ExecuteRequest handles it.
 		upstreamCtx = context.WithValue(upstreamCtx, encryptedContentSessionKey{}, sessionIdentity.affinityID)
 		upstreamCtx = WithCodexTurnStateAffinityKey(upstreamCtx, affinityKey)
 		guardCodexTurnStateEcho(affinityKey, account, downstreamHeaders)
@@ -854,7 +854,7 @@ func (h *Handler) forwardResponsesWebSocketTurn(c *gin.Context, conn *websocket.
 			}
 			retryable := isRetryableRequestErrorForContext(c.Request.Context(), reqErr, continuousRetryPolicy)
 			shouldRetry := retryEnabled && retryable && shouldRetryRequestError(reqErr, &generalRetries, maxRetries, continuousRetryPolicy)
-			// 传输类失败粘滞同号重试:不记账号失败、不解绑亲和、不硬排除(issue #331)
+			// Transport-class failures retry sticky on the same account: no account failure is recorded, no affinity is unbound, no hard exclusion (issue #331)
 			stickyRetry := h.shouldStickyTransportRetry(reqErr, kind, timedOut, shouldRetry, continuousRetryPolicy)
 			if retryable && kind != "" && !(timedOut && shouldRetry) && !stickyRetry {
 				h.store.ReportRequestFailure(account, kind, time.Duration(durationMs)*time.Millisecond)
@@ -897,7 +897,7 @@ func (h *Handler) forwardResponsesWebSocketTurn(c *gin.Context, conn *websocket.
 					return errResponsesWSClientGone
 				}
 				if stickyRetry {
-					log.Printf("传输错误粘滞重试：保留账号 %d 与会话亲和 (attempt %s, ws)", account.ID(), retryAttemptProgress(attempt, maxRetries))
+					log.Printf("transport error sticky retry: keeping account %d and session affinity (attempt %s, ws)", account.ID(), retryAttemptProgress(attempt, maxRetries))
 				}
 				continue
 			}
@@ -952,8 +952,8 @@ func (h *Handler) forwardResponsesWebSocketTurn(c *gin.Context, conn *websocket.
 				}
 			}
 
-			// 上游认不出续链 id：账号本身是好的，别记失败也别排除它，
-			// 降级成自包含请求后原地重试一次（issue #400）。
+			// Upstream does not recognise the continuation id: the account itself is fine, so do not record a failure or exclude it,
+			// downgrade to a self-contained request and retry once in place (issue #400).
 			if canDegradeContinuation() && isPreviousResponseNotFoundBody(errBody) {
 				if contextErr := degradeContinuation(fmt.Sprintf("upstream rejected previous_response_id on account %d", account.ID()), attempt+1); contextErr != nil {
 					h.store.Release(account)
@@ -1046,8 +1046,8 @@ func (h *Handler) forwardResponsesWebSocketTurn(c *gin.Context, conn *websocket.
 			}
 			var continuationErr *responsesWSContinuationNotFoundError
 			if canDegradeContinuation() && errors.As(err, &continuationErr) {
-				// 账号已在流内释放，未记失败也未解绑：剥离续链 id 后原地再试一次。
-				// turn-state 钉号同样走这条路：上游已经说找不到 id，换号无益，剥 id 才能继续。
+				// The account was already released inside the stream, with no failure recorded and no unbinding: strip the continuation id and retry once in place.
+				// Turn-state pinning takes this same path: upstream has already said the id cannot be found, switching accounts does not help, only stripping the id lets it continue.
 				if contextErr := degradeContinuation(fmt.Sprintf("upstream rejected previous_response_id on account %d", account.ID()), attempt+1); contextErr != nil {
 					return writeResponsesWSRecoveryErrorForContext(c, conn, contextErr)
 				}
@@ -1073,7 +1073,7 @@ func (h *Handler) forwardResponsesWebSocketTurn(c *gin.Context, conn *websocket.
 					}
 					retryOrdinal, retryLimit := retryStateForStreamEvent(retryErr.outcome, eventType, generalRetries, rateLimitRetries, maxRetries, maxRateLimitRetries, continuousRetryPolicy)
 					log.Printf("Responses WebSocket upstream stream ended before first token, retrying (attempt %s, account %d): %s", retryAttemptProgress(retryOrdinal-1, retryLimit), account.ID(), retryErr.outcome.failureMessage)
-					// 有限首字超时已白等一轮；无限预算仍强制退避，避免无等待循环。
+					// The finite first-token timeout has already waited a full round; an unlimited budget still forces a backoff, to avoid a no-wait loop.
 					if !h.waitBeforeRetryWithFirstTokenTimeout(c.Request.Context(), isFirstTokenTimeoutOutcome(retryErr.outcome), retryOrdinal, retryLimit, resp) {
 						return errResponsesWSClientGone
 					}
@@ -1184,10 +1184,10 @@ func (h *Handler) streamResponsesWSUpstream(
 	var usage *UsageInfo
 	var actualServiceTier string
 	ttftRecorded := false
-	// contentTokenSeen 用严格判定（与宽松首字统计无关）。宽松口径下
-	// codex.rate_limits / metadata 会置位 ttftRecorded；本机 2004 还开了
-	// preflight passthrough，这两帧会先写出并置位 wroteAnyBody。若用它们做
-	// 「首包前」判断，previous_response_not_found 降级在真实上游上永远进不去（#541）。
+	// contentTokenSeen uses the strict judgement (unrelated to the lenient first-token statistics). Under the lenient mode
+	// codex.rate_limits / metadata set ttftRecorded; local 2004 also enabled
+	// preflight passthrough, and these two frames are written first and set wroteAnyBody. If they were used for the
+	// "before the first packet" judgement, the previous_response_not_found downgrade could never be entered on the real upstream (#541).
 	contentTokenSeen := false
 	preflightSettings := CurrentRuntimeSettings()
 	preflightSettings.ContinuousRetryPolicy = continuousRetryPolicy
@@ -1226,12 +1226,12 @@ func (h *Handler) streamResponsesWSUpstream(
 		}
 		return writeResponsesWSObservedMessage(c.Request.Context(), conn, payload)
 	}
-	// 首 token 前收到不可重试的 response.failed 时置位:不把原始失败帧透传给客户端,
-	// 循环外改写 error 帧并按错误类别用非正常 close code 关闭,
-	// 让下游中转/计费方明确感知失败,而不是把它当成一次正常结束的会话。
+	// Set when a non-retryable response.failed is received before the first token: the raw failure frame is not passed through to the client,
+	// the error frame is rewritten outside the loop and the connection is closed with a non-normal close code by error category,
+	// so that the downstream relay or biller clearly perceives the failure rather than treating it as a normally ended session.
 	abortedForErrorClose := false
-	// 续链请求在首包前被上游以 previous_response_not_found 拒绝时置位：不透传失败帧，
-	// 交回外层剥离 previous_response_id 后重试一次（issue #400）。
+	// Set when a continuation request is rejected upstream with previous_response_not_found before the first packet: the failure frame is not passed through,
+	// and control returns to the outer loop to strip previous_response_id and retry once (issue #400).
 	continuationNotFound := false
 	pendingFirstTokenMessages := make([][]byte, 0, 4)
 	pendingFirstTokenBytes := 0
@@ -1267,7 +1267,7 @@ func (h *Handler) streamResponsesWSUpstream(
 		if multiAgentV2State != nil && multiAgentV2State.isOptimizedFor(account.ID()) {
 			data = restoreCodexMultiAgentV2Response(data, multiAgentV2State)
 		}
-		// [OutputGuard 前置检查] 必须早于 provenance、collector、replay 与 downstream 写路径
+		// [OutputGuard pre-check] must come before the provenance, collector, replay and downstream write paths
 		if err := ObserveEvent(reqGuard, responsesProjector, normalizedUpstreamSSEEventType(sseEvent, data), data); err != nil {
 			gotTerminal = true
 			guardCoord.HandleTripped(reqGuard.TrippedReason(), func() {
@@ -1297,9 +1297,9 @@ func (h *Handler) streamResponsesWSUpstream(
 				clientData = transformed
 			}
 		}
-		// 容量降载码（server_is_overloaded/slow_down）对 Codex CLI 是致命错误：
-		// 一旦要透传给客户端就改写为可重试的 server_error。冷却/计费/日志用的
-		// terminalFailurePayload 取改写前的原始 data，不受影响。
+		// Capacity load-shedding codes (server_is_overloaded/slow_down) are fatal errors for the Codex CLI:
+		// once they are to be passed through to the client they are rewritten as a retryable server_error. Cooldown/billing/logging use the
+		// original data of terminalFailurePayload from before the rewrite, which is unaffected.
 		clientData = sanitizeCapacityShedEventForClient(eventType, clientData)
 		ttftGuard.MarkProgress(eventType)
 		isFirstToken := isLooseFirstTokenResult(parsed)
@@ -1373,11 +1373,11 @@ func (h *Handler) streamResponsesWSUpstream(
 			gotTerminal = true
 		}
 		if !clientGone {
-			// 可重试的 error 帧（上游降载先导帧）与生命周期帧一样缓冲：立即写出
-			// 会置位 wroteAnyBody，随后的 response.failed 就进不了首包前静默换号分支。
-			// previous_response_not_found 的先导 error 帧同样缓冲：它按 invalid_request
-			// 分类不属于可重试帧，立即写出会置位 wroteAnyBody，随后的 response.failed
-			// 就进不了下面的续链降级分支。
+			// Retryable error frames (the upstream overload leading frame) are buffered like lifecycle frames: writing them out immediately
+			// would set wroteAnyBody, and the subsequent response.failed would then miss the silent account-switch branch before the first packet.
+			// The leading error frame of previous_response_not_found is buffered in the same way: it is classified as invalid_request,
+			// not a retryable frame, and writing it out immediately would set wroteAnyBody, so the subsequent response.failed
+			// would miss the continuation downgrade branch below.
 			shouldDefer := shouldDeferPreContentSSEEvent(eventType, contentTokenSeen, gotTerminal, preflightPassthrough) ||
 				(!contentTokenSeen && !wroteAnyBody && !gotTerminal && isRetryableUpstreamErrorFrame(eventType, data, continuousRetryPolicy)) ||
 				(allowContinuationDegrade && !contentTokenSeen && !gotTerminal && eventType == "error" && isPreviousResponseNotFoundBody(data))
@@ -1391,18 +1391,18 @@ func (h *Handler) streamResponsesWSUpstream(
 					return false
 				}
 			} else {
-				// 首包前收到可重试的 response.failed（额度耗尽/限流/5xx/401）时，
-				// 不把失败帧下发给客户端：丢弃尚未发送的前导缓冲并提前结束读取，
-				// 让外层循环透明换到健康账号重试，避免客户端反复 Reconnecting。
-				// 已经向客户端写过内容（wroteAnyBody / 已记录首 token）则照常透传。
+				// When a retryable response.failed (quota exhausted, rate limit, 5xx, 401) is received before the first packet,
+				// do not send the failure frame to the client: discard the leading buffer not yet sent and end reading early,
+				// letting the outer loop transparently switch to a healthy account and retry, to avoid the client repeatedly reconnecting.
+				// If content has already been written to the client (wroteAnyBody / first token already recorded), pass it through as usual.
 				if (retryEnabled || hideUpstreamErrors) && eventType == "response.failed" && !contentTokenSeen && !wroteAnyBody && continuousRetryStreamFailureSelected(classifyResponseFailedOutcome(terminalFailurePayload), terminalFailurePayload, eventType, continuousRetryPolicy) {
 					pendingFirstTokenMessages = pendingFirstTokenMessages[:0]
 					pendingFirstTokenBytes = 0
 					return false
 				}
-				// 续链 id 上游认不出：换号重试没用（换了还是找不到），但剥离续链 id
-				// 后同一账号就能继续。前置元数据（rate_limits / metadata）即使已经
-				// 写出也不算内容，不能挡住降级——真实 ChatGPT WS 几乎总会先推这两帧。
+				// The upstream does not recognise the continuation id: switching accounts does not help (it still cannot be found), but after stripping the continuation id
+				// the same account can continue. Preamble metadata (rate_limits / metadata), even if already written out,
+				// does not count as content and must not block the downgrade: real ChatGPT WS almost always pushes these two frames first.
 				if allowContinuationDegrade && eventType == "response.failed" && !contentTokenSeen &&
 					isPreviousResponseNotFoundBody(terminalFailurePayload) {
 					pendingFirstTokenMessages = pendingFirstTokenMessages[:0]
@@ -1410,11 +1410,11 @@ func (h *Handler) streamResponsesWSUpstream(
 					continuationNotFound = true
 					return false
 				}
-				// 首 token 前的不可重试 response.failed(如 context_length_exceeded)
-				// 不透传原始失败帧:丢弃前导缓冲并提前结束读取,循环外按真实错误
-				// 语义返回 error 帧 + 非正常 close code(与 SSE 路径返回 4xx 对齐)。
-				// 可重试的失败不在此拦截:silent retry 开启时由上面的分支换号重试,
-				// 关闭时按既有约定原样透传失败帧。
+				// A non-retryable response.failed before the first token (such as context_length_exceeded)
+				// does not pass the raw failure frame through: discard the leading buffer, end reading early, and outside the loop
+				// return an error frame with a non-normal close code by its real error semantics (aligned with the SSE path returning 4xx).
+				// A retryable failure is not intercepted here: with silent retry enabled it is retried on another account by the branch above;
+				// with it disabled, the failure frame is passed through as-is per the existing convention.
 				if shouldReturnHTTPErrorForResponseFailed(eventType, contentTokenSeen, wroteAnyBody, clientGone) &&
 					!continuousRetryStreamFailureSelected(classifyResponseFailedOutcome(terminalFailurePayload), terminalFailurePayload, eventType, continuousRetryPolicy) {
 					pendingFirstTokenMessages = pendingFirstTokenMessages[:0]
@@ -1444,15 +1444,15 @@ func (h *Handler) streamResponsesWSUpstream(
 			(!isResponsesTerminalEvent(eventType) || awaitingResponsesWSInterruptAck(c.Request.Context())) &&
 			!(gotTerminal && isResponsesWSInterruptAck(eventType))
 	})
-	// clientGone（guard 命中或下游写失败）后抑制未决 interrupt 的失败确认帧：
-	// guard 终态帧必须是连接关闭前的最后一帧，不得在终态后再下发 response.interrupt.failed。
+	// After clientGone (guard hit or downstream write failure), suppress the failure acknowledgement frame for a pending interrupt:
+	// the guard's terminal frame must be the last frame before the connection closes, and response.interrupt.failed must not be sent after the terminal frame.
 	if !clientGone {
 		if err := failPendingResponsesWSInterrupt(c.Request.Context(), conn); err != nil {
 			writeErr = err
 		}
 	}
-	// guard 命中（或写失败）后 clientGone 已置位：guard 终态帧是连接关闭前的
-	// 最后一帧，命中后不得再把 outputBuffer 中残留的消息补写到下游。
+	// After a guard hit (or write failure) clientGone is set: the guard's terminal frame is
+	// the last frame before the connection closes, and after a hit, any messages left in outputBuffer must not be written downstream.
 	if writeErr == nil && !clientGone && outputBuffer != nil && wsReplay == nil {
 		remaining, err := outputBuffer.Flush()
 		if err != nil {
@@ -1468,7 +1468,7 @@ func (h *Handler) streamResponsesWSUpstream(
 		}
 	}
 
-	// 续链 id 失效且首包前拦下：账号无过错，不记失败也不解绑，交回外层降级重试。
+	// Continuation id invalid and intercepted before the first packet: the account is not at fault, so no failure is recorded and it is not unbound; control returns to the outer loop to downgrade and retry.
 	if continuationNotFound && !contentTokenSeen && writeErr == nil && c.Request.Context().Err() == nil {
 		_ = wsReplay.Close()
 		ttftGuard.Stop()
@@ -1503,8 +1503,8 @@ func (h *Handler) streamResponsesWSUpstream(
 		} else {
 			outcome = classifyStreamOutcome(errContinuousRetryDeadlineExceeded, nil, nil, false)
 		}
-		// 流式 response.failed（HTTP 200）里的 cyber_policy 处罚也要记录，
-		// 否则只有非 2xx 错误体才会被记入提示词过滤日志。
+		// The cyber_policy penalty in a streaming response.failed (HTTP 200) must also be recorded,
+		// otherwise only non-2xx error bodies would be logged to the prompt-filter log.
 		promptPolicyIncidentID = acceptedPromptPolicyIncidentID(h.logUpstreamCyberPolicy(c, "/v1/responses", model, responseFailedErrorBody(terminalFailurePayload), upstreamCyberPolicyAttempt{
 			Transport: upstreamPromptPolicyTransport(true, viaWebsocket), StatusCode: outcome.logStatusCode,
 			AccountID: account.ID(), AttemptIndex: fallbackAttempt,
@@ -1663,7 +1663,7 @@ func (h *Handler) streamResponsesWSUpstream(
 		logInput.ImageInputTokens, logInput.ImageOutputTokens, logInput.CachedImageInputTokens = usage.ImageInputTokens, usage.ImageOutputTokens, usage.CachedImageInputTokens
 	}
 	applyImageUsageLogInfo(logInput, imageLogInfo)
-	// WS 轮终态记账：attempt 实发模型优先（effectiveModel），兜底客户端请求模型。
+	// WS turn terminal accounting: the model actually sent by the attempt takes priority (effectiveModel), falling back to the model requested by the client.
 	applyUpstreamResponseModelObservation(logInput, responseModelObserver, upstreamSentModelForAudit(effectiveModel, model), account.ID())
 	h.logUsageForRequest(c, logInput)
 
@@ -1685,8 +1685,8 @@ func (h *Handler) streamResponsesWSUpstream(
 		h.store.Release(account)
 	}
 	if outcome.guardTripped {
-		// Guard 命中终态统一走 1013：与 primitive（error 帧 + CloseTryAgainLater）
-		// 及 HTTP/502 语义一致，下游可将本次中止识别为可重试而非客户端违规。
+		// Guard-hit terminal outcomes all use 1013: consistent with the primitive (error frame + CloseTryAgainLater)
+		// and the HTTP/502 semantics, so downstream can recognise this abort as retryable rather than a client violation.
 		return newResponsesWSCloseError(websocket.CloseTryAgainLater, outcome.failureMessage, errModelOutputGuardTriggered)
 	}
 	if outcome.terminalLocal {
@@ -1699,7 +1699,7 @@ func (h *Handler) streamResponsesWSUpstream(
 	}
 
 	if errors.Is(writeErr, promptfilter.ErrOutputBlocked) {
-		apiErr := api.NewAPIError(api.ErrorCode("response_policy_violation"), "模型输出违反安全策略", api.ErrorTypeInvalidRequest)
+		apiErr := api.NewAPIError(api.ErrorCode("response_policy_violation"), "model output violates the safety policy", api.ErrorTypeInvalidRequest)
 		if !claimContinuousRetrySuccessContext(c.Request.Context()) {
 			return errResponsesWSClientGone
 		}
@@ -1710,8 +1710,8 @@ func (h *Handler) streamResponsesWSUpstream(
 		return errResponsesWSClientGone
 	}
 	if abortedForErrorClose && !downstreamWrote {
-		// 首 token 前上游失败且未向客户端写过任何帧:发结构化 error 帧后按错误类别
-		// 关闭连接,避免下游把"正常收尾的会话"当成功并按预估 input token 计费。
+		// When the upstream fails before the first token and nothing has been written to the client: send a structured error frame, then
+		// close the connection by error category, to avoid downstream counting a "normally ended session" as success and billing on estimated input tokens.
 		apiErr := api.NewAPIError(api.ErrCodeUpstreamError, outcome.failureMessage, api.ErrorTypeUpstream)
 		preserveErrorCode := isPreviousResponseNotFoundBody(terminalFailurePayload)
 		if preserveErrorCode {
@@ -1757,8 +1757,8 @@ func (h *Handler) streamResponsesWSUpstream(
 	if outcome.logStatusCode != http.StatusOK && len(terminalFailurePayload) == 0 {
 		errCode := api.ErrCodeUpstreamError
 		if outcome.logStatusCode == logStatusUpstreamStreamBreak {
-			// 断流(598)用稳定错误码 upstream_stream_break，下游可编程识别并重试
-			// (issue #473)；其余上游异常保持通用 upstream_error。
+			// A stream break (598) uses the stable error code upstream_stream_break, so downstream can recognise it programmatically and retry
+			// (issue #473); other upstream exceptions keep the generic upstream_error.
 			errCode = api.ErrorCode(ErrorCodeUpstreamStreamBreak)
 		}
 		apiErr := api.NewAPIError(errCode, outcome.failureMessage, api.ErrorTypeUpstream)
@@ -1778,7 +1778,7 @@ func normalizeResponsesWebSocketClientPayload(raw []byte) ([]byte, string, *api.
 		return nil, "", api.NewAPIError(api.ErrCodeInvalidRequest, "empty websocket request payload", api.ErrorTypeInvalidRequest)
 	}
 	if len(trimmed) > security.MaxRequestBodySize {
-		return nil, "", api.NewAPIError(api.ErrCodeInvalidRequest, "请求体过大", api.ErrorTypeInvalidRequest)
+		return nil, "", api.NewAPIError(api.ErrCodeInvalidRequest, "request body too large", api.ErrorTypeInvalidRequest)
 	}
 	eventType, envelopeErr := responsesWSClientEventType(trimmed)
 	if envelopeErr != nil {
@@ -1855,9 +1855,9 @@ func (h *Handler) inspectPromptFilterOpenAIForWebSocket(c *gin.Context, conn *we
 	if verdict.Action != promptfilter.ActionBlock {
 		return false, false
 	}
-	// 与 HTTP 入口一致:本地 block 立即锁定会话,使后续绕过本地正则的等价变形
-	// 也无法通过这条 WS 会话到达上游。这条 WS 路径持有独立的 block 逻辑,漏掉
-	// 这一步会让整个前置扼杀在 Codex 的 WebSocket 通道上失效。
+	// Consistent with the HTTP entry: a local block immediately locks the session, so that equivalent variants that bypass the local regex
+	// also cannot reach upstream through this WS session. This WS path holds its own independent block logic, and missing this
+	// step would make the whole up-front interception ineffective on Codex's WebSocket channel.
 	h.lockPromptConversationOnLocalBlock(c, cfg, nil, endpoint, model, evaluation.Decision, verdict)
 	errorCode := api.ErrorCode("prompt_blocked")
 	errorMessage := localPromptBlockMessage(cfg)
@@ -1956,8 +1956,8 @@ func newResponsesWSCloseError(code int, reason string, err error) error {
 	}
 }
 
-// responsesWSCloseCodeForStatus 把上游失败的 HTTP 语义状态码映射为 WebSocket close code:
-// 429 → 1013(稍后重试);其余 4xx 确定性客户端错误 → 1008(策略拒绝);5xx → 1011。
+// responsesWSCloseCodeForStatus maps the HTTP-semantic status code of an upstream failure to a WebSocket close code:
+// 429 → 1013 (retry later); other 4xx deterministic client errors → 1008 (policy rejection); 5xx → 1011.
 func responsesWSCloseCodeForStatus(statusCode int) int {
 	switch {
 	case statusCode == http.StatusTooManyRequests:

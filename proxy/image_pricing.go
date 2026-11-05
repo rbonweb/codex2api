@@ -6,7 +6,7 @@ import (
 	"github.com/codex2api/database"
 )
 
-// applyOfficialImagePricingRow 只读取受支持图片模型，分别合并 Image/Text 行。
+// applyOfficialImagePricingRow reads only supported image models and merges the Image and Text rows separately.
 func applyOfficialImagePricingRow(out map[string]database.ModelPricingOverride, row officialPricingRow) {
 	model := database.GPTImage25BillingModel(normalizeOfficialPricingModel(row.cell("model")))
 	if model == "" {
@@ -24,8 +24,8 @@ func applyOfficialImagePricingRow(out map[string]database.ModelPricingOverride, 
 	out[model] = price
 }
 
-// projectImageResolutionPricing 为独立可编辑的分辨率变体继承基础模型 token 价。
-// 官方没有按输出分辨率区分 token 单价；精确模型价格和用户自定义价仍优先。
+// projectImageResolutionPricing gives each independently editable resolution variant the base model's token price.
+// The official pricing does not vary the token price by output resolution; exact model prices and user-defined prices still take precedence.
 func projectImageResolutionPricing(allowed map[string]struct{}, parsed map[string]database.ModelPricingOverride) {
 	base, exists := parsed["gpt-image-2"]
 	if !exists {

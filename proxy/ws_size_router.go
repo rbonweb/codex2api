@@ -7,32 +7,32 @@ import (
 	"time"
 )
 
-// websocketSizeRouter 从实际发生的上游 close 1009 (message too big) 中学习
-// 触发体积,让后续同量级请求直接首发 HTTP 上游,省去"先等 WS 必败、再串行
-// 降级 HTTP"叠加出的首字长尾(issue #404 的核心痛点)。上游帧上限未公开,
-// 这里不做静态猜测,只记录本进程观测到的最小失败体积。
+// websocketSizeRouter learns the trigger size from upstream close 1009 (message too big) events that actually happen,
+// so later requests of the same size go straight to the HTTP upstream and skip the "WS is bound to fail, then fall back to HTTP" sequence
+// that adds a long first-token tail (the core pain point of issue #404). The upstream frame limit is not public,
+// so it makes no static guess and only records the smallest failing size observed in this process.
 type websocketSizeRouter struct {
 	mu        sync.Mutex
 	minTooBig int
 	learnedAt time.Time
 }
 
-// wsSizeRouterMinSample 学习样本下限:真实上游帧上限远高于此,更小的
-// 1009 几乎必然是误分类;同时避免异常小样本长期劫持路由。
+// wsSizeRouterMinSample is the lower bound for learning samples: the real upstream frame limit is far above this, so smaller
+// 1009 results are almost certainly misclassified; this also keeps an abnormally small sample from hijacking the route for a long time.
 const wsSizeRouterMinSample = 64 * 1024
 
-// wsSizeRouterTTL 学习结果有效期:上游帧上限可能随部署调整,过期后
-// 回到"先试 WS"的默认行为,由下一次真实 1009 重新校准。
+// wsSizeRouterTTL is how long a learned result stays valid: the upstream frame limit may change with deployments, so after expiry
+// it goes back to the default of "try WS first" and is recalibrated by the next real 1009.
 const wsSizeRouterTTL = 6 * time.Hour
 
-// wsSizeRouterMarginPercent 判定余量:请求体与实际 WS 帧之间有信封字段、
-// 注入字段的少量差异,略小于已知失败体积的请求同样大概率 1009。
+// wsSizeRouterMarginPercent is the decision margin: between the request body and the actual WS frame there are envelope fields,
+// injected fields cause small differences, so a request slightly smaller than the known failing size also very likely gets a 1009.
 const wsSizeRouterMarginPercent = 95
 
 var globalWSSizeRouter websocketSizeRouter
 
-// wsSizeRouterDisabled 系统设置 codex_ws_size_router_enabled 关闭、或环境变量
-// 逃生阀 CODEX_WS_SIZE_ROUTER=off 时,恢复"一律先试 WS"的旧行为。
+// wsSizeRouterDisabled applies when the system setting codex_ws_size_router_enabled is off, or when the environment variable
+// escape hatch CODEX_WS_SIZE_ROUTER=off is set, restoring the old behavior of "always try WS first".
 func wsSizeRouterDisabled() bool {
 	if !CurrentRuntimeSettings().CodexWSSizeRouter {
 		return true
@@ -40,7 +40,7 @@ func wsSizeRouterDisabled() bool {
 	return strings.EqualFold(strings.TrimSpace(os.Getenv("CODEX_WS_SIZE_ROUTER")), "off")
 }
 
-// RecordMessageTooBig 记录一次 close 1009 发生时的请求体大小。
+// RecordMessageTooBig records the request body size when a close 1009 happens.
 func (r *websocketSizeRouter) RecordMessageTooBig(bodySize int) {
 	if bodySize < wsSizeRouterMinSample || wsSizeRouterDisabled() {
 		return
@@ -53,7 +53,7 @@ func (r *websocketSizeRouter) RecordMessageTooBig(bodySize int) {
 	r.learnedAt = time.Now()
 }
 
-// PreferHTTP 判断该体积的请求是否应跳过 WebSocket 直接走 HTTP 上游。
+// PreferHTTP reports whether a request of this size should skip WebSocket and go straight to the HTTP upstream.
 func (r *websocketSizeRouter) PreferHTTP(bodySize int) bool {
 	if wsSizeRouterDisabled() {
 		return false

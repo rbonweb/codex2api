@@ -40,7 +40,7 @@ func TestOnDemandWritePolicySkipsWriteForUnchainedOwner(t *testing.T) {
 func TestOnDemandWritePolicyAllowsWriteAfterOwnerChains(t *testing.T) {
 	resetResponseCacheStateForTest(onDemandResponseCacheConfig())
 
-	// 任意一次续链查询（这里必然 miss）即赋予该 owner 写入资格。
+	// Any single chained query (here it necessarily misses) grants that owner write eligibility.
 	if cached := getResponseCache("key:1", "resp_unknown"); cached != nil {
 		t.Fatalf("expected miss, got %d items", len(cached))
 	}
@@ -89,7 +89,7 @@ func TestChainOwnerExpiresAfterWindow(t *testing.T) {
 
 	getResponseCache("key:1", "resp_unknown")
 
-	// 手动把资格窗口推到过去，模拟 1 小时无续链。
+	// Manually push the eligibility window into the past, simulating one hour without chaining.
 	respCache.mu.Lock()
 	for _, record := range respCache.chainOwners {
 		record.expiresAt = time.Now().Add(-time.Minute)
@@ -101,10 +101,10 @@ func TestChainOwnerExpiresAfterWindow(t *testing.T) {
 		t.Fatalf("expired chain owner should be gated, got %d items", len(cached))
 	}
 
-	// 清理循环应移除过期记录。
+	// The cleanup loop should remove expired records.
 	cleanupResponseCacheExpired(time.Now())
 	if stats := GetResponseCacheStats(); stats.ChainOwners != 1 {
-		// getResponseCache 上面那次 miss 查询又重新标记了 owner，因此是 1。
+		// The miss query above via getResponseCache re-marked the owner, so this is 1.
 		t.Fatalf("ChainOwners = %d, want 1 (re-marked by the gated lookup)", stats.ChainOwners)
 	}
 }

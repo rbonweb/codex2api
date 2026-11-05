@@ -26,7 +26,7 @@ func TestSignedCYCreatesSeparatedPersonKeyNetworkSessionAndAccountProfiles(t *te
 	store := auth.NewStore(nil, nil, &database.SystemSettings{MaxConcurrency: 2, TestConcurrency: 1})
 	store.SetPromptFilterConfig(cfg)
 	store.ReplacePromptFilterNewAPIBindings([]*database.PromptFilterNewAPIBinding{{
-		APIKeyID: 101, PlatformCode: "gateway-a", PlatformName: "示例平台平台", Secret: "gateway-a-secret", Enabled: true, RequireSignedIdentity: true,
+		APIKeyID: 101, PlatformCode: "gateway-a", PlatformName: "example platform platform", Secret: "gateway-a-secret", Enabled: true, RequireSignedIdentity: true,
 	}})
 	handler := NewHandler(store, db, nil, nil)
 	handler.SetRuntimeCache(cache.NewMemory(1))
@@ -82,7 +82,7 @@ func TestPromptPolicyRoutingSnapshotNormalizesDefaultCodexAccount(t *testing.T) 
 	t.Cleanup(store.Stop)
 	account := &auth.Account{DBID: 73, Email: "codex-account@example.com", AccessToken: "test-token"}
 	store.AddAccount(account)
-	store.SetGroupName(4, "打铁")
+	store.SetGroupName(4, "Blacksmith")
 	store.ApplyAccountGroups(account.DBID, []int64{4})
 	store.SetAPIKeyAllowedGroups(9, []int64{4})
 	handler := NewHandler(store, nil, nil, nil)

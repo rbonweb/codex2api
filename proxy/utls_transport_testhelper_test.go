@@ -9,9 +9,9 @@ import (
 	"golang.org/x/net/http2/h2c"
 )
 
-// h2TestServer 是一个明文 HTTP/2（h2c）测试服务端，用于构造真实的
-// *http2.ClientConn —— 连接生命周期的断言必须打在真连接上，
-// mock 无法复现 readLoop / 空闲定时器 / stream 计数等关键行为。
+// h2TestServer is a plaintext HTTP/2 (h2c) test server, used to build a real
+// *http2.ClientConn. Connection lifecycle assertions must hit a real connection,
+// because a mock cannot reproduce key behavior such as the readLoop, the idle timer or stream counting.
 type h2TestServer struct {
 	listener net.Listener
 	server   *http.Server
@@ -22,10 +22,10 @@ func (s *h2TestServer) Close() {
 	_ = s.listener.Close()
 }
 
-// newIdleHTTP2ClientConn 起一个本地 h2c 服务端并返回一条已完成握手、
-// 当前处于空闲状态（无任何 stream）的客户端连接。
+// newIdleHTTP2ClientConn starts a local h2c server and returns a connection that has completed the handshake
+// and is currently idle (no streams at all).
 //
-// 连接由调用方负责关闭（或交给被测代码关闭后断言其状态）。
+// The caller is responsible for closing the connection (or hands it to the code under test to close and then asserts its state).
 func newIdleHTTP2ClientConn(t *testing.T) (*h2TestServer, *http2.ClientConn) {
 	t.Helper()
 
@@ -49,7 +49,7 @@ func newIdleHTTP2ClientConn(t *testing.T) (*h2TestServer, *http2.ClientConn) {
 		t.Fatalf("dial: %v", err)
 	}
 
-	// 与 createConnection 保持同款配置，确保测试覆盖的是生产路径的参数。
+	// Same settings as createConnection, so the test covers the production path's parameters.
 	tr := &http2.Transport{
 		ReadIdleTimeout: codexHTTP2ReadIdleTimeout,
 		PingTimeout:     codexHTTP2PingTimeout,

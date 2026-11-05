@@ -20,8 +20,8 @@ import (
 	"github.com/gin-gonic/gin"
 )
 
-// Output Guard 的运行时配置有数据库级最小值（channel >= 128KiB）。集成测试
-// 因此使用真实的最小阈值，并由 >128KiB 的真实上游事件触发，而不是伪造小值。
+// The Output Guard runtime config has a database-level minimum (channel >= 128KiB). The integration test
+// therefore uses the real minimum threshold and is triggered by real upstream events larger than 128KiB, rather than a faked small value.
 const (
 	guardHTTPTestMaxToolBytes    = int64(16 * 1024)
 	guardHTTPTestMaxChannelBytes = int64(128 * 1024)
@@ -32,8 +32,8 @@ func init() {
 	gin.SetMode(gin.TestMode)
 }
 
-// setupOutputGuardHTTPTestEnv 装载一份合法的、可由真实事件触发的 Guard 配置，
-// 并保证测试结束后清空全局就绪状态，避免污染整包其它用例。
+// setupOutputGuardHTTPTestEnv loads a valid guard config that can be triggered by real events,
+// and ensures the global ready state is cleared when the test ends, so that it does not pollute other cases in the package.
 func setupOutputGuardHTTPTestEnv(t *testing.T) {
 	t.Helper()
 	ResetOutputGuardStateForTest()
@@ -52,8 +52,8 @@ func setupOutputGuardHTTPTestEnv(t *testing.T) {
 	}
 }
 
-// newOutputGuardHTTPTestStore 使用真实 auth.Store 与真实账号，走与生产一致的
-// Resin 出站链路（Codex OAuth 账号无法用 BaseURL 直接指向 httptest）。
+// newOutputGuardHTTPTestStore uses a real auth.Store and real accounts, going through the same
+// Resin outbound path as production (Codex OAuth accounts cannot point BaseURL directly at httptest).
 func newOutputGuardHTTPTestStore(t *testing.T, maxRetries int) *auth.Store {
 	t.Helper()
 	store := auth.NewStore(nil, nil, &database.SystemSettings{
@@ -98,8 +98,8 @@ func outputGuardTestDelta(itemID string, delta string) string {
 	})
 }
 
-// outputGuardTestRandomText 生成低周期性的文本，避免触发 repetition 检测，
-// 从而保证断言命中的是字节预算链路。
+// outputGuardTestRandomText generates low-periodicity text to avoid triggering repetition detection,
+// so that the assertion hits the byte-budget path.
 func outputGuardTestRandomText(seed int64, n int) string {
 	const alphabet = "abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789"
 	rng := rand.New(rand.NewSource(seed))
@@ -140,8 +140,8 @@ func decodeOutputGuardErrorCode(t *testing.T, body []byte) string {
 	return payload.Error.Code
 }
 
-// 1. Responses HTTP 流式在首 token 前触发 Guard：必须返回 502 JSON 错误响应，
-// 且上游被即时取消。
+// 1. Responses HTTP streaming trips the Guard before the first token: it must return a 502 JSON error response,
+// and the upstream must be cancelled immediately.
 func TestResponsesHTTPStreamGuardTrippedPreToken(t *testing.T) {
 	setupOutputGuardHTTPTestEnv(t)
 
@@ -186,16 +186,16 @@ func TestResponsesHTTPStreamGuardTrippedPreToken(t *testing.T) {
 	}
 }
 
-// guardDeadlineRecorder 让 httptest.ResponseRecorder 支持写 deadline，
-// 因为 04a 的流内终态写入使用 http.ResponseController 且有界超时。
+// guardDeadlineRecorder makes httptest.ResponseRecorder support write deadlines,
+// because 04a's in-stream terminal write uses http.ResponseController with a bounded timeout.
 type guardDeadlineRecorder struct {
 	*httptest.ResponseRecorder
 }
 
 func (r *guardDeadlineRecorder) SetWriteDeadline(time.Time) error { return nil }
 
-// 2. ChatCompletions 流式在首 token 之后触发 Guard：下游必须收到流内 502
-// error 帧，且绝不能出现成功哨兵 [DONE]。
+// 2. ChatCompletions streaming trips the Guard after the first token: downstream must receive an in-stream 502
+// error frame, and the [DONE] success sentinel must never appear.
 func TestChatCompletionsStreamGuardTrippedPostTokenNoDone(t *testing.T) {
 	setupOutputGuardHTTPTestEnv(t)
 
@@ -248,7 +248,7 @@ func TestChatCompletionsStreamGuardTrippedPostTokenNoDone(t *testing.T) {
 	}
 }
 
-// 3. Responses HTTP 非流式：失控快照必须阻断聚合结果写出，直接返回 502。
+// 3. Responses HTTP non-streaming: a runaway snapshot must block the aggregated result from being written, returning 502 directly.
 func TestResponsesHTTPNonStreamGuardTripped(t *testing.T) {
 	setupOutputGuardHTTPTestEnv(t)
 
@@ -282,8 +282,8 @@ func TestResponsesHTTPNonStreamGuardTripped(t *testing.T) {
 	}
 }
 
-// 3b. ChatCompletions 非流式：聚合前命中 Guard 必须阻断 compact 结果写出，
-// 返回 502 JSON 而不是把已经失控的内容聚合成 200。
+// 3b. ChatCompletions non-streaming: if the Guard trips before aggregation, it must block the compact result from being written,
+// returning a 502 JSON instead of aggregating already-runaway content into a 200.
 func TestChatCompletionsNonStreamGuardTripped(t *testing.T) {
 	setupOutputGuardHTTPTestEnv(t)
 
@@ -320,8 +320,8 @@ func TestChatCompletionsNonStreamGuardTripped(t *testing.T) {
 	}
 }
 
-// 4. 冷启动门禁：配置加载失败（lastSyncError 已记录、未就绪）时，Responses 与
-// ChatCompletions 都必须以 503 service_unavailable 强阻断，不得进入账号调度。
+// 4. Cold-start gate: when config loading fails (lastSyncError recorded, not ready), both Responses and
+// ChatCompletions must hard-block with 503 service_unavailable and must not enter account scheduling.
 func TestOutputGuardHTTPReadinessGate503(t *testing.T) {
 	ResetOutputGuardStateForTest()
 	t.Cleanup(ResetOutputGuardStateForTest)
@@ -360,12 +360,12 @@ func TestOutputGuardHTTPReadinessGate503(t *testing.T) {
 	}
 }
 
-// 5. 跨 attempt 预算继承：第一次尝试已消费但未触发的字节必须累计到第二次
-// 尝试，否则每次 attempt 重建状态机会把跨 attempt 的失控流放行。
+// 5. Cross-attempt budget inheritance: bytes already consumed but not triggered in the first attempt must accumulate into the second
+// attempt; otherwise rebuilding the state machine on each attempt would let a runaway stream through across attempts.
 func TestResponsesHTTPNonStreamGuardBudgetInheritedAcrossAttempts(t *testing.T) {
 	setupOutputGuardHTTPTestEnv(t)
 
-	// 每个 attempt 单独都低于 128KiB channel 上限，两次累计后越界。
+	// Each attempt alone is below the 128KiB channel limit, but the two accumulated together exceed it.
 	halfBudget := guardHTTPTestMaxChannelBytes/2 + 6*1024
 	firstDelta := outputGuardTestRandomText(44, int(halfBudget))
 	secondDelta := outputGuardTestRandomText(55, int(halfBudget))

@@ -8,8 +8,8 @@ import (
 	"testing"
 )
 
-// TestLogCompressionNegotiationDedupe 验证协商结果日志按结果去重:
-// 同一结果只报一次,两种结果各报一次后不再产生任何输出(混合链路不刷屏)。
+// TestLogCompressionNegotiationDedupe verifies that the negotiation result log is deduplicated by result:
+// The same result is reported only once. After each of the two results has been reported once, nothing more is printed, so mixed links do not flood the log.
 func TestLogCompressionNegotiationDedupe(t *testing.T) {
 	wsCompressionSeen.Store(0)
 	t.Cleanup(func() { wsCompressionSeen.Store(0) })
@@ -26,29 +26,29 @@ func TestLogCompressionNegotiationDedupe(t *testing.T) {
 
 	logCompressionNegotiation(nil, 1)
 	if buf.Len() != 0 {
-		t.Fatalf("nil resp 不应产生日志: %q", buf.String())
+		t.Fatalf("nil resp should not produce a log: %q", buf.String())
 	}
 
 	logCompressionNegotiation(negotiated, 1)
-	if got := buf.String(); !strings.Contains(got, "已协商 permessage-deflate") {
-		t.Fatalf("首次协商成功应打日志, got %q", got)
+	if got := buf.String(); !strings.Contains(got, "negotiated permessage-deflate") {
+		t.Fatalf("the first successful negotiation should log, got %q", got)
 	}
 	buf.Reset()
 
 	logCompressionNegotiation(negotiated, 2)
 	if buf.Len() != 0 {
-		t.Fatalf("重复结果不应再打日志: %q", buf.String())
+		t.Fatalf("a repeated result should not log again: %q", buf.String())
 	}
 
 	logCompressionNegotiation(plain, 3)
-	if got := buf.String(); !strings.Contains(got, "未协商 permessage-deflate") {
-		t.Fatalf("首次未协商也应打一次日志, got %q", got)
+	if got := buf.String(); !strings.Contains(got, "did not negotiate permessage-deflate") {
+		t.Fatalf("the first non-negotiation should also log once, got %q", got)
 	}
 	buf.Reset()
 
 	logCompressionNegotiation(plain, 4)
 	logCompressionNegotiation(negotiated, 5)
 	if buf.Len() != 0 {
-		t.Fatalf("两种结果各报过一次后应完全静默: %q", buf.String())
+		t.Fatalf("after each of the two results has been reported once, output should be completely silent: %q", buf.String())
 	}
 }

@@ -24,8 +24,8 @@ func newChatStreamTerminalTestHandler(t *testing.T, events []string) (*Handler, 
 	})
 }
 
-// newChatStreamServeTestHandler 搭一个走 Resin HTTP 上游的 /v1/chat/completions
-// 测试环境，假上游按 serve 回调自由控制写入节奏（含 flush/静默）。
+// newChatStreamServeTestHandler builds a /v1/chat/completions handler that calls a Resin HTTP upstream
+// test helper: the fake upstream controls its write pace freely through the serve callback (including flush and silence).
 func newChatStreamServeTestHandler(t *testing.T, serve func(w http.ResponseWriter)) (*Handler, *atomic.Int32) {
 	t.Helper()
 	gin.SetMode(gin.TestMode)

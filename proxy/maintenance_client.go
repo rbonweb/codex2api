@@ -8,36 +8,36 @@ import (
 	"github.com/codex2api/auth"
 )
 
-// ==================== 账号维护请求的 HTTP Client 池（issue #446） ====================
+// ==================== HTTP Client pool for account maintenance requests (issue #446) ====================
 //
-// 背景：wham 用量/重置券、Codex 模型清单、alpha search、订阅到期同步这些
-// 「维护类」旁路请求，过去每次调用都 `&http.Client{Transport: newCodexTransport(...)}`
-// 新建一次性 transport。标准 transport 下遗留连接靠 IdleConnTimeout 兜底（90s 回收）；
-// 但 uTLS transport 自管连接池，一次性实例用完即被丢弃，其名下的 HTTP/2 连接
-// 没有任何持有者去关闭，readLoop goroutine 与 socket 常驻到进程结束。
-// 后台探针是周期任务、/models 又被 Codex 客户端高频请求，于是连接数、goroutine
-// 与内存随运行时长线性增长，最终 OOM。
+// Background: wham usage/reset coupons, the Codex model list, alpha search, and subscription expiry sync, these
+// "maintenance" bypass requests used to build `&http.Client{Transport: newCodexTransport(...)}` on every call,
+// creating a one-off transport. Under the standard transport, leftover connections are reclaimed by IdleConnTimeout (90s);
+// but the uTLS transport manages its own connection pool, so a one-off instance is discarded after use, and the HTTP/2 connections under it
+// have no holder to close them, so the readLoop goroutine and the socket stay resident until the process exits.
+// Background probes run periodically and /models is requested often by the Codex client, so the connection count, goroutines
+// and memory grow linearly with runtime, eventually causing OOM.
 //
-// 修复：维护请求复用按 (用途 + 账号 + 代理 + transport 模式) 隔离的 Client。
-// 直接复用 clientPool，从而自动获得既有的 TTL 淘汰（clientPoolTTL）与
-// releaseEvictedClient 的连接关闭逻辑，无需第二套清理协程。
+// Fix: maintenance requests reuse a Client isolated by (purpose + account + proxy + transport mode).
+// Reuse clientPool directly, which automatically gets the existing TTL eviction (clientPoolTTL) and
+// the connection-closing logic of releaseEvictedClient, with no second cleanup goroutine needed.
 //
-// 为什么不直接共用 /responses 的池（getPooledClient）：
-//   - 维护请求与业务请求的 UA/Originator 语义不同（订阅端点用浏览器 UA），
-//     混在同一条 h2 连接上会改变上游看到的流量画像；
-//   - /responses 失败时会 recyclePooledClient 摘除整个 Client，不应因为一次
-//     后台探针失败而波及业务连接（反之亦然）。
+// Why not share the /responses pool (getPooledClient) directly:
+//   - maintenance requests use different UA/Originator semantics from business requests (subscription endpoints use a browser UA),
+//     and mixing them on the same h2 connection would change the traffic profile upstream sees;
+//   - when /responses fails, recyclePooledClient removes the whole Client, so one failed
+//     background probe must not spill over onto business connections (and vice versa).
 
-// 维护请求的池用途标识。区分用途让「订阅同步（浏览器 UA）」与
-// 「wham/清单/搜索（Codex CLI UA）」各自持有连接，不混用同一条 h2 连接。
+// Pool purpose identifiers for maintenance requests. Separating purposes lets "subscription sync (browser UA)" and
+// "wham / model list / search (Codex CLI UA)" each hold their own connections, without sharing one h2 connection.
 const (
-	maintenancePurposeCodex        = "codex"        // wham / models / alpha search，Codex CLI UA
-	maintenancePurposeSubscription = "subscription" // 网页端订阅端点，浏览器 UA
-	maintenancePurposeInvite       = "invite"       // 网页端推荐邀请端点，浏览器 UA
+	maintenancePurposeCodex        = "codex"        // wham / models / alpha search, Codex CLI UA
+	maintenancePurposeSubscription = "subscription" // web subscription endpoints, browser UA
+	maintenancePurposeInvite       = "invite"       // web referral invite endpoints, browser UA
 )
 
-// maintenanceClientKey 构造维护 Client 的池键。与 clientPoolKey 前缀不同，
-// 保证与 /responses 主池、Resin 池互不覆盖。
+// maintenanceClientKey builds the pool key for maintenance Clients. Its prefix differs from clientPoolKey,
+// so it cannot overwrite the /responses main pool or the Resin pool.
 func maintenanceClientKey(account *auth.Account, proxyURL, transportMode, purpose string) string {
 	accountID := int64(0)
 	if account != nil {
@@ -46,10 +46,10 @@ func maintenanceClientKey(account *auth.Account, proxyURL, transportMode, purpos
 	return fmt.Sprintf("maint|%s|%d|%s|%s", purpose, accountID, strings.TrimSpace(proxyURL), transportMode)
 }
 
-// getMaintenanceClient 返回维护请求专用的池化 Client。
+// getMaintenanceClient returns a pooled Client dedicated to maintenance requests.
 //
-// forceUTLS=true 时无视 CODEX_TRANSPORT_MODE 强制使用 uTLS Chrome 指纹
-// （订阅端点在 Cloudflare 后面，普通指纹会被拦截）。
+// When forceUTLS=true, CODEX_TRANSPORT_MODE is ignored and the uTLS Chrome fingerprint is forced,
+// (subscription endpoints sit behind Cloudflare, where a regular fingerprint would be blocked).
 func getMaintenanceClient(account *auth.Account, proxyURL, purpose string, forceUTLS bool) *http.Client {
 	transportMode := codexTransportModeFromEnv()
 	if forceUTLS {
@@ -73,16 +73,16 @@ func getMaintenanceClient(account *auth.Account, proxyURL, purpose string, force
 	entry := &poolEntry{
 		client: &http.Client{
 			Transport: transport,
-			// 不设整体超时：各调用方都用 context 控制超时（wham 25s、清单 15s、
-			// search 120s、订阅 15s），与 /responses 池的语义保持一致。
+			// No overall timeout: each caller controls its timeout with context (wham 25s, model list 15s,
+			// search 120s, subscription 15s), consistent with the semantics of the /responses pool.
 			Timeout: 0,
 		},
 	}
 	entry.touch()
 
 	if v, loaded := clientPool.LoadOrStore(key, entry); loaded {
-		// 竞争失败：丢弃自己刚建的 transport 并释放其连接（此时通常尚未拨号，
-		// 但 uTLS 下不主动关闭就可能留下无人持有的连接）。
+		// Lost the race: discard the transport we just built and release its connections (usually not yet dialed at this point,
+		// but under uTLS, connections nobody holds may be left behind without an explicit close).
 		releaseEvictedClient(entry.client)
 		e := v.(*poolEntry)
 		e.touch()
@@ -91,8 +91,8 @@ func getMaintenanceClient(account *auth.Account, proxyURL, purpose string, force
 	return entry.client
 }
 
-// getCodexMaintenanceClient 是 wham / 模型清单 / alpha search 共用的池化 Client。
-// 走网关同款 transport（含 uTLS Chrome 指纹），与 /responses 的指纹保持一致。
+// getCodexMaintenanceClient is the pooled Client shared by wham, the model list, and alpha search.
+// It uses the same transport as the gateway (including the uTLS Chrome fingerprint), keeping the fingerprint consistent with /responses.
 func getCodexMaintenanceClient(account *auth.Account, proxyURL string) *http.Client {
 	return getMaintenanceClient(account, proxyURL, maintenancePurposeCodex, false)
 }

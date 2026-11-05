@@ -32,7 +32,7 @@ func requestConnectionCapacityKind(ctx context.Context) connectionCapacityKind {
 	return capacityChat
 }
 
-// 只有没有聊天内容的明确预热使用空白预算；携带上下文仍属于聊天连接。
+// Only an explicit warm-up with no chat content uses the blank budget; a connection that carries context still counts as a chat connection.
 func withConnectionCapacityKind(ctx context.Context, headers http.Header, body []byte) context.Context {
 	kind := capacityChat
 	prewarm := gjson.GetBytes(body, "generate").Type == gjson.False || proxy.IsCodexWebsocketPrewarmRequest(headers, body)
@@ -89,7 +89,7 @@ func (m *Manager) budgetConnectionCount(input connectionCapacityRequest) int {
 	return m.budgetConnectionCountLocked(input.accountID, input.kind)
 }
 
-// 首次用户使用空白连接前转为聊天连接；推理不受空闲保留额度限制。
+// Convert a blank connection to a chat connection before the user first uses it; inference is not limited by the idle retention quota.
 func (m *Manager) ensureConnectionBudget(wc *WsConnection, kind connectionCapacityKind) error {
 	m.adoptConnectionCapacity(wc)
 	if kind == capacityBlank || connectionBudgetKind(wc) == capacityChat {
@@ -105,7 +105,7 @@ func (m *Manager) ensureConnectionBudget(wc *WsConnection, kind connectionCapaci
 	return nil
 }
 
-// 未发送请求就被本地额度拒绝的新连接没有用户上下文，可退回空白预算。
+// A new connection rejected by the local quota before any request was sent has no user context and can fall back to the blank budget.
 func (m *Manager) releaseUnusedChatCapacity(wc *WsConnection) {
 	if wc.session.hasUserContext() || wc.session.PendingCount() != 0 {
 		return

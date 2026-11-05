@@ -8,16 +8,16 @@ import (
 	"github.com/klauspost/compress/zstd"
 )
 
-// readUpstreamRequestBody 读取 mock 上游收到的请求体，按 Content-Encoding 解压。
+// readUpstreamRequestBody reads the request body the mock upstream received and decompresses it according to Content-Encoding.
 //
-// 请求体 zstd 压缩默认开启（对齐真实 Codex CLI，见 codex_request_compression.go），
-// 所以测试里的假上游必须和真实上游一样会解压，否则断言的是压缩帧而不是 JSON。
+// zstd compression of the request body is enabled by default (aligned with the real Codex CLI, see codex_request_compression.go),
+// so the fake upstream in tests must decompress just like the real upstream, otherwise the assertion would check the compressed frame instead of the JSON.
 //
-// 用它而不是在测试里把压缩关掉：关掉等于让整套 HTTP 路径测试绕开默认配置，
-// 那条路径上的改写逻辑就再也没有被真实形态覆盖过。
+// Use it rather than turning compression off in tests: turning it off would mean the whole HTTP path test bypasses the default configuration,
+// and the rewrite logic on that path would never again be covered in its real shape.
 //
-// 函数是幂等的：没有 Content-Encoding 时原样返回。Grok OAuth 的大请求体
-// 也会走 zstd，假上游同样用这里解压后再断言 JSON。
+// The function is idempotent: without Content-Encoding it returns the input unchanged. Large Grok OAuth request bodies
+// also go through zstd, and the fake upstream likewise decompresses here before asserting on the JSON.
 func readUpstreamRequestBody(r *http.Request) []byte {
 	if r == nil || r.Body == nil {
 		return nil

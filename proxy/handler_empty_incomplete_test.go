@@ -44,8 +44,8 @@ func invokeChatCompletionsWithBody(t *testing.T, handler *Handler, body string) 
 	return recorder
 }
 
-// 上游第一轮以 0 输出的 response.incomplete 静默中止，第二轮正常：网关必须把第一轮
-// 当失败透明重试，下游只看到成功结果。
+// The upstream silently aborts the first round with a zero-output response.incomplete, and the second round is normal: the gateway must treat the first round
+// as a failure and retry it transparently, so downstream only sees the successful result.
 func TestChatCompletionsEmptyIncompleteRetriesThenSucceeds(t *testing.T) {
 	for _, stream := range []bool{true, false} {
 		name := "non-stream"
@@ -86,7 +86,7 @@ func TestChatCompletionsEmptyIncompleteRetriesThenSucceeds(t *testing.T) {
 	}
 }
 
-// 每一轮都静默中止：重试预算耗尽后按 502 + 稳定错误码返回，而不是 200 + 空内容。
+// Every round aborts silently: once the retry budget is exhausted, return 502 with a stable error code, not 200 with empty content.
 func TestChatCompletionsEmptyIncompleteExhaustedReturns502(t *testing.T) {
 	for _, stream := range []bool{true, false} {
 		name := "non-stream"
@@ -114,7 +114,7 @@ func TestChatCompletionsEmptyIncompleteExhaustedReturns502(t *testing.T) {
 	}
 }
 
-// 真正的 max_output_tokens 截断（有输出、有 token）必须维持 v2.8.3 的正常终态语义。
+// A real max_output_tokens truncation (with output and tokens) must keep the normal terminal semantics of v2.8.3.
 func TestChatCompletionsRealTruncationStillReportsLength(t *testing.T) {
 	handler, calls := newChatStreamTerminalTestHandler(t, []string{
 		`{"type":"response.created","response":{"id":"resp_trunc"}}`,
@@ -148,7 +148,7 @@ func invokeResponsesWithBody(t *testing.T, handler *Handler, body string) *httpt
 	return recorder
 }
 
-// 原生 /v1/responses 路径同样要把零输出的 incomplete 当失败重试。
+// The native /v1/responses path must also treat a zero-output incomplete as a failure and retry it.
 func TestResponsesEmptyIncompleteRetriesThenSucceeds(t *testing.T) {
 	for _, stream := range []bool{true, false} {
 		name := "non-stream"

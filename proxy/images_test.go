@@ -29,8 +29,8 @@ import (
 const tinyPNGBase64 = "iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mP8/x8AAwMCAO+/p9sAAAAASUVORK5CYII="
 
 func TestBuildImagesAPIResponseCloudURL(t *testing.T) {
-	// 用本地 httptest 充当 S3 端点：PUT 返回 200 让上传成功；
-	// presign 是离线签名，生成的 GET 直链会指向该测试服务器。
+	// Use a local httptest server as the S3 endpoint: PUT returns 200 so the upload succeeds;
+	// presign is an offline signature, and the generated GET direct link points to this test server.
 	fakeS3 := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		w.Header().Set("ETag", `"deadbeef"`)
 		w.WriteHeader(http.StatusOK)
@@ -82,7 +82,7 @@ func TestBuildImagesAPIResponseLocalFallsBackToDataURL(t *testing.T) {
 }
 
 func TestImageGalleryPersisterRecordsAssetAndJob(t *testing.T) {
-	// 假 S3 端点：PUT 200 让上传成功；presign 离线签名生成直链。
+	// Fake S3 endpoint: PUT 200 makes the upload succeed; presign generates the direct link offline.
 	fakeS3 := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		w.Header().Set("ETag", `"deadbeef"`)
 		w.WriteHeader(http.StatusOK)
@@ -119,7 +119,7 @@ func TestImageGalleryPersisterRecordsAssetAndJob(t *testing.T) {
 	}
 	p.finalize(ctx)
 
-	// 应登记一条 asset，且 storage_path 为 s3:// ref。
+	// should register one asset, and storage_path should be an s3:// ref.
 	assets, err := db.ListImageAssets(ctx, 1, 10, 0)
 	if err != nil {
 		t.Fatalf("ListImageAssets: %v", err)
@@ -135,7 +135,7 @@ func TestImageGalleryPersisterRecordsAssetAndJob(t *testing.T) {
 		t.Fatalf("asset should be linked to a synthetic job, got job_id=0")
 	}
 
-	// synthetic job 应存在且标记为成功，携带 api_key_id。
+	// synthetic job should exist and be marked successful, carrying api_key_id.
 	job, err := db.GetImageGenerationJob(ctx, asset.JobID)
 	if err != nil {
 		t.Fatalf("GetImageGenerationJob: %v", err)
@@ -181,7 +181,7 @@ func TestBuildImagesResponsesRequestMatchesReferenceChain(t *testing.T) {
 
 func TestBuildImagesResponsesRequestCarriesMaxEditImages(t *testing.T) {
 	if MaxImageEditInputCount != 16 {
-		t.Fatalf("MaxImageEditInputCount = %d, want 16（对齐官方 gpt-image 编辑上限）", MaxImageEditInputCount)
+		t.Fatalf("MaxImageEditInputCount = %d, want 16 (matches the official gpt-image edit limit)", MaxImageEditInputCount)
 	}
 
 	images := make([]string, MaxImageEditInputCount)
@@ -192,7 +192,7 @@ func TestBuildImagesResponsesRequestCarriesMaxEditImages(t *testing.T) {
 
 	parts := gjson.GetBytes(body, "input.0.content").Array()
 	if len(parts) != MaxImageEditInputCount+1 {
-		t.Fatalf("content parts = %d, want %d（1 条文本 + %d 张图）", len(parts), MaxImageEditInputCount+1, MaxImageEditInputCount)
+		t.Fatalf("content parts = %d, want %d (1 text + %d images)", len(parts), MaxImageEditInputCount+1, MaxImageEditInputCount)
 	}
 	for i, part := range parts[1:] {
 		if got := part.Get("type").String(); got != "input_image" {
@@ -327,8 +327,8 @@ func TestRawResponsesBodyShouldForceHTTPForImageGeneration(t *testing.T) {
 		{"top_level_option", []byte(`{"model":"gpt-5.5","input":"hi","size":"1024x1024"}`), true},
 		{"plain_request", []byte(`{"model":"gpt-5.5","input":"hello"}`), false},
 		{"image_generation_code_request", []byte(`{"model":"gpt-5.5","input":"帮我写一个生成图片的 Python 脚本"}`), false},
-		// issue #304: 注入的 image_generation 工具但无 tool_choice / 无自然语言意图，
-		// 不应因工具单纯存在而强制 HTTP，普通请求继续走 WS。
+		// issue #304: an injected image_generation tool without tool_choice or natural-language intent
+		// must not force HTTP just because the tool is present; ordinary requests keep using WS.
 		{"injected_tool_without_intent", []byte(`{"model":"gpt-5.5","input":"hello","tools":[{"type":"image_generation"}]}`), false},
 		{"injected_tool_plain_chat", []byte(`{"model":"gpt-5.5","input":"解释一下这段报错","tools":[{"type":"image_generation","model":"gpt-image-2"},{"type":"function","name":"lookup"}]}`), false},
 	}
@@ -342,7 +342,7 @@ func TestRawResponsesBodyShouldForceHTTPForImageGeneration(t *testing.T) {
 }
 
 func TestStripResponsesImageGenerationToolRemovesInjectedTool(t *testing.T) {
-	// PrepareResponsesBody 默认给普通请求注入 image_generation 工具 + 桥接 instructions；WS 路径需全部剥离。
+	// PrepareResponsesBody injects the image_generation tool and bridge instructions into ordinary requests by default; the WS path must strip them all.
 	prepared, _ := PrepareResponsesBody([]byte(`{"model":"gpt-5.5","input":"hello"}`))
 	if !responsesBodyHasImageGenerationTool(prepared) {
 		t.Fatalf("setup: prepared body should contain injected image tool: %s", prepared)
@@ -392,7 +392,7 @@ func TestStripResponsesImageGenerationToolNoopWithoutImageTool(t *testing.T) {
 }
 
 func TestTranslateRequestDoesNotFlagPlainChatAsImageGeneration(t *testing.T) {
-	// Chat 入口用 codexBody 判定，TranslateRequest 不应注入图片工具，否则普通对话会被误判强制 HTTP。
+	// The Chat entry point judges with codexBody: TranslateRequest must not inject the image tool, otherwise ordinary conversations would be misjudged as forced HTTP.
 	codexBody, err := TranslateRequest([]byte(`{"model":"gpt-5.5","messages":[{"role":"user","content":"hello"}]}`))
 	if err != nil {
 		t.Fatalf("TranslateRequest: %v", err)
@@ -673,7 +673,7 @@ func TestCollectImagesResponseClassifiesNoOutputOutcomes(t *testing.T) {
 			statusCode: http.StatusBadGateway,
 			retry:      true,
 			code:       "image_generation_unavailable",
-			// issue #589：模型说了什么必须带回给调用方，不能只回一句固定文案。
+			// issue #589: what the model said must be carried back to the caller, not just a fixed sentence.
 			message: "Upstream did not execute image generation; model replied: Try describing the scene in more detail.",
 		},
 		{
@@ -753,7 +753,7 @@ func TestIsImageContentPolicyRefusalHeuristics(t *testing.T) {
 		{"I can't create images of real people, but I can draw a stylized character instead.", true},
 		{"Sorry, I cannot generate explicit or sexual content.", true},
 		{"这个请求不符合使用规范，无法生成。", true},
-		// 只有拒绝措辞、没有政策主题：更像账号缺图片工具，必须保持可换号重试。
+		// Only refusal wording without a policy topic: more like the account lacking the image tool, so it must stay retryable on another account.
 		{"I can't generate images right now.", false},
 		{"抱歉，我目前无法生成图片。", false},
 		{"Try describing the scene in more detail.", false},
@@ -1011,7 +1011,7 @@ func TestForwardImagesExplicitToolMissingCoolsModel(t *testing.T) {
 	}
 }
 
-// TestForwardImagesEmptyTerminalRetriesSameAccountOnce 验证空终态会在同一账号上重试一次。
+// TestForwardImagesEmptyTerminalRetriesSameAccountOnce verifies that an empty terminal state is retried once on the same account.
 func TestForwardImagesEmptyTerminalRetriesSameAccountOnce(t *testing.T) {
 	gin.SetMode(gin.TestMode)
 	previousRuntime := CurrentRuntimeSettings()
@@ -1066,8 +1066,8 @@ func TestForwardImagesEmptyTerminalRetriesSameAccountOnce(t *testing.T) {
 	}
 }
 
-// TestForwardImagesInitialKeepaliveCommitsSSEFailure 验证 Images 首个保活提交 SSE 后，
-// 本地失败会转换为协议错误事件。
+// TestForwardImagesInitialKeepaliveCommitsSSEFailure verifies that after Images' first keepalive commits SSE,
+// a local failure is converted into a protocol error event.
 func TestForwardImagesInitialKeepaliveCommitsSSEFailure(t *testing.T) {
 	gin.SetMode(gin.TestMode)
 	previousRuntime := CurrentRuntimeSettings()
@@ -1485,8 +1485,8 @@ func TestStreamImagesResponseDoesNotReplayAfterPartialImage(t *testing.T) {
 	}
 }
 
-// TestNextImageAccountHonorsNoAffinitySplit 生图也要守分流：无指纹的生图请求只能落到
-// 分流组，带指纹的必须避开分流组——否则 store 层放宽了授权，生图流量会两个方向都走反。
+// TestNextImageAccountHonorsNoAffinitySplit checks that image generation also honors the split: unfingerprinted image requests can only land on
+// the split group, while fingerprinted ones must avoid it; otherwise the store layer would loosen authorization and image traffic would go the wrong way in both directions.
 func TestNextImageAccountHonorsNoAffinitySplit(t *testing.T) {
 	store := auth.NewStore(nil, nil, &database.SystemSettings{MaxConcurrency: 2, TestConcurrency: 1, TestModel: "gpt-5.4"})
 	store.AddAccount(&auth.Account{DBID: 1, AccessToken: "primary-token", PlanType: "plus", GroupIDs: []int64{10}})
@@ -1574,7 +1574,7 @@ func TestNextImagesMainModelAfterUnsupported(t *testing.T) {
 		return []byte(`{"detail":"The '` + model + `' model is not supported when using Codex with a ChatGPT account."}`)
 	}
 
-	// 拒绝的是驱动主模型:换下一个候选。
+	// The rejection was for the driver main model: switch to the next candidate.
 	tried := make(map[string]bool)
 	next, ok := nextImagesMainModelAfterUnsupported(body, unsupported(defaultImagesMainModel), tried)
 	if !ok || next != imagesMainModelFallbacks[0] {
@@ -1584,7 +1584,7 @@ func TestNextImagesMainModelAfterUnsupported(t *testing.T) {
 		t.Fatalf("tried = %v, want rejected driver recorded", tried)
 	}
 
-	// 已试过的候选不再返回;候选耗尽后返回 false。
+	// A candidate already tried is not returned again; once candidates are exhausted, it returns false.
 	rewritten, _ := sjson.SetBytes(body, "model", next)
 	for range imagesMainModelFallbacks {
 		var more bool
@@ -1601,7 +1601,7 @@ func TestNextImagesMainModelAfterUnsupported(t *testing.T) {
 		t.Fatalf("expected candidates to be exhausted, tried=%v", tried)
 	}
 
-	// 拒绝的是生图模型或别的模型:不换驱动(交给既有的模型冷却逻辑)。
+	// The rejection was for the image model or another model: do not switch drivers (leave it to the existing model cooldown logic).
 	if _, ok := nextImagesMainModelAfterUnsupported(body, unsupported("gpt-image-2.5-flare"), make(map[string]bool)); ok {
 		t.Fatal("image model rejection must not trigger main-model fallback")
 	}

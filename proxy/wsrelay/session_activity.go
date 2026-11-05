@@ -2,7 +2,7 @@ package wsrelay
 
 import "time"
 
-// Touch 更新最后业务活跃时间，并永久标记该会话曾承载用户聊天。
+// Touch updates the last business-activity time, and permanently marks the session as having carried user chat.
 func (s *Session) Touch() {
 	s.touchActivity(true)
 }
@@ -26,7 +26,7 @@ func (s *Session) markUserContext() {
 	s.mu.Unlock()
 }
 
-// IsExpired 检查业务空闲超时；空白会话在普通模式下继续保持连接。
+// IsExpired checks the business idle timeout; a blank session keeps the connection in normal mode.
 func (s *Session) IsExpired() bool {
 	s.mu.RLock()
 	defer s.mu.RUnlock()

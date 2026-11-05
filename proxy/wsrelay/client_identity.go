@@ -13,7 +13,7 @@ func websocketClientIdentity(headers http.Header) string {
 	return hex.EncodeToString(hash[:])
 }
 
-// 握手头固定到连接；版本更新后须使用对应身份的连接池。
+// The handshake headers are pinned to the connection; after a version update, the matching identity's connection pool must be used.
 func websocketClientPoolKey(key string, headers http.Header) string {
 	if key == "" {
 		return key

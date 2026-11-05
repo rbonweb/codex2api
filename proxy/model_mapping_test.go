@@ -128,8 +128,8 @@ func TestApplyReasoningEffortModelAliasToBody(t *testing.T) {
 	}
 }
 
-// ultra 是预埋的思考强度档位（未来新模型可能支持），必须在 alias 配置与
-// 请求级 effort 归一化中原样透传，而不是被钳位回 high。
+// ultra is a pre-reserved reasoning effort tier (future models may support it). It must pass through unchanged
+// in both alias config and request-level effort normalization, instead of being clamped back to high.
 func TestApplyReasoningEffortModelAliasSupportsUltra(t *testing.T) {
 	store := auth.NewStore(nil, nil, nil)
 	store.SetReasoningEffortModels(`[{"model":"gpt-5.5","effort":"ultra"}]`)
@@ -354,12 +354,12 @@ func TestStripCompactModelSuffixFromBody(t *testing.T) {
 	if got := gjson.GetBytes(body, "model").String(); got != "gpt-5.4" {
 		t.Fatalf("body model = %q, want gpt-5.4; body=%s", got, body)
 	}
-	// input 等其它字段保持不变
+	// other fields such as input stay unchanged
 	if got := gjson.GetBytes(body, "input").String(); got != "hi" {
 		t.Fatalf("input should be preserved, got %q", got)
 	}
 
-	// 无后缀请求原样返回，不改写。
+	// a request without a suffix is returned as-is, unrewritten.
 	orig := []byte(`{"model":"gpt-5.4","input":"hi"}`)
 	body2, model2, matched2 := stripCompactModelSuffixFromBody(orig)
 	if matched2 {
@@ -373,8 +373,8 @@ func TestStripCompactModelSuffixFromBody(t *testing.T) {
 	}
 }
 
-// 合成的 -openai-compact 别名不得命中 "gpt-*"、"*" 之类通用规则，
-// 否则会压过基础名本应命中的精确规则（issue: PR #350 回归）。
+// Synthetic -openai-compact aliases must not match generic rules such as "gpt-*" or "*",
+// otherwise they would override the exact rule the base name should have matched (issue: PR #350 regression).
 func TestCompactSyntheticAliasDoesNotMatchGenericWildcardRules(t *testing.T) {
 	store := auth.NewStore(nil, nil, nil)
 	store.SetCodexModelMapping(`{"gpt-5.5":"model-a","gpt-*":"model-b"}`)
@@ -393,7 +393,7 @@ func TestCompactSyntheticAliasDoesNotMatchGenericWildcardRules(t *testing.T) {
 	}
 }
 
-// 显式针对 compact 别名的通配规则（*-openai-compact）仍可命中合成别名。
+// Wildcard rules that explicitly target the compact alias (*-openai-compact) can still match synthetic aliases.
 func TestCompactSyntheticAliasMatchesCompactScopedWildcardRule(t *testing.T) {
 	store := auth.NewStore(nil, nil, nil)
 	store.SetCodexModelMapping(`{"*-openai-compact":"gpt-5.5"}`)
@@ -409,9 +409,9 @@ func TestCompactSyntheticAliasMatchesCompactScopedWildcardRule(t *testing.T) {
 	}
 }
 
-// 映射目标携带 -openai-compact 后缀时须剥离后再写入请求体：
-// 上游 compact 端点只认真实模型名（issue: PR #350 回归，导致上游收到
-// gpt-5.6-sol-openai-compact 而压缩失败）。
+// When a mapping target carries the -openai-compact suffix, it must be stripped before being written into the request body:
+// the upstream compact endpoint only accepts real model names (issue: PR #350 regression, which caused the upstream to receive
+// gpt-5.6-sol-openai-compact and compression failed).
 func TestCompactMappingTargetSuffixIsStripped(t *testing.T) {
 	store := auth.NewStore(nil, nil, nil)
 	store.SetCodexModelMapping(`{"gpt-5.6-sol-openai-compact":"gpt-5.4-openai-compact"}`)

@@ -23,7 +23,7 @@ type pricingSpan struct {
 	left int
 }
 
-// parseOfficialPricingHTML 读取网页中的表格并验证合并单元格结构，不接受 Markdown。
+// parseOfficialPricingHTML reads the table from the page and validates its merged-cell structure. Markdown is not accepted.
 func parseOfficialPricingHTML(body []byte) ([]officialHTMLPricingTable, error) {
 	doc, err := html.Parse(bytes.NewReader(body))
 	if err != nil {
@@ -47,12 +47,12 @@ func parseOfficialPricingHTML(body []byte) ([]officialHTMLPricingTable, error) {
 		return nil, parseErr
 	}
 	if len(tables) == 0 {
-		return nil, fmt.Errorf("官方页面格式不符：未找到 HTML 价格表")
+		return nil, fmt.Errorf("official page format is unexpected: no HTML pricing table found")
 	}
 	return tables, nil
 }
 
-// pricingHTMLGrid 展开 rowspan/colspan，拒绝重叠、超限或缺列的数据。
+// pricingHTMLGrid expands rowspan/colspan and rejects data that overlaps, exceeds limits, or is missing columns.
 func pricingHTMLGrid(table *html.Node) ([][]*html.Node, error) {
 	var grid [][]*html.Node
 	var spans [maxPricingTableSpan]pricingSpan
@@ -75,7 +75,7 @@ func pricingHTMLGrid(table *html.Node) ([][]*html.Node, error) {
 	return grid, nil
 }
 
-// placePricingHTMLCells 在已有跨行单元格之外放置本行数据。
+// placePricingHTMLCells places this row's data around the cells that already span across rows.
 func placePricingHTMLCells(row []*html.Node, spans []pricingSpan, cells []*html.Node) error {
 	column := 0
 	for _, cell := range cells {
@@ -84,11 +84,11 @@ func placePricingHTMLCells(row []*html.Node, spans []pricingSpan, cells []*html.
 		}
 		width, height := pricingHTMLSpan(cell, "colspan"), pricingHTMLSpan(cell, "rowspan")
 		if width <= 0 || height <= 0 || column+width > len(row) {
-			return fmt.Errorf("官方价格表合并单元格格式不符")
+			return fmt.Errorf("official pricing table has malformed merged cells")
 		}
 		for i := column; i < column+width; i++ {
 			if row[i] != nil {
-				return fmt.Errorf("官方价格表单元格重叠")
+				return fmt.Errorf("official pricing table cells overlap")
 			}
 			row[i] = cell
 			spans[i] = pricingSpan{node: cell, left: height - 1}
@@ -98,7 +98,7 @@ func placePricingHTMLCells(row []*html.Node, spans []pricingSpan, cells []*html.
 	return nil
 }
 
-// pricingHTMLSpan 只接受有界的正整数跨度。
+// pricingHTMLSpan only accepts bounded positive integer spans.
 func pricingHTMLSpan(node *html.Node, key string) int {
 	value := pricingHTMLAttribute(node, key)
 	if value == "" {
@@ -111,7 +111,7 @@ func pricingHTMLSpan(node *html.Node, key string) int {
 	return span
 }
 
-// pricingHTMLRows 将多行表头合成为列名，保留每列的语义。
+// pricingHTMLRows merges multi-row headers into column names, keeping the meaning of each column.
 func pricingHTMLRows(grid [][]*html.Node) []officialPricingRow {
 	var header []string
 	var rows []officialPricingRow
@@ -136,7 +136,7 @@ func pricingHTMLRows(grid [][]*html.Node) []officialPricingRow {
 	return rows
 }
 
-// pricingHTMLHeaderRow 判断该行是否完全由表头单元格组成。
+// pricingHTMLHeaderRow reports whether the row consists entirely of header cells.
 func pricingHTMLHeaderRow(cells []*html.Node) bool {
 	for _, cell := range cells {
 		if cell == nil || cell.Data != "th" {
@@ -146,7 +146,7 @@ func pricingHTMLHeaderRow(cells []*html.Node) bool {
 	return len(cells) > 0
 }
 
-// mergePricingHTMLHeader 合并分组名称，去掉不影响价格语义的分组前缀。
+// mergePricingHTMLHeader merges group names and drops group prefixes that do not affect the pricing meaning.
 func mergePricingHTMLHeader(header []string, cells []*html.Node) []string {
 	if len(header) < len(cells) {
 		header = append(header, make([]string, len(cells)-len(header))...)
@@ -166,7 +166,7 @@ func mergePricingHTMLHeader(header []string, cells []*html.Node) []string {
 	return header
 }
 
-// pricingHTMLTier 读取最近的档位标记，避免 Batch/Ultrafast 价格覆盖标准价。
+// pricingHTMLTier reads the nearest tier marker so that Batch/Ultrafast prices do not overwrite standard prices.
 func pricingHTMLTier(node *html.Node) string {
 	for current := node; current != nil; current = current.Parent {
 		for _, key := range []string{"data-pricing-tier", "data-value"} {
@@ -180,7 +180,7 @@ func pricingHTMLTier(node *html.Node) string {
 	return "standard"
 }
 
-// pricingHTMLAttribute 返回 HTML 属性值。
+// pricingHTMLAttribute returns an HTML attribute value.
 func pricingHTMLAttribute(node *html.Node, key string) string {
 	for _, attribute := range node.Attr {
 		if attribute.Key == key {
@@ -190,7 +190,7 @@ func pricingHTMLAttribute(node *html.Node, key string) string {
 	return ""
 }
 
-// cell 只按明确列名取值，不通过列位置推测价格。
+// cell reads values only from explicitly named columns and never infers prices from column position.
 func (row officialPricingRow) cell(columns ...string) string {
 	for _, column := range columns {
 		if value, ok := row[column]; ok {
@@ -200,12 +200,12 @@ func (row officialPricingRow) cell(columns ...string) string {
 	return ""
 }
 
-// price 读取命名列中的美元单价；非法内容返回 NaN，由价格校验拒绝。
+// price reads the USD unit price from a named column; invalid content returns NaN, which price validation rejects.
 func (row officialPricingRow) price(columns ...string) float64 {
 	return parseOfficialPrice(row.cell(columns...))
 }
 
-// normalizeOfficialPricingHeader 统一旧式单行表头的大小写及空白。
+// normalizeOfficialPricingHeader normalizes the case and whitespace of old single-row headers.
 func normalizeOfficialPricingHeader(cells []string) []string {
 	header := make([]string, len(cells))
 	for i, cell := range cells {
@@ -214,7 +214,7 @@ func normalizeOfficialPricingHeader(cells []string) []string {
 	return header
 }
 
-// walkPricingHTML 遍历节点；回调返回 false 时不再访问该节点的子树。
+// walkPricingHTML walks the nodes; when the callback returns false, it does not visit that node's subtree.
 func walkPricingHTML(node *html.Node, visit func(*html.Node) bool) {
 	if !visit(node) {
 		return
@@ -224,7 +224,7 @@ func walkPricingHTML(node *html.Node, visit func(*html.Node) bool) {
 	}
 }
 
-// pricingHTMLTableRows 收集 HTML 表格的单元格，保留节点以区分模型链接和说明文字。
+// pricingHTMLTableRows collects the cells of an HTML table and keeps the nodes so that model links can be told apart from description text.
 func pricingHTMLTableRows(table *html.Node) [][]*html.Node {
 	var rows [][]*html.Node
 	walkPricingHTML(table, func(node *html.Node) bool {
@@ -243,7 +243,7 @@ func pricingHTMLTableRows(table *html.Node) [][]*html.Node {
 	return rows
 }
 
-// pricingHTMLModelText 优先读取模型链接，避免把描述及状态图标拼进模型 ID。
+// pricingHTMLModelText reads the model link first, so that the description and status icon are not concatenated into the model ID.
 func pricingHTMLModelText(cell *html.Node) string {
 	model := ""
 	walkPricingHTML(cell, func(node *html.Node) bool {
@@ -261,13 +261,13 @@ func pricingHTMLModelText(cell *html.Node) string {
 	return htmlNodeText(cell)
 }
 
-// isOfficialPricingModelLabel 只把模型链接当作名称，排除帮助链接和说明。
+// isOfficialPricingModelLabel only treats model links as names and excludes help links and descriptions.
 func isOfficialPricingModelLabel(label string) bool {
 	label = strings.ToLower(label)
 	return strings.HasPrefix(label, "gpt-")
 }
 
-// htmlNodeText 提取单元格的可见文本。
+// htmlNodeText extracts the visible text of a cell.
 func htmlNodeText(node *html.Node) string {
 	if node == nil {
 		return ""

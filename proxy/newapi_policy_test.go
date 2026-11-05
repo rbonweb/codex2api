@@ -189,10 +189,10 @@ func TestPromptFilterAuditCapturesOnlyVerifiedSignedUserIdentity(t *testing.T) {
 	c.Set(newAPIPolicyMetaContextKey, verifiedNewAPIPolicyContext{
 		Identity: newAPIIdentity{UserID: "73", ClientIP: "203.0.113.73", RequestID: "req-73"},
 		APIKeyID: 101, Platform: "gateway-a", MetaVerified: true,
-		Meta: newAPIPolicyMeta{UserName: "示例平台用户", UserEmail: "gateway-a@example.com", UserGroup: "vip"},
+		Meta: newAPIPolicyMeta{UserName: "example platform user", UserEmail: "gateway-a@example.com", UserGroup: "vip"},
 	})
 	got := handler.capturePromptFilterAuditContext(c)
-	if got.NewAPIPolicyStatus != "verified" || got.NewAPIUserID != "73" || got.NewAPIUserName != "示例平台用户" || got.NewAPIUserEmail != "gateway-a@example.com" || got.NewAPIUserGroup != "vip" {
+	if got.NewAPIPolicyStatus != "verified" || got.NewAPIUserID != "73" || got.NewAPIUserName != "example platform user" || got.NewAPIUserEmail != "gateway-a@example.com" || got.NewAPIUserGroup != "vip" {
 		t.Fatalf("verified identity audit = %+v", got)
 	}
 }
@@ -363,8 +363,8 @@ func TestWebSocketPolicyDecisionIDUsesLogicalFrameSequence(t *testing.T) {
 	}
 }
 
-// 上游 CYB 始终是权威封号信号;本地高置信度严重违规是否累计封号则由
-// LocalSevereStrikeEnabled 掌控。两条路径都要覆盖,任一策略回归都应被发现。
+// The upstream CYB is always the authoritative account-suspension signal; whether local high-confidence severe violations accumulate toward a suspension is
+// controlled by LocalSevereStrikeEnabled. Both paths must be covered, so a regression in either policy is caught.
 func TestUpstreamCYBStrikeAlwaysAndLocalSevereFollowsSwitch(t *testing.T) {
 	cfg := promptGuardTestConfig()
 	cfg.Advanced.Enforcement.CYBStrikeEnabled = true
@@ -401,13 +401,13 @@ func TestUpstreamCYBStrikeAlwaysAndLocalSevereFollowsSwitch(t *testing.T) {
 	disabled := cfg
 	disabled.Advanced.Enforcement.LocalSevereStrikeEnabled = false
 	if buildLocal(disabled).StrikeEligible {
-		t.Fatal("关闭 LocalSevereStrikeEnabled 后本地严重违规仍被判为可累计封号")
+		t.Fatal("after disabling LocalSevereStrikeEnabled, local severe violations were still judged as accumulating toward an account suspension")
 	}
 
 	enabled := cfg
 	enabled.Advanced.Enforcement.LocalSevereStrikeEnabled = true
 	if !buildLocal(enabled).StrikeEligible {
-		t.Fatal("开启 LocalSevereStrikeEnabled 后本地最高置信度严重违规未累计封号")
+		t.Fatal("after enabling LocalSevereStrikeEnabled, the highest-confidence local severe violations did not accumulate toward an account suspension")
 	}
 }
 
@@ -431,7 +431,7 @@ func TestUpstreamCyberPolicyStrikeRequiresExplicitCodex2APISwitch(t *testing.T) 
 	if got := c.Writer.Header().Get("X-Codex2API-Policy-Strike-Eligible"); got != "false" {
 		t.Fatalf("strike eligibility header = %q, want false", got)
 	}
-	if message := newAPIPolicyDecisionAPIError(metadata).Message; !strings.Contains(message, "再次触发可能会停用账号") {
+	if message := newAPIPolicyDecisionAPIError(metadata).Message; !strings.Contains(message, "triggering it again may deactivate the account") {
 		t.Fatalf("disabled CYB strike deterrence message = %q", message)
 	}
 }
@@ -914,9 +914,9 @@ func TestSignedPolicyMetaNormalizesUserIdentityText(t *testing.T) {
 	meta := newAPIPolicyMeta{
 		PlatformID: "gateway-a", Profile: promptfilter.GuardProfileBalanced, Mode: promptfilter.GuardModeEnforce,
 		Provider: string(promptfilter.ModelFamilyOpenAI), Protocol: string(promptfilter.ProtocolResponses),
-		UserName: "  示例平台用户  ", UserEmail: " user@example.com ", UserGroup: " vip ",
+		UserName: "  example platform user  ", UserEmail: " user@example.com ", UserGroup: " vip ",
 	}
-	if !normalizeVerifiedNewAPIPolicyMeta(&meta) || meta.UserName != "示例平台用户" || meta.UserEmail != "user@example.com" || meta.UserGroup != "vip" {
+	if !normalizeVerifiedNewAPIPolicyMeta(&meta) || meta.UserName != "example platform user" || meta.UserEmail != "user@example.com" || meta.UserGroup != "vip" {
 		t.Fatalf("identity metadata normalization = %+v", meta)
 	}
 	meta.UserName = "bad\nname"

@@ -108,7 +108,7 @@ func TestRemoveConnectionUsesEffectiveProxyKey(t *testing.T) {
 func TestAcquireConnectionReusesIdleConnectedConnection(t *testing.T) {
 	manager := NewManager()
 	t.Cleanup(manager.Stop)
-	// 测试环境无真实 WebSocket 连接，注入探活函数跳过 Ping
+	// The test environment has no real WebSocket connection; inject a probe function to skip the ping
 	manager.probeFunc = func(wc *WsConnection) bool { return true }
 
 	account := &auth.Account{DBID: 42}
@@ -655,7 +655,7 @@ func TestAcquireReusableConnectionSkipsBusySlot(t *testing.T) {
 	account := &auth.Account{DBID: 42}
 	wsURL := "wss://example.test/responses"
 	_, busySession := newTestSlotConnection(manager, account, wsURL, "cache-key#0")
-	busySession.AddPendingRequest("cache-key#0") // 占用 slot 0
+	busySession.AddPendingRequest("cache-key#0") // occupy slot 0
 	idleConn, _ := newTestSlotConnection(manager, account, wsURL, "cache-key#1")
 
 	got, pr, usedKey, err := manager.AcquireReusableConnection(context.Background(), account, wsURL, "cache-key", "stateless-xyz", 4, http.Header{}, "")
@@ -671,7 +671,7 @@ func TestAcquireReusableConnectionSkipsBusySlot(t *testing.T) {
 	got.session.RemovePendingRequest(pr.RequestID)
 }
 
-// ==================== 续链亲和(response_id → 连接绑定) ====================
+// ==================== Continuation affinity (response_id → connection binding) ====================
 
 func newBoundTestConn(t *testing.T, manager *Manager, accountID int64, sessionKey string) *WsConnection {
 	t.Helper()
@@ -702,12 +702,12 @@ func TestBindAndLookupResponseConn(t *testing.T) {
 		t.Fatalf("slotKey = %q, want base#0", slotKey)
 	}
 
-	// 账号不匹配 → miss(续链换号后不得复用别人账号的连接)
+	// Account mismatch → miss (after switching accounts for a continuation, another account's connection must not be reused)
 	if got, _ := manager.lookupResponseConn("resp_abc", 8, "key-A"); got != nil {
 		t.Fatal("lookup with wrong account must miss")
 	}
 
-	// 连接被移出池(销毁/重建) → miss
+	// Connection removed from the pool (destroyed/rebuilt) → miss
 	manager.connections.Delete(wc.PoolKey)
 	if got, _ := manager.lookupResponseConn("resp_abc", 7, "key-A"); got != nil {
 		t.Fatal("lookup after conn removed from pool must miss")
@@ -721,7 +721,7 @@ func TestLookupResponseConnRejectsRebuiltSlot(t *testing.T) {
 	wc := newBoundTestConn(t, manager, 7, "base#0")
 	manager.BindResponseConn("resp_old", wc, "base#0", 7, "key-A")
 
-	// 同 PoolKey 槽位被重建为新连接:旧绑定必须失效(指针校验)
+	// The same PoolKey slot was rebuilt as a new connection: the old binding must be invalid (pointer check)
 	replacement := &WsConnection{session: NewSession(7, manager), URL: wc.URL, PoolKey: wc.PoolKey}
 	replacement.SetState(StateConnected)
 	replacement.Touch()
@@ -754,7 +754,7 @@ func TestAcquirePreferredConnection(t *testing.T) {
 		t.Fatalf("PendingCount = %d, want 1", wc.session.PendingCount())
 	}
 
-	// 连接忙(已有在途请求)时不等待,直接回退常规路径
+	// When the connection is busy (has in-flight requests), do not wait; fall back directly to the regular path
 	got2, pr2, _ := manager.AcquirePreferredConnection("resp_chain", 7, "key-A")
 	if got2 != nil || pr2 != nil {
 		t.Fatal("busy preferred connection must not be acquired")
@@ -861,7 +861,7 @@ func TestLookupResponseConnIsolatesAPIKeys(t *testing.T) {
 	wc := newBoundTestConn(t, manager, 7, "base#0")
 	manager.BindResponseConn("resp_owned", wc, "base#0", 7, "key-A")
 
-	// 别的 API Key 拿着同一个 response_id 不得命中(防跨 Key 定向挤连接)
+	// Another API key holding the same response_id must not match (prevents cross-key targeting of connections)
 	if got, _ := manager.lookupResponseConn("resp_owned", 7, "key-B"); got != nil {
 		t.Fatal("lookup with different api key must miss")
 	}
@@ -873,9 +873,9 @@ func TestLookupResponseConnIsolatesAPIKeys(t *testing.T) {
 	}
 }
 
-// 上游对 WS upgrade 回 401 时，结构化握手错误必须原样穿透 AcquireConnection
-// 的传播链（不被二次包装），执行器才能把它还原成真实状态码的 HTTP 响应；
-// 否则 401 在使用日志里只会以 transport/598 出现且账号不触发 unauthorized 冷却。
+// When the upstream answers the WS upgrade with 401, the structured handshake error must pass through AcquireConnection
+// unchanged (not wrapped a second time) along the propagation chain, so the executor can restore it to an HTTP response with the real status code;
+// otherwise the 401 would only appear in the usage log as transport/598 and the account would not trigger the unauthorized cooldown.
 func TestAcquireConnectionDial401ReturnsTypedHandshakeError(t *testing.T) {
 	upstreamBody := `{"error":{"message":"Provided authentication token is expired.","type":"invalid_request_error","code":"token_expired"}}`
 	upstream := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
@@ -913,14 +913,14 @@ func TestAcquireConnectionDial401ReturnsTypedHandshakeError(t *testing.T) {
 		t.Fatalf("converted StatusCode = %d, want 401", resp.StatusCode)
 	}
 	got, _ := io.ReadAll(resp.Body)
-	// readHTTPErrorBody 会重排 JSON 键序，按字段断言。
+	// readHTTPErrorBody reorders JSON keys, so assert by field.
 	if !strings.Contains(string(got), `"code":"token_expired"`) || strings.Contains(string(got), "websocket handshake failed") {
 		t.Fatalf("converted body should be raw upstream json, got %q", got)
 	}
 }
 
-// 402(deactivated_workspace)与 401 同理:结构化握手错误穿透传播链后被还原成
-// 真实状态码响应,进入账号标错/换号链路,而不是以 transport/500 漏给下游。
+// 402 (deactivated_workspace) is the same as 401: after the structured handshake error passes through the propagation chain, it is restored to
+// an HTTP response with the real status code, entering the account-error marking / account-switch path, instead of leaking to downstream as transport/500.
 func TestAcquireConnectionDial402DeactivatedWorkspaceConverts(t *testing.T) {
 	upstream := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		w.Header().Set("Content-Type", "application/json")

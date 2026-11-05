@@ -17,7 +17,7 @@ func isOneShotPoolConn(wc *WsConnection) bool {
 	return wc != nil && wc.session != nil && proxy.IsStatelessWebsocketSessionID(wc.session.ID)
 }
 
-// 无绑定的一次性连接先回收，其余按业务使用时间排序。
+// Unbound one-off connections are reclaimed first; the rest are sorted by business use time.
 func sortIdleForEviction(idle []idleAccountConnection) {
 	sort.Slice(idle, func(i, j int) bool {
 		one, other := isOneShotPoolConn(idle[i].wc), isOneShotPoolConn(idle[j].wc)
@@ -50,7 +50,7 @@ func (m *Manager) hasLiveResponseBindingLocked(wc *WsConnection) bool {
 	return false
 }
 
-// 实体连接登记覆盖拨号、入池和摘池后的收尾，直到 socket 实际关闭。
+// The physical connection registration covers dialing, pool entry, and the cleanup after removal from the pool, until the socket is actually closed.
 type connectionCapacitySlot struct {
 	manager   *Manager
 	accountID int64
@@ -95,7 +95,7 @@ func (m *Manager) newCapacitySlotLocked(accountID int64) *connectionCapacitySlot
 	return slot
 }
 
-// 兼容已存在于池中的连接；生产拨号在永久 reader 启动前完成登记。
+// Compatible with connections already in the pool; production dialing completes registration before the permanent reader starts.
 func (m *Manager) adoptConnectionCapacity(wc *WsConnection) {
 	kind := connectionBudgetKind(wc)
 	m.capacityMu.Lock()
@@ -157,7 +157,7 @@ func (m *Manager) idleCapacityConnections(input connectionCapacityRequest) []idl
 	return idle
 }
 
-// 绑定检查与禁止晚到绑定原子完成，避免终态绑定和容量回收交错。
+// The binding check and the prohibition of late binding complete atomically, so terminal bindings and capacity reclamation do not interleave.
 func (m *Manager) discardUnboundIdleConnection(wc *WsConnection) {
 	m.respConnMu.Lock()
 	if wc.session.PendingCount() != 0 || m.hasLiveResponseBindingLocked(wc) {
@@ -190,7 +190,7 @@ func (m *Manager) reclaimConnectionCapacity(input connectionCapacityRequest) boo
 		}
 		m.discardUnboundIdleConnection(candidate.wc)
 	}
-	// 0 关闭空白保留池，但仍允许请求临时拨号；收尾时关闭连接。
+	// 0 disables the blank retention pool, but requests can still dial temporarily; the connection is closed during cleanup.
 	return input.limit == 0 || m.budgetConnectionCount(input)+input.extraPending+input.freeSlots <= input.limit
 }
 
@@ -208,7 +208,7 @@ func (m *Manager) trimIdleAccountConnections(accountID int64, limit int, protect
 	m.reclaimConnectionCapacity(input)
 }
 
-// 调用方持有账号锁；聊天拨号只登记实体连接，空白拨号仍检查原预算。
+// The caller holds the account lock; chat dials only register the physical connection, while blank dials still check the original budget.
 func (m *Manager) reserveAccountConnectionCapacity(input connectionCapacityRequest) *connectionCapacitySlot {
 	if !m.ensureAccountConnectionCapacity(input) {
 		return nil

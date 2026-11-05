@@ -38,22 +38,22 @@ import (
 )
 
 const (
-	// defaultImagesMainModel 是生图链路里驱动 image_generation 工具调用的主模型
-	// (图像本身由 tools[0].model 决定,主模型只负责发起工具调用,token 开销极小)。
-	// 2026-09 起 ChatGPT 账号的 Codex manifest 已不含 gpt-5.4-mini,上游对它直接回
+	// defaultImagesMainModel is the main model that drives the image_generation tool call in the image generation pipeline
+	// (the image itself is determined by tools[0].model; the main model only issues the tool call, so its token overhead is tiny).
+	// Since 2026-09, the Codex manifest for ChatGPT accounts no longer includes gpt-5.4-mini, and upstream responds to it directly with
 	// 400 "The 'gpt-5.4-mini' model is not supported when using Codex with a ChatGPT
-	// account",整条生图链路随之全断;free/plus/pro 三档 manifest 均含 gpt-5.6-luna,
-	// 故改用它。系统生图设置或 CODEX_IMAGES_MAIN_MODEL 可覆盖;上游再次下线时,
-	// imagesMainModelFallbacks 会在同一账号上按序换驱动重试,不会把 400 记到生图模型头上。
+	// account", which breaks the whole image generation pipeline; the free, plus and pro tier manifests all include gpt-5.6-luna,
+	// so it is used instead. The system image generation setting or CODEX_IMAGES_MAIN_MODEL can override it; when upstream goes offline again,
+	// imagesMainModelFallbacks retries on the same account with the next driver in order, and does not attribute the 400 to the image model.
 	defaultImagesMainModel = "gpt-5.6-luna"
 	defaultImagesToolModel = "gpt-image-2"
 
 	imageModel2KAlias = "gpt-image-2-2k"
 	imageModel4KAlias = "gpt-image-2-4k"
 
-	// imageModel2KSuffix / imageModel4KSuffix 是分辨率档位别名后缀:任意
-	// gpt-image-* 模型都可以带 -2k / -4k(如 gpt-image-2-4k),网关剥掉后缀
-	// 作为 tools[0].model 发上游,并按档位补默认尺寸与超分计划。
+	// imageModel2KSuffix / imageModel4KSuffix are the resolution tier alias suffixes: any
+	// gpt-image-* model can carry a -2k / -4k suffix (e.g. gpt-image-2-4k), and the gateway strips the suffix
+	// before sending it upstream as tools[0].model, and fills in the default size and upscale plan for the tier.
 	imageModel2KSuffix = "-2k"
 	imageModel4KSuffix = "-4k"
 
@@ -78,24 +78,24 @@ const (
 	maxImageAttempts = 5
 
 	// MaxImageEditInputCount caps the number of input images for edit requests.
-	// 与官方 Images API 对 gpt-image 系列的上限一致（16 张）；上游 responses
-	// 通道已实测可接受 16 张 input_image（issue #275）。
+	// Matches the official Images API limit for the gpt-image family (16 images); the upstream responses
+	// channel has been verified to accept 16 input_image items (issue #275).
 	MaxImageEditInputCount = 16
 
 	imageStreamConnectedComment = ": connected\n\n"
 
-	// imageCloudURLTTL 控制 response_format=url 时返回的预签名云直链有效期。
+	// imageCloudURLTTL controls the validity period of the presigned cloud direct link returned when response_format=url.
 	imageCloudURLTTL = time.Hour
 
 	imageOAuthUnavailableCooldown = 30 * time.Minute
 	imageModelTextMaxBytes        = 600
 )
 
-// imagesMainModelFallbacks 是驱动主模型被上游按"不支持"拒绝时的候选序列,
-// 按 free/plus/pro 三档 manifest 的交集从便宜到贵排列。
+// imagesMainModelFallbacks is the candidate sequence used when the driver main model is rejected upstream as "unsupported",
+// ordered from cheapest to most expensive, based on the intersection of the free/plus/pro tier manifests.
 var imagesMainModelFallbacks = []string{"gpt-5.5", "gpt-5.6-terra", "gpt-5.6-sol", "gpt-6-astra"}
 
-// ImagesDefaultMainModel 返回未配置系统生图设置时的文本驱动，供后台展示。
+// ImagesDefaultMainModel returns the text driver used when no system image generation setting is configured, for display in the admin panel.
 func ImagesDefaultMainModel() string {
 	if value := strings.TrimSpace(os.Getenv(imagesMainModelEnv)); value != "" {
 		return value
@@ -103,21 +103,21 @@ func ImagesDefaultMainModel() string {
 	return defaultImagesMainModel
 }
 
-// NormalizeImagesMainModel 校验文本驱动名称；空值表示使用部署默认值。
-// 允许尚未同步到模型目录的名称，以便使用中转或新发布的文本模型。
+// NormalizeImagesMainModel validates the text driver name; an empty value means the deployment default is used.
+// Names not yet synced to the model catalog are allowed, so relay or newly released text models can be used.
 func NormalizeImagesMainModel(value string) (string, error) {
 	value = strings.TrimSpace(value)
 	if len(value) > 128 || strings.IndexFunc(value, func(r rune) bool { return unicode.IsSpace(r) || unicode.IsControl(r) }) >= 0 {
-		return "", fmt.Errorf("codex_images_main_model 必须是不超过 128 字节且不含空白的模型名称")
+		return "", fmt.Errorf("codex_images_main_model must be a model name of at most 128 bytes with no whitespace")
 	}
 	if isImageOnlyModel(value) {
-		return "", fmt.Errorf("codex_images_main_model 必须是文本模型，不能使用图像模型")
+		return "", fmt.Errorf("codex_images_main_model must be a text model, not an image model")
 	}
 	return value, nil
 }
 
-// imagesMainModel 在每次构造生图请求时读取配置，后台保存后立即生效。
-// 优先级：系统设置 > 环境变量 > 内置默认值。
+// imagesMainModel reads the configuration each time an image generation request is built, so it takes effect as soon as the admin panel saves it.
+// Priority: system setting > environment variable > built-in default.
 func imagesMainModel() string {
 	if value := CurrentRuntimeSettings().CodexImagesMainModel; value != "" {
 		return value
@@ -125,8 +125,8 @@ func imagesMainModel() string {
 	return ImagesDefaultMainModel()
 }
 
-// imagesMainModelCandidates 返回驱动主模型的完整候选序列(首选 + 回退),去重且
-// 排除生图模型本身。
+// imagesMainModelCandidates returns the full candidate sequence for the driver main model (preferred + fallbacks), deduplicated and
+// excluding the image generation model itself.
 func imagesMainModelCandidates() []string {
 	seen := make(map[string]bool, len(imagesMainModelFallbacks)+1)
 	candidates := make([]string, 0, len(imagesMainModelFallbacks)+1)
@@ -141,9 +141,9 @@ func imagesMainModelCandidates() []string {
 	return candidates
 }
 
-// nextImagesMainModelAfterUnsupported 判断上游 400 是否在拒绝当前驱动主模型
-// (而不是生图模型或请求内容),是则返回下一个未试过的候选驱动。tried 记录本次请求
-// 已被拒绝的驱动,由调用方跨重试保存。
+// nextImagesMainModelAfterUnsupported determines whether an upstream 400 is rejecting the current driver main model
+// (rather than the image model or the request content), and if so returns the next untried candidate driver. tried records the
+// drivers already rejected in this request; the caller keeps it across retries.
 func nextImagesMainModelAfterUnsupported(responsesBody, errBody []byte, tried map[string]bool) (string, bool) {
 	current := strings.TrimSpace(gjson.GetBytes(responsesBody, "model").String())
 	rejected := codexUnsupportedModelFromBody(errBody)
@@ -444,14 +444,14 @@ func isImageOnlyModel(model string) bool {
 	return strings.HasPrefix(strings.ToLower(strings.TrimSpace(model)), "gpt-image-")
 }
 
-// IsGPTImageModel 判断模型名是否属于 Codex 生图模型族(gpt-image-*),含 -2k/-4k
-// 档位别名与带日期的快照名。供 admin 生图台等外部包复用同一准入判定。
+// IsGPTImageModel reports whether a model name belongs to the Codex image generation family (gpt-image-*), including the -2k/-4k
+// resolution tier aliases and dated snapshot names. External packages such as the admin image studio reuse the same admission check.
 func IsGPTImageModel(model string) bool {
 	return isImageOnlyModel(model)
 }
 
-// splitImageModelSizeAlias 把 gpt-image-*-2k / -4k 拆成基础模型与档位后缀;
-// 无后缀时返回原模型与空串。
+// splitImageModelSizeAlias splits gpt-image-*-2k / -4k into the base model and the tier suffix;
+// without a suffix, it returns the original model and an empty string.
 func splitImageModelSizeAlias(model string) (string, string) {
 	model = strings.TrimSpace(model)
 	lower := strings.ToLower(model)
@@ -466,8 +466,8 @@ func splitImageModelSizeAlias(model string) (string, string) {
 	return model, ""
 }
 
-// isGPTImage2FamilyModel 判断是否 gpt-image-2 世代(含 2.5 flare/sunburst 及其快照名):
-// 这一族共用 1K/2K/4K 尺寸档位与提示词方向推断;更早或未知型号不补默认尺寸。
+// isGPTImage2FamilyModel reports whether a model belongs to the gpt-image-2 generation (including 2.5 flare/sunburst and their snapshot names):
+// this family shares the 1K/2K/4K size tiers and prompt-direction inference; older or unknown models do not get a default size filled in.
 func isGPTImage2FamilyModel(model string) bool {
 	return strings.HasPrefix(strings.ToLower(strings.TrimSpace(model)), "gpt-image-2")
 }
@@ -493,7 +493,7 @@ func normalizeImageToolModelForPrompt(model string, prompt string) (string, stri
 		base = defaultImagesToolModel
 	}
 	if !isGPTImage2FamilyModel(base) {
-		// gpt-image-1.5 等更早型号或未知名字:原样透传,尺寸交给上游默认。
+		// gpt-image-1.5 and other older models or unknown names: passed through as-is, with the size left to the upstream default.
 		return model, ""
 	}
 	switch tier {
@@ -702,19 +702,19 @@ func responsesBodyRequestsImageGeneration(body []byte) bool {
 	return false
 }
 
-// rawResponsesBodyShouldForceHTTPForImageGeneration 判断请求是否"真的要生图"，
-// 从而必须改走 HTTP 上游——WebSocket 上游传输大体积图片数据会卡死（issue #220）。
+// rawResponsesBodyShouldForceHTTPForImageGeneration determines whether a request "really wants image generation",
+// and so must switch to the HTTP upstream, because the WebSocket upstream hangs when it carries large image data (issue #220).
 //
-// 只在"真实生图意图"时强制 HTTP：image-only 模型、tool_choice=image_generation、
-// 顶层图片选项字段（responsesBodyRequestsImageGeneration），或 prompt 中的自然语言
-// 生图意图（issue #288）。它刻意**不**因 tools[] 里单纯存在 image_generation 工具而
-// 触发：客户端把生图工具无差别注入到每个请求时（issue #304），否则会把普通请求也全部
-// 打到 HTTP、丢掉 WebSocket。这类"注入但未使用"的工具改由 WS 路径上的
-// stripResponsesImageGenerationTool 剥离。
+// It forces HTTP only on "real image generation intent": image-only models, tool_choice=image_generation,
+// top-level image option fields (responsesBodyRequestsImageGeneration), or the natural-language
+// image generation intent in the prompt (issue #288). It deliberately does **not** force HTTP merely because an image_generation tool is present in tools[]:
+// that would be triggered whenever clients inject the tool indiscriminately into every request (issue #304), sending all ordinary requests too
+// to HTTP and dropping the WebSocket. Such "injected but unused" tools are instead removed on the WS path by
+// stripResponsesImageGenerationTool.
 //
-// /v1/responses 路径须传入下游 raw body（PrepareResponsesBody 注入默认工具之前）；
-// chat 路径传入翻译后的 Codex body（TranslateRequest 不会自动注入图片工具）。两者都
-// 不应含自动注入的 tool_choice=image_generation，否则普通请求会被误判。
+// The /v1/responses path must pass the downstream raw body (before PrepareResponsesBody injects the default tools);
+// the chat path passes the translated Codex body (TranslateRequest does not inject the image tool automatically). Neither of them
+// should contain an automatically injected tool_choice=image_generation, otherwise ordinary requests would be misjudged.
 func rawResponsesBodyShouldForceHTTPForImageGeneration(body []byte) bool {
 	return responsesBodyRequestsImageGeneration(body) || responsesBodyHasNaturalImageGenerationIntent(body)
 }
@@ -922,22 +922,22 @@ var imageIntentPositivePhrases = []string{
 	"make this image",
 }
 
-// stripResponsesImageGenerationTool 移除请求体中的 image_generation 工具及指向它的
-// tool_choice。仅在 WebSocket 上游模式下使用：此时 body 中的 image_generation 工具
-// 要么是 PrepareResponsesBody 自动注入的，要么是客户端无差别注入的（issue #304）——
-// 两者都未表达真实生图意图（真实意图已被 rawResponsesBodyShouldForceHTTPForImageGeneration
-// 判定为强制 HTTP，不会走到这里）。移除后可防止模型自主调用图片工具产生大体积数据导致
-// WS 流卡死（issue #220）。
+// stripResponsesImageGenerationTool removes the image_generation tool from the request body, along with the
+// tool_choice that points to it. It is used only in WebSocket upstream mode: there the image_generation tool in the body
+// is either auto-injected by PrepareResponsesBody or indiscriminately injected by the client (issue #304);
+// neither expresses real image generation intent (real intent has already been judged by rawResponsesBodyShouldForceHTTPForImageGeneration
+// to force HTTP, so it never reaches here). Removing it prevents the model from invoking the image tool on its own and producing large data that hangs the
+// WS stream (issue #220).
 //
-// 它是 stripResponsesImageGenerationCapabilities 的别名（后者是能力剥离的完整实现，
-// 额外覆盖 namespace image_gen 与 Responses Lite 内嵌声明）；WS 路径沿用此名保持语义。
+// It is an alias of stripResponsesImageGenerationCapabilities (the full implementation of capability stripping,
+// additionally covering the namespace image_gen and the Responses Lite inline declarations); the WS path keeps this name to preserve semantics.
 func stripResponsesImageGenerationTool(body []byte) []byte {
 	return stripResponsesImageGenerationCapabilities(body)
 }
 
-// stripImageGenerationToolsFromArray 从工具数组里剔除图片能力声明：扁平的
-// {"type":"image_generation"} 与 namespace 形式 {"type":"namespace","name":"image_gen"}。
-// 返回保留下来的工具及是否发生过移除。
+// stripImageGenerationToolsFromArray removes image capability declarations from the tools array: the flat
+// {"type":"image_generation"} and the namespace form {"type":"namespace","name":"image_gen"}.
+// It returns the kept tools and whether any were removed.
 func stripImageGenerationToolsFromArray(tools []gjson.Result) ([]interface{}, bool) {
 	kept := make([]interface{}, 0, len(tools))
 	removed := false
@@ -956,17 +956,17 @@ func stripImageGenerationToolsFromArray(tools []gjson.Result) ([]interface{}, bo
 	return kept, removed
 }
 
-// stripResponsesImageGenerationCapabilities 剥离请求体里的 Codex 图片工具能力声明，
-// 保留 shell/function/apply_patch/MCP/web search 等其他工具，把请求当作普通文本请求
-// 继续转发（issue #411 的 strip 策略；同时也是 WS 防大体积卡死路径的实现）。覆盖：
-//  1. 顶层 tools[] 移除 {"type":"image_generation"} 与 namespace {"name":"image_gen"}。
-//  2. Responses Lite 的 input[].additional_tools.tools[] 做同样过滤；若过滤后该载体
-//     工具列表为空则移除整个 additional_tools 项。
-//  3. 仅当 tool_choice 明确指向 image_generation / image_gen 时删除它；"auto" 及其他
-//     工具选择保持不变。
-//  4. 清理网关自己追加的图片桥接 instructions，保留用户自带的 instructions 内容。
+// stripResponsesImageGenerationCapabilities strips the Codex image tool capability declarations from the request body,
+// keeps other tools such as shell/function/apply_patch/MCP/web search, and keeps forwarding the request as an ordinary text request
+// continuing to forward it (the strip strategy for issue #411; it is also the WS-path implementation that prevents large-body hangs). It covers:
+//  1. At the top level of tools[], remove {"type":"image_generation"} and the namespace {"name":"image_gen"}.
+//  2. Apply the same filtering to input[].additional_tools.tools[] in Responses Lite; if the carrier's
+//     tool list is then empty, remove the whole additional_tools item.
+//  3. Delete tool_choice only when it explicitly points to image_generation / image_gen; "auto" and other
+//     tool choices stay unchanged.
+//  4. Clean up the image bridge instructions the gateway itself appended, and keep the user's own instructions content.
 func stripResponsesImageGenerationCapabilities(body []byte) []byte {
-	// 1. 顶层 tools[]
+	// 1. top-level tools[]
 	if tools := gjson.GetBytes(body, "tools"); tools.Exists() && tools.IsArray() {
 		if kept, removed := stripImageGenerationToolsFromArray(tools.Array()); removed {
 			if len(kept) == 0 {
@@ -981,7 +981,7 @@ func stripResponsesImageGenerationCapabilities(body []byte) []byte {
 	// items stay opaque, including when a different carrier must be rewritten.
 	body = stripResponsesInputImageTools(body)
 
-	// 3. tool_choice：仅删显式指向图片工具的选择
+	// 3. tool_choice: delete only the choice that explicitly points to the image tool
 	if choice := gjson.GetBytes(body, "tool_choice"); choice.Exists() {
 		var target string
 		if choice.Type == gjson.String {
@@ -997,7 +997,7 @@ func stripResponsesImageGenerationCapabilities(body []byte) []byte {
 		}
 	}
 
-	// 4. 桥接 instructions（网关注入的引导文案）
+	// 4. bridge instructions (the guidance text injected by the gateway)
 	if instructions := gjson.GetBytes(body, "instructions").String(); strings.Contains(instructions, codexImageGenerationBridgeMarker) {
 		cleaned := strings.ReplaceAll(instructions, "\n\n"+codexImageGenerationBridgeText, "")
 		cleaned = strings.ReplaceAll(cleaned, codexImageGenerationBridgeText, "")
@@ -1086,7 +1086,7 @@ func validateImagesModel(model string) error {
 	return nil
 }
 
-// mediaOnlyModelEndpoints 返回媒体专用模型对应的下游端点提示文案。
+// mediaOnlyModelEndpoints returns the downstream endpoint hint text for media-only models.
 func mediaOnlyModelEndpoints(model string) string {
 	return "/v1/images/generations and /v1/images/edits"
 }
@@ -1562,7 +1562,7 @@ func buildImagesResponsesRequest(prompt string, images []string, toolJSON []byte
 	return req
 }
 
-// imageCapableAccountFilter 生图上游目前只有 Codex 官方账号支持。
+// imageCapableAccountFilter: the image generation upstream currently supports only official Codex accounts.
 func imageCapableAccountFilter(account *auth.Account) bool {
 	return account != nil
 }
@@ -1574,10 +1574,10 @@ func imagePreferredAccountFilter(account *auth.Account) bool {
 	return auth.IsPlusOrHigherPlan(account.GetPlanType())
 }
 
-// nextImageAccount 先在 plus 及以上套餐的账号里挑，挑不到再放开到全部账号。
-// 两层都要过 scope 预算闸门（issue #439），否则回退层会绕过预算限制。
-// 无指纹分流同样要覆盖两层：否则生图流量既能落到分流组账号上，无指纹的生图请求
-// 又不会被关进分流组，两个方向都跟配置意图相反。
+// nextImageAccount first picks from accounts on plus-and-above plans, and only falls back to all accounts when none is found.
+// Both layers must pass the scope budget gate (issue #439); otherwise the fallback layer would bypass the budget limit.
+// Unfingerprinted routing must cover both layers too: otherwise image traffic can land on split-group accounts, and unfingerprinted image requests
+// are not confined to the split group either, so both directions go against the configured intent.
 func (h *Handler) nextImageAccount(c *gin.Context, apiKeyID int64, exclude map[int64]bool, model string, identity requestSessionIdentity) (*auth.Account, string) {
 	ctx := context.Background()
 	if c != nil && c.Request != nil {
@@ -1593,7 +1593,7 @@ func (h *Handler) nextImageAccount(c *gin.Context, apiKeyID int64, exclude map[i
 	return h.nextAccountForSessionWithFilter("", apiKeyID, exclude, h.applyScopeBudgetFilter(c, fallbackFilter))
 }
 
-// forwardImagesRequest 执行 Images 请求的账号调度、上游重试、响应聚合和下游输出。
+// forwardImagesRequest runs account scheduling, upstream retries, response aggregation and downstream output for an Images request.
 func (h *Handler) forwardImagesRequest(c *gin.Context, inboundEndpoint, requestModel, logModel, logEffectiveModel string, responsesBody []byte, responseFormat, streamPrefix string, stream bool) {
 	if strings.TrimSpace(logModel) == "" {
 		logModel = requestModel
@@ -1605,7 +1605,7 @@ func (h *Handler) forwardImagesRequest(c *gin.Context, inboundEndpoint, requestM
 
 	apiKeyID := requestAPIKeyID(c)
 	sessionIdentity := resolveRequestSessionIdentity(c.Request.Header, responsesBody)
-	// scope 并发位在选中账号后才能占，请求退出时统一释放（issue #439 v2）。
+	// The scope concurrency slot can only be taken after an account is selected, and is released uniformly when the request exits (issue #439 v2).
 	defer h.ReleaseAPIKeyScopeConcurrency(c)
 	continuousRetryPolicy := continuousRetryPolicyForCall(nil)
 	rememberContinuousRetryPolicyForRequest(c, continuousRetryPolicy)
@@ -1627,12 +1627,12 @@ func (h *Handler) forwardImagesRequest(c *gin.Context, inboundEndpoint, requestM
 	continuousRetryActive := false
 	var sameAccountRetryID int64
 	sameAccountEmptyRetried := make(map[int64]bool)
-	// 驱动主模型被上游拒绝("The 'X' model is not supported ...")时换下一个候选驱动
-	// 在同一账号上重试;记录已拒绝的驱动避免绕圈。
+	// When upstream rejects the driver main model ("The 'X' model is not supported ..."), switch to the next candidate driver
+	// retry on the same account; record the rejected drivers to avoid going in circles.
 	rejectedMainModels := make(map[string]bool)
 
-	// 仅在 response_format=url 且配置了云存储时启用：上传图片到对象存储、
-	// 登记进图库并返回预签名直链。否则 urlFor 为 nil，沿用 base64/data URL。
+	// Enabled only when response_format=url and cloud storage is configured: upload the image to object storage,
+	// register it in the gallery and return the presigned direct link. Otherwise urlFor is nil, and base64/data URL is used as before.
 	persister := h.newImageGalleryPersister(c, responseFormat, requestModel, responsesBody)
 	var urlFor imageURLBuilder
 	if persister != nil {
@@ -1820,11 +1820,11 @@ func (h *Handler) forwardImagesRequest(c *gin.Context, inboundEndpoint, requestM
 			h.store.Release(account)
 			logUpstreamError(inboundEndpoint, resp.StatusCode, logModel, account.ID(), errBody)
 			if resp.StatusCode == http.StatusBadRequest {
-				// 400 拒绝的是驱动主模型而非生图模型:不能按 (账号, 生图模型) 冷却——那会把
-				// 唯一能生图的账号整体拉黑 30 分钟;换下一个候选驱动在同一账号上重试。
+				// 400 rejects the driver main model rather than the image model, so it must not be cooled down per (account, image model): doing so would
+				// blacklist the only image-capable account as a whole for 30 minutes; instead switch to the next candidate driver and retry on the same account.
 				if nextMainModel, ok := nextImagesMainModelAfterUnsupported(responsesBody, errBody, rejectedMainModels); ok {
 					rejectedMainModel := gjson.GetBytes(responsesBody, "model").String()
-					log.Printf("账号 %d (plan=%s) 生图驱动模型 %s 被上游拒绝，改用 %s 重试（可通过 %s 覆盖默认驱动）", account.ID(), account.GetPlanType(), rejectedMainModel, nextMainModel, imagesMainModelEnv)
+					log.Printf("account %d (plan=%s) image driver model %s was rejected upstream, retrying with %s (the default driver can be overridden via %s)", account.ID(), account.GetPlanType(), rejectedMainModel, nextMainModel, imagesMainModelEnv)
 					if rewritten, err := sjson.SetBytes(responsesBody, "model", nextMainModel); err == nil {
 						responsesBody = rewritten
 					}
@@ -2321,11 +2321,11 @@ func imageStreamRetryLimit(err error, generalLimit int, policies ...database.Con
 	return generalLimit
 }
 
-// imageUpscaleTimeout 是单张图超分(含并发闸排队)的耗时上限,对齐生图台。
+// imageUpscaleTimeout is the time limit for upscaling a single image (including queueing at the concurrency gate), aligned with the image studio.
 const imageUpscaleTimeout = 3 * time.Minute
 
-// imageUpscalePlan 记录请求解析阶段确定的物理目标尺寸:-2k/-4k 别名承诺的是
-// 最终输出分辨率,上游只按 quality 返回基础图,差额由网关超分补齐(issue #477)。
+// imageUpscalePlan records the physical target size determined at request parsing: the -2k/-4k alias promises
+// the final output resolution, while upstream returns only the base image per quality; the difference is filled in by gateway upscaling (issue #477).
 type imageUpscalePlan struct {
 	Scale         string
 	RequestedSize string
@@ -2461,8 +2461,8 @@ func imageStrictSizeField(value gjson.Result) string {
 	return ""
 }
 
-// imageUpscalePlanForRequest 只对 -2k/-4k 别名生成计划;RequestedSize 取 tool
-// 里最终生效的 size(用户显式值优先,否则别名默认),它是权威目标尺寸。
+// imageUpscalePlanForRequest generates a plan only for the -2k/-4k aliases; RequestedSize takes the size that finally takes effect in the tool
+// (an explicit user value takes priority, otherwise the alias default); it is the authoritative target size.
 func imageUpscalePlanForRequest(requestModel string, responsesBody []byte) imageUpscalePlan {
 	var scale string
 	switch _, tier := splitImageModelSizeAlias(requestModel); tier {
@@ -2480,8 +2480,8 @@ func imageUpscalePlanForRequest(requestModel string, responsesBody []byte) image
 	return imageUpscalePlan{Scale: scale, RequestedSize: requestedSize}
 }
 
-// applyImageUpscalePlan 对最终返回的每张图执行超分;失败时降级返回上游基础
-// 分辨率而不是让整个请求失败(图本身仍可用)。partial 预览帧不经过这里。
+// applyImageUpscalePlan upscales every final returned image; on failure it degrades to returning the upstream base resolution
+// instead of failing the whole request (the image itself is still usable). Partial preview frames do not go through here.
 func applyImageUpscalePlan(ctx context.Context, plan imageUpscalePlan, results []imageCallResult) []imageCallResult {
 	if !plan.enabled() {
 		return results
@@ -2495,7 +2495,7 @@ func applyImageUpscalePlan(ctx context.Context, plan imageUpscalePlan, results [
 		upscaled, err := imageupscale.EnsureSizeWithFit(upscaleCtx, data, plan.Scale, plan.RequestedSize, plan.Fit)
 		cancel()
 		if err != nil {
-			log.Printf("images 超分失败,按上游基础分辨率返回 (scale=%s size=%s backend=%s): %v",
+			log.Printf("images upscale failed, returning the upstream base resolution (scale=%s size=%s backend=%s): %v",
 				plan.Scale, plan.RequestedSize, imageupscale.Backend(), err)
 			continue
 		}
@@ -2512,7 +2512,7 @@ func applyImageUpscalePlan(ctx context.Context, plan imageUpscalePlan, results [
 	return results
 }
 
-// applyImageUpscalePlanWithKeepalive 在图片超分期间保持下游连接有协议流量。
+// applyImageUpscalePlanWithKeepalive keeps protocol traffic flowing on the downstream connection during image upscaling.
 func applyImageUpscalePlanWithKeepalive(ctx context.Context, plan imageUpscalePlan, results []imageCallResult) ([]imageCallResult, error) {
 	if p := pipelineFromContext(ctx); p != nil && p.Output != nil {
 		return results, nil
@@ -2613,11 +2613,11 @@ func collectImageModelText(builder *strings.Builder, payload []byte) {
 	}
 }
 
-// imageModelReplyPreviewMaxRunes 限制回填进错误信息/用量日志的模型文本长度。
+// imageModelReplyPreviewMaxRunes limits the length of model text backfilled into error messages and usage logs.
 const imageModelReplyPreviewMaxRunes = 240
 
-// imageModelReplyPreview 把模型的文本回复压成一行可安全外发的摘要：折叠空白、
-// 脱敏、按 rune 截断（不能按字节截，中文回复会被切成乱码）。
+// imageModelReplyPreview compresses the model's text reply into a one-line summary that is safe to send out: it collapses whitespace,
+// redacts sensitive content, and truncates by rune (not by byte, otherwise Chinese replies would be cut into garbled text).
 func imageModelReplyPreview(text string) string {
 	text = strings.Join(strings.Fields(text), " ")
 	if text == "" {
@@ -2639,16 +2639,16 @@ func imageTextContainsAny(lower string, markers ...string) bool {
 	return false
 }
 
-// isImageContentPolicyRefusal 判断"有文本、无图片"的终态是不是模型的内容拒绝。
-// 两类证据任一成立即判定：
-//  1. 文本点名了审核/安全/内容政策等术语。
-//  2. 自然语言拒绝：既有"无法/不能"类拒绝措辞，又点名了政策类主题（真实人物、
-//     版权、成人内容等）。模型用中文回复时几乎不会出现第 1 类术语，这种拒绝
-//     以前会被当成上游故障换号重试，最后回一句看不出原因的 502（issue #589
-//     里三个账号连环 502 很可能就是这样来的）。
+// isImageContentPolicyRefusal reports whether a "has text, no image" terminal state is the model's content refusal.
+// Either of two kinds of evidence is enough:
+//  1. The text names a term such as review, safety or content policy.
+//  2. A natural-language refusal: it has both a "can't / cannot" style refusal wording and names a policy-type topic (real people,
+//     copyright, adult content, etc.). When the model replies in Chinese, the first kind of term almost never appears, and such a refusal
+//     used to be treated as an upstream failure and retried on another account, ending in a 502 with no visible reason (issue #589
+//     where three accounts returned 502 in a row, very likely from exactly this).
 //
-// 只有拒绝措辞、没有主题的文本（"I can't generate images right now"）不算：那更
-// 像账号缺图片工具的能力缺失，应当换号重试而不是按用户错误终止。
+// Wording that is only a refusal with no topic ("I can't generate images right now") does not count: that looks more like the account
+// lacking the image tool capability, and it should be retried on another account rather than ended as a user error.
 func isImageContentPolicyRefusal(text string) bool {
 	lower := strings.ToLower(text)
 	if imageTextContainsAny(lower,
@@ -2698,8 +2698,8 @@ func classifyImageNoOutput(text string) error {
 			message:    imageModelReplyPreview(text),
 		}
 	}
-	// 把模型说了什么带回给调用方和用量日志。以前这里只回一句固定文案，用户和
-	// 运维都看不到上游到底为什么没出图（issue #589）。
+	// Carry what the model said back to the caller and the usage log. Previously this returned only a fixed sentence, so neither the user nor
+	// operators could see why upstream produced no image at all (issue #589).
 	message := "Upstream did not execute image generation"
 	if preview := imageModelReplyPreview(text); preview != "" {
 		message += "; model replied: " + preview
@@ -2820,14 +2820,14 @@ func markImageModelUnavailable(store *auth.Store, account *auth.Account, model s
 	markImageModelCapabilityUnavailable(store, account, model)
 }
 
-// logImageNoOutputOutcome 把"上游收到请求却没出图"的终态连同模型文本打进服务日志，
-// 让运维不用翻用量日志也能看到上游给出的理由（issue #589）。
+// logImageNoOutputOutcome writes the terminal state "upstream received the request but produced no image" to the service log, together with the model text,
+// so operators can see the reason upstream gave without digging through the usage log (issue #589).
 func logImageNoOutputOutcome(account *auth.Account, inboundEndpoint, model string, err error) {
 	outcome := imageNoOutputDetails(err)
 	if outcome == nil || account == nil {
 		return
 	}
-	log.Printf("%s 上游未产出图片 (account=%d model=%s kind=%s status=%d): %s",
+	log.Printf("%s upstream produced no image (account=%d model=%s kind=%s status=%d): %s",
 		inboundEndpoint, account.ID(), model, outcome.kind, outcome.statusCode, outcome.Error())
 }
 
@@ -2869,7 +2869,7 @@ func markImageModelCapabilityUnavailable(store *auth.Store, account *auth.Accoun
 	}
 	cooldown := store.MarkModelCooldown(account, model, imageOAuthUnavailableCooldown, "openai_images_oauth_tool_unavailable")
 	if !cooldown.ResetAt.IsZero() {
-		log.Printf("账号 %d 的 OAuth 图片工具明确不可用，模型 %s 冷却到 %s", account.ID(), model, cooldown.ResetAt.Format(time.RFC3339))
+		log.Printf("account %d's OAuth image tool is explicitly unavailable, model %s cooling down until %s", account.ID(), model, cooldown.ResetAt.Format(time.RFC3339))
 	}
 }
 
@@ -2878,7 +2878,7 @@ func imageErrorPrefersSameAccountRetry(err error) bool {
 	return outcome != nil && outcome.kind == imageNoOutputEmpty
 }
 
-// collectImagesResponse 聚合 Images 上游 SSE，并在读取期间维持请求级下游保活。
+// collectImagesResponse aggregates the Images upstream SSE, and keeps request-level downstream keepalive going while it reads.
 func collectImagesResponse(ctx context.Context, body io.Reader, responseFormat, fallbackModel string, urlFor imageURLBuilder, upscalePlan imageUpscalePlan, requireSuccessfulTerminal ...bool) ([]byte, *UsageInfo, int, imageUsageLogInfo, error) {
 	var (
 		out            []byte
@@ -2982,7 +2982,7 @@ func collectImagesResponse(ctx context.Context, body io.Reader, responseFormat, 
 	return out, usage, len(gjson.GetBytes(out, "data").Array()), imageLogInfo, nil
 }
 
-// streamImagesResponse 将 Images 上游事件转发为下游 SSE，并插入协议保活帧。
+// streamImagesResponse forwards Images upstream events as downstream SSE, and inserts protocol keepalive frames.
 func (h *Handler) streamImagesResponse(c *gin.Context, body io.Reader, responseFormat, streamPrefix, fallbackModel string, start time.Time, upscalePlan imageUpscalePlan, attempts ...*continuousRetryStreamAttempt) (*UsageInfo, int, int, imageUsageLogInfo, bool, error) {
 	c.Header("Content-Type", "text/event-stream")
 	c.Header("Cache-Control", "no-cache")
@@ -3164,7 +3164,7 @@ func (h *Handler) streamImagesResponse(c *gin.Context, body io.Reader, responseF
 				setReadErr(err)
 				return false
 			}
-			// 超分期间由独立的请求级保活循环继续发送注释帧。
+			// During upscaling, the independent request-level keepalive loop keeps sending comment frames.
 			var upscaleErr error
 			results, upscaleErr = applyImageUpscalePlanWithKeepalive(c.Request.Context(), upscalePlan, results)
 			if upscaleErr != nil {
@@ -3573,8 +3573,8 @@ func mergeImageMeta(target *imageCallResult, source imageCallResult) {
 	}
 }
 
-// imageURLBuilder 接收一张生成图，返回其托管直链。返回 ok=false 表示
-// 应回退到 base64 data URL。为 nil 时表示未启用云存储直链。
+// imageURLBuilder receives one generated image and returns its hosted direct link. It returns ok=false to indicate
+// that the caller should fall back to a base64 data URL. When nil, it means the cloud storage direct link is not enabled.
 type imageURLBuilder func(ctx context.Context, image imageCallResult, idx int) (string, bool)
 
 func buildImagesAPIResponse(ctx context.Context, results []imageCallResult, createdAt int64, usageRaw []byte, firstMeta imageCallResult, responseFormat string, urlFor imageURLBuilder) ([]byte, error) {
@@ -3595,7 +3595,7 @@ func buildImagesAPIResponse(ctx context.Context, results []imageCallResult, crea
 		populateImageStats(&image)
 		item := []byte(`{}`)
 		if format == "url" {
-			// 已配置云存储直链时上传并返回托管 URL；失败或未配置则回退到 data URL。
+			// When a cloud storage direct link is configured, upload and return the hosted URL; on failure or when not configured, fall back to the data URL.
 			if url, ok := buildImageURL(ctx, urlFor, image, idx); ok {
 				item, _ = sjson.SetBytes(item, "url", url)
 			} else {
@@ -3639,15 +3639,15 @@ func buildImagesAPIResponse(ctx context.Context, results []imageCallResult, crea
 	return out, nil
 }
 
-// imageStorageIsCloud 报告当前图片存储后端是否为云端（S3 兼容）对象存储。
+// imageStorageIsCloud reports whether the current image storage backend is cloud (S3-compatible) object storage.
 func imageStorageIsCloud() bool {
 	return imagestore.CurrentConfig().Backend == imagestore.BackendS3
 }
 
-// cloudUploadImage 把单张生成图上传到已配置的云存储，返回存储 ref 与限时预签名直链。
+// cloudUploadImage uploads a single generated image to the configured cloud storage, and returns the storage ref and a time-limited presigned direct link.
 //
-// 任一步失败都返回 ok=false，由调用方回退到 base64/data URL，
-// 确保 API 不会因为对象存储配置或网络问题而整体失败。
+// If any step fails, it returns ok=false, and the caller falls back to base64/data URL,
+// so that the API does not fail as a whole because of object storage configuration or network problems.
 func cloudUploadImage(ctx context.Context, image imageCallResult, idx int) (ref, url string, ok bool) {
 	data, decoded := decodeImageBase64(image.Result)
 	if !decoded || len(data) == 0 {
@@ -3655,31 +3655,31 @@ func cloudUploadImage(ctx context.Context, image imageCallResult, idx int) (ref,
 	}
 	backend, err := imagestore.Primary()
 	if err != nil {
-		log.Printf("[images] 云存储未初始化，回退 base64: %v", err)
+		log.Printf("[images] cloud storage not initialized, falling back to base64: %v", err)
 		return "", "", false
 	}
 	mimeType := mimeTypeFromOutputFormat(image.OutputFormat)
 	key := fmt.Sprintf("api/%d-%02d-%s.%s", time.Now().UnixNano(), idx+1, uuid.NewString()[:8], imageExtFromOutputFormat(image.OutputFormat))
 	ref, err = backend.Save(ctx, key, data, mimeType)
 	if err != nil {
-		log.Printf("[images] 上传云存储失败，回退 base64: %v", err)
+		log.Printf("[images] cloud storage upload failed, falling back to base64: %v", err)
 		return "", "", false
 	}
 	url, err = imagestore.PresignURL(ctx, ref, imageCloudURLTTL)
 	if err != nil {
-		log.Printf("[images] 生成预签名直链失败，回退 base64: %v", err)
+		log.Printf("[images] failed to generate presigned direct link, falling back to base64: %v", err)
 		return "", "", false
 	}
 	return ref, url, true
 }
 
-// cloudImageURLOnly 仅上传 + 预签名，不写图库。供未接入 DB 的场景（如单测）使用。
+// cloudImageURLOnly only uploads and presigns, without writing to the gallery. Used by scenarios without a connected DB (such as unit tests).
 func cloudImageURLOnly(ctx context.Context, image imageCallResult, idx int) (string, bool) {
 	_, url, ok := cloudUploadImage(ctx, image, idx)
 	return url, ok
 }
 
-// buildImageURL 执行注入的 url 构造回调；回调为 nil 时返回 ok=false（回退 data URL）。
+// buildImageURL calls the injected url-building callback; when the callback is nil, it returns ok=false (falls back to the data URL).
 func buildImageURL(ctx context.Context, urlFor imageURLBuilder, image imageCallResult, idx int) (string, bool) {
 	if urlFor == nil {
 		return "", false
@@ -3687,7 +3687,7 @@ func buildImageURL(ctx context.Context, urlFor imageURLBuilder, image imageCallR
 	return urlFor(ctx, image, idx)
 }
 
-// imageExtFromOutputFormat 把 output_format 归一为对象 key 用的文件扩展名。
+// imageExtFromOutputFormat normalizes output_format into a file extension for use in object keys.
 func imageExtFromOutputFormat(outputFormat string) string {
 	switch strings.ToLower(strings.TrimSpace(outputFormat)) {
 	case "jpg", "jpeg", "image/jpeg":
@@ -3699,11 +3699,11 @@ func imageExtFromOutputFormat(outputFormat string) string {
 	}
 }
 
-// imageGalleryPersister 在 response_format=url 且配置了云存储时，把每张生成图
-// 上传到对象存储、登记进图库（懒创建 synthetic job + asset 记录），并返回预签名直链。
+// imageGalleryPersister, when response_format=url and cloud storage is configured, uploads each generated image
+// to object storage, registers it in the gallery (lazily creating a synthetic job and asset record), and returns the presigned direct link.
 //
-// 这样 API 生成的图与后台 Image Studio 生成的图共用同一套图库展示与删除逻辑：
-// 管理员可在图库中看到它们，删除时会级联删掉数据库记录与云端对象，不再无主堆积。
+// This way, images generated through the API and images generated by the admin Image Studio share the same gallery display and deletion logic:
+// admins can see them in the gallery, and deleting one cascades to the database record and the cloud object, so they no longer pile up unowned.
 type imageGalleryPersister struct {
 	h            *Handler
 	prompt       string
@@ -3714,13 +3714,13 @@ type imageGalleryPersister struct {
 	model        string
 	start        time.Time
 
-	jobID        int64 // 懒创建：第一张图上传成功时才建 job；0 表示尚未/无法创建
+	jobID        int64 // created lazily: the job is created only when the first image uploads successfully; 0 means not yet created or unable to create
 	jobAttempted bool
 	saved        int
 }
 
-// newImageGalleryPersister 在 response_format=url 且已配置云存储时构造一个 persister，
-// 否则返回 nil（调用方据此回退到 data URL / base64）。
+// newImageGalleryPersister, when response_format=url and cloud storage is configured, constructs a persister;
+// otherwise it returns nil (the caller then falls back to a data URL / base64 accordingly).
 func (h *Handler) newImageGalleryPersister(c *gin.Context, responseFormat, model string, responsesBody []byte) *imageGalleryPersister {
 	if !strings.EqualFold(strings.TrimSpace(responseFormat), "url") || !imageStorageIsCloud() {
 		return nil
@@ -3751,7 +3751,7 @@ func (h *Handler) newImageGalleryPersister(c *gin.Context, responseFormat, model
 	return p
 }
 
-// buildURL 实现注入 buildImagesAPIResponse 的回调：上传 + 登记图库，返回直链。
+// buildURL implements the callback injected into buildImagesAPIResponse: upload plus register in the gallery, and return the direct link.
 func (p *imageGalleryPersister) buildURL(ctx context.Context, image imageCallResult, idx int) (string, bool) {
 	ref, url, ok := cloudUploadImage(ctx, image, idx)
 	if !ok {
@@ -3761,8 +3761,8 @@ func (p *imageGalleryPersister) buildURL(ctx context.Context, image imageCallRes
 	return url, true
 }
 
-// recordAsset 尽力把已上传对象登记进图库（job + asset）。失败时删除已上传对象，
-// 保持「每个云端对象都有数据库记录」的不变式，避免产生无主文件。
+// recordAsset makes a best-effort attempt to register the uploaded object in the gallery (job + asset). On failure it deletes the uploaded object,
+// keeping the invariant "every cloud object has a database record", to avoid producing unowned files.
 func (p *imageGalleryPersister) recordAsset(ctx context.Context, image imageCallResult, ref string) {
 	if p == nil || p.h == nil || p.h.db == nil {
 		return
@@ -3785,7 +3785,7 @@ func (p *imageGalleryPersister) recordAsset(ctx context.Context, image imageCall
 		RevisedPrompt: image.RevisedPrompt,
 	}
 	if _, err := p.h.db.InsertImageAsset(ctx, input); err != nil {
-		log.Printf("[images] 登记图库 asset 失败，删除已上传对象避免无主: %v", err)
+		log.Printf("[images] failed to register gallery asset, deleting the uploaded object to avoid an orphan: %v", err)
 		if backend, rerr := imagestore.Resolve(ref); rerr == nil {
 			_ = backend.Delete(ctx, ref)
 		}
@@ -3794,7 +3794,7 @@ func (p *imageGalleryPersister) recordAsset(ctx context.Context, image imageCall
 	p.saved++
 }
 
-// ensureJob 懒创建一条 synthetic job，返回 job_id；创建失败时返回 0（asset 仍可见于图库平铺视图）。
+// ensureJob lazily creates a synthetic job and returns the job_id; on creation failure it returns 0 (the asset is still visible in the flat gallery view).
 func (p *imageGalleryPersister) ensureJob(ctx context.Context) int64 {
 	if p.jobAttempted {
 		return p.jobID
@@ -3808,21 +3808,21 @@ func (p *imageGalleryPersister) ensureJob(ctx context.Context) int64 {
 		APIKeyMasked: p.apiKeyMasked,
 	})
 	if err != nil {
-		log.Printf("[images] 创建图库 job 失败，asset 将以 job_id=0 登记: %v", err)
+		log.Printf("[images] failed to create gallery job, asset will be registered with job_id=0: %v", err)
 		return 0
 	}
 	p.jobID = id
 	return id
 }
 
-// finalize 把 synthetic job 标记为成功（含耗时）。无 job 或一张都没存成时跳过。
+// finalize marks the synthetic job as successful (including elapsed time). It is skipped when there is no job or none of the images were stored.
 func (p *imageGalleryPersister) finalize(ctx context.Context) {
 	if p == nil || p.h == nil || p.h.db == nil || p.jobID == 0 || p.saved == 0 {
 		return
 	}
 	durationMs := int(time.Since(p.start).Milliseconds())
 	if err := p.h.db.MarkImageJobSucceeded(ctx, p.jobID, durationMs); err != nil {
-		log.Printf("[images] 标记图库 job 成功失败: %v", err)
+		log.Printf("[images] failed to mark gallery job as successful: %v", err)
 	}
 }
 

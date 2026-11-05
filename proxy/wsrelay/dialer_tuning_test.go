@@ -12,7 +12,7 @@ import (
 	"github.com/gorilla/websocket"
 )
 
-// TestManagerDialerHasTuningFields 验证主 dialer 配置了缓冲区与 KeepAlive 拨号器（B 项调优）。
+// TestManagerDialerHasTuningFields verifies that the main dialer is configured with buffers and a KeepAlive dialer (tuning item B).
 func TestManagerDialerHasTuningFields(t *testing.T) {
 	m := NewManager()
 	t.Cleanup(m.Stop)
@@ -34,33 +34,33 @@ func TestManagerDialerHasTuningFields(t *testing.T) {
 	}
 }
 
-// TestDialerCopyInheritsAllFields 验证 A 项修复：连接级 dialer 副本（浅拷贝 *m.dialer）
-// 继承了 NetDialContext / 缓冲区 / 压缩等全部调优字段，而非旧实现只抄 2 个字段。
+// TestDialerCopyInheritsAllFields verifies the item A fix: the per-connection dialer copy (shallow copy of *m.dialer)
+// inherits all tuning fields, including NetDialContext, buffers, and compression, rather than the old implementation copying only 2 fields.
 func TestDialerCopyInheritsAllFields(t *testing.T) {
 	m := NewManager()
 	t.Cleanup(m.Stop)
 
-	// 模拟 createConnection 里的浅拷贝
+	// Simulate the shallow copy in createConnection
 	dialerCopy := *m.dialer
 	dialer := &dialerCopy
 
 	if dialer.NetDialContext == nil {
-		t.Error("副本丢失 NetDialContext —— KeepAlive 将失效（这正是修复前的 bug）")
+		t.Error("copy lost NetDialContext; KeepAlive would stop working (this is exactly the bug before the fix)")
 	}
 	if dialer.ReadBufferSize != m.dialer.ReadBufferSize {
-		t.Errorf("副本 ReadBufferSize = %d, want %d", dialer.ReadBufferSize, m.dialer.ReadBufferSize)
+		t.Errorf("copy ReadBufferSize = %d, want %d", dialer.ReadBufferSize, m.dialer.ReadBufferSize)
 	}
 	if dialer.WriteBufferSize != m.dialer.WriteBufferSize {
-		t.Errorf("副本 WriteBufferSize = %d, want %d", dialer.WriteBufferSize, m.dialer.WriteBufferSize)
+		t.Errorf("copy WriteBufferSize = %d, want %d", dialer.WriteBufferSize, m.dialer.WriteBufferSize)
 	}
 	if dialer.WriteBufferPool != m.dialer.WriteBufferPool {
-		t.Error("副本应共享同一 WriteBufferPool")
+		t.Error("copy should share the same WriteBufferPool")
 	}
 	if dialer.EnableCompression != m.dialer.EnableCompression {
-		t.Error("副本应继承 EnableCompression")
+		t.Error("copy should inherit EnableCompression")
 	}
 	if dialer.HandshakeTimeout != m.dialer.HandshakeTimeout {
-		t.Error("副本应继承 HandshakeTimeout")
+		t.Error("copy should inherit HandshakeTimeout")
 	}
 }
 
@@ -189,15 +189,15 @@ func TestConfigureWebsocketDialerProxyRejectsInvalidURL(t *testing.T) {
 	}
 }
 
-// TestAcquireBackoffConstants 校验退避常量取值合理（C 项）。
+// TestAcquireBackoffConstants checks that the backoff constant values are reasonable (item C).
 func TestAcquireBackoffConstants(t *testing.T) {
 	if AcquireInitialBackoff <= 0 {
-		t.Error("AcquireInitialBackoff 必须 > 0")
+		t.Error("AcquireInitialBackoff must be > 0")
 	}
 	if AcquireMaxBackoff < AcquireInitialBackoff {
-		t.Error("AcquireMaxBackoff 应 >= AcquireInitialBackoff")
+		t.Error("AcquireMaxBackoff should be >= AcquireInitialBackoff")
 	}
 	if AcquireMaxWait <= AcquireMaxBackoff {
-		t.Error("AcquireMaxWait 应远大于单次退避封顶")
+		t.Error("AcquireMaxWait should be much larger than a single backoff cap")
 	}
 }

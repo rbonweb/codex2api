@@ -15,14 +15,14 @@ func TestDrainableUpstreamContextSurvivesAfterClientCancel(t *testing.T) {
 
 	cancelClient()
 
-	// 客户端取消瞬间上游仍应活着，给后续 SSE drain 留时间。
+	// Upstream should still be alive at the moment the client cancels, leaving time for the subsequent SSE drain.
 	select {
 	case <-upstreamCtx.Done():
 		t.Fatal("upstream ctx canceled too early after client cancel")
 	case <-time.After(10 * time.Millisecond):
 	}
 
-	// 等到 drain timeout 到达，上游应该被取消。
+	// Once the drain timeout is reached, upstream should be cancelled.
 	select {
 	case <-upstreamCtx.Done():
 	case <-time.After(200 * time.Millisecond):

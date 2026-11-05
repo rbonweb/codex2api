@@ -10,8 +10,8 @@ import (
 	"github.com/tidwall/gjson"
 )
 
-// issue #473：首包后断流必须给下游一个可编程识别的失败终态，
-// 而不是静默 EOF 的"假 200"。
+// issue #473: a stream break after the first packet must give the downstream a programmatically recognizable failure terminal state,
+// rather than a silent EOF that looks like a fake 200.
 
 func TestWriteResponsesStreamBreakEvent(t *testing.T) {
 	gin.SetMode(gin.TestMode)
@@ -81,11 +81,11 @@ func TestShouldWriteStreamBreakEvent(t *testing.T) {
 		writeErr     error
 		want         bool
 	}{
-		{"首包后断流", false, true, nil, nil, true},
-		{"正常终态不触发", true, true, nil, nil, false},
-		{"零写入交给透明重试/502 出口", false, false, nil, nil, false},
-		{"客户端已断开不写", false, true, errBoom, nil, false},
-		{"下游写失败不写", false, true, nil, errBoom, false},
+		{"stream break after first packet", false, true, nil, nil, true},
+		{"normal terminal does not trigger", true, true, nil, nil, false},
+		{"zero writes hand off to transparent retry / the 502 exit", false, false, nil, nil, false},
+		{"client already disconnected, no write", false, true, errBoom, nil, false},
+		{"downstream write failed, no write", false, true, nil, errBoom, false},
 	}
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {

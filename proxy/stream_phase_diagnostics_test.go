@@ -7,10 +7,10 @@ import (
 	"time"
 )
 
-// TestStreamPhaseDiagnosticsDistinguishesBackpressure 验证断流判据能区分
-// "下游背压拖停上游读取" 与 "上游自己重置"(issue #491)。
+// TestStreamPhaseDiagnosticsDistinguishesBackpressure verifies that the stream-break criterion can tell apart
+// "downstream backpressure stalls upstream reads" and "upstream resets on its own" (issue #491).
 func TestStreamPhaseDiagnosticsDistinguishesBackpressure(t *testing.T) {
-	// 无上游帧时不产出判据:连响应头都没读到,和背压无关。
+	// With no upstream frames, no criterion is produced: not even the response headers were read, which is unrelated to backpressure.
 	if got := newStreamPhaseDiagnostics().summary(); got != "" {
 		t.Fatalf("no upstream frame should yield empty summary, got %q", got)
 	}
@@ -20,37 +20,37 @@ func TestStreamPhaseDiagnosticsDistinguishesBackpressure(t *testing.T) {
 	diag.markUpstreamFrame()
 	diag.addWriteBlocked(time.Now().Add(-1200 * time.Millisecond))
 	summary := diag.summary()
-	for _, want := range []string{"上游帧 2", "下游写阻塞 1", "距上游末帧"} {
+	for _, want := range []string{"upstream frame 2", "downstream write blocked 1", "since last upstream frame"} {
 		if !strings.Contains(summary, want) {
 			t.Fatalf("summary %q missing %q", summary, want)
 		}
 	}
 
-	// nil 诊断器全程安全(未挂载时零开销路径)。
+	// A nil diagnostics object is safe throughout (zero-overhead path when not attached).
 	var nilDiag *streamPhaseDiagnostics
 	nilDiag.markUpstreamFrame()
 	nilDiag.addWriteBlocked(time.Now())
 	if got := nilDiag.summary(); got != "" {
 		t.Fatalf("nil diagnostics summary = %q, want empty", got)
 	}
-	// 零值 start 不计入(未挂诊断器时 diagnosticsClock 返回零值)。
+	// A zero start value is not counted (diagnosticsClock returns the zero value when no diagnostics object is attached).
 	zeroStart := newStreamPhaseDiagnostics()
 	zeroStart.markUpstreamFrame()
 	zeroStart.addWriteBlocked(time.Time{})
-	if !strings.Contains(zeroStart.summary(), "下游写阻塞 0ms") {
+	if !strings.Contains(zeroStart.summary(), "downstream write blocked 0ms") {
 		t.Fatalf("zero start must not accumulate: %s", zeroStart.summary())
 	}
 }
 
-// TestAnnotateStreamBreakDiagnosticsOnlyForBreaks 验证判据只追加到断流失败上,
-// 客户端主动断开与正常结束不受影响。
+// TestAnnotateStreamBreakDiagnosticsOnlyForBreaks verifies that the criterion is appended only to stream-break failures,
+// while client-initiated disconnects and normal completion are not affected.
 func TestAnnotateStreamBreakDiagnosticsOnlyForBreaks(t *testing.T) {
 	diag := newStreamPhaseDiagnostics()
 	diag.markUpstreamFrame()
 
 	broke := classifyStreamOutcome(nil, errors.New("stream error: stream ID 19; INTERNAL_ERROR; received from peer"), nil, false)
 	annotated := annotateStreamBreakDiagnostics(broke, diag)
-	if !strings.Contains(annotated.failureMessage, "上游流读取失败") || !strings.Contains(annotated.failureMessage, "上游帧 1") {
+	if !strings.Contains(annotated.failureMessage, "upstream stream read failed") || !strings.Contains(annotated.failureMessage, "upstream frame 1") {
 		t.Fatalf("stream break message not annotated: %q", annotated.failureMessage)
 	}
 	if annotated.failureKind != "transport" || annotated.logStatusCode != logStatusUpstreamStreamBreak {
@@ -68,7 +68,7 @@ func TestAnnotateStreamBreakDiagnosticsOnlyForBreaks(t *testing.T) {
 	}
 }
 
-// TestPoolEntryAgeRotation 验证按寿命轮转只作用于标准 transport,且 0 表示关闭。
+// TestPoolEntryAgeRotation verifies that age-based rotation applies only to the standard transport, and that 0 means disabled.
 func TestPoolEntryAgeRotation(t *testing.T) {
 	now := time.Now().UnixNano()
 	fresh := &poolEntry{createdAt: now - int64(5*time.Minute), rotatable: true}

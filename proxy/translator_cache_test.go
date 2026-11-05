@@ -56,7 +56,7 @@ func TestRequestCacheExpiresEntries(t *testing.T) {
 
 func TestEstimateParsedRequestSizeCountsMessageSlices(t *testing.T) {
 	raw := []byte(`{"messages":[{},{},{}]}`) // ~24 bytes
-	// 20000 条短消息的原始 JSON 很小，但切片常驻内存远超单条上限：必须按不可缓存处理。
+	// The raw JSON of 20000 short messages is small, but the slice stays resident in memory far above the single-entry limit: it must be treated as uncacheable.
 	sparse := openAIRequest{Messages: make([]openAIMessage, 20000)}
 	if got := estimateParsedRequestSize(raw, &sparse); got != parsedRequestSizeCeiling {
 		t.Fatalf("20k-message estimate = %d, want clamped to %d", got, parsedRequestSizeCeiling)

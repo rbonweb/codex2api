@@ -18,9 +18,9 @@ import (
 	"github.com/tidwall/gjson"
 )
 
-// 流式请求在首 token 之前收到 response.failed 时,应中止 SSE 转发、由循环外按真实
-// HTTP 错误码返回,而不是把失败包成 200 + [DONE](后者会被上游中转/计费方误判为
-// 成功流并按预估 input token 计费)。见 shouldReturnHTTPErrorForResponseFailed。
+// When a streaming request receives response.failed before the first token, SSE forwarding should be aborted and the real
+// HTTP error code returned outside the loop, rather than wrapping the failure as 200 + [DONE] (the latter is misjudged by upstream relays/billers as a
+// successful stream and billed on estimated input tokens). See shouldReturnHTTPErrorForResponseFailed.
 func TestShouldReturnHTTPErrorForResponseFailed(t *testing.T) {
 	cases := []struct {
 		name         string
@@ -30,12 +30,12 @@ func TestShouldReturnHTTPErrorForResponseFailed(t *testing.T) {
 		clientGone   bool
 		want         bool
 	}{
-		{"首 token 前的 response.failed 应返回错误码", "response.failed", false, false, false, true},
-		{"response.completed 不拦截", "response.completed", false, false, false, false},
-		{"已产出首 token 不拦截(维持流式收尾)", "response.failed", true, false, false, false},
-		{"已向下游写过 body 不拦截(200 已发出)", "response.failed", false, true, false, false},
-		{"客户端已断开不拦截(继续读上游取 usage)", "response.failed", false, false, true, false},
-		{"普通内容事件不拦截", "response.output_text.delta", false, false, false, false},
+		{"response.failed before the first token should return an error code", "response.failed", false, false, false, true},
+		{"response.completed is not intercepted", "response.completed", false, false, false, false},
+		{"no interception once the first output token has been produced (keep the streaming wrap-up)", "response.failed", true, false, false, false},
+		{"no interception once the body has been written downstream (200 already sent)", "response.failed", false, true, false, false},
+		{"no interception when the client has disconnected (keep reading upstream for usage)", "response.failed", false, false, true, false},
+		{"ordinary content events are not intercepted", "response.output_text.delta", false, false, false, false},
 	}
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
@@ -48,17 +48,17 @@ func TestShouldReturnHTTPErrorForResponseFailed(t *testing.T) {
 	}
 }
 
-// streamEpilogue 复刻 Responses/ChatCompletions 流式路径的收尾时序:
-// 逐事件走 defer/拦截逻辑 → 仅在写过 body 时收尾 flush → 拦截命中时循环外 c.JSON。
-// 用真实 HTTP 连接验证,因为致命点在 gin 层:flusher.Flush 会先 WriteHeaderNow
-// 提交 200,零写入时提前 flush 会让后续 c.JSON(4xx) 的状态码永远无法送达下游。
+// streamEpilogue reproduces the epilogue timing of the Responses/ChatCompletions streaming path:
+// event by event through the defer/intercept logic → flush the epilogue only when a body has been written → on intercept, c.JSON outside the loop.
+// Verified over a real HTTP connection, because the fatal point is at the gin layer: flusher.Flush first calls WriteHeaderNow
+// to commit 200; flushing early with zero writes would make the subsequent c.JSON(4xx) status code never reach downstream.
 func streamEpilogue(t *testing.T, c *gin.Context, events [][]byte) {
 	t.Helper()
 	c.Header("Content-Type", "text/event-stream")
 	c.Header("Cache-Control", "no-cache")
 	flusher, ok := c.Writer.(http.Flusher)
 	if !ok {
-		t.Error("c.Writer 未实现 http.Flusher")
+		t.Error("c.Writer does not implement http.Flusher")
 		return
 	}
 	streamWriter := newStreamFlushWriter(c.Writer, flusher)
@@ -114,7 +114,7 @@ func TestStreamFirstTokenFailureWireBehavior(t *testing.T) {
 		wantBodyHas  string
 	}{
 		{
-			name: "首 token 前 response.failed → 下游收到真实 4xx JSON",
+			name: "response.failed before the first token → downstream receives a real 4xx JSON",
 			events: [][]byte{
 				[]byte(`{"type":"response.created"}`),
 				[]byte(`{"type":"response.in_progress"}`),
@@ -125,7 +125,7 @@ func TestStreamFirstTokenFailureWireBehavior(t *testing.T) {
 			wantBodyHas:  "context_length_exceeded",
 		},
 		{
-			name: "已产出首 token → 维持 200 SSE 流式收尾",
+			name: "first output token already produced → keep the 200 SSE streaming wrap-up",
 			events: [][]byte{
 				[]byte(`{"type":"response.created"}`),
 				[]byte(`{"type":"response.output_text.delta","delta":"hi"}`),
@@ -169,8 +169,8 @@ func TestStreamFirstTokenFailureWireBehavior(t *testing.T) {
 	}
 }
 
-// 入站 WS 路径的等价修复:首 token 前不可重试的 response.failed 不透传原始失败帧,
-// 改为 error 帧 + 按错误类别的非正常 close code(与 SSE 路径返回真实 4xx 对齐)。
+// The equivalent fix on the inbound WS path: a non-retryable response.failed before the first token does not pass the raw failure frame through,
+// it instead sends an error frame plus a non-normal close code by error category (aligned with the SSE path returning a real 4xx).
 func TestResponsesWSCloseCodeForStatus(t *testing.T) {
 	cases := []struct {
 		status int
@@ -192,9 +192,9 @@ func TestResponsesWSCloseCodeForStatus(t *testing.T) {
 	}
 }
 
-// 端到端:入站 WS 首 token 前收到不可重试的 response.failed(context_length_exceeded)
-// 时,客户端应收到结构化 error 帧 + ClosePolicyViolation 关闭,而不是原始失败帧 +
-// 正常收尾(后者会被下游中转/计费方当成一次成功会话)。且确定性客户端错误不换号重试。
+// End to end: when the inbound WS receives a non-retryable response.failed before the first token (context_length_exceeded),
+// the client should receive a structured error frame plus a ClosePolicyViolation close, rather than the raw failure frame plus
+// a normal wrap-up (the latter would be counted by downstream relays/billers as one successful session). Deterministic client errors do not retry on another account.
 func TestResponsesWebSocketNonRetryableFailureReturnsErrorClose(t *testing.T) {
 	gin.SetMode(gin.TestMode)
 
@@ -252,7 +252,7 @@ func TestResponsesWebSocketNonRetryableFailureReturnsErrorClose(t *testing.T) {
 		t.Fatalf("read error frame: %v", err)
 	}
 	if eventType := gjson.GetBytes(first, "type").String(); eventType != "error" {
-		t.Fatalf("first event type = %q, want \"error\" (原始 response.failed 帧不应透传) body=%s", eventType, first)
+		t.Fatalf("first event type = %q, want \"error\" (the raw response.failed frame must not be passed through) body=%s", eventType, first)
 	}
 	if !strings.Contains(string(first), "input too long") {
 		t.Fatalf("error frame should carry upstream message when hiding disabled: %s", first)

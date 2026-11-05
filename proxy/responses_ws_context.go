@@ -226,8 +226,8 @@ func degradeResponsesWSContinuationWithSource(body []byte, owner string, source 
 		if !responsesWSContinuationFailOpen() {
 			return nil, false, apiErr
 		}
-		// 逃生阀：退回旧行为，剥掉 previous_response_id 后按原样转发当轮 input。
-		// 上游看到的是丢失历史的会话，只在明确接受该风险时启用。
+		// Escape hatch: revert to the old behaviour, strip previous_response_id and forward the current turn's input as-is.
+		// Upstream sees a session that has lost its history; enable this only when the risk is explicitly accepted.
 		log.Printf("Responses WebSocket continuation context unavailable (%s); CODEX_WS_CONTINUATION_FAIL_OPEN=true, forwarding without history", responsesWSContextReason(apiErr))
 		stripped, err := sjson.DeleteBytes(body, "previous_response_id")
 		if err != nil {
@@ -246,8 +246,8 @@ func degradeResponsesWSContinuationWithSource(body []byte, owner string, source 
 	return expanded, false, nil
 }
 
-// responsesWSContinuationFailOpen 读取逃生阀：CODEX_WS_CONTINUATION_FAIL_OPEN=true
-// 时上下文不可恢复不再关连接，而是按旧行为剥 id 硬发。
+// responsesWSContinuationFailOpen reads the escape hatch: when CODEX_WS_CONTINUATION_FAIL_OPEN=true
+// the connection is no longer closed when context cannot be recovered; instead the old behaviour is used, the id is stripped, and the request is sent anyway.
 func responsesWSContinuationFailOpen() bool {
 	switch strings.ToLower(strings.TrimSpace(os.Getenv("CODEX_WS_CONTINUATION_FAIL_OPEN"))) {
 	case "1", "true", "yes", "on":
@@ -275,8 +275,8 @@ func responsesWSContextReason(apiErr *api.APIError) string {
 	return apiErr.Message
 }
 
-// markResponsesWSContinuationCapable 为允许持久存储的会话授予 on_demand 写入资格。
-// store:false 的原生 WS 续链单独使用完整快照，并复用共享后端。
+// markResponsesWSContinuationCapable grants the on_demand write eligibility to sessions allowed to persist storage.
+// Native WS continuation with store:false uses a full snapshot on its own, and reuses the shared backend.
 func markResponsesWSContinuationCapable(owner string, rawBody []byte) {
 	if store := gjson.GetBytes(rawBody, "store"); store.Exists() && store.Type == gjson.False {
 		return
@@ -284,8 +284,8 @@ func markResponsesWSContinuationCapable(owner string, rawBody []byte) {
 	markResponseCacheChainOwnerIfOnDemand(owner)
 }
 
-// 入场时固定不可变祖先；原生 WS 缺少 L1 时读取共享快照以保留加密上下文的账号。
-// 旧续链后端查询、历史合并与序列化仍按需执行，不提前记为客户端回放命中。
+// The immutable ancestor is fixed at admission; native WS reads the shared snapshot when there is no L1, to keep accounts that hold encrypted context.
+// Legacy continuation backend lookups, history merging and serialisation still run on demand, and are not recorded early as a client-replay hit.
 type responsesWSReplaySource struct {
 	body               []byte
 	owner              string
@@ -318,7 +318,7 @@ func newResponsesWSReplaySourceFromInput(input string) *responsesWSReplaySource 
 	return &responsesWSReplaySource{input: input, precomputed: true}
 }
 
-// Input 返回可回放快照；祖先缺失、超限或不可移植时返回空串，调用方据此跳过写缓存。
+// Input returns the replayable snapshot; when the ancestor is missing, over limit, or not portable it returns an empty string, and the caller uses this to skip the cache write.
 func (s *responsesWSReplaySource) Input() string {
 	if s == nil {
 		return ""

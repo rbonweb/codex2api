@@ -18,13 +18,13 @@ const (
 	officialPricingBodyLimit = 4 << 20
 )
 
-// OfficialPricingSyncOptions 指定本轮同步的模型和官方来源。
+// OfficialPricingSyncOptions specifies the models and official sources for this sync round.
 type OfficialPricingSyncOptions struct {
 	Models        []string
 	IncludeOpenAI bool
 }
 
-// OfficialPricingSyncResult 包含有效价格数、覆盖更新数、缺价模型及参考来源。
+// OfficialPricingSyncResult contains the number of valid prices, the number of override updates, the models missing prices, and the reference sources.
 type OfficialPricingSyncResult struct {
 	Fetched   int               `json:"fetched"`
 	Applied   int               `json:"applied"`
@@ -51,10 +51,10 @@ type officialPricingSync struct {
 	result  *OfficialPricingSyncResult
 }
 
-// SyncOfficialModelPricing 在事务外抓取价格，再原子更新覆盖；缺价时恢复默认，自定义价优先。
+// SyncOfficialModelPricing fetches prices outside the transaction, then atomically updates the overrides; when a price is missing it restores the default, and custom prices take precedence.
 func SyncOfficialModelPricing(ctx context.Context, db *database.DB, proxyURL string, options OfficialPricingSyncOptions) (*OfficialPricingSyncResult, error) {
 	if db == nil {
-		return nil, fmt.Errorf("数据库不可用，无法同步官方模型价格")
+		return nil, fmt.Errorf("database unavailable, cannot sync official model prices")
 	}
 	sync := &officialPricingSync{
 		options: options,
@@ -67,7 +67,7 @@ func SyncOfficialModelPricing(ctx context.Context, db *database.DB, proxyURL str
 			sync.allowed[key] = struct{}{}
 		}
 	}
-	// 与版本同步共用浏览器传输：HTTPS 使用 uTLS，兼容环境代理并显式释放连接。
+	// Shares the browser transport with version sync: HTTPS uses uTLS, stays compatible with environment proxies, and releases connections explicitly.
 	client, closeClient := newVersionSyncClient(OfficialOpenAIPricingURL, proxyURL, officialPricingTimeout)
 	defer closeClient()
 	sync.fetch(ctx, client)
@@ -77,7 +77,7 @@ func SyncOfficialModelPricing(ctx context.Context, db *database.DB, proxyURL str
 	}
 	sync.findMissing()
 	if len(sync.pricing) == 0 && len(sync.result.Missing) == 0 {
-		return sync.result, fmt.Errorf("官方页面未解析到当前模型的价格")
+		return sync.result, fmt.Errorf("official page did not yield a price for the current model")
 	}
 	_, err := db.MutateModelPricingSettings(ctx, nil, sync.apply)
 	if err == nil {
@@ -86,7 +86,7 @@ func SyncOfficialModelPricing(ctx context.Context, db *database.DB, proxyURL str
 	return sync.result, err
 }
 
-// fetch 独立处理每个官方来源的失败，使其他来源及默认价回退继续生效。
+// fetch handles the failure of each official source independently, so that the other sources and the default-price fallback keep working.
 func (sync *officialPricingSync) fetch(ctx context.Context, client *http.Client) {
 	sources := []officialPricingSource{
 		{"OpenAI", OfficialOpenAIPricingURL, sync.options.IncludeOpenAI, ParseOpenAIOfficialPricingHTML},
@@ -97,17 +97,17 @@ func (sync *officialPricingSync) fetch(ctx context.Context, client *http.Client)
 		}
 		body, err := fetchOfficialPricingHTML(ctx, client, source.url)
 		if err != nil {
-			sync.result.Warnings = append(sync.result.Warnings, fmt.Sprintf("读取 %s 官方价格失败: %v", source.name, err))
+			sync.result.Warnings = append(sync.result.Warnings, fmt.Sprintf("failed to read %s official prices: %v", source.name, err))
 			continue
 		}
 		parsed, err := source.parse(body)
 		if err != nil {
-			sync.result.Warnings = append(sync.result.Warnings, fmt.Sprintf("解析 %s 官方价格失败: %v", source.name, err))
+			sync.result.Warnings = append(sync.result.Warnings, fmt.Sprintf("failed to parse %s official prices: %v", source.name, err))
 			continue
 		}
 		if source.url == OfficialOpenAIPricingURL {
 			if err := openAIPriceData(parsed).supplementContext(ctx, client, body); err != nil {
-				sync.result.Warnings = append(sync.result.Warnings, fmt.Sprintf("读取 OpenAI 长上下文价格失败: %v", err))
+				sync.result.Warnings = append(sync.result.Warnings, fmt.Sprintf("failed to read OpenAI long-context prices: %v", err))
 			}
 		}
 		if sync.importPricing(parsed) > 0 {
@@ -117,7 +117,7 @@ func (sync *officialPricingSync) fetch(ctx context.Context, client *http.Client)
 	sync.result.Fetched = len(sync.pricing)
 }
 
-// importPricing 仅导入当前模型列表中出现的价格。
+// importPricing only imports prices for models that appear in the current model list.
 func (sync *officialPricingSync) importPricing(parsed map[string]database.ModelPricingOverride) int {
 	imported := 0
 	projectImageResolutionPricing(sync.allowed, parsed)
@@ -130,7 +130,7 @@ func (sync *officialPricingSync) importPricing(parsed map[string]database.ModelP
 			continue
 		}
 		if err := validateSyncedPricing(model, override, true); err != nil {
-			sync.result.Warnings = append(sync.result.Warnings, fmt.Sprintf("%s 价格校验失败: %v", model, err))
+			sync.result.Warnings = append(sync.result.Warnings, fmt.Sprintf("%s price validation failed: %v", model, err))
 			continue
 		}
 		sync.pricing[model] = override
@@ -139,7 +139,7 @@ func (sync *officialPricingSync) importPricing(parsed map[string]database.ModelP
 	return imported
 }
 
-// findMissing 只对本轮启用来源的模型收集缺价信息。
+// findMissing only collects missing-price information for models from the sources enabled in this round.
 func (sync *officialPricingSync) findMissing() {
 	for model := range sync.allowed {
 		if _, ok := sync.pricing[model]; ok || !officialPricingModelEnabled(model, sync.options) {
@@ -150,12 +150,12 @@ func (sync *officialPricingSync) findMissing() {
 	sort.Strings(sync.result.Missing)
 }
 
-// officialPricingModelEnabled 判断模型是否属于本轮启用的官方来源。
+// officialPricingModelEnabled reports whether the model belongs to an official source enabled in this round.
 func officialPricingModelEnabled(_ string, options OfficialPricingSyncOptions) bool {
 	return options.IncludeOpenAI
 }
 
-// apply 清除缺价模型的旧同步覆盖，让内置规则和别名继承规则重新生效。
+// apply clears stale sync overrides for models with missing prices, so that the built-in rules and alias inheritance rules take effect again.
 func (sync *officialPricingSync) apply(current map[string]database.ModelPricingOverride) error {
 	for model, override := range sync.pricing {
 		if current[model].Source == database.ModelPricingSourceCustom {
@@ -177,7 +177,7 @@ func (sync *officialPricingSync) apply(current map[string]database.ModelPricingO
 	return nil
 }
 
-// fetchOfficialPricingHTML 只接受 HTML 响应，格式变化时由参考 JSON 接管。
+// fetchOfficialPricingHTML only accepts HTML responses; when the format changes, the reference JSON takes over.
 func fetchOfficialPricingHTML(ctx context.Context, client *http.Client, sourceURL string) ([]byte, error) {
 	reqCtx, cancel := context.WithTimeout(ctx, officialPricingTimeout)
 	defer cancel()
@@ -192,17 +192,17 @@ func fetchOfficialPricingHTML(ctx context.Context, client *http.Client, sourceUR
 	}
 	defer resp.Body.Close()
 	if resp.StatusCode < http.StatusOK || resp.StatusCode >= http.StatusMultipleChoices {
-		return nil, fmt.Errorf("官方价格页面返回 %d", resp.StatusCode)
+		return nil, fmt.Errorf("official pricing page returned %d", resp.StatusCode)
 	}
 	if !strings.Contains(strings.ToLower(resp.Header.Get("Content-Type")), "text/html") {
-		return nil, fmt.Errorf("官方价格页面 Content-Type 不是 HTML")
+		return nil, fmt.Errorf("official pricing page Content-Type is not HTML")
 	}
 	body, err := io.ReadAll(io.LimitReader(resp.Body, officialPricingBodyLimit+1))
 	if err != nil {
 		return nil, err
 	}
 	if len(body) == 0 || len(body) > officialPricingBodyLimit {
-		return nil, fmt.Errorf("官方价格页面为空或超过大小限制")
+		return nil, fmt.Errorf("official pricing page is empty or exceeds the size limit")
 	}
 	return body, nil
 }

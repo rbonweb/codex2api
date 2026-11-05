@@ -124,7 +124,7 @@ func (h *Handler) refreshNewAPIWebSocketBinding(c *gin.Context, now time.Time) *
 	revoked := func() *api.APIError {
 		return api.NewAPIError(
 			api.ErrorCode("newapi_websocket_binding_changed"),
-			"NewAPI 平台绑定或密钥已变更，请重新连接后再试",
+			"NewAPI platform binding or key has changed, reconnect and try again",
 			api.ErrorTypeAuthentication,
 		)
 	}
@@ -537,13 +537,13 @@ func (h *Handler) requiredNewAPIIdentityError(c *gin.Context, cfg promptfilter.N
 		return nil
 	}
 	code := api.ErrorCode("newapi_signed_identity_invalid")
-	message := "NewAPI 身份签名校验失败，该 Codex2API Key 仅接受其绑定平台的签名请求"
+	message := "NewAPI identity signature verification failed; this Codex2API key only accepts requests signed by its bound platform"
 	if strings.TrimSpace(c.GetHeader("X-NewAPI-Signature")) == "" {
 		code = api.ErrorCode("newapi_signed_identity_required")
-		message = "该 Codex2API Key 要求绑定平台提供 NewAPI 身份签名"
+		message = "this Codex2API key requires the bound platform to provide a NewAPI identity signature"
 	} else if strings.TrimSpace(c.GetHeader("X-NewAPI-Policy-Meta")) == "" || strings.TrimSpace(c.GetHeader("X-NewAPI-Policy-Meta-Signature")) == "" {
 		code = api.ErrorCode("newapi_platform_identity_required")
-		message = "该 Codex2API Key 要求绑定平台提供已签名的平台身份元数据"
+		message = "this Codex2API key requires the bound platform to provide signed platform identity metadata"
 	}
 	// This is an authentication boundary failure, not prompt-policy evidence.
 	// Do not emit violation/strike/ban headers and do not record an offense.
@@ -597,25 +597,25 @@ func (h *Handler) rejectRequiredNewAPIIdentity(c *gin.Context, cfg promptfilter.
 func (h *Handler) VerifyNewAPIPolicyHandshake(c *gin.Context) {
 	cfg := h.promptFilterConfigForRequest(c)
 	if _, identityVerified := h.verifyNewAPIIdentityContext(c, cfg.Advanced.NewAPI, nil); !identityVerified {
-		c.JSON(http.StatusUnauthorized, gin.H{"success": false, "message": "NewAPI 审计签名校验失败"})
+		c.JSON(http.StatusUnauthorized, gin.H{"success": false, "message": "NewAPI audit signature verification failed"})
 		return
 	}
 	policyContext, ok := h.verifyNewAPIPolicyContext(c, cfg.Advanced.NewAPI, nil)
 	if !ok {
 		metaProvided := strings.TrimSpace(c.GetHeader("X-NewAPI-Policy-Meta")) != "" || strings.TrimSpace(c.GetHeader("X-NewAPI-Policy-Meta-Signature")) != ""
 		if metaProvided {
-			c.JSON(http.StatusUnprocessableEntity, gin.H{"success": false, "message": "NewAPI 审核档案元数据签名或格式无效", "code": "policy_meta_invalid", "identity_verified": true})
+			c.JSON(http.StatusUnprocessableEntity, gin.H{"success": false, "message": "NewAPI policy metadata signature or format is invalid", "code": "policy_meta_invalid", "identity_verified": true})
 			return
 		}
-		c.JSON(http.StatusUnauthorized, gin.H{"success": false, "message": "NewAPI 审计签名校验失败"})
+		c.JSON(http.StatusUnauthorized, gin.H{"success": false, "message": "NewAPI audit signature verification failed"})
 		return
 	}
 	metaProvided := strings.TrimSpace(c.GetHeader("X-NewAPI-Policy-Meta")) != "" || strings.TrimSpace(c.GetHeader("X-NewAPI-Policy-Meta-Signature")) != ""
 	if metaProvided && !policyContext.MetaVerified {
-		c.JSON(http.StatusUnprocessableEntity, gin.H{"success": false, "message": "NewAPI 审核档案元数据签名或格式无效", "code": "policy_meta_invalid", "identity_verified": true})
+		c.JSON(http.StatusUnprocessableEntity, gin.H{"success": false, "message": "NewAPI policy metadata signature or format is invalid", "code": "policy_meta_invalid", "identity_verified": true})
 		return
 	}
-	c.JSON(http.StatusOK, gin.H{"success": true, "message": "NewAPI 审计签名校验成功", "user_id": policyContext.Identity.UserID, "client_ip": policyContext.Identity.ClientIP, "request_id": policyContext.Identity.RequestID, "timestamp": c.GetHeader("X-NewAPI-Timestamp"), "platform": policyContext.Platform, "policy_meta_verified": policyContext.MetaVerified, "policy_meta": policyContext.Meta})
+	c.JSON(http.StatusOK, gin.H{"success": true, "message": "NewAPI audit signature verified", "user_id": policyContext.Identity.UserID, "client_ip": policyContext.Identity.ClientIP, "request_id": policyContext.Identity.RequestID, "timestamp": c.GetHeader("X-NewAPI-Timestamp"), "platform": policyContext.Platform, "policy_meta_verified": policyContext.MetaVerified, "policy_meta": policyContext.Meta})
 }
 
 // sendNewAPIPolicyDecision returns a structured policy event to NewAPI. NewAPI
@@ -703,7 +703,7 @@ func upstreamCyberPolicyResponseMessage(c *gin.Context) string {
 }
 
 func newAPIPolicyDecisionAPIError(metadata newAPIPolicyDecisionMetadata) *api.APIError {
-	message := "请求违反安全策略，本次请求已被拒绝"
+	message := "request violates the security policy and has been rejected"
 	if metadata.ReasonCode == newAPIUpstreamCyberPolicyReasonCode {
 		if metadata.ConversationLocked {
 			message = upstreamCyberPolicyLockedUserMessage

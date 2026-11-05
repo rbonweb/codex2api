@@ -6,10 +6,10 @@ import (
 	"github.com/codex2api/auth"
 )
 
-// issue #446：维护类旁路请求（wham 用量/重置券、模型清单、alpha search、订阅同步）
-// 过去每次调用都新建一次性 transport。uTLS 模式下这些 transport 用完即弃、
-// 其名下的 HTTP/2 连接无人关闭，后台探针与 /models 会把连接数、goroutine
-// 与内存持续推高。以下测试锁死「复用同一个池化 Client」这一不变量。
+// issue #446: maintenance-class bypass requests (wham usage/reset coupons, model list, alpha search, subscription sync)
+// used to build a new one-off transport on every call. In uTLS mode those transports are discarded after use,
+// and their HTTP/2 connections are never closed, so the background probe and /models keep pushing up the connection count, goroutines,
+// and memory. The tests below lock in the invariant "reuse the same pooled Client".
 
 func TestGetCodexMaintenanceClientIsReusedPerAccount(t *testing.T) {
 	t.Setenv("CODEX_TRANSPORT_MODE", "utls_chrome")
@@ -21,14 +21,14 @@ func TestGetCodexMaintenanceClientIsReusedPerAccount(t *testing.T) {
 	second := getCodexMaintenanceClient(acc, "")
 
 	if first != second {
-		t.Fatal("同一账号两次取用返回了不同 Client：一次性 transport 会持续泄漏连接与 goroutine")
+		t.Fatal("the same account got different Clients on two calls: one-off transports keep leaking connections and goroutines")
 	}
 	if _, ok := first.Transport.(*utlsRoundTripper); !ok {
-		t.Fatalf("utls_chrome 模式下 transport = %T, want *utlsRoundTripper", first.Transport)
+		t.Fatalf("in utls_chrome mode transport = %T, want *utlsRoundTripper", first.Transport)
 	}
 }
 
-// 账号之间必须隔离：同一条 TCP 连接被不同 token 复用会被上游识别。
+// Accounts must be isolated: the same TCP connection reused across different tokens is recognizable upstream.
 func TestGetCodexMaintenanceClientIsolatesAccountsAndProxies(t *testing.T) {
 	t.Setenv("CODEX_TRANSPORT_MODE", "utls_chrome")
 	clearMaintenanceClients(t)
@@ -37,15 +37,15 @@ func TestGetCodexMaintenanceClientIsolatesAccountsAndProxies(t *testing.T) {
 	accB := &auth.Account{DBID: 4462}
 
 	if getCodexMaintenanceClient(accA, "") == getCodexMaintenanceClient(accB, "") {
-		t.Fatal("不同账号共享了同一个维护 Client（连接会被跨 token 复用）")
+		t.Fatal("different accounts shared the same maintenance Client (connections would be reused across tokens)")
 	}
 	if getCodexMaintenanceClient(accA, "") == getCodexMaintenanceClient(accA, "http://proxy:8080") {
-		t.Fatal("不同代理共享了同一个维护 Client（出口 IP 会串）")
+		t.Fatal("different proxies shared the same maintenance Client (egress IPs would get mixed)")
 	}
 }
 
-// 维护请求与 /responses 主池必须分开：/responses 失败时会摘除整个 Client，
-// 不应因一次后台探针失败牵连业务连接，反之亦然。
+// Maintenance requests must be kept separate from the /responses main pool: when /responses fails, the whole Client is removed,
+// so one failed background probe must not drag down business connections, and vice versa.
 func TestMaintenanceClientKeyDoesNotCollideWithResponsesPool(t *testing.T) {
 	acc := &auth.Account{DBID: 4463}
 
@@ -54,14 +54,14 @@ func TestMaintenanceClientKeyDoesNotCollideWithResponsesPool(t *testing.T) {
 	subKey := maintenanceClientKey(acc, "", codexTransportModeUTLSChrome, maintenancePurposeSubscription)
 
 	if maintKey == responsesKey {
-		t.Fatalf("维护池键与 /responses 池键冲突: %q", maintKey)
+		t.Fatalf("maintenance pool key conflicts with the /responses pool key: %q", maintKey)
 	}
 	if maintKey == subKey {
-		t.Fatal("订阅同步（浏览器 UA）与 Codex 维护请求（CLI UA）共享了连接")
+		t.Fatal("subscription sync (browser UA) and Codex maintenance requests (CLI UA) shared a connection")
 	}
 }
 
-// 订阅端点在 Cloudflare 后面，必须强制 uTLS 指纹，与 CODEX_TRANSPORT_MODE 无关。
+// Subscription endpoints sit behind Cloudflare, so uTLS fingerprinting must be forced, independent of CODEX_TRANSPORT_MODE.
 func TestSubscriptionMaintenanceClientForcesUTLS(t *testing.T) {
 	t.Setenv("CODEX_TRANSPORT_MODE", "standard")
 	clearMaintenanceClients(t)
@@ -70,11 +70,11 @@ func TestSubscriptionMaintenanceClientForcesUTLS(t *testing.T) {
 	client := getMaintenanceClient(acc, "", maintenancePurposeSubscription, true)
 
 	if _, ok := client.Transport.(*utlsRoundTripper); !ok {
-		t.Fatalf("订阅同步 transport = %T, want *utlsRoundTripper（普通指纹会被 Cloudflare 拦截）", client.Transport)
+		t.Fatalf("subscription sync transport = %T, want *utlsRoundTripper (a regular fingerprint would be blocked by Cloudflare)", client.Transport)
 	}
 }
 
-// clearMaintenanceClients 清空维护 Client 池，避免用例间互相污染。
+// clearMaintenanceClients empties the maintenance Client pool so test cases do not contaminate each other.
 func clearMaintenanceClients(t *testing.T) {
 	t.Helper()
 	clientPool.Range(func(key, value any) bool {

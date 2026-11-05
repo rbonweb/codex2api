@@ -17,7 +17,7 @@ var errSSELineTooLong = errors.New("upstream SSE line exceeds limit")
 
 var errSSEEventTooLarge = errors.New("upstream SSE event exceeds limit")
 
-// readBoundedSSELine 读取一行，内存占用不超过 limit（不含 bufio 自身缓冲）。
+// readBoundedSSELine reads one line, with memory use not exceeding limit (excluding bufio's own buffer).
 func readBoundedSSELine(reader *bufio.Reader, limit int) ([]byte, error) {
 	var line []byte
 	for {
@@ -33,13 +33,13 @@ func readBoundedSSELine(reader *bufio.Reader, limit int) ([]byte, error) {
 }
 
 // -------------------------------------------------------------------------
-// 增补部分：导出常量别名与非流式有界读取器（严格保留既有小写符号兼容性）
+// Additions: exported constant aliases and a bounded reader for non-streaming reads (strictly keeping compatibility with the existing lowercase symbols)
 // -------------------------------------------------------------------------
 
 const (
 	MaxSSELineBytes      = maxSSELineBytes
 	MaxSSEEventBytes     = maxSSEEventBytes
-	MaxResponseBodyBytes = 16 << 20 // 16 MiB (非流式响应体默认上限)
+	MaxResponseBodyBytes = 16 << 20 // 16 MiB (default limit for non-streaming response bodies)
 )
 
 var (
@@ -48,13 +48,13 @@ var (
 	ErrResponseBodyTooLarge = errors.New("response_body_too_large")
 )
 
-// ReadBoundedResponseBody 有界读取非流式响应体。
+// ReadBoundedResponseBody reads a non-streaming response body with a bound.
 func ReadBoundedResponseBody(body io.Reader, limit int64) ([]byte, error) {
 	if limit <= 0 {
 		limit = MaxResponseBodyBytes
 	}
-	// 预留 +1 探测超限时需要 limit+1；MaxInt64 时加一会溢出为负，导致
-	// io.LimitReader 立即 EOF 并静默返回空数据，因此先做 clamp。
+	// Reserving +1 to detect overflow needs limit+1; at MaxInt64, adding one overflows to a negative value, which causes
+	// io.LimitReader to return EOF immediately and silently return empty data, so clamp first.
 	if limit > math.MaxInt64-1 {
 		limit = math.MaxInt64 - 1
 	}

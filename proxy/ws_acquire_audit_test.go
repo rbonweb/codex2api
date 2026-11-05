@@ -18,13 +18,13 @@ func TestWsAcquireAuditAccumulatesResetsAndTolerates(t *testing.T) {
 		t.Fatalf("wsAcquireAuditMs = %d, want 500 (accumulated)", got)
 	}
 
-	// 每 attempt 清零：换号重试后旧值不得泄漏进新 attempt 的日志行
+	// Reset to zero per attempt: after an account-switch retry, the old value must not leak into the new attempt's log row
 	resetWsAcquireAudit(ctx)
 	if got := wsAcquireAuditMs(ctx); got != 0 {
 		t.Fatalf("wsAcquireAuditMs after reset = %d, want 0", got)
 	}
 
-	// 非正时长与未挂载 audit 的 ctx 都必须安全无操作
+	// Non-positive durations and a ctx with no audit attached must both be safe no-ops
 	AddWsAcquireDuration(ctx, 0)
 	AddWsAcquireDuration(context.Background(), time.Second)
 	if got := wsAcquireAuditMs(context.Background()); got != 0 {
@@ -49,7 +49,7 @@ func TestPopulateWsAcquireFirstTokenExclusion(t *testing.T) {
 		ApplyRuntimeSettings(next)
 	}
 
-	// 默认关闭：保持含取连的历史口径
+	// Off by default: keeps the historical basis that includes connection acquisition
 	setExclude(t, false)
 	input := &database.UsageLogInput{FirstTokenMs: 1500}
 	populateWsAcquireFromRequest(newCtx(900*time.Millisecond), input)
@@ -57,7 +57,7 @@ func TestPopulateWsAcquireFirstTokenExclusion(t *testing.T) {
 		t.Fatalf("disabled: first_token=%d acquire=%d, want 1500/900", input.FirstTokenMs, input.WsAcquireMs)
 	}
 
-	// 开启：扣除取连，两列相加可还原
+	// Enabled: connection acquisition is subtracted; adding the two columns restores the original
 	setExclude(t, true)
 	input = &database.UsageLogInput{FirstTokenMs: 1500}
 	populateWsAcquireFromRequest(newCtx(900*time.Millisecond), input)
@@ -65,14 +65,14 @@ func TestPopulateWsAcquireFirstTokenExclusion(t *testing.T) {
 		t.Fatalf("enabled: first_token=%d acquire=%d, want 600/900", input.FirstTokenMs, input.WsAcquireMs)
 	}
 
-	// 扣除后不归零：已打点的行钳到 1ms，避免前端把 0 当作未记录
+	// Not zeroed after subtraction: recorded rows are clamped to 1ms so the frontend does not treat 0 as not recorded
 	input = &database.UsageLogInput{FirstTokenMs: 800}
 	populateWsAcquireFromRequest(newCtx(900*time.Millisecond), input)
 	if input.FirstTokenMs != 1 {
 		t.Fatalf("clamped: first_token=%d, want 1", input.FirstTokenMs)
 	}
 
-	// 未打点（0）的行不动：0 表示无首字，不能被扣成负/假值
+	// Rows that were not recorded (0) stay unchanged: 0 means no first token, and it must not be turned into a negative or fake value
 	input = &database.UsageLogInput{FirstTokenMs: 0}
 	populateWsAcquireFromRequest(newCtx(900*time.Millisecond), input)
 	if input.FirstTokenMs != 0 {

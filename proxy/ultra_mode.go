@@ -13,13 +13,13 @@ import (
 	"github.com/codex2api/database"
 )
 
-// Codex 客户端的 "Ultra" 档不是线路上的 reasoning.effort 取值:客户端把它翻成
-// effort=xhigh,并在 input 里追加一条 <multi_agent_mode> developer 消息开启主动
-// 多代理委派;切回其他档位时再追加一条"no longer applies"的消息关闭(issue #669,
-// 抓包实证)。因此 Ultra 只能从请求体里最后一条 multi_agent_mode 消息判定。
+// The Codex client's "Ultra" tier is not a reasoning.effort value on the wire: the client translates it into
+// effort=xhigh and appends a <multi_agent_mode> developer message to input to enable proactive
+// multi-agent delegation; when switching back to another tier it appends a "no longer applies" message to turn it off (issue #669,
+// verified by packet capture). Therefore Ultra can only be determined from the last multi_agent_mode message in the request body.
 //
-// 同一回合内的续接帧(带 previous_response_id、input 只有工具输出)不携带历史,
-// 看不到这条消息,按 turn_id 继承本回合首帧的判定结果。
+// Continuation frames within the same turn (with previous_response_id and input holding only tool output) carry no history,
+// so they cannot see this message and inherit the first frame's result for this turn by turn_id.
 const (
 	ultraModeMarkerTag  = "<multi_agent_mode>"
 	ultraModeActiveText = "Proactive multi-agent delegation is active"
@@ -38,8 +38,8 @@ const (
 	ultraModeOn
 )
 
-// detectUltraModeFromBody 只看 input 顶层的 developer 消息,以最后一条
-// multi_agent_mode 消息为准;没有任何标记返回 unknown。
+// detectUltraModeFromBody only looks at developer messages at the top level of input, and uses the last
+// multi_agent_mode message as authoritative; with no marker at all it returns unknown.
 func detectUltraModeFromBody(body []byte) ultraModeState {
 	if len(body) == 0 || !bytes.Contains(body, []byte("multi_agent_mode")) {
 		return ultraModeUnknown
@@ -80,8 +80,8 @@ func detectUltraModeFromBody(body []byte) ultraModeState {
 	return state
 }
 
-// ultraModeTurnKey 取 Codex 回合 ID:WS 帧在 client_metadata.turn_id /
-// client_metadata.x-codex-turn-metadata,HTTP 在 X-Codex-Turn-Metadata 头。
+// ultraModeTurnKey takes the Codex turn ID: WS frames use client_metadata.turn_id /
+// client_metadata.x-codex-turn-metadata, and HTTP uses the X-Codex-Turn-Metadata header.
 func ultraModeTurnKey(headers http.Header, body []byte) string {
 	if id := strings.TrimSpace(gjson.GetBytes(body, "client_metadata.turn_id").String()); id != "" {
 		return id
@@ -133,8 +133,8 @@ func (c *ultraModeTurnCache) get(key string, now time.Time) (bool, bool) {
 	return entry.on, true
 }
 
-// pruneLocked 先清过期项;仍然超限就整体清空——回合缓存丢失只影响续接帧的标记,
-// 不影响计费与路由,比在热路径上做 LRU 划算。
+// pruneLocked clears expired entries first; if still over the limit it clears everything: losing the turn cache only affects the markers of continuation frames,
+// does not affect billing or routing, and is cheaper than doing LRU on the hot path.
 func (c *ultraModeTurnCache) pruneLocked(now time.Time) {
 	for key, entry := range c.entries {
 		if now.Sub(entry.seen) > ultraModeTurnTTL {
@@ -146,7 +146,7 @@ func (c *ultraModeTurnCache) pruneLocked(now time.Time) {
 	}
 }
 
-// resolveRequestUltraMode 判定本请求是否处于 Codex Ultra 档。
+// resolveRequestUltraMode determines whether this request is in the Codex Ultra tier.
 func resolveRequestUltraMode(headers http.Header, body []byte) bool {
 	now := time.Now()
 	key := ultraModeTurnKey(headers, body)
@@ -187,8 +187,8 @@ func cachedRequestUltraMode(c *gin.Context) (bool, bool) {
 	return on, ok
 }
 
-// populateUltraUsageMetaFromRequest 把 Ultra 判定写进用量日志。入口已缓存的
-// 直接用;没缓存的(如非 /v1/responses 入口)退回原始请求体判定一次。
+// populateUltraUsageMetaFromRequest writes the Ultra determination into the usage log. The entry point's cached
+// result is used directly; if nothing is cached (such as a non-/v1/responses entry point), it falls back to determining once from the raw request body.
 func populateUltraUsageMetaFromRequest(c *gin.Context, input *database.UsageLogInput) {
 	if input == nil || input.Ultra {
 		return

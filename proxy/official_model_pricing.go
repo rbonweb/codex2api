@@ -14,7 +14,7 @@ var officialDollarPrice = regexp.MustCompile(`^\$(-?(?:\d{1,3}(?:,\d{3})+|\d+)(?
 
 var officialPriceUnit = regexp.MustCompile(`(?i)^/\s*(?:mtok|1m\s+tokens|million\s+tokens|image|img|sec|second)(?:\s|$)`)
 
-// normalizeOfficialPricingModel 去除上下文注释并保留模型的独立价格键。
+// normalizeOfficialPricingModel strips context annotations and keeps the model's own independent price key.
 func normalizeOfficialPricingModel(value string) string {
 	value = strings.ToLower(strings.Trim(strings.TrimSpace(value), "`"))
 	if idx := strings.Index(value, " ("); idx >= 0 {
@@ -23,7 +23,7 @@ func normalizeOfficialPricingModel(value string) string {
 	return database.PricingManagementModelKey(value)
 }
 
-// parseOfficialPrice 严格读取美元数值，未知格式返回 NaN，禁止静默当成零价。
+// parseOfficialPrice strictly reads a USD numeric value. Unknown formats return NaN and must never be silently treated as a zero price.
 func parseOfficialPrice(value string) float64 {
 	value = strings.TrimSpace(value)
 	if value == "" || value == "-" || value == "—" {
@@ -44,7 +44,7 @@ func parseOfficialPrice(value string) float64 {
 	return price
 }
 
-// validOfficialPriceUnit 拒绝按千 token、分钟或字符计费的价格混入 token/媒体单价。
+// validOfficialPriceUnit rejects prices billed per thousand tokens, per minute, or per character from being mixed into token or media unit prices.
 func validOfficialPriceUnit(unit string) bool {
 	if unit == "" || strings.EqualFold(strings.Join(strings.Fields(unit), ""), "/1m") {
 		return true
@@ -52,7 +52,7 @@ func validOfficialPriceUnit(unit string) bool {
 	return officialPriceUnit.MatchString(unit)
 }
 
-// uniqueSortedStrings 返回去空白、去重且按字典序排列的字符串。
+// uniqueSortedStrings returns the strings with surrounding whitespace trimmed, de-duplicated, and sorted lexicographically.
 func uniqueSortedStrings(values []string) []string {
 	seen := make(map[string]struct{}, len(values))
 	out := make([]string, 0, len(values))

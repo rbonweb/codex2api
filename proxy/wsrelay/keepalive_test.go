@@ -6,7 +6,7 @@ import (
 	"testing"
 )
 
-// 构造一个已连接的池内连接（不依赖真实 socket）。
+// Build a connected in-pool connection (does not depend on a real socket).
 func addConnectedConn(t *testing.T, m *Manager, accountID int64, sessionKey string) *WsConnection {
 	t.Helper()
 	wsURL := "wss://example.test/responses"
@@ -41,7 +41,7 @@ func TestPingIdleConnectionsOnlyPingsConnected(t *testing.T) {
 
 	connected := addConnectedConn(t, m, 1, "s1")
 
-	// 一个未连接的连接：应被跳过
+	// A connection that is not connected: should be skipped
 	disc := addConnectedConn(t, m, 2, "s2")
 	disc.SetState(StateDisconnected)
 
@@ -62,7 +62,7 @@ func TestPingIdleConnectionsSkipsBusyConnection(t *testing.T) {
 	m.keepalivePingFunc = func(wc *WsConnection) error { pings++; return nil }
 
 	busy := addConnectedConn(t, m, 1, "s1")
-	// 给 busy 连接挂一个 pending 请求 -> 应被跳过
+	// Attach a pending request to the busy connection -> should be skipped
 	pr := busy.session.AddPendingRequest("s1")
 	if busy.session.PendingCount() == 0 {
 		t.Fatal("setup failed: expected a pending request")
@@ -89,18 +89,18 @@ func TestKeepaliveTaskDisabledDoesNotPing(t *testing.T) {
 	m.keepalivePingFunc = func(wc *WsConnection) error { pings++; return nil }
 	addConnectedConn(t, m, 1, "s1")
 
-	// enabled=false：即便有空闲连接，也不应 Ping
+	// enabled=false: even with idle connections, no ping should be sent
 	task := NewKeepaliveTask(m, func() bool { return false }, func() int { return 1 })
-	// 直接驱动一次 enabled 判定逻辑：模拟 loop 内的判断
+	// Drive the enabled check directly once: simulate the check inside the loop
 	if task.enabled() {
 		t.Fatal("enabled should be false")
 	}
-	// 关闭状态下不会调用 PingIdleConnections
+	// PingIdleConnections is not called while disabled
 	if pings != 0 {
 		t.Fatalf("pings=%d, want 0 when disabled", pings)
 	}
 
-	// 显式启用后，PingIdleConnections 应工作
+	// After explicitly enabling, PingIdleConnections should work
 	if got := m.connectionCountForTest(); got != 1 {
 		t.Fatalf("connection count=%d, want 1", got)
 	}
@@ -110,7 +110,7 @@ func TestKeepaliveTaskDisabledDoesNotPing(t *testing.T) {
 	}
 }
 
-// connectionCountForTest 返回连接池大小（测试辅助）。
+// connectionCountForTest returns the connection pool size (test helper).
 func (m *Manager) connectionCountForTest() int {
 	n := 0
 	m.connections.Range(func(_, _ any) bool { n++; return true })

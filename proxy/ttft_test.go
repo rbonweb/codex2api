@@ -12,25 +12,25 @@ func TestIsFirstTokenEvent(t *testing.T) {
 		eventType string
 		want      bool
 	}{
-		// 不应触发首字（控制 / 终止事件）
+		// Must not trigger first token (control / terminal events)
 		{"empty", "", false},
 		{"created", "response.created", false},
 		{"in_progress", "response.in_progress", false},
 		{"completed", "response.completed", false},
 		{"failed", "response.failed", false},
 
-		// 应触发首字 —— 明确的内容增量事件
+		// Must trigger first token: explicit content delta events
 		{"function_call_arguments_delta", "response.function_call_arguments.delta", true},
 		{"image_partial", "response.image_generation_call.partial_image", true},
 		{"reasoning_text_delta", "response.reasoning_text.delta", true},
 		{"reasoning_summary_text_delta", "response.reasoning_summary_text.delta", true},
 		{"reasoning_encrypted_delta", "response.reasoning.encrypted_content.delta", true},
 
-		// 已有路径继续命中
+		// Existing paths still match
 		{"output_text_delta", "response.output_text.delta", true},
 		{"output_text_done", "response.output_text.done", true},
 
-		// 结构事件仅靠 type 不应触发首字
+		// Structural events must not trigger first token based on type alone
 		{"function_call_arguments_done", "response.function_call_arguments.done", false},
 		{"output_item_added", "response.output_item.added", false},
 		{"output_item_done", "response.output_item.done", false},
@@ -50,17 +50,17 @@ func TestIsPreContentLifecycleEvent(t *testing.T) {
 		eventType string
 		want      bool
 	}{
-		// 仅 created / in_progress 属于可短暂缓冲的前置生命周期帧
+		// Only created / in_progress are pre-content lifecycle frames that may be buffered briefly
 		{"response.created", true},
 		{"response.in_progress", true},
 		{" response.created ", true},
-		// 结构帧标志响应已开始，必须立即下发
+		// Structural frames signal that the response has started and must be sent immediately
 		{"response.output_item.added", false},
 		{"response.content_part.added", false},
-		// reasoning / 内容增量必须立即下发
+		// reasoning / content deltas must be sent immediately
 		{"response.reasoning_summary_text.delta", false},
 		{"response.output_text.delta", false},
-		// 终止帧不属于前置生命周期
+		// Terminal frames are not part of the pre-content lifecycle
 		{"response.completed", false},
 		{"response.failed", false},
 		{"", false},
