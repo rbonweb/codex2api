@@ -90,15 +90,6 @@ func liteLLMPriceToOverride(model string, entry liteLLMPricingEntry) database.Mo
 		price.LongContextThresholdTokens = threshold.tokens
 		break
 	}
-	switch database.MediaBillingUnit(model) {
-	case database.MediaUnitImage:
-		price.MediaUnitCost = entry.number("output_cost_per_image")
-		if _, exists := entry["output_cost_per_image"]; !exists {
-			price.MediaUnitCost = entry.number("input_cost_per_image")
-		}
-	case database.MediaUnitSecond:
-		price.MediaUnitCost = entry.number("output_cost_per_second")
-	}
 	return price
 }
 

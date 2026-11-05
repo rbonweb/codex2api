@@ -35,9 +35,6 @@ func UsageLogCostBreakdown(log *UsageLogInput) CostBreakdown {
 		model = log.Model
 	}
 	model = daybreakBillingModel(model, log.DaybreakProgram)
-	if unit := MediaBillingUnit(model); unit != "" {
-		return CostBreakdown{TotalCost: mediaUsageCost(log, model, unit)}
-	}
 	if GPTImage25BillingModel(model) == "" {
 		return CalculateCostBreakdownWithCacheWrites(log.InputTokens, log.OutputTokens, log.CachedTokens, log.CacheWrite5mTokens, log.CacheWrite1hTokens, model, usageLogBillingServiceTier(log))
 	}

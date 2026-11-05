@@ -168,3 +168,17 @@ func testImageUserBillingPersistence(t *testing.T, driver, dsn string) {
 		t.Fatalf("audit-off quota=%v", row.QuotaUsed)
 	}
 }
+
+func TestParseModelPricingOverridesJSONDropsRemovedMediaModes(t *testing.T) {
+	blob := `{"grok-imagine-video":{"user_billing_mode":"per_video","image_unit_price":0.5,"media_unit_cost":0.1},"gpt-image-2":{"user_billing_mode":"per_image","image_unit_price":0.04}}`
+	got, err := ParseModelPricingOverridesJSON(blob)
+	if err != nil {
+		t.Fatalf("legacy blob must still parse: %v", err)
+	}
+	if _, ok := got["grok-imagine-video"]; ok {
+		t.Fatalf("per_video entry should be dropped, got %+v", got)
+	}
+	if o, ok := got["gpt-image-2"]; !ok || o.UserBillingMode != UserBillingModePerImage || o.ImageUnitPrice != 0.04 {
+		t.Fatalf("gpt-image entry must survive, got %+v", got)
+	}
+}

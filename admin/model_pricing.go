@@ -133,9 +133,6 @@ type modelPricingRow struct {
 	Pricing        database.ModelPricingOverride `json:"pricing"`
 	CanonicalModel string                        `json:"canonical_model,omitempty"`
 	IsAlias        bool                          `json:"is_alias,omitempty"`
-	// MediaUnit 非空表示媒体模型(image=按张、second=按秒),价格看 media_unit_cost
-	// 而非 token 单价;media_unit_cost 为 0 即未定价。
-	MediaUnit string `json:"media_unit,omitempty"`
 }
 
 func modelPricingManagementKeys(ids []string) []string {
@@ -178,7 +175,6 @@ func (h *Handler) ListModelPricing(c *gin.Context) {
 			Pricing:        database.ModelPricingOverrideFromPricing(database.GetModelPricing(key), database.ModelPricingSourceFor(key)),
 			CanonicalModel: canonicalModel,
 			IsAlias:        canonicalModel != "",
-			MediaUnit:      database.MediaBillingUnit(key),
 		})
 	}
 
