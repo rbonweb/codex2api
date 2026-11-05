@@ -90,13 +90,21 @@ type bridgeTestServer struct {
 // newBridgeTestServer serves /v1/realtime through RealtimeWebSocket with the audio seams replaced by fakes.
 func newBridgeTestServer(t *testing.T, allowLive, supported bool) *bridgeTestServer {
 	t.Helper()
+	// A short grace keeps tests that never send a trigger event moving; tests that need to see the call before it exists use newBridgeTestServerWithGrace.
+	return newBridgeTestServerWithGrace(t, allowLive, supported, 5*time.Millisecond)
+}
+
+// newBridgeTestServerWithGrace sets the creation grace before the server starts, so the handlers read it after a happens-before edge.
+func newBridgeTestServerWithGrace(t *testing.T, allowLive, supported bool, grace time.Duration) *bridgeTestServer {
+	t.Helper()
 	gin.SetMode(gin.TestMode)
 	srv := &bridgeTestServer{call: newFakeBridgeCall(), session: make(chan []byte, 4), handlers: make(chan struct{}, 8)}
 
-	prevOpen, prevSupported, prevEncoder := openRealtimeAudioCall, realtimeAudioBridgeSupported, newRealtimeAudioEncoder
+	prevOpen, prevSupported, prevEncoder, prevGrace := openRealtimeAudioCall, realtimeAudioBridgeSupported, newRealtimeAudioEncoder, realtimeAudioCreateGrace
 	t.Cleanup(func() {
-		openRealtimeAudioCall, realtimeAudioBridgeSupported, newRealtimeAudioEncoder = prevOpen, prevSupported, prevEncoder
+		openRealtimeAudioCall, realtimeAudioBridgeSupported, newRealtimeAudioEncoder, realtimeAudioCreateGrace = prevOpen, prevSupported, prevEncoder, prevGrace
 	})
+	realtimeAudioCreateGrace = grace
 	openRealtimeAudioCall = func(_ *Handler, _ *gin.Context, session json.RawMessage) (realtimeAudioCallConn, *liveGatewayError) {
 		srv.opens.Add(1)
 		srv.session <- append([]byte(nil), session...)
@@ -105,17 +113,22 @@ func newBridgeTestServer(t *testing.T, allowLive, supported bool) *bridgeTestSer
 	realtimeAudioBridgeSupported = func() bool { return supported }
 	newRealtimeAudioEncoder = func() (opusEncoder, error) { return bridgeFakeEncoder{}, nil }
 
+	var inflight sync.WaitGroup
 	handler := &Handler{}
 	router := gin.New()
 	router.GET("/v1/realtime", func(c *gin.Context) {
 		row := &database.APIKeyRow{ID: 7, Limits: database.APIKeyLimits{AllowLive: allowLive}}
 		c.Set(contextAPIKeyRow, row)
 		c.Set(contextAPIKeyID, row.ID)
+		inflight.Add(1)
+		defer inflight.Done()
 		handler.RealtimeWebSocket(c)
 		srv.handlers <- struct{}{}
 	})
 	server := httptest.NewServer(router)
 	t.Cleanup(server.Close)
+	// httptest does not wait for hijacked connections, so wait for the handlers before the seams are restored. The client connections are closed first (their cleanups were registered later).
+	t.Cleanup(inflight.Wait)
 	srv.URL = "ws" + strings.TrimPrefix(server.URL, "http") + "/v1/realtime"
 	return srv
 }
@@ -305,7 +318,7 @@ func TestAudioBridgeMapsUpstreamEvents(t *testing.T) {
 	}
 }
 
-func TestAudioBridgeTextItemAndSessionUpdateReachTheCall(t *testing.T) {
+func TestAudioBridgeTextItemAndResponseCreateReachTheCall(t *testing.T) {
 	srv := newBridgeTestServer(t, true, true)
 	conn := srv.dial(t, "?model=gpt-realtime")
 	readBridgeUntil(t, conn, "session.created")
@@ -317,19 +330,127 @@ func TestAudioBridgeTextItemAndSessionUpdateReachTheCall(t *testing.T) {
 	}
 	readBridgeUntil(t, conn, "conversation.item.created")
 
-	writeBridgeEvent(t, conn, `{"type":"session.update","session":{"instructions":"Be brief.","audio":{"output":{"voice":"alloy"}}}}`)
-	sideband = takeBridgeSent(t, srv.call)
-	if gjson.GetBytes(sideband, "type").String() != "session.update" || gjson.GetBytes(sideband, "session.audio.output.voice").String() != "cove" {
-		t.Fatalf("session sideband = %s", sideband)
-	}
-	ack := readBridgeUntil(t, conn, "session.updated")
-	if gjson.GetBytes(ack, "session.instructions").String() != "Be brief." {
-		t.Fatalf("ack = %s", ack)
-	}
-
 	writeBridgeEvent(t, conn, `{"type":"response.create","response":{"instructions":"ignored"}}`)
 	if got := string(takeBridgeSent(t, srv.call)); got != `{"type":"response.create"}` {
 		t.Fatalf("response.create sideband = %s", got)
+	}
+}
+
+func TestAudioBridgeSessionUpdateBeforeCreationCarriesInstructionsAndVoice(t *testing.T) {
+	srv := newBridgeTestServerWithGrace(t, true, true, time.Hour)
+	conn := srv.dial(t, "?model=gpt-realtime")
+	readBridgeUntil(t, conn, "session.created")
+	if srv.opens.Load() != 0 {
+		t.Fatal("the call was created before any trigger event")
+	}
+
+	writeBridgeEvent(t, conn, `{"type":"session.update","session":{"type":"realtime","instructions":"Answer in one short sentence.","audio":{"output":{"voice":"echo"}}}}`)
+	ack := readBridgeUntil(t, conn, "session.updated")
+	if gjson.GetBytes(ack, "session.instructions").String() != "Answer in one short sentence." {
+		t.Fatalf("ack = %s", ack)
+	}
+	session := <-srv.session
+	if got := gjson.GetBytes(session, "instructions").String(); got != "Answer in one short sentence." {
+		t.Fatalf("creation instructions = %q", got)
+	}
+	if got := gjson.GetBytes(session, "audio.output.voice").String(); got != "spruce" {
+		t.Fatalf("creation voice = %q, want spruce (echo)", got)
+	}
+	select {
+	case event := <-srv.call.sent:
+		t.Fatalf("the pre-creation update was also forwarded upstream: %s", event)
+	default:
+	}
+}
+
+func TestAudioBridgeCreatesCallAfterGraceWithoutSessionUpdate(t *testing.T) {
+	srv := newBridgeTestServerWithGrace(t, true, true, 10*time.Millisecond)
+	conn := srv.dial(t, "?model=gpt-realtime")
+	readBridgeUntil(t, conn, "session.created")
+	select {
+	case session := <-srv.session:
+		if gjson.GetBytes(session, "instructions").String() != liveAudioDefaultInstructions {
+			t.Fatalf("creation session = %s", session)
+		}
+	case <-time.After(bridgeTestTimeout):
+		t.Fatal("the call was not created after the grace period")
+	}
+}
+
+// seqBridgeEncoder tags every packet with its sequence number so tests can check the order frames reach the track.
+type seqBridgeEncoder struct{ n *atomic.Int32 }
+
+func (e seqBridgeEncoder) Encode([]int16) ([]byte, error) {
+	return []byte{bridgeTestMarker, byte(e.n.Add(1))}, nil
+}
+func (seqBridgeEncoder) Close() {}
+
+func TestAudioBridgeAudioSentBeforeCreationIsFlushedInOrder(t *testing.T) {
+	srv := newBridgeTestServerWithGrace(t, true, true, time.Hour)
+	var seq atomic.Int32
+	newRealtimeAudioEncoder = func() (opusEncoder, error) { return seqBridgeEncoder{n: &seq}, nil }
+	gate := make(chan struct{})
+	open := openRealtimeAudioCall
+	openRealtimeAudioCall = func(h *Handler, c *gin.Context, session json.RawMessage) (realtimeAudioCallConn, *liveGatewayError) {
+		<-gate
+		return open(h, c, session)
+	}
+	conn := srv.dial(t, "?model=gpt-realtime")
+	readBridgeUntil(t, conn, "session.created")
+
+	// Both appends arrive while the call is still being created; each is 100 ms, so five frames.
+	pcm := base64.StdEncoding.EncodeToString(make([]byte, 4800))
+	writeBridgeEvent(t, conn, `{"type":"input_audio_buffer.append","audio":"`+pcm+`"}`)
+	writeBridgeEvent(t, conn, `{"type":"input_audio_buffer.append","audio":"`+pcm+`"}`)
+	close(gate)
+	for want := 1; want <= 10; want++ {
+		select {
+		case frame := <-srv.call.frames:
+			if int(frame[1]) != want {
+				t.Fatalf("frame %d carries sequence %d", want, frame[1])
+			}
+		case <-time.After(bridgeTestTimeout):
+			t.Fatalf("got %d frames, want 10", want-1)
+		}
+	}
+}
+
+func TestAudioBridgeSessionUpdateAfterCreationIsImmutable(t *testing.T) {
+	srv := newBridgeTestServer(t, true, true)
+	conn := srv.dial(t, "?model=gpt-realtime")
+	readBridgeUntil(t, conn, "session.created")
+	writeBridgeEvent(t, conn, `{"type":"session.update","session":{"instructions":"First.","audio":{"output":{"voice":"echo"}}}}`)
+	readBridgeUntil(t, conn, "session.updated")
+	<-srv.session
+
+	// Changing instructions and voice is refused with one error each, and nothing reaches upstream.
+	writeBridgeEvent(t, conn, `{"type":"session.update","session":{"instructions":"Second.","audio":{"output":{"voice":"coral"}}}}`)
+	ack := readBridgeUntil(t, conn, "session.updated")
+	if gjson.GetBytes(ack, "session.instructions").String() != "First." || gjson.GetBytes(ack, "session.audio.output.voice").String() != "echo" {
+		t.Fatalf("ack should show the accepted fields: %s", ack)
+	}
+	for _, want := range []string{"Instructions cannot be updated after initialization.", "Voice cannot be updated after initialization."} {
+		errEvent := readBridgeUntil(t, conn, "error")
+		if gjson.GetBytes(errEvent, "error.code").String() != "immutable_field_update" || gjson.GetBytes(errEvent, "error.message").String() != want {
+			t.Fatalf("error = %s, want %q", errEvent, want)
+		}
+	}
+	select {
+	case event := <-srv.call.sent:
+		t.Fatalf("an immutable update reached upstream: %s", event)
+	default:
+	}
+
+	// Resending the accepted values is not a change, and the session keeps working.
+	writeBridgeEvent(t, conn, `{"type":"session.update","session":{"instructions":"First.","audio":{"output":{"voice":"echo"}}}}`)
+	readBridgeUntil(t, conn, "session.updated")
+	writeBridgeEvent(t, conn, `{"type":"ping"}`)
+	if next := readBridgeEvent(t, conn); gjson.GetBytes(next, "type").String() != "pong" {
+		t.Fatalf("event after an unchanged update = %s, want pong", next)
+	}
+	writeBridgeEvent(t, conn, `{"type":"response.create"}`)
+	if got := string(takeBridgeSent(t, srv.call)); got != `{"type":"response.create"}` {
+		t.Fatalf("sideband = %s", got)
 	}
 }
 
@@ -441,6 +562,7 @@ func TestAudioBridgeClientDisconnectClosesCallOnce(t *testing.T) {
 	srv := newBridgeTestServer(t, true, true)
 	conn := srv.dial(t, "?model=gpt-realtime")
 	readBridgeUntil(t, conn, "session.created")
+	<-srv.session
 
 	_ = conn.WriteControl(websocket.CloseMessage, websocket.FormatCloseMessage(websocket.CloseNormalClosure, "bye"), time.Now().Add(bridgeTestTimeout))
 	_ = conn.Close()
@@ -459,6 +581,7 @@ func TestAudioBridgeCallEndingClosesClient(t *testing.T) {
 	srv := newBridgeTestServer(t, true, true)
 	conn := srv.dial(t, "?model=gpt-realtime")
 	readBridgeUntil(t, conn, "session.created")
+	<-srv.session
 
 	srv.call.end()
 	_, _, err := conn.ReadMessage()
@@ -478,9 +601,9 @@ func TestAudioBridgeOpenFailureIsAnErrorEventThenClose(t *testing.T) {
 		return nil, newLiveGatewayError(http.StatusServiceUnavailable, api.ErrCodeServiceUnavailable, api.ErrorTypeServer, "no capacity")
 	}
 	conn := srv.dial(t, "?model=gpt-realtime")
-	errEvent := readBridgeEvent(t, conn)
-	if gjson.GetBytes(errEvent, "type").String() != "error" || !strings.Contains(string(errEvent), "no capacity") {
-		t.Fatalf("first event = %s", errEvent)
+	errEvent := readBridgeUntil(t, conn, "error")
+	if !strings.Contains(string(errEvent), "no capacity") {
+		t.Fatalf("error event = %s", errEvent)
 	}
 	_, _, err := conn.ReadMessage()
 	if closeErr, ok := err.(*websocket.CloseError); !ok || closeErr.Code != websocket.CloseTryAgainLater {
