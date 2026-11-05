@@ -131,54 +131,6 @@ func TestTranslateRequestDropsMalformedToolCallHistoryAsPair(t *testing.T) {
 	}
 }
 
-func TestTranslateChatToResponsesForGrokPreservesControls(t *testing.T) {
-	raw := []byte(`{
-		"model":"grok-4.5",
-		"messages":[{"role":"user","content":"hello"}],
-		"temperature":0.25,
-		"top_p":0.8,
-		"max_tokens":111,
-		"max_completion_tokens":222,
-		"stop":["END","DONE"],
-		"seed":17,
-		"presence_penalty":0.2,
-		"frequency_penalty":-0.1,
-		"parallel_tool_calls":false,
-		"tools":[{"type":"function","function":{"name":"lookup","description":"Lookup","parameters":{"type":"object","uniqueItems":true}}}],
-		"tool_choice":{"type":"function","function":{"name":"lookup"}},
-		"response_format":{"type":"json_schema","json_schema":{"name":"answer","strict":true,"schema":{"type":"object","uniqueItems":true}}}
-	}`)
-	got, err := TranslateChatToResponsesForGrok(raw)
-	if err != nil {
-		t.Fatalf("TranslateChatToResponsesForGrok: %v", err)
-	}
-	checks := map[string]string{
-		"temperature":             "0.25",
-		"top_p":                   "0.8",
-		"max_output_tokens":       "222",
-		"stop.0":                  "END",
-		"stop.1":                  "DONE",
-		"seed":                    "17",
-		"presence_penalty":        "0.2",
-		"frequency_penalty":       "-0.1",
-		"tool_choice.type":        "function",
-		"tool_choice.name":        "lookup",
-		"text.format.type":        "json_schema",
-		"text.format.name":        "answer",
-		"tools.0.parameters.type": "object",
-	}
-	for path, want := range checks {
-		if value := gjson.GetBytes(got, path); value.String() != want {
-			t.Fatalf("%s = %q, want %q; body=%s", path, value.String(), want, got)
-		}
-	}
-	if value := gjson.GetBytes(got, "parallel_tool_calls"); !value.Exists() || value.Bool() {
-		t.Fatalf("parallel_tool_calls should preserve explicit false; body=%s", got)
-	}
-	if !gjson.GetBytes(got, "tools.0.parameters.uniqueItems").Bool() || !gjson.GetBytes(got, "text.format.schema.uniqueItems").Bool() {
-		t.Fatalf("Grok canonical conversion must not apply Codex schema stripping; body=%s", got)
-	}
-}
 
 func TestTranslateRequestRemainsCodexSafeWhenChatControlsPresent(t *testing.T) {
 	raw := []byte(`{"model":"gpt-5.4","messages":[{"role":"user","content":"hello"}],"temperature":0.25,"max_tokens":10,"stop":"END","tool_choice":"none"}`)
@@ -1240,83 +1192,6 @@ func TestPrepareResponsesBody_NormalizesLegacyImageContentPart(t *testing.T) {
 	}
 }
 
-func TestPrepareOpenAIResponsesBody_NormalizesLegacyImageContentPart(t *testing.T) {
-	raw := []byte(`{
-		"model":"gpt-5.4",
-		"stream":false,
-		"input":[
-			{
-				"type":"message",
-				"role":"user",
-				"content":[
-					{"type":"image_url","image_url":{"url":"https://example.com/cat.png"}}
-				]
-			}
-		]
-	}`)
-
-	got := PrepareOpenAIResponsesBody(raw)
-
-	if typ := gjson.GetBytes(got, "input.0.content.0.type").String(); typ != "input_image" {
-		t.Fatalf("expected legacy image_url part to normalize to input_image, got %q; body=%s", typ, got)
-	}
-	if imageURL := gjson.GetBytes(got, "input.0.content.0.image_url").String(); imageURL != "https://example.com/cat.png" {
-		t.Fatalf("expected image_url object to be flattened, got %q; body=%s", imageURL, got)
-	}
-	if gjson.GetBytes(got, "include").Exists() {
-		t.Fatalf("OpenAI Responses body should not get Codex include defaults; body=%s", got)
-	}
-	if gjson.GetBytes(got, "store").Exists() {
-		t.Fatalf("OpenAI Responses body should not get Codex store defaults; body=%s", got)
-	}
-	if stream := gjson.GetBytes(got, "stream"); !stream.Exists() || stream.Bool() {
-		t.Fatalf("OpenAI Responses body should preserve stream=false; body=%s", got)
-	}
-}
-
-func TestPrepareOpenAIResponsesBody_ImageGenerationToolChoiceInjectsTool(t *testing.T) {
-	tests := []struct {
-		name string
-		raw  string
-	}{
-		{
-			name: "object tool_choice",
-			raw: `{
-				"model":"gpt-5.4",
-				"input":"draw a cat",
-				"tool_choice":{"type":"image_generation"}
-			}`,
-		},
-		{
-			name: "string tool_choice",
-			raw: `{
-				"model":"gpt-5.4",
-				"input":"draw a cat",
-				"tool_choice":"image_generation"
-			}`,
-		},
-	}
-
-	for _, tc := range tests {
-		t.Run(tc.name, func(t *testing.T) {
-			got := PrepareOpenAIResponsesBody([]byte(tc.raw))
-
-			if toolType := gjson.GetBytes(got, "tools.0.type").String(); toolType != "image_generation" {
-				t.Fatalf("tool type = %q, want image_generation; body=%s", toolType, got)
-			}
-			if toolModel := gjson.GetBytes(got, "tools.0.model").String(); toolModel != defaultImagesToolModel {
-				t.Fatalf("tool model = %q, want %q; body=%s", toolModel, defaultImagesToolModel, got)
-			}
-			if gjson.GetBytes(got, "include").Exists() {
-				t.Fatalf("OpenAI Responses body should not get Codex include defaults; body=%s", got)
-			}
-			if gjson.GetBytes(got, "store").Exists() {
-				t.Fatalf("OpenAI Responses body should not get Codex store defaults; body=%s", got)
-			}
-		})
-	}
-}
-
 func TestPrepareResponsesBody_SanitizesTextFormatJSONSchema(t *testing.T) {
 	raw := []byte(`{
 		"model":"gpt-5.4",
@@ -1661,23 +1536,6 @@ func TestPrepareResponsesBody_JSONObjectInjectsJSONHintWhenInputOmitsJSON(t *tes
 	}
 }
 
-func TestPrepareOpenAIResponsesBody_NativeJSONObjectPreservesInputWhenInputOmitsJSON(t *testing.T) {
-	raw := []byte(`{
-		"model":"gpt-5.4",
-		"input":"return name",
-		"text":{"format":{"type":"json_object"}}
-	}`)
-
-	got := PrepareOpenAIResponsesBody(raw)
-
-	input := gjson.GetBytes(got, "input").String()
-	if input != "return name" {
-		t.Fatalf("native JSON mode must preserve the original input, got %q; body=%s", input, got)
-	}
-	if gjson.GetBytes(got, "include").Exists() {
-		t.Fatalf("OpenAI Responses body should not get Codex include defaults; body=%s", got)
-	}
-}
 
 func TestPrepareResponsesBody_DefaultsIncludeForResponses(t *testing.T) {
 	raw := []byte(`{
@@ -2202,29 +2060,6 @@ func TestPrepareCompactResponsesBody_RemovesUnsupportedInjectedFields(t *testing
 	}
 }
 
-func TestPrepareOpenAIResponsesCompactBody_RemovesUnsupportedFields(t *testing.T) {
-	raw := []byte(`{
-		"model":"gpt-4.1",
-		"input":"hello",
-		"include":["reasoning.encrypted_content"],
-		"store":true,
-		"stream":true
-	}`)
-
-	got := PrepareOpenAIResponsesCompactBody(raw)
-
-	for _, field := range []string{"include", "store", "stream"} {
-		if gjson.GetBytes(got, field).Exists() {
-			t.Fatalf("expected %s to be removed for OpenAI Responses compact body, got %s", field, got)
-		}
-	}
-	if model := gjson.GetBytes(got, "model").String(); model != "gpt-4.1" {
-		t.Fatalf("model = %q, want gpt-4.1; body=%s", model, got)
-	}
-	if input := gjson.GetBytes(got, "input").String(); input != "hello" {
-		t.Fatalf("input = %q, want hello; body=%s", input, got)
-	}
-}
 
 func TestPrepareCompactResponsesBody_RemovesClientSuppliedInclude(t *testing.T) {
 	raw := []byte(`{
@@ -2318,29 +2153,6 @@ func TestPrepareResponsesBody_MovesCompactionTriggerToFinalInputItem(t *testing.
 	}
 }
 
-func TestPrepareOpenAIResponsesBody_MovesCompactionTriggerToFinalInputItem(t *testing.T) {
-	raw := []byte(`{
-		"model":"gpt-5.6-sol",
-		"stream":true,
-		"input":[
-			{"type":"compaction_trigger"},
-			{"type":"context_compaction","encrypted_content":"opaque"},
-			{"type":"function_call_output","call_id":"call_1","output":"ok"}
-		]
-	}`)
-
-	got := PrepareOpenAIResponsesBody(raw)
-	input := gjson.GetBytes(got, "input").Array()
-	if len(input) != 3 {
-		t.Fatalf("input length = %d, want 3; body=%s", len(input), got)
-	}
-	if gotType := input[0].Get("type").String(); gotType != "context_compaction" {
-		t.Fatalf("input[0].type = %q, want context_compaction; body=%s", gotType, got)
-	}
-	if gotType := input[2].Get("type").String(); gotType != "compaction_trigger" {
-		t.Fatalf("final input type = %q, want compaction_trigger; body=%s", gotType, got)
-	}
-}
 
 func TestPrepareResponsesBody_CachedHistoryStillKeepsCompactionTriggerFinal(t *testing.T) {
 	raw := []byte(`{
@@ -2655,29 +2467,6 @@ func TestPrepareResponsesBodyInfersFunctionToolChoiceTypeWhenMissing(t *testing.
 	}
 }
 
-func TestPrepareOpenAIResponsesBodyNormalizesChatStyleFunctionToolChoice(t *testing.T) {
-	raw := []byte(`{
-		"model":"gpt-5.4",
-		"input":"hello",
-		"tools":[{"type":"function","name":"lookup","parameters":{"type":"object"}}],
-		"tool_choice":{
-			"type":"function",
-			"function":{"name":"lookup"}
-		}
-	}`)
-
-	got := PrepareOpenAIResponsesBody(raw)
-	choice := gjson.GetBytes(got, "tool_choice")
-	if choice.Get("type").String() != "function" {
-		t.Fatalf("tool_choice.type = %q, want function; body=%s", choice.Get("type").String(), got)
-	}
-	if choice.Get("name").String() != "lookup" {
-		t.Fatalf("tool_choice.name = %q, want lookup; body=%s", choice.Get("name").String(), got)
-	}
-	if choice.Get("function").Exists() {
-		t.Fatalf("tool_choice nested function object should be removed, got %s", got)
-	}
-}
 
 func TestPrepareResponsesBody_DefaultsNullMessageContent(t *testing.T) {
 	raw := []byte(`{
@@ -4015,11 +3804,6 @@ func TestPrepareCompactBodiesStripClientMetadata(t *testing.T) {
 	codexBody, _ := PrepareCompactResponsesBodyForOwner(raw, "")
 	if gjson.GetBytes(codexBody, "client_metadata").Exists() {
 		t.Fatalf("codex compact body should strip client_metadata, got %s", codexBody)
-	}
-
-	relayBody := PrepareOpenAIResponsesCompactBody(raw)
-	if gjson.GetBytes(relayBody, "client_metadata").Exists() {
-		t.Fatalf("relay compact body should strip client_metadata, got %s", relayBody)
 	}
 }
 

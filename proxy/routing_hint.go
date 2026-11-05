@@ -50,13 +50,12 @@ func buildCodexRoutingHint(requestBody []byte) string {
 
 // ApplyCodexRoutingHint 先剥离任意大小写形态的既有该头（网关所有，下游与
 // 账号自定义头传入的一律不认），再仅对官方 Codex 账号按最终出站 body 合成。
-// 中转/Grok（relay-style）账号只剥不发。
 func ApplyCodexRoutingHint(headers http.Header, account *auth.Account, requestBody []byte) {
 	if headers == nil {
 		return
 	}
 	deleteHeaderCaseInsensitive(headers, codexRoutingHintHeader)
-	if account == nil || account.IsRelayStyle() || CodexRoutingHintDisabled() {
+	if account == nil || CodexRoutingHintDisabled() {
 		return
 	}
 	if hint := buildCodexRoutingHint(requestBody); hint != "" {

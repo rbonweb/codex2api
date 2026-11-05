@@ -71,7 +71,6 @@ func TestSchedulerQueueOverloadHTTPRoutes(t *testing.T) {
 		{"responses", "/v1/responses", `{"model":"gpt-5.5","input":"hello"}`, (*Handler).Responses},
 		{"compact", "/v1/responses/compact", `{"model":"gpt-5.5","input":"hello"}`, (*Handler).ResponsesCompact},
 		{"chat", "/v1/chat/completions", `{"model":"gpt-5.5","messages":[{"role":"user","content":"hello"}]}`, (*Handler).ChatCompletions},
-		{"messages", "/v1/messages", `{"model":"claude-opus-4-6","max_tokens":128,"messages":[{"role":"user","content":"hello"}]}`, (*Handler).Messages},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			s := saturatedSchedulerQueue(t)
@@ -104,9 +103,6 @@ func TestSchedulerQueueOverloadCommittedSSE(t *testing.T) {
 		c.Request = httptest.NewRequest(http.MethodPost, "/", nil)
 		c.Header("Content-Type", "text/event-stream")
 		keepalive := ": keepalive\n\n"
-		if tc.protocol == continuousRetryProtocolGemini {
-			keepalive = "data: {}\n\n"
-		}
 		_, _ = c.Writer.WriteString(keepalive)
 		c.Writer.Flush()
 		if !writeSchedulerQueueError(c, auth.ErrSchedulerQueueFull, tc.protocol) {
@@ -115,12 +111,6 @@ func TestSchedulerQueueOverloadCommittedSSE(t *testing.T) {
 		body := r.Body.String()
 		if r.Code != http.StatusOK || !strings.HasPrefix(body, keepalive) || !strings.Contains(body, tc.marker) || !strings.Contains(body, schedulerQueueFullMessage) {
 			t.Fatalf("committed overload response = %d %s", r.Code, body)
-		}
-		if tc.protocol == continuousRetryProtocolGemini && (strings.Contains(body, "response.failed") || !strings.Contains(body, `"code":503`)) {
-			t.Fatalf("overload response must use the Gemini error envelope: %s", body)
-		}
-		if tc.protocol == continuousRetryProtocolGemini && (!json.Valid([]byte(strings.TrimPrefix(body, keepalive))) || strings.HasSuffix(body, "\n")) {
-			t.Fatalf("Gemini SDK expects a terminal bare JSON error without an SSE delimiter: %q", body)
 		}
 	}
 }
@@ -139,9 +129,6 @@ func TestSelectionTimeoutHTTPProtocols(t *testing.T) {
 			c, _ := gin.CreateTestContext(r)
 			c.Request = httptest.NewRequest(http.MethodPost, "/", nil)
 			keepalive := ": keepalive\n\n"
-			if tc.protocol == continuousRetryProtocolGemini {
-				keepalive = "data: {}\n\n"
-			}
 			if committed {
 				c.Header("Content-Type", "text/event-stream")
 				_, _ = c.Writer.WriteString(keepalive)
@@ -153,12 +140,6 @@ func TestSelectionTimeoutHTTPProtocols(t *testing.T) {
 			body := r.Body.String()
 			if !strings.Contains(body, schedulerSelectionTimeoutMessage) {
 				t.Fatalf("missing selection timeout: %s", body)
-			}
-			if tc.protocol == continuousRetryProtocolGemini && (strings.Contains(body, "response.failed") || !strings.Contains(body, `"code":503`) || !strings.Contains(body, tc.marker)) {
-				t.Fatalf("selection timeout must use the Gemini error envelope: %s", body)
-			}
-			if tc.protocol == continuousRetryProtocolGemini && committed && (!json.Valid([]byte(strings.TrimPrefix(body, keepalive))) || strings.HasSuffix(body, "\n")) {
-				t.Fatalf("Gemini SDK expects a terminal bare JSON error without an SSE delimiter: %q", body)
 			}
 			if committed {
 				if r.Code != http.StatusOK || !strings.HasPrefix(body, keepalive) || !strings.Contains(body, tc.marker) {

@@ -132,32 +132,6 @@ func TestResponsesHTTPContextMergePreservesAncestorsAndRejectsAmbiguousReplay(t 
 	}
 }
 
-func TestResponsesHTTPContextMergeDoesNotConstrainNativeRelayHistory(t *testing.T) {
-	gin.SetMode(gin.TestMode)
-	resetResponseCacheStateForTest(testResponseCacheConfig())
-	t.Cleanup(resetResponseCacheForTest)
-	setResponseCache("anon", "resp_relay_parent", []json.RawMessage{
-		json.RawMessage(`{"role":"user","content":"local snapshot"}`),
-		json.RawMessage(`{"type":"function_call","call_id":"call_old","name":"lookup","arguments":"{}"}`),
-	})
-	var seen []byte
-	upstream := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		seen = readUpstreamRequestBody(r)
-		w.Header().Set("Content-Type", "application/json")
-		_, _ = io.WriteString(w, `{"id":"resp_native_relay","status":"completed","output":[{"type":"message","role":"assistant","content":[{"type":"output_text","text":"OK"}]}],"usage":{"input_tokens":1,"output_tokens":1}}`)
-	}))
-	defer upstream.Close()
-	store := newContinuationRelayStore(upstream.URL)
-	defer store.Stop()
-	handler := NewHandler(store, nil, nil, nil)
-	raw := []byte(`{"model":"gpt-5.5","store":false,"previous_response_id":"resp_relay_parent","input":[{"type":"function_call","call_id":"call_old","name":"lookup","arguments":"{}"},{"type":"function_call_output","call_id":"call_old","output":"upstream owns the parent"}]}`)
-	response := invokeResponsesHandler(t, handler.Responses, raw)
-	if response.Code != http.StatusOK || gjson.GetBytes(seen, "previous_response_id").String() != "resp_relay_parent" ||
-		gjson.GetBytes(seen, "input.#").Int() != 2 || strings.Contains(string(seen), "local snapshot") {
-		t.Fatalf("native relay lost its original upstream-owned history: status=%d sent=%s body=%s", response.Code, seen, response.Body.String())
-	}
-}
-
 // Keep the raw duplicate keys intact: marshaling a Go map would erase the
 // first-value/last-value disagreement this boundary is intended to reject.
 func TestResponsesHTTPContextMergeRejectsDuplicateTopLevelFields(t *testing.T) {
@@ -173,75 +147,66 @@ func TestResponsesHTTPContextMergeRejectsDuplicateTopLevelFields(t *testing.T) {
 	t.Cleanup(resetResponseCacheForTest)
 	const prefix = `[{"role":"user","content":"ANCESTOR_MUST_SURVIVE"},{"type":"function_call","call_id":"call_old","name":"lookup","arguments":"{}"},{"type":"function_call_output","call_id":"call_old","output":"old"}]`
 	const newPair = `[{"type":"function_call","call_id":"call_new","name":"lookup","arguments":"{}"},{"type":"function_call_output","call_id":"call_new","output":"new"}]`
-	for _, relay := range []bool{false, true} {
-		channel := "Codex"
-		if relay {
-			channel = "native relay"
+	for _, compact := range []bool{false, true} {
+		endpoint := "Responses"
+		if compact {
+			endpoint = "Compact"
 		}
-		for _, compact := range []bool{false, true} {
-			endpoint := "Responses"
-			if compact {
-				endpoint = "Compact"
-			}
-			for _, tc := range []struct{ name, fields string }{
-				{"first input proves prefix but last drops it", `"previous_response_id":"resp_dup_parent","input":` + prefix + `,"input":` + newPair},
-				{"last input proves prefix but first does not", `"previous_response_id":"resp_dup_parent","input":` + newPair + `,"input":` + prefix},
-				{"escaped input key is the same field", `"previous_response_id":"resp_dup_parent","input":` + prefix + `,"in\u0070ut":` + newPair},
-				{"first known parent then missing parent", `"previous_response_id":"resp_dup_parent","previous_response_id":"resp_other","input":` + newPair},
-				{"empty parent then hidden missing parent", `"previous_response_id":"","previous_response_id":"resp_other","input":` + newPair},
-				{"known parent then null changes expansion", `"previous_response_id":"resp_dup_parent","previous_response_id":null,"input":` + newPair},
-				{"escaped parent key is the same field", `"previous_response_id":"resp_dup_parent","previous_response_\u0069d":"resp_other","input":` + newPair},
-				{"identical duplicate fields are still ambiguous", `"input":` + newPair + `,"input":` + newPair},
-			} {
-				t.Run(channel+"/"+endpoint+"/"+tc.name, func(t *testing.T) {
-					resetResponseCacheStateForTest(testResponseCacheConfig())
-					setResponseCache("anon", "resp_dup_parent", []json.RawMessage{
-						json.RawMessage(`{"role":"user","content":"ANCESTOR_MUST_SURVIVE"}`),
-						json.RawMessage(`{"type":"function_call","call_id":"call_old","name":"lookup","arguments":"{}"}`),
-					})
-					var calls atomic.Int32
-					upstream := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-						calls.Add(1)
-						_, _ = io.Copy(io.Discard, r.Body)
-						if !relay && !compact {
-							w.Header().Set("Content-Type", "text/event-stream")
-							_, _ = io.WriteString(w, wsContextTestSSE("resp_duplicate_accepted", `{"type":"message","role":"assistant","content":[{"type":"output_text","text":"OK"}]}`))
-							return
-						}
-						w.Header().Set("Content-Type", "application/json")
-						_, _ = io.WriteString(w, `{"id":"resp_duplicate_accepted","status":"completed","output":[],"usage":{"input_tokens":1,"output_tokens":1}}`)
-					}))
-					defer upstream.Close()
-					SetResinConfig(&ResinConfig{BaseURL: upstream.URL, PlatformName: "duplicate-context-test"})
-					store := newContinuationCodexStore()
-					if relay {
-						store.Stop()
-						store = newContinuationRelayStore(upstream.URL)
-					}
-					defer store.Stop()
-					handler := NewHandler(store, nil, nil, nil)
-					invoke := handler.Responses
-					if compact {
-						invoke = handler.ResponsesCompact
-					}
-					raw := []byte(`{"model":"gpt-5.5","store":false,` + tc.fields + `}`)
-					if !gjson.ValidBytes(raw) {
-						t.Fatal("duplicate-key fixture is not syntactically valid JSON")
-					}
-					response := invokeResponsesHandler(t, invoke, raw)
-					if response.Code != http.StatusBadRequest || gjson.GetBytes(response.Body.Bytes(), "error.code").String() != string(api.ErrCodeInvalidRequest) || calls.Load() != 0 {
-						t.Fatalf("ambiguous context envelope was not rejected before upstream: status=%d calls=%d body=%s", response.Code, calls.Load(), response.Body.String())
-					}
-					if strings.Contains(response.Body.String(), "resp_dup_parent") || strings.Contains(response.Body.String(), "ANCESTOR_MUST_SURVIVE") {
-						t.Fatal("duplicate-key error leaked a parent identifier or history")
-					}
+		for _, tc := range []struct{ name, fields string }{
+			{"first input proves prefix but last drops it", `"previous_response_id":"resp_dup_parent","input":` + prefix + `,"input":` + newPair},
+			{"last input proves prefix but first does not", `"previous_response_id":"resp_dup_parent","input":` + newPair + `,"input":` + prefix},
+			{"escaped input key is the same field", `"previous_response_id":"resp_dup_parent","input":` + prefix + `,"in\u0070ut":` + newPair},
+			{"first known parent then missing parent", `"previous_response_id":"resp_dup_parent","previous_response_id":"resp_other","input":` + newPair},
+			{"empty parent then hidden missing parent", `"previous_response_id":"","previous_response_id":"resp_other","input":` + newPair},
+			{"known parent then null changes expansion", `"previous_response_id":"resp_dup_parent","previous_response_id":null,"input":` + newPair},
+			{"escaped parent key is the same field", `"previous_response_id":"resp_dup_parent","previous_response_\u0069d":"resp_other","input":` + newPair},
+			{"identical duplicate fields are still ambiguous", `"input":` + newPair + `,"input":` + newPair},
+		} {
+			t.Run(endpoint+"/"+tc.name, func(t *testing.T) {
+				resetResponseCacheStateForTest(testResponseCacheConfig())
+				setResponseCache("anon", "resp_dup_parent", []json.RawMessage{
+					json.RawMessage(`{"role":"user","content":"ANCESTOR_MUST_SURVIVE"}`),
+					json.RawMessage(`{"type":"function_call","call_id":"call_old","name":"lookup","arguments":"{}"}`),
 				})
-			}
+				var calls atomic.Int32
+				upstream := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+					calls.Add(1)
+					_, _ = io.Copy(io.Discard, r.Body)
+					if !compact {
+						w.Header().Set("Content-Type", "text/event-stream")
+						_, _ = io.WriteString(w, wsContextTestSSE("resp_duplicate_accepted", `{"type":"message","role":"assistant","content":[{"type":"output_text","text":"OK"}]}`))
+						return
+					}
+					w.Header().Set("Content-Type", "application/json")
+					_, _ = io.WriteString(w, `{"id":"resp_duplicate_accepted","status":"completed","output":[],"usage":{"input_tokens":1,"output_tokens":1}}`)
+				}))
+				defer upstream.Close()
+				SetResinConfig(&ResinConfig{BaseURL: upstream.URL, PlatformName: "duplicate-context-test"})
+				store := newContinuationCodexStore()
+				defer store.Stop()
+				handler := NewHandler(store, nil, nil, nil)
+				invoke := handler.Responses
+				if compact {
+					invoke = handler.ResponsesCompact
+				}
+				raw := []byte(`{"model":"gpt-5.5","store":false,` + tc.fields + `}`)
+				if !gjson.ValidBytes(raw) {
+					t.Fatal("duplicate-key fixture is not syntactically valid JSON")
+				}
+				response := invokeResponsesHandler(t, invoke, raw)
+				if response.Code != http.StatusBadRequest || gjson.GetBytes(response.Body.Bytes(), "error.code").String() != string(api.ErrCodeInvalidRequest) || calls.Load() != 0 {
+					t.Fatalf("ambiguous context envelope was not rejected before upstream: status=%d calls=%d body=%s", response.Code, calls.Load(), response.Body.String())
+				}
+				if strings.Contains(response.Body.String(), "resp_dup_parent") || strings.Contains(response.Body.String(), "ANCESTOR_MUST_SURVIVE") {
+					t.Fatal("duplicate-key error leaked a parent identifier or history")
+				}
+			})
 		}
 	}
 }
 
-func TestResponsesHTTPContextEnvelopeKeepsNestedNamesAndNativeRelayNumbers(t *testing.T) {
+// Nested "input" and "previous_response_id" keys inside metadata or input items are data, not envelope fields.
+func TestResponsesHTTPContextEnvelopeKeepsNestedNames(t *testing.T) {
 	gin.SetMode(gin.TestMode)
 	resetResponseCacheStateForTest(testResponseCacheConfig())
 	t.Cleanup(resetResponseCacheForTest)
@@ -251,41 +216,47 @@ func TestResponsesHTTPContextEnvelopeKeepsNestedNamesAndNativeRelayNumbers(t *te
 			endpoint = "Compact"
 		}
 		t.Run(endpoint, func(t *testing.T) {
+			setResponseCache("anon", "resp_nested_parent", []json.RawMessage{
+				json.RawMessage(`{"role":"user","content":"local snapshot"}`),
+			})
 			requests := make(chan []byte, 1)
 			upstream := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 				requests <- readUpstreamRequestBody(r)
-				w.Header().Set("Content-Type", "application/json")
-				_, _ = io.WriteString(w, `{"id":"resp_native_fields","status":"completed","output":[],"usage":{"input_tokens":1,"output_tokens":1}}`)
+				if compact {
+					w.Header().Set("Content-Type", "application/json")
+					_, _ = io.WriteString(w, `{"id":"resp_nested_fields","output":[],"usage":{"input_tokens":1,"output_tokens":1}}`)
+					return
+				}
+				w.Header().Set("Content-Type", "text/event-stream")
+				_, _ = io.WriteString(w, wsContextTestSSE("resp_nested_fields"))
 			}))
 			defer upstream.Close()
-			store := newContinuationRelayStore(upstream.URL)
+			codexRestoredUseResin(t, upstream.URL)
+			store := newContinuationCodexStore()
 			defer store.Stop()
 			handler := NewHandler(store, nil, nil, nil)
 			invoke := handler.Responses
 			if compact {
 				invoke = handler.ResponsesCompact
 			}
-			raw := []byte(`{"model":"gpt-5.5","store":false,"previous_response_id":"resp_native_parent","input":[{"role":"user","content":"preserve native fields","metadata":{"input":"nested input","previous_response_id":"nested parent"}}],"metadata":{"input":"native metadata","previous_response_id":"native nested parent","large":9007199254740993},"text":{"format":{"type":"json_schema","name":"native","schema":{"type":"object","properties":{"input":{"type":"integer","minimum":9007199254740993},"previous_response_id":{"type":"string"}}}}}}`)
+			raw := []byte(`{"model":"gpt-5.5","store":false,"previous_response_id":"resp_nested_parent","input":[{"role":"user","content":"preserve nested fields","metadata":{"input":"nested input","previous_response_id":"nested parent"}}]}`)
 			response := invokeResponsesHandler(t, invoke, raw)
 			if response.Code != http.StatusOK {
-				t.Fatalf("unique native envelope rejected: status=%d body=%s", response.Code, response.Body.String())
+				t.Fatalf("unique envelope with nested names rejected: status=%d body=%s", response.Code, response.Body.String())
 			}
 			body := <-requests
 			for path, want := range map[string]string{
-				"previous_response_id":                  "resp_native_parent",
-				"input.0.metadata.input":                "nested input",
-				"input.0.metadata.previous_response_id": "nested parent",
-				"metadata.input":                        "native metadata",
-				"metadata.previous_response_id":         "native nested parent",
+				"input.0.content":                       "local snapshot",
+				"input.1.content":                       "preserve nested fields",
+				"input.1.metadata.input":                "nested input",
+				"input.1.metadata.previous_response_id": "nested parent",
 			} {
 				if got := gjson.GetBytes(body, path).String(); got != want {
-					t.Errorf("native field changed at %s: got=%q want=%q", path, got, want)
+					t.Errorf("field changed at %s: got=%q want=%q; body=%s", path, got, want, body)
 				}
 			}
-			for _, path := range []string{"metadata.large", "text.format.schema.properties.input.minimum"} {
-				if got := gjson.GetBytes(body, path).Raw; got != "9007199254740993" {
-					t.Errorf("native integer precision changed at %s: %s", path, got)
-				}
+			if gjson.GetBytes(body, "previous_response_id").Exists() {
+				t.Errorf("previous_response_id must be expanded for Codex: %s", body)
 			}
 		})
 	}

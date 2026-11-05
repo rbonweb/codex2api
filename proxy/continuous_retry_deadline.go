@@ -271,7 +271,7 @@ func rememberContinuousRetryStreamFailure(ctx context.Context, outcome streamOut
 	if outcome.logStatusCode == http.StatusOK || continuousRetryDeadlineExceeded(ctx) {
 		return
 	}
-	status := safeGrokNativeHTTPStatus(outcome.logStatusCode)
+	status := safeUpstreamHTTPStatus(outcome.logStatusCode)
 	if len(body) == 0 || !json.Valid(body) {
 		body, _ = json.Marshal(gin.H{"error": gin.H{
 			"message": outcome.failureMessage,
@@ -330,8 +330,6 @@ const (
 	continuousRetryProtocolOpenAI continuousRetryHTTPProtocol = iota
 	continuousRetryProtocolResponses
 	continuousRetryProtocolChat
-	continuousRetryProtocolAnthropic
-	continuousRetryProtocolGemini
 )
 
 func installContinuousRetryHTTPDeadline(c *gin.Context, policy database.ContinuousRetryPolicy, protocol continuousRetryHTTPProtocol) func() {

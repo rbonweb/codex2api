@@ -89,15 +89,35 @@ func TestRecordCompactionProvenanceFromPayload(t *testing.T) {
 	}
 }
 
-func newCompactionAffinityRelay(t *testing.T, calls *atomic.Int32) *httptest.Server {
+// newCompactionAffinityUpstream starts one local Codex upstream (reached through the Resin forwarder)
+// that dispatches on the Authorization bearer token, so each Codex account gets its own behaviour.
+func newCompactionAffinityUpstream(t *testing.T, byToken map[string]http.HandlerFunc) {
 	t.Helper()
-	return httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		handler, ok := byToken[strings.TrimPrefix(r.Header.Get("Authorization"), "Bearer ")]
+		if !ok {
+			w.WriteHeader(http.StatusInternalServerError)
+			_, _ = io.WriteString(w, `{"error":{"message":"unexpected bearer token"}}`)
+			return
+		}
+		handler(w, r)
+	}))
+	t.Cleanup(server.Close)
+	codexRestoredUseResin(t, server.URL)
+}
+
+func compactionAffinityStreamHandler(calls *atomic.Int32) http.HandlerFunc {
+	return func(w http.ResponseWriter, r *http.Request) {
 		calls.Add(1)
 		_, _ = io.Copy(io.Discard, r.Body)
 		w.Header().Set("Content-Type", "text/event-stream")
 		_, _ = io.WriteString(w, "data: {\"type\":\"response.output_item.done\",\"item\":{\"type\":\"compaction\",\"encrypted_content\":\"stream-output-state\"}}\n\n")
 		_, _ = io.WriteString(w, "data: {\"type\":\"response.completed\",\"response\":{\"id\":\"resp_affinity\",\"status\":\"completed\",\"output\":[],\"usage\":{\"input_tokens\":1,\"output_tokens\":1}}}\n\n")
-	}))
+	}
+}
+
+func newCompactionAffinityCodexAccount(id int64, token string) *auth.Account {
+	return &auth.Account{DBID: id, AccessToken: token, PlanType: "plus", AccountID: token}
 }
 
 func newCompactionAffinityStore(accounts ...*auth.Account) *auth.Store {
@@ -126,15 +146,16 @@ func runCompactionAffinityResponses(t *testing.T, handler *Handler, body string)
 
 func TestResponsesRoutesKnownCompactionToProducerDomain(t *testing.T) {
 	var otherCalls, producerCalls atomic.Int32
-	otherUpstream := newCompactionAffinityRelay(t, &otherCalls)
-	defer otherUpstream.Close()
-	producerUpstream := newCompactionAffinityRelay(t, &producerCalls)
-	defer producerUpstream.Close()
+	newCompactionAffinityUpstream(t, map[string]http.HandlerFunc{
+		"other":    compactionAffinityStreamHandler(&otherCalls),
+		"producer": compactionAffinityStreamHandler(&producerCalls),
+	})
 
-	other := &auth.Account{DBID: 1, UpstreamType: auth.UpstreamOpenAIResponses, BaseURL: otherUpstream.URL, APIKey: "other", Models: []string{"gpt-4.1-direct"}}
-	producer := &auth.Account{DBID: 2, UpstreamType: auth.UpstreamOpenAIResponses, BaseURL: producerUpstream.URL, APIKey: "producer", Models: []string{"gpt-4.1-direct"}}
+	other := newCompactionAffinityCodexAccount(1, "other")
+	producer := newCompactionAffinityCodexAccount(2, "producer")
 	other.SetSchedulerPriority(100)
 	store := newCompactionAffinityStore(other, producer)
+	defer store.Stop()
 	store.SetAffinityMode(auth.AffinityModeOff)
 	handler := NewHandler(store, nil, nil, nil)
 	handler.SetRuntimeCache(cache.NewMemory(1))
@@ -142,7 +163,7 @@ func TestResponsesRoutesKnownCompactionToProducerDomain(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	recorder := runCompactionAffinityResponses(t, handler, `{"model":"gpt-4.1-direct","stream":true,"input":[{"type":"compaction","encrypted_content":"known-state"},{"role":"user","content":"continue"}]}`)
+	recorder := runCompactionAffinityResponses(t, handler, `{"model":"gpt-5.5","stream":true,"input":[{"type":"compaction","encrypted_content":"known-state"},{"role":"user","content":"continue"}]}`)
 	if recorder.Code != http.StatusOK {
 		t.Fatalf("status = %d, body = %s", recorder.Code, recorder.Body.String())
 	}
@@ -157,20 +178,21 @@ func TestResponsesRoutesKnownCompactionToProducerDomain(t *testing.T) {
 func TestResponsesPortableCompactionReturnsToNormalPoolScheduling(t *testing.T) {
 	var otherCalls, producerCalls atomic.Int32
 	var receivedBody []byte
-	otherUpstream := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		otherCalls.Add(1)
-		receivedBody = readUpstreamRequestBody(r)
-		w.Header().Set("Content-Type", "text/event-stream")
-		_, _ = io.WriteString(w, "data: {\"type\":\"response.completed\",\"response\":{\"id\":\"resp_portable\",\"status\":\"completed\",\"output\":[],\"usage\":{\"input_tokens\":1,\"output_tokens\":1}}}\n\n")
-	}))
-	defer otherUpstream.Close()
-	producerUpstream := newCompactionAffinityRelay(t, &producerCalls)
-	defer producerUpstream.Close()
+	newCompactionAffinityUpstream(t, map[string]http.HandlerFunc{
+		"other": func(w http.ResponseWriter, r *http.Request) {
+			otherCalls.Add(1)
+			receivedBody = readUpstreamRequestBody(r)
+			w.Header().Set("Content-Type", "text/event-stream")
+			_, _ = io.WriteString(w, "data: {\"type\":\"response.completed\",\"response\":{\"id\":\"resp_portable\",\"status\":\"completed\",\"output\":[],\"usage\":{\"input_tokens\":1,\"output_tokens\":1}}}\n\n")
+		},
+		"producer": compactionAffinityStreamHandler(&producerCalls),
+	})
 
-	other := &auth.Account{DBID: 1, UpstreamType: auth.UpstreamOpenAIResponses, BaseURL: otherUpstream.URL, APIKey: "other", Models: []string{"gpt-4.1-direct"}}
-	producer := &auth.Account{DBID: 2, UpstreamType: auth.UpstreamOpenAIResponses, BaseURL: producerUpstream.URL, APIKey: "producer", Models: []string{"gpt-4.1-direct"}}
+	other := newCompactionAffinityCodexAccount(1, "other")
+	producer := newCompactionAffinityCodexAccount(2, "producer")
 	other.SetSchedulerPriority(100)
 	store := newCompactionAffinityStore(other, producer)
+	defer store.Stop()
 	store.SetAffinityMode(auth.AffinityModeOff)
 	handler := NewHandler(store, nil, nil, nil)
 	handler.SetRuntimeCache(cache.NewMemory(1))
@@ -178,7 +200,7 @@ func TestResponsesPortableCompactionReturnsToNormalPoolScheduling(t *testing.T) 
 		t.Fatal(err)
 	}
 
-	recorder := runCompactionAffinityResponses(t, handler, `{"model":"gpt-4.1-direct","stream":true,"input":[{"type":"compaction","encrypted_content":"`+portableCompactionFixture+`"},{"role":"user","content":"continue"}]}`)
+	recorder := runCompactionAffinityResponses(t, handler, `{"model":"gpt-5.5","stream":true,"input":[{"type":"compaction","encrypted_content":"`+portableCompactionFixture+`"},{"role":"user","content":"continue"}]}`)
 	if recorder.Code != http.StatusOK {
 		t.Fatalf("status = %d, body = %s", recorder.Code, recorder.Body.String())
 	}
@@ -195,15 +217,16 @@ func TestResponsesPortableCompactionReturnsToNormalPoolScheduling(t *testing.T) 
 
 func TestResponsesMixedPortableAndOpaqueCompactionRetainsOpaqueAffinity(t *testing.T) {
 	var otherCalls, producerCalls atomic.Int32
-	otherUpstream := newCompactionAffinityRelay(t, &otherCalls)
-	defer otherUpstream.Close()
-	producerUpstream := newCompactionAffinityRelay(t, &producerCalls)
-	defer producerUpstream.Close()
+	newCompactionAffinityUpstream(t, map[string]http.HandlerFunc{
+		"other":    compactionAffinityStreamHandler(&otherCalls),
+		"producer": compactionAffinityStreamHandler(&producerCalls),
+	})
 
-	other := &auth.Account{DBID: 1, UpstreamType: auth.UpstreamOpenAIResponses, BaseURL: otherUpstream.URL, APIKey: "other", Models: []string{"gpt-4.1-direct"}}
-	producer := &auth.Account{DBID: 2, UpstreamType: auth.UpstreamOpenAIResponses, BaseURL: producerUpstream.URL, APIKey: "producer", Models: []string{"gpt-4.1-direct"}}
+	other := newCompactionAffinityCodexAccount(1, "other")
+	producer := newCompactionAffinityCodexAccount(2, "producer")
 	other.SetSchedulerPriority(100)
 	store := newCompactionAffinityStore(other, producer)
+	defer store.Stop()
 	store.SetAffinityMode(auth.AffinityModeOff)
 	handler := NewHandler(store, nil, nil, nil)
 	handler.SetRuntimeCache(cache.NewMemory(1))
@@ -211,7 +234,7 @@ func TestResponsesMixedPortableAndOpaqueCompactionRetainsOpaqueAffinity(t *testi
 		t.Fatal(err)
 	}
 
-	recorder := runCompactionAffinityResponses(t, handler, `{"model":"gpt-4.1-direct","stream":true,"input":[{"type":"compaction","encrypted_content":"`+portableCompactionFixture+`"},{"type":"compaction","encrypted_content":"known-opaque"}]}`)
+	recorder := runCompactionAffinityResponses(t, handler, `{"model":"gpt-5.5","stream":true,"input":[{"type":"compaction","encrypted_content":"`+portableCompactionFixture+`"},{"type":"compaction","encrypted_content":"known-opaque"}]}`)
 	if recorder.Code != http.StatusOK {
 		t.Fatalf("status = %d, body = %s", recorder.Code, recorder.Body.String())
 	}
@@ -222,18 +245,20 @@ func TestResponsesMixedPortableAndOpaqueCompactionRetainsOpaqueAffinity(t *testi
 
 func TestResponsesPrefersProducerIndependentOfSessionAffinityMode(t *testing.T) {
 	var seenAuthorization string
-	upstream := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+	completed := func(w http.ResponseWriter, r *http.Request) {
 		seenAuthorization = r.Header.Get("Authorization")
 		_, _ = io.Copy(io.Discard, r.Body)
 		w.Header().Set("Content-Type", "text/event-stream")
 		_, _ = io.WriteString(w, "data: {\"type\":\"response.completed\",\"response\":{\"id\":\"resp_preferred\",\"status\":\"completed\",\"output\":[],\"usage\":{\"input_tokens\":1,\"output_tokens\":1}}}\n\n")
-	}))
-	defer upstream.Close()
+	}
+	newCompactionAffinityUpstream(t, map[string]http.HandlerFunc{"other": completed, "producer": completed})
 
-	other := &auth.Account{DBID: 1, UpstreamType: auth.UpstreamOpenAIResponses, BaseURL: upstream.URL, APIKey: "other", Models: []string{"gpt-4.1-direct"}}
-	producer := &auth.Account{DBID: 2, UpstreamType: auth.UpstreamOpenAIResponses, BaseURL: upstream.URL, APIKey: "producer", Models: []string{"gpt-4.1-direct"}, HealthTier: auth.HealthTierWarm}
+	other := newCompactionAffinityCodexAccount(1, "other")
+	producer := newCompactionAffinityCodexAccount(2, "producer")
+	producer.HealthTier = auth.HealthTierWarm
 	other.SetSchedulerPriority(100)
 	store := newCompactionAffinityStore(other, producer)
+	defer store.Stop()
 	store.SetAffinityMode(auth.AffinityModeOff)
 	handler := NewHandler(store, nil, nil, nil)
 	handler.SetRuntimeCache(cache.NewMemory(1))
@@ -241,7 +266,7 @@ func TestResponsesPrefersProducerIndependentOfSessionAffinityMode(t *testing.T) 
 		t.Fatal(err)
 	}
 
-	recorder := runCompactionAffinityResponses(t, handler, `{"model":"gpt-4.1-direct","stream":true,"input":[{"type":"compaction","encrypted_content":"producer-state"}]}`)
+	recorder := runCompactionAffinityResponses(t, handler, `{"model":"gpt-5.5","stream":true,"input":[{"type":"compaction","encrypted_content":"producer-state"}]}`)
 	if recorder.Code != http.StatusOK {
 		t.Fatalf("status = %d, body = %s", recorder.Code, recorder.Body.String())
 	}
@@ -252,29 +277,33 @@ func TestResponsesPrefersProducerIndependentOfSessionAffinityMode(t *testing.T) 
 
 func TestResponsesNonStreamRoutesAndRecordsKnownCompaction(t *testing.T) {
 	var otherCalls, producerCalls atomic.Int32
-	newJSONRelay := func(calls *atomic.Int32, outputState string) *httptest.Server {
-		return httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+	jsonHandler := func(calls *atomic.Int32, outputState string) http.HandlerFunc {
+		return func(w http.ResponseWriter, r *http.Request) {
 			calls.Add(1)
 			_, _ = io.Copy(io.Discard, r.Body)
-			w.Header().Set("Content-Type", "application/json")
-			_, _ = io.WriteString(w, `{"id":"resp_nonstream","status":"completed","output":[{"type":"compaction","encrypted_content":"`+outputState+`"}],"usage":{"input_tokens":1,"output_tokens":1,"total_tokens":2}}`)
-		}))
+			// Codex always answers over SSE; the handler folds it into the non-stream JSON reply.
+			w.Header().Set("Content-Type", "text/event-stream")
+			_, _ = io.WriteString(w, `data: {"type":"response.completed","response":{"id":"resp_nonstream","status":"completed","output":[{"type":"compaction","encrypted_content":"`+outputState+`"}],"usage":{"input_tokens":1,"output_tokens":1,"total_tokens":2}}}`+"\n\n")
+		}
 	}
-	otherUpstream := newJSONRelay(&otherCalls, "wrong-output")
-	defer otherUpstream.Close()
-	producerUpstream := newJSONRelay(&producerCalls, "nonstream-output-state")
-	defer producerUpstream.Close()
+	newCompactionAffinityUpstream(t, map[string]http.HandlerFunc{
+		"other":    jsonHandler(&otherCalls, "wrong-output"),
+		"producer": jsonHandler(&producerCalls, "nonstream-output-state"),
+	})
 
-	other := &auth.Account{DBID: 1, UpstreamType: auth.UpstreamOpenAIResponses, BaseURL: otherUpstream.URL, APIKey: "other", Models: []string{"gpt-4.1-direct"}}
-	producer := &auth.Account{DBID: 2, UpstreamType: auth.UpstreamOpenAIResponses, BaseURL: producerUpstream.URL, APIKey: "producer", Models: []string{"gpt-4.1-direct"}, HealthTier: auth.HealthTierWarm}
+	other := newCompactionAffinityCodexAccount(1, "other")
+	producer := newCompactionAffinityCodexAccount(2, "producer")
+	producer.HealthTier = auth.HealthTierWarm
 	other.SetSchedulerPriority(100)
-	handler := NewHandler(newCompactionAffinityStore(other, producer), nil, nil, nil)
+	store := newCompactionAffinityStore(other, producer)
+	defer store.Stop()
+	handler := NewHandler(store, nil, nil, nil)
 	handler.SetRuntimeCache(cache.NewMemory(1))
 	if err := handler.recordCompactionProvenance(context.Background(), producer, "nonstream-known-state"); err != nil {
 		t.Fatal(err)
 	}
 
-	recorder := runCompactionAffinityResponses(t, handler, `{"model":"gpt-4.1-direct","stream":false,"input":[{"type":"compaction","encrypted_content":"nonstream-known-state"}]}`)
+	recorder := runCompactionAffinityResponses(t, handler, `{"model":"gpt-5.5","stream":false,"input":[{"type":"compaction","encrypted_content":"nonstream-known-state"}]}`)
 	if recorder.Code != http.StatusOK {
 		t.Fatalf("status = %d, body = %s", recorder.Code, recorder.Body.String())
 	}
@@ -288,18 +317,23 @@ func TestResponsesNonStreamRoutesAndRecordsKnownCompaction(t *testing.T) {
 
 func TestResponsesKnownCompactionAllowsSameDomainAccountFailover(t *testing.T) {
 	var calls atomic.Int32
-	upstream := newCompactionAffinityRelay(t, &calls)
-	defer upstream.Close()
+	newCompactionAffinityUpstream(t, map[string]http.HandlerFunc{
+		"producer": compactionAffinityStreamHandler(&calls),
+		"failover": compactionAffinityStreamHandler(&calls),
+	})
 
-	producer := &auth.Account{DBID: 1, UpstreamType: auth.UpstreamOpenAIResponses, BaseURL: upstream.URL, APIKey: "producer", Models: []string{"gpt-4.1-direct"}, Status: auth.StatusError}
-	failover := &auth.Account{DBID: 2, UpstreamType: auth.UpstreamOpenAIResponses, BaseURL: upstream.URL, APIKey: "failover", Models: []string{"gpt-4.1-direct"}}
-	handler := NewHandler(newCompactionAffinityStore(producer, failover), nil, nil, nil)
+	producer := newCompactionAffinityCodexAccount(1, "producer")
+	producer.Status = auth.StatusError
+	failover := newCompactionAffinityCodexAccount(2, "failover")
+	store := newCompactionAffinityStore(producer, failover)
+	defer store.Stop()
+	handler := NewHandler(store, nil, nil, nil)
 	handler.SetRuntimeCache(cache.NewMemory(1))
 	if err := handler.recordCompactionProvenance(context.Background(), producer, "same-domain-state"); err != nil {
 		t.Fatal(err)
 	}
 
-	recorder := runCompactionAffinityResponses(t, handler, `{"model":"gpt-4.1-direct","stream":true,"input":[{"type":"compaction","encrypted_content":"same-domain-state"}]}`)
+	recorder := runCompactionAffinityResponses(t, handler, `{"model":"gpt-5.5","stream":true,"input":[{"type":"compaction","encrypted_content":"same-domain-state"}]}`)
 	if recorder.Code != http.StatusOK {
 		t.Fatalf("status = %d, body = %s", recorder.Code, recorder.Body.String())
 	}
@@ -308,26 +342,33 @@ func TestResponsesKnownCompactionAllowsSameDomainAccountFailover(t *testing.T) {
 	}
 }
 
+// Kept for request_limits_test.go, which only needs a compact upstream that must never be reached.
 func newCompactionAffinityCompactRelay(t *testing.T, calls *atomic.Int32) *httptest.Server {
 	t.Helper()
-	return httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+	return httptest.NewServer(compactionAffinityCompactHandler(calls))
+}
+
+func compactionAffinityCompactHandler(calls *atomic.Int32) http.HandlerFunc {
+	return func(w http.ResponseWriter, r *http.Request) {
 		calls.Add(1)
 		_, _ = io.Copy(io.Discard, r.Body)
 		w.Header().Set("Content-Type", "application/json")
 		_, _ = io.WriteString(w, `{"id":"cmp-affinity","object":"response.compaction","output":[{"type":"compaction","encrypted_content":"next-state"}],"usage":{"input_tokens":1,"output_tokens":1,"total_tokens":2}}`)
-	}))
+	}
 }
 
 func TestResponsesCompactRoutesKnownCompactionToProducerDomain(t *testing.T) {
 	var otherCalls, producerCalls atomic.Int32
-	otherUpstream := newCompactionAffinityCompactRelay(t, &otherCalls)
-	defer otherUpstream.Close()
-	producerUpstream := newCompactionAffinityCompactRelay(t, &producerCalls)
-	defer producerUpstream.Close()
+	newCompactionAffinityUpstream(t, map[string]http.HandlerFunc{
+		"other":    compactionAffinityCompactHandler(&otherCalls),
+		"producer": compactionAffinityCompactHandler(&producerCalls),
+	})
 
-	other := &auth.Account{DBID: 1, UpstreamType: auth.UpstreamOpenAIResponses, BaseURL: otherUpstream.URL, APIKey: "other", Models: []string{"gpt-4.1-direct"}}
-	producer := &auth.Account{DBID: 2, UpstreamType: auth.UpstreamOpenAIResponses, BaseURL: producerUpstream.URL, APIKey: "producer", Models: []string{"gpt-4.1-direct"}}
-	handler := NewHandler(newCompactionAffinityStore(other, producer), nil, nil, nil)
+	other := newCompactionAffinityCodexAccount(1, "other")
+	producer := newCompactionAffinityCodexAccount(2, "producer")
+	store := newCompactionAffinityStore(other, producer)
+	defer store.Stop()
+	handler := NewHandler(store, nil, nil, nil)
 	handler.SetRuntimeCache(cache.NewMemory(1))
 	if err := handler.recordCompactionProvenance(context.Background(), producer, "known-compact-state"); err != nil {
 		t.Fatal(err)
@@ -336,7 +377,7 @@ func TestResponsesCompactRoutesKnownCompactionToProducerDomain(t *testing.T) {
 	gin.SetMode(gin.TestMode)
 	recorder := httptest.NewRecorder()
 	ginContext, _ := gin.CreateTestContext(recorder)
-	req := httptest.NewRequest(http.MethodPost, "/v1/responses/compact", bytes.NewBufferString(`{"model":"gpt-4.1-direct","input":[{"type":"compaction","encrypted_content":"known-compact-state"}]}`))
+	req := httptest.NewRequest(http.MethodPost, "/v1/responses/compact", bytes.NewBufferString(`{"model":"gpt-5.5","input":[{"type":"compaction","encrypted_content":"known-compact-state"}]}`))
 	req.Header.Set("Content-Type", "application/json")
 	ginContext.Request = req
 	handler.ResponsesCompact(ginContext)
@@ -354,15 +395,16 @@ func TestResponsesCompactRoutesKnownCompactionToProducerDomain(t *testing.T) {
 
 func TestResponsesCompactPortableCompactionReturnsToNormalPoolScheduling(t *testing.T) {
 	var otherCalls, producerCalls atomic.Int32
-	otherUpstream := newCompactionAffinityCompactRelay(t, &otherCalls)
-	defer otherUpstream.Close()
-	producerUpstream := newCompactionAffinityCompactRelay(t, &producerCalls)
-	defer producerUpstream.Close()
+	newCompactionAffinityUpstream(t, map[string]http.HandlerFunc{
+		"other":    compactionAffinityCompactHandler(&otherCalls),
+		"producer": compactionAffinityCompactHandler(&producerCalls),
+	})
 
-	other := &auth.Account{DBID: 1, UpstreamType: auth.UpstreamOpenAIResponses, BaseURL: otherUpstream.URL, APIKey: "other", Models: []string{"gpt-4.1-direct"}}
-	producer := &auth.Account{DBID: 2, UpstreamType: auth.UpstreamOpenAIResponses, BaseURL: producerUpstream.URL, APIKey: "producer", Models: []string{"gpt-4.1-direct"}}
+	other := newCompactionAffinityCodexAccount(1, "other")
+	producer := newCompactionAffinityCodexAccount(2, "producer")
 	other.SetSchedulerPriority(100)
 	store := newCompactionAffinityStore(other, producer)
+	defer store.Stop()
 	store.SetAffinityMode(auth.AffinityModeOff)
 	handler := NewHandler(store, nil, nil, nil)
 	handler.SetRuntimeCache(cache.NewMemory(1))
@@ -373,7 +415,7 @@ func TestResponsesCompactPortableCompactionReturnsToNormalPoolScheduling(t *test
 	gin.SetMode(gin.TestMode)
 	recorder := httptest.NewRecorder()
 	ginContext, _ := gin.CreateTestContext(recorder)
-	req := httptest.NewRequest(http.MethodPost, "/v1/responses/compact", bytes.NewBufferString(`{"model":"gpt-4.1-direct","input":[{"type":"compaction","encrypted_content":"`+portableCompactionFixture+`"}]}`))
+	req := httptest.NewRequest(http.MethodPost, "/v1/responses/compact", bytes.NewBufferString(`{"model":"gpt-5.5","input":[{"type":"compaction","encrypted_content":"`+portableCompactionFixture+`"}]}`))
 	req.Header.Set("Content-Type", "application/json")
 	ginContext.Request = req
 	handler.ResponsesCompact(ginContext)
@@ -509,14 +551,14 @@ func (c *compactionFailingRuntimeCache) GetRuntime(context.Context, string, stri
 
 func TestResponsesKeepsServingCompactionDuringCacheOutage(t *testing.T) {
 	var calls atomic.Int32
-	upstream := newCompactionAffinityRelay(t, &calls)
-	defer upstream.Close()
+	newCompactionAffinityUpstream(t, map[string]http.HandlerFunc{"key": compactionAffinityStreamHandler(&calls)})
 
-	account := &auth.Account{DBID: 1, UpstreamType: auth.UpstreamOpenAIResponses, BaseURL: upstream.URL, APIKey: "key", Models: []string{"gpt-4.1-direct"}}
-	handler := NewHandler(newCompactionAffinityStore(account), nil, nil, nil)
+	store := newCompactionAffinityStore(newCompactionAffinityCodexAccount(1, "key"))
+	defer store.Stop()
+	handler := NewHandler(store, nil, nil, nil)
 	handler.SetRuntimeCache(&compactionFailingRuntimeCache{TokenCache: cache.NewMemory(1)})
 
-	recorder := runCompactionAffinityResponses(t, handler, `{"model":"gpt-4.1-direct","stream":true,"input":[{"type":"compaction","encrypted_content":"any-state"},{"role":"user","content":"continue"}]}`)
+	recorder := runCompactionAffinityResponses(t, handler, `{"model":"gpt-5.5","stream":true,"input":[{"type":"compaction","encrypted_content":"any-state"},{"role":"user","content":"continue"}]}`)
 
 	if recorder.Code != http.StatusOK {
 		t.Fatalf("status = %d, body = %s", recorder.Code, recorder.Body.String())

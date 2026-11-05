@@ -536,48 +536,6 @@ func TestApplyCodexFingerprintHeadersIgnoresInvalidTurnMetadata(t *testing.T) {
 	}
 }
 
-// TestApplyCodexFingerprintSkipsRelayAccounts 验证中转型账号不走 Codex 官方出站路径，
-// 恒为 off，即使凭据里配了收敛档位。
-func TestApplyCodexFingerprintSkipsRelayAccounts(t *testing.T) {
-	relay := &auth.Account{
-		DBID:                 42,
-		UpstreamType:         auth.UpstreamOpenAIResponses,
-		BaseURL:              "https://relay.example.com",
-		APIKey:               "sk-relay",
-		CodexFingerprintMode: auth.CodexFingerprintModeFull,
-	}
-	if ids := resolveCodexFingerprintIDs(relay, codexClientHeaders("", "client-session")); ids != nil {
-		t.Fatalf("relay account ids = %#v, want nil", ids)
-	}
-
-	grok := &auth.Account{
-		DBID:                 42,
-		UpstreamType:         auth.UpstreamGrok,
-		APIKey:               "xai-key",
-		CodexFingerprintMode: auth.CodexFingerprintModeFull,
-	}
-	if ids := resolveCodexFingerprintIDs(grok, codexClientHeaders("", "client-session")); ids != nil {
-		t.Fatalf("grok account ids = %#v, want nil", ids)
-	}
-
-	// 即使下游带着完整的 Codex 特征头打到 Grok 账号上，也不得改写任何载体。
-	const raw = `{"installation_id":"client-install","session_id":"client-session"}`
-	outbound := http.Header{}
-	outbound.Set("X-Codex-Turn-Metadata", raw)
-	downstream := codexClientHeaders(raw, "client-session")
-	ApplyCodexFingerprintHeaders(outbound, grok, downstream)
-	if got := outbound.Get("X-Codex-Turn-Metadata"); got != raw {
-		t.Fatalf("grok turn metadata = %q, want %q unchanged", got, raw)
-	}
-	if got := outbound.Get("X-Codex-Installation-Id"); got != "" {
-		t.Fatalf("grok X-Codex-Installation-Id = %q, want unset", got)
-	}
-	body := []byte(`{"client_metadata":{"x-codex-installation-id":"client-install"}}`)
-	if got := ApplyCodexFingerprintToBody(body, grok, downstream); string(got) != string(body) {
-		t.Fatalf("grok body = %s, want %s unchanged", got, body)
-	}
-}
-
 // compact 路径此前只收敛请求头、请求体 client_metadata 原样发出，上游会看到
 // 「头说设备 A、体说设备 B」这种真实客户端不会有的矛盾（也让收敛形同虚设）。
 func TestExecuteCompactRequestConvergesBodyAndHeaders(t *testing.T) {

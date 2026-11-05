@@ -22,7 +22,6 @@ import (
 // 所有携带账号身份的出站(/responses、compact、WS、wham 用量、订阅查询、遥测、
 // 令牌刷新)全部改经 Resin,第 2 层选出的代理只保留在日志/审计里、不参与拨号。
 // 显式模板刷新可通过 ResolveCodexRequestEgress 使用专属签发代理,不改变以上默认链路。
-// Claude / Grok / Antigravity 等中继型账号不经 Resin,继续走第 2 层。
 //
 // 所有 Codex 出站选客户端的地方都必须经过本文件的解析器,禁止各自再写
 // `if IsResinEnabled()` 分支——分支散落正是"三套互相覆盖、看不出谁在生效"的根源。
@@ -81,10 +80,10 @@ func ResolveCodexEgress(account *auth.Account, targetURL, proxyURL string) Codex
 }
 
 // resinCarriesEgress 判定该账号的出站是否由 Resin 承担:Resin 已启用、有账号身份
-// (Resin 按账号粘性,无身份无从粘)且不是中继型账号(Claude/Grok/Antigravity 不经 Resin)。
+// (Resin 按账号粘性,无身份无从粘)。
 // 与 auth.Store 的 fail-closed 放行、upstream_trace 的审计标签取同一口径。
 func resinCarriesEgress(account *auth.Account) bool {
-	return IsResinEnabled() && account != nil && !account.IsRelayStyle()
+	return IsResinEnabled() && account != nil
 }
 
 // ViaResin 报告本次出站是否经 Resin。

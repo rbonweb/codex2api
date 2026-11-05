@@ -264,7 +264,7 @@ func pricingHTMLModelText(cell *html.Node) string {
 // isOfficialPricingModelLabel 只把模型链接当作名称，排除帮助链接和说明。
 func isOfficialPricingModelLabel(label string) bool {
 	label = strings.ToLower(label)
-	return strings.HasPrefix(label, "claude ") || strings.HasPrefix(label, "gpt-") || strings.HasPrefix(label, "grok-")
+	return strings.HasPrefix(label, "gpt-")
 }
 
 // htmlNodeText 提取单元格的可见文本。

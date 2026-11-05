@@ -118,20 +118,6 @@ func TestCodexClientIdentityAutoComparesFullPrerelease(t *testing.T) {
 	}
 }
 
-func TestCodexClientIdentityUnavailablePropagatesThroughResponsesRelay(t *testing.T) {
-	codexTestIdentityCache(t)
-	ApplyRuntimeSettings(RuntimeSettings{ClientCompatMode: ClientCompatModeAuto, CodexMinCLIVersion: "0.999.0", CodexUserAgentConfig: `{"client_kind":"codex-desktop"}`})
-	request := httptest.NewRequest(http.MethodPost, "http://example.test/v1/responses", nil)
-	err := applyOpenAIResponsesRequestHeaders(request, &auth.Account{DBID: 1}, "api-key", nil)
-	var apiErr *Error
-	if !errors.As(err, &apiErr) || apiErr.Code != ErrorCodeCodexClientVersionUnavailable {
-		t.Fatalf("HTTP relay hid error: %v", err)
-	}
-	_, err = openAIResponsesWebsocketHeadersChecked(openAIResponsesWSHeaderInput{ctx: context.Background(), account: &auth.Account{DBID: 1}, apiKey: "api-key", endpoint: "http://example.test/v1/responses"})
-	if !errors.As(err, &apiErr) || apiErr.Code != ErrorCodeCodexClientVersionUnavailable {
-		t.Fatalf("WS relay hid error: %v", err)
-	}
-}
 
 func TestCodexClientIdentityUnavailableStopsLiveSideband(t *testing.T) {
 	codexTestIdentityCache(t)

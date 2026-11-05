@@ -83,65 +83,6 @@ func TestCustomToolStreamReconcilesDone(t *testing.T) {
 	}
 }
 
-func TestCustomToolAnthropicRoundTrip(t *testing.T) {
-	for _, input := range []string{"print(\"你好\")\ntext('\\path')", "", `{"query":"hello"}`} {
-		t.Run(input, func(t *testing.T) {
-			translator := newAnthropicStreamTranslator("gpt-6-astra")
-			accumulator := newAnthropicResponseAccumulator("gpt-6-astra")
-			item := map[string]any{"type": "custom_tool_call", "id": "ctc_test", "call_id": "call_original", "namespace": "functions", "name": "exec", "input": input}
-			accumulator.apply(translator.translateEvent(customToolTestEvent("response.output_item.added", map[string]any{"item": item})))
-			runes := []rune(input)
-			prefix := string(runes[:len(runes)/2])
-			accumulator.apply(translator.translateEvent(customToolTestEvent("response.custom_tool_call_input.delta", map[string]any{"item_id": "ctc_test", "delta": prefix})))
-			// The canonical done event supplies a deliberately omitted suffix.
-			accumulator.apply(translator.translateEvent(customToolTestEvent("response.custom_tool_call_input.done", map[string]any{"item_id": "ctc_test", "input": input})))
-			accumulator.apply(translator.translateEvent(customToolTestEvent("response.output_item.done", map[string]any{"item": item})))
-			completed := []byte(`{"type":"response.completed","response":{"status":"completed","output":[]}}`)
-			accumulator.apply(translator.translateEvent(completed))
-			if translator.toolInputError != nil {
-				t.Fatal(translator.toolInputError)
-			}
-			response := accumulator.build(completed)
-			if len(response.Content) != 1 || !json.Valid(response.Content[0].Input) || gjson.GetBytes(response.Content[0].Input, "input").String() != input {
-				t.Fatalf("custom input wrapper failed: %+v", response.Content)
-			}
-			block := response.Content[0]
-			messages := []any{map[string]any{"role": "assistant", "content": response.Content}, map[string]any{"role": "user", "content": []any{map[string]any{"type": "tool_result", "tool_use_id": block.ID, "content": "ok"}}}}
-			request, _ := json.Marshal(map[string]any{"model": "gpt-6-astra", "messages": messages, "tool_choice": map[string]any{"type": "tool", "name": "exec"}, "tools": []any{map[string]any{"name": "exec", "input_schema": map[string]any{"type": "object", "properties": map[string]any{"input": map[string]any{"type": "string"}}, "required": []string{"input"}}}}})
-			body, _, err := TranslateAnthropicToCodexWithModels(request, "", []string{"gpt-6-astra"})
-			if err != nil {
-				t.Fatal(err)
-			}
-			if gjson.GetBytes(body, "input.0.type").String() != "custom_tool_call" || gjson.GetBytes(body, "input.0.call_id").String() != "call_original" || gjson.GetBytes(body, "input.0.input").String() != input || gjson.GetBytes(body, "input.0.namespace").String() != "functions" || gjson.GetBytes(body, "input.1.type").String() != "custom_tool_call_output" || gjson.GetBytes(body, "input.1.call_id").String() != "call_original" {
-				t.Fatalf("custom Messages history failed to round-trip: %s", body)
-			}
-			if gjson.GetBytes(body, "tool_choice.type").String() != "custom" || gjson.GetBytes(body, "tool_choice.namespace").String() != "functions" {
-				t.Fatalf("custom tool choice not restored: %s", body)
-			}
-			if gjson.GetBytes(body, "tools.0.type").String() != "namespace" || gjson.GetBytes(body, "tools.0.name").String() != "functions" || gjson.GetBytes(body, "tools.0.tools.0.type").String() != "custom" {
-				t.Fatalf("wrapper declaration was not restored: %s", body)
-			}
-			nonStream := buildAnthropicResponseFromCompleted(customToolTestEvent("response.completed", map[string]any{"response": map[string]any{"output": []any{item}}}), "gpt-6-astra")
-			if len(nonStream.Content) != 1 || nonStream.Content[0].ID != block.ID || gjson.GetBytes(nonStream.Content[0].Input, "input").String() != input {
-				t.Fatal("streaming and non-streaming custom representations differ")
-			}
-		})
-	}
-}
-
-func TestCustomToolAnthropicRejectsDivergentDone(t *testing.T) {
-	translator := newAnthropicStreamTranslator("gpt-6-astra")
-	translator.translateEvent([]byte(`{"type":"response.output_item.added","item":{"type":"custom_tool_call","id":"ctc_test","call_id":"call_test","name":"exec"}}`))
-	translator.translateEvent([]byte(`{"type":"response.custom_tool_call_input.delta","delta":"print("}`))
-	translator.translateEvent([]byte(`{"type":"response.custom_tool_call_input.done","input":"different()"}`))
-	if translator.toolInputError == nil {
-		t.Fatal("divergent canonical input was accepted")
-	}
-	if events := translator.translateEvent([]byte(`{"type":"response.completed","response":{"output":[]}}`)); len(events) != 0 {
-		t.Fatal("invalid input produced a success terminal")
-	}
-}
-
 func TestCustomToolChatNonStreamRebuildsEmptyTerminalOutput(t *testing.T) {
 	handler, calls := newChatStreamTerminalTestHandler(t, []string{
 		`{"type":"response.output_item.done","output_index":0,"item":{"type":"custom_tool_call","id":"ctc_test","call_id":"call_test","name":"exec","input":"print(\"你好\")"}}`,

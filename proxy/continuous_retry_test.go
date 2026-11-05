@@ -268,12 +268,6 @@ func TestContinuousRetryCatchAllNeverRetriesExplicitCyberPolicy(t *testing.T) {
 	if shouldRetryImageStreamError(statuslessErr, &general, -1, 0, maxImageAttempts, policy) {
 		t.Fatal("catch-all selected a statusless explicit CYB image failure")
 	}
-	if grokMediaInvalidSuccessSelected(policy, httpPayload, nil) {
-		t.Fatal("catch-all selected an explicit CYB Grok media error envelope")
-	}
-	if !grokMediaInvalidSuccessSelected(policy, []byte(`{"error":{"code":"future_media_failure"}}`), nil) {
-		t.Fatal("catch-all stopped selecting a non-CYB Grok media failure")
-	}
 	if general != 0 || rate != 0 {
 		t.Fatalf("explicit CYB consumed retry counters: general=%d rate=%d", general, rate)
 	}

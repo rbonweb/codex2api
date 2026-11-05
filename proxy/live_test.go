@@ -357,14 +357,11 @@ func containsAll(items []string, want ...string) bool {
 	return true
 }
 
-func TestLiveAccountFilterExcludesRelay(t *testing.T) {
-	if liveAccountFilter(&auth.Account{UpstreamType: auth.UpstreamGrok, APIKey: "xai"}) {
-		t.Fatal("grok should be excluded")
-	}
-	if liveAccountFilter(&auth.Account{UpstreamType: auth.UpstreamOpenAIResponses, APIKey: "sk", BaseURL: "https://api.openai.com"}) {
-		t.Fatal("openai api key account should be excluded")
-	}
+func TestLiveAccountFilterAcceptsCodexAccountsOnly(t *testing.T) {
 	if !liveAccountFilter(&auth.Account{AccessToken: "at", PlanType: "plus"}) {
 		t.Fatal("chatgpt oauth should be included")
+	}
+	if liveAccountFilter(nil) {
+		t.Fatal("nil account should be excluded")
 	}
 }

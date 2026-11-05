@@ -67,10 +67,7 @@ func codexUsageFramePersistInterval() time.Duration {
 // adds no upstream requests or request headers. Observation queue overflow can
 // request the existing authoritative probe to recover dropped partial frames.
 func ApplyCodexUsageEventFrame(store *auth.Store, account *auth.Account, eventType string, frame gjson.Result, observedAt time.Time) {
-	// Relay accounts can pass through their backend's quota frames. Those
-	// describe the relay's own upstream account, not this account's Codex
-	// windows, so they must not drive local usage or cooldowns.
-	if account == nil || account.IsRelayStyle() || !codexUsageFrameIngestEnabled.Load() {
+	if account == nil || !codexUsageFrameIngestEnabled.Load() {
 		return
 	}
 	switch strings.ToLower(strings.TrimSpace(eventType)) {
@@ -368,7 +365,7 @@ func isDefaultCodexLimitName(name string) bool {
 // partial frames in order instead of blocking the read pump or discarding the
 // final update.
 func ApplyCodexIdleUsageFrame(store *auth.Store, account *auth.Account, eventType string, payload []byte) {
-	if account == nil || account.IsRelayStyle() || len(payload) == 0 || !codexUsageFrameIngestEnabled.Load() {
+	if account == nil || len(payload) == 0 || !codexUsageFrameIngestEnabled.Load() {
 		return
 	}
 	normalizedType := strings.ToLower(strings.TrimSpace(eventType))

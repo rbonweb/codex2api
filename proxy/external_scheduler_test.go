@@ -222,33 +222,6 @@ func TestPinnedResponsesForwardsRateLimitWithoutRetry(t *testing.T) {
 	}
 }
 
-func TestPinnedMessagesReportsUnknownAccountInAnthropicFormat(t *testing.T) {
-	handler, upstream, _ := newPinnedCodexHandler(t, nil, func(w http.ResponseWriter, _ *http.Request) {
-		writePinnedSuccessSSE(w)
-	})
-
-	recorder := httptest.NewRecorder()
-	handler.Messages(pinnedTestContext(recorder, "/v1/messages", `{"model":"gpt-5.5","max_tokens":16,"messages":[{"role":"user","content":"hello"}]}`, 7, 99))
-
-	body := recorder.Body.String()
-	if recorder.Code != http.StatusNotFound {
-		t.Fatalf("status = %d body = %s, want 404", recorder.Code, body)
-	}
-	if gjson.Get(body, "type").String() != "error" || gjson.Get(body, "error.type").String() != "not_found_error" ||
-		gjson.Get(body, "error.code").String() != "pinned_account_not_found" {
-		t.Fatalf("body = %s, want an Anthropic not_found_error with code pinned_account_not_found", body)
-	}
-	if got := recorder.Header().Get(pinnedAccountErrorHeader); got != "pinned_account_not_found" {
-		t.Fatalf("%s = %q, want pinned_account_not_found", pinnedAccountErrorHeader, got)
-	}
-	if got := recorder.Header().Get(PinnedAccountHeader); got != "" {
-		t.Fatalf("%s = %q, want unset when no account ran the request", PinnedAccountHeader, got)
-	}
-	if got := upstream.calls.Load(); got != 0 {
-		t.Fatalf("upstream calls = %d, want none", got)
-	}
-}
-
 // An account restricted to other API keys must be indistinguishable from a
 // missing one, so a key cannot probe the pool outside its scope.
 func TestPinnedChatTreatsAccountOutsideKeyScopeAsMissing(t *testing.T) {
@@ -284,7 +257,6 @@ func externalSchedulerIngressRouter(row *database.APIKeyRow) *gin.Engine {
 	}
 	router.POST("/v1/responses", echo)
 	router.GET("/v1/responses", echo)
-	router.POST("/v1/messages", echo)
 	router.POST("/v1/images/generations", echo)
 	router.GET("/v1/models", echo)
 	router.POST("/backend-api/codex/responses/*subpath", echo)
@@ -345,16 +317,19 @@ func TestExternalSchedulerIngress(t *testing.T) {
 	}
 }
 
-func TestExternalSchedulerIngressUsesAnthropicErrorsOnMessages(t *testing.T) {
+func TestExternalSchedulerIngressUsesOpenAIErrorsOnResponses(t *testing.T) {
 	gin.SetMode(gin.TestMode)
 	external := &database.APIKeyRow{ID: 7, Enabled: true, Limits: database.APIKeyLimits{ExternalScheduler: true}}
 	recorder := httptest.NewRecorder()
-	externalSchedulerIngressRouter(external).ServeHTTP(recorder, httptest.NewRequest(http.MethodPost, "/v1/messages", strings.NewReader(`{}`)))
+	externalSchedulerIngressRouter(external).ServeHTTP(recorder, httptest.NewRequest(http.MethodPost, "/v1/responses", strings.NewReader(`{}`)))
 
 	body := recorder.Body.String()
-	if recorder.Code != http.StatusBadRequest || gjson.Get(body, "type").String() != "error" ||
+	if recorder.Code != http.StatusBadRequest || gjson.Get(body, "type").Exists() ||
 		gjson.Get(body, "error.type").String() != "invalid_request_error" || gjson.Get(body, "error.code").String() != "pinned_account_required" {
-		t.Fatalf("status = %d body = %s, want an Anthropic invalid_request_error", recorder.Code, body)
+		t.Fatalf("status = %d body = %s, want an OpenAI-format invalid_request_error", recorder.Code, body)
+	}
+	if got := recorder.Header().Get(pinnedAccountErrorHeader); got != "pinned_account_required" {
+		t.Fatalf("%s = %q, want pinned_account_required", pinnedAccountErrorHeader, got)
 	}
 }
 

@@ -28,7 +28,7 @@ const modelQuotaSSE = "data: {\"type\":\"response.created\",\"response\":{\"id\"
 	"data: {\"type\":\"response.output_text.done\"}\n\n" +
 	"data: {\"type\":\"response.completed\",\"response\":{\"id\":\"resp_quota\",\"status\":\"completed\",\"usage\":{\"input_tokens\":1,\"output_tokens\":1}}}\n\n"
 
-func newModelQuotaTestHandler(t *testing.T, limit int64, upstream string, native bool) (*Handler, *database.APIKeyRow, *gin.Engine) {
+func newModelQuotaTestHandler(t *testing.T, limit int64, upstream string) (*Handler, *database.APIKeyRow, *gin.Engine) {
 	t.Helper()
 	gin.SetMode(gin.TestMode)
 	previous := CurrentRuntimeSettings()
@@ -54,15 +54,9 @@ func newModelQuotaTestHandler(t *testing.T, limit int64, upstream string, native
 	}
 	store := auth.NewStore(db, nil, &database.SystemSettings{MaxConcurrency: 4, MaxRetries: 0, MaxRateLimitRetries: 0})
 	t.Cleanup(store.Stop)
-	if native {
-		store.AddAccount(&auth.Account{DBID: 1, AccessToken: "test-token", PlanType: "pro", Models: []string{"gpt-6-astra", "gpt-5.5"}})
-	} else {
-		// The early global mapping is deliberately outside the quota; only the
-		// later account mapping exposes the actual model that must be charged.
-		store.SetCodexModelMapping(`{"team-model":"gpt-5.5"}`)
-		store.AddAccount(&auth.Account{DBID: 1, UpstreamType: auth.UpstreamOpenAIResponses,
-			BaseURL: upstream, APIKey: "relay-test", PlanType: "api",
-			Models: []string{"gpt-6-astra", "gpt-5.5"}, ModelMapping: `{"team-model":"gpt-6-astra"}`})
+	store.AddAccount(&auth.Account{DBID: 1, AccessToken: "test-token", PlanType: "pro", Models: []string{"gpt-6-astra", "gpt-5.5"}})
+	if upstream != "" {
+		codexRestoredUseResin(t, upstream)
 	}
 	h := NewHandler(store, db, &config.Config{}, nil)
 	r := gin.New()
@@ -79,7 +73,7 @@ func performModelQuotaRequest(r http.Handler, endpoint, body string) *httptest.R
 	return w
 }
 
-func TestModelRequestQuotaHTTPMappedModelAndProtocolErrors(t *testing.T) {
+func TestModelRequestQuotaHTTPModelAndProtocolErrors(t *testing.T) {
 	var sent atomic.Int32
 	upstream := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		sent.Add(1)
@@ -92,7 +86,7 @@ func TestModelRequestQuotaHTTPMappedModelAndProtocolErrors(t *testing.T) {
 		_, _ = io.WriteString(w, modelQuotaSSE)
 	}))
 	defer upstream.Close()
-	h, row, router := newModelQuotaTestHandler(t, 1, upstream.URL, false)
+	h, row, router := newModelQuotaTestHandler(t, 1, upstream.URL)
 	invalid := performModelQuotaRequest(router, "/v1/responses", `{"model":7,"input":"hi"}`)
 	if invalid.Code != http.StatusBadRequest {
 		t.Fatalf("invalid status=%d body=%s", invalid.Code, invalid.Body.String())
@@ -101,15 +95,14 @@ func TestModelRequestQuotaHTTPMappedModelAndProtocolErrors(t *testing.T) {
 	if err != nil || usage[0].Used != 0 {
 		t.Fatalf("local rejection charged quota: %#v %v", usage, err)
 	}
-	first := performModelQuotaRequest(router, "/v1/responses", `{"model":"team-model","input":"hi","stream":true}`)
+	first := performModelQuotaRequest(router, "/v1/responses", `{"model":"gpt-6-astra","input":"hi","stream":true}`)
 	if first.Code != 200 || !strings.Contains(first.Body.String(), "response.completed") {
 		t.Fatalf("first=%d %s", first.Code, first.Body.String())
 	}
 	for _, tc := range []struct{ path, body string }{
-		{"/v1/responses", `{"model":"team-model","input":"hi","stream":true}`},
-		{"/v1/chat/completions", `{"model":"team-model","messages":[{"role":"user","content":"hi"}]}`},
-		{"/v1/messages", `{"model":"gpt-6-astra","max_tokens":10,"messages":[{"role":"user","content":"hi"}]}`},
-		{"/v1/responses/compact", `{"model":"team-model","input":[{"role":"user","content":"hi"}]}`},
+		{"/v1/responses", `{"model":"gpt-6-astra","input":"hi","stream":true}`},
+		{"/v1/chat/completions", `{"model":"gpt-6-astra","messages":[{"role":"user","content":"hi"}]}`},
+		{"/v1/responses/compact", `{"model":"gpt-6-astra","input":[{"role":"user","content":"hi"}]}`},
 	} {
 		w := performModelQuotaRequest(router, tc.path, tc.body)
 		if w.Code != 429 || gjson.GetBytes(w.Body.Bytes(), "error.code").String() != "rate_limit_reached" || gjson.GetBytes(w.Body.Bytes(), "error.details.used").Int() != 1 || w.Header().Get("Retry-After") == "" {
@@ -143,7 +136,7 @@ func TestModelRequestQuotaExecutorRetriesAndFreshRequest(t *testing.T) {
 		_, _ = io.WriteString(w, `{"error":{"message":"test transport attempt"}}`)
 	}))
 	defer upstream.Close()
-	h, row, _ := newModelQuotaTestHandler(t, 1, upstream.URL, false)
+	h, row, _ := newModelQuotaTestHandler(t, 1, upstream.URL)
 	c, _ := gin.CreateTestContext(httptest.NewRecorder())
 	c.Request = httptest.NewRequest(http.MethodPost, "/v1/responses", nil)
 	c.Set(contextAPIKeyRow, row)
@@ -151,7 +144,7 @@ func TestModelRequestQuotaExecutorRetriesAndFreshRequest(t *testing.T) {
 	ctx := c.Request.Context()
 	account := h.store.Accounts()[0]
 	for attempt := 0; attempt < 3; attempt++ {
-		resp, err := ExecuteOpenAIResponsesRequest(ctx, account, []byte(`{"model":"gpt-6-astra","input":"hi"}`), "", nil)
+		resp, err := ExecuteRequest(ctx, account, []byte(`{"model":"gpt-6-astra","input":"hi"}`), "session", "", "", nil, nil, false)
 		if err != nil {
 			t.Fatalf("internal retry %d: %v", attempt, err)
 		}
@@ -164,7 +157,7 @@ func TestModelRequestQuotaExecutorRetriesAndFreshRequest(t *testing.T) {
 		t.Fatalf("usage=%#v calls=%d err=%v", usage, calls.Load(), err)
 	}
 	h.attachAPIKeyModelRequestQuota(c, true)
-	_, err = ExecuteOpenAIResponsesRequest(c.Request.Context(), account, []byte(`{"model":"gpt-6-astra"}`), "", nil)
+	_, err = ExecuteRequest(c.Request.Context(), account, []byte(`{"model":"gpt-6-astra"}`), "session", "", "", nil, nil, false)
 	if apiKeyModelRequestError(err) == nil || calls.Load() != 3 {
 		t.Fatalf("new request bypassed quota: %v calls=%d", err, calls.Load())
 	}
@@ -186,7 +179,7 @@ func TestModelRequestQuotaActivatesSSEKeepaliveAfterAdmission(t *testing.T) {
 		_, _ = io.WriteString(w, modelQuotaSSE)
 	}))
 	t.Cleanup(upstream.Close)
-	_, _, router := newModelQuotaTestHandler(t, 2, upstream.URL, false)
+	_, _, router := newModelQuotaTestHandler(t, 2, upstream.URL)
 
 	response := performModelQuotaRequest(router, "/v1/responses", `{"model":"gpt-6-astra","input":"hi","stream":true}`)
 	body := response.Body.String()
@@ -208,7 +201,7 @@ func TestModelRequestQuotaWebsocketFramesAndOtherModel(t *testing.T) {
 		sent.Add(1)
 		return &http.Response{StatusCode: 200, Header: http.Header{"Content-Type": {"text/event-stream"}}, Body: io.NopCloser(strings.NewReader(modelQuotaSSE))}, nil
 	}
-	h, _, router := newModelQuotaTestHandler(t, 1, "", true)
+	h, _, router := newModelQuotaTestHandler(t, 1, "")
 	server := httptest.NewServer(router)
 	defer server.Close()
 	conn, _, err := websocket.DefaultDialer.Dial("ws"+strings.TrimPrefix(server.URL, "http")+"/v1/responses", http.Header{"Authorization": {"Bearer " + modelQuotaTestKey}})
@@ -256,7 +249,7 @@ func TestModelRequestQuotaWebsocketFramesAndOtherModel(t *testing.T) {
 }
 
 func TestModelRequestQuotaPreviouslyUnrestrictedSnapshotCannotBypassNewRule(t *testing.T) {
-	h, row, _ := newModelQuotaTestHandler(t, 1, "", true)
+	h, row, _ := newModelQuotaTestHandler(t, 1, "")
 	stale := *row
 	stale.Limits = database.APIKeyLimits{}
 	newRequest := func() context.Context {
@@ -274,49 +267,6 @@ func TestModelRequestQuotaPreviouslyUnrestrictedSnapshotCannotBypassNewRule(t *t
 	}
 }
 
-func TestModelRequestQuotaAntigravityUsesFinalWireModel(t *testing.T) {
-	var sent atomic.Int32
-	upstream := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		sent.Add(1)
-		body := readUpstreamRequestBody(r)
-		if model := gjson.GetBytes(body, "model").String(); model != "gemini-pro-agent" {
-			t.Errorf("wire model=%s", model)
-		}
-		_, _ = io.WriteString(w, `{"ok":true}`)
-	}))
-	defer upstream.Close()
-	previous := antigravityInteractionsEndpoint
-	antigravityInteractionsEndpoint = upstream.URL
-	t.Cleanup(func() { antigravityInteractionsEndpoint = previous })
-	h, row, _ := newModelQuotaTestHandler(t, 1, "", true)
-	limits := database.APIKeyLimits{ModelRequestLimits: []database.APIKeyModelRequestLimit{{Model: "gemini-pro-agent", MaxRequests: 1}}}
-	if err := h.db.UpdateAPIKeyLimits(context.Background(), row.ID, limits); err != nil {
-		t.Fatal(err)
-	}
-	row, err := h.db.GetAPIKeyByID(context.Background(), row.ID)
-	if err != nil {
-		t.Fatal(err)
-	}
-	c, _ := gin.CreateTestContext(httptest.NewRecorder())
-	c.Request = httptest.NewRequest(http.MethodPost, "/v1/responses", nil)
-	c.Set(contextAPIKeyRow, row)
-	account := &auth.Account{DBID: 55, UpstreamType: auth.UpstreamAntigravity, APIKey: "test-key"}
-	for request := 0; request < 2; request++ {
-		h.attachAPIKeyModelRequestQuota(c, true)
-		resp, err := executeAntigravityInteractionsRequest(c.Request.Context(), account, "gemini-3.1-pro-high", []byte(`{"input":"hi"}`), false, "")
-		if request == 0 {
-			if err != nil {
-				t.Fatal(err)
-			}
-			_ = resp.Body.Close()
-		} else if apiKeyModelRequestError(err) == nil {
-			t.Fatalf("public alias bypassed wire budget: %v", err)
-		}
-	}
-	if sent.Load() != 1 {
-		t.Fatalf("sent %d upstream requests", sent.Load())
-	}
-}
 
 func TestModelRequestQuotaErrorClaimsRetryTerminal(t *testing.T) {
 	ctx, cancel := context.WithCancelCause(context.Background())

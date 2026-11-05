@@ -6,12 +6,12 @@ const settings = readFileSync(new URL('../pages/Settings.tsx', import.meta.url),
 const zh = JSON.parse(readFileSync(new URL('../locales/zh.json', import.meta.url), 'utf8'))
 const en = JSON.parse(readFileSync(new URL('../locales/en.json', import.meta.url), 'utf8'))
 
-const TABS = ['codex', 'claude', 'antigravity', 'grok', 'appearance', 'general']
+const TABS = ['codex', 'appearance', 'general']
 
 test('settings page is split into one panel per tab driven by ?tab=', () => {
   assert.match(settings, /useSearchParams\(\)/)
   assert.match(settings, /searchParams\.get\('tab'\)/)
-  assert.match(settings, /type SettingsTabKey = 'codex' \| 'claude' \| 'antigravity' \| 'grok' \| 'appearance' \| 'general'/)
+  assert.match(settings, /type SettingsTabKey = 'codex' \| 'appearance' \| 'general'/)
   for (const tab of TABS) {
     assert.match(settings, new RegExp(`\\{ id: '${tab}', label: t\\('settings\\.nav\\.${tab}'\\)`), `tab pill ${tab}`)
     assert.match(settings, new RegExp(`\\{activeTab === '${tab}' \\? \\(`), `panel ${tab}`)
@@ -24,7 +24,7 @@ test('settings page is split into one panel per tab driven by ?tab=', () => {
 })
 
 test('legacy #settings-* anchors map onto a tab', () => {
-  for (const id of ['settings-overview', 'settings-traffic', 'settings-runtime', 'settings-models', 'settings-grok', 'settings-claude', 'settings-antigravity', 'settings-appearance']) {
+  for (const id of ['settings-overview', 'settings-traffic', 'settings-runtime', 'settings-models', 'settings-appearance']) {
     assert.match(settings, new RegExp(`'${id}': '(${TABS.join('|')})'`), id)
   }
 })
@@ -43,13 +43,10 @@ test('channel-specific cards live in their channel tab, shared cards in general'
   }
   assert.ok(codex.includes('codex_user_agent_config') || codex.includes('codexUserAgentConfig'))
   assert.ok(!codex.includes('settings.usageLogMode'), 'usage log settings are shared, not Codex-only')
-  assert.ok(panel('claude').includes('<ClaudeCodeSettingsCard />'))
-  assert.ok(panel('antigravity').includes('settings.antigravityOAuth.title'))
-  assert.ok(panel('grok').includes('settings.grokSettingsTitle'))
   const appearance = panel('appearance')
   assert.ok(appearance.includes('settings.display') && appearance.includes('settings.backgroundImage'))
   const general = panel('general')
-  for (const key of ['settings.systemStatus', 'settings.visibleChannelsTitle', 'settings.trafficProtection', 'settings.modelCooldownTitle', 'settings.schedulingStrategy', 'settings.runtimeOptimization', 'settings.usageLogMode', 'settings.githubAccess', 'settings.imageStorage', 'settings.security', 'settings.apiEndpoints']) {
+  for (const key of ['settings.systemStatus', 'settings.trafficProtection', 'settings.modelCooldownTitle', 'settings.schedulingStrategy', 'settings.runtimeOptimization', 'settings.usageLogMode', 'settings.githubAccess', 'settings.imageStorage', 'settings.security', 'settings.apiEndpoints']) {
     assert.ok(general.includes(key), `general tab should contain ${key}`)
   }
   assert.ok(!general.includes('settings.codexUserAgentRaw'), 'Codex UA emulation must not stay in general runtime card')
@@ -57,7 +54,7 @@ test('channel-specific cards live in their channel tab, shared cards in general'
 
 test('tab and section labels exist in zh and en', () => {
   for (const locale of [zh, en]) {
-    for (const key of ['codex', 'codexDesc', 'claude', 'antigravity', 'grok', 'appearance', 'general', 'generalDesc', 'codexQuota', 'codexQuotaDesc', 'codexTransport', 'codexTransportDesc', 'codexClient', 'codexClientDesc', 'codexImages', 'codexImagesDesc']) {
+    for (const key of ['codex', 'codexDesc', 'appearance', 'general', 'generalDesc', 'codexQuota', 'codexQuotaDesc', 'codexTransport', 'codexTransportDesc', 'codexClient', 'codexClientDesc', 'codexImages', 'codexImagesDesc']) {
       assert.equal(typeof locale.settings?.nav?.[key], 'string', `settings.nav.${key}`)
     }
     assert.equal(typeof locale.settings?.codexClientTitle, 'string')
@@ -70,7 +67,7 @@ test('tab and section labels exist in zh and en', () => {
 
 test('codex tab points at the shared scheduling strategy in general', () => {
   const start = settings.indexOf("{activeTab === 'codex' ? (")
-  const end = settings.indexOf("{activeTab === 'claude' ? (")
+  const end = settings.indexOf("{activeTab === 'appearance' ? (")
   const codex = settings.slice(start, end)
   assert.match(codex, /selectTab\('general', 'settings-traffic'\)/)
   assert.match(codex, /settings\.codexSchedulingHintAction/)
@@ -79,32 +76,17 @@ test('codex tab points at the shared scheduling strategy in general', () => {
     for (const key of ['codexSchedulingHintTitle', 'codexSchedulingHintDesc', 'codexSchedulingHintAction']) {
       assert.equal(typeof locale.settings?.[key], 'string', `settings.${key}`)
     }
-    assert.match(locale.settings.schedulerModeDesc, /Grok/)
-    assert.match(locale.settings.schedulerModeDesc, /Antigravity/)
   }
 })
 
-test('shared settings cards declare which upstream channels they apply to', () => {
-  const badges = readFileSync(new URL('../components/ChannelScopeBadges.tsx', import.meta.url), 'utf8')
-  assert.match(badges, /export const ALL_UPSTREAM_CHANNELS/)
-  assert.match(badges, /data-channel-scope/)
-  assert.match(settings, /channels\?: readonly UpstreamChannel\[\]/)
-  // 通用 Tab 里每张跨渠道卡片都必须带 channels，避免再出现"看不出给谁用"的设置。
-  for (const title of ['settings.trafficProtection', 'settings.schedulingStrategy', 'settings.runtimeOptimization', 'settings.autoCleanup']) {
-    assert.match(settings, new RegExp(`title=\\{t\\('${title.replace('.', '\\.')}'\\)\\}[^\\n]*channels=\\{ALL_UPSTREAM_CHANNELS\\}`), title)
-  }
-  assert.match(settings, /title=\{t\('settings\.continuousRetryTitle'\)\}\n\s+channels=\{ALL_UPSTREAM_CHANNELS\}/)
-  assert.match(settings, /title=\{t\('settings\.modelCooldownTitle'\)\}\n\s+channels=\{ALL_UPSTREAM_CHANNELS\}/)
-  assert.match(settings, /settings\.imageStorage'\)\}[^\n]*channels=\{CHANNELS_CODEX_ONLY\}/)
-  assert.match(settings, /settings\.globalAutoPauseTitle'\)\}[^\n]*channels=\{CHANNELS_CODEX_CLAUDE\}/)
-  assert.match(settings, /settings\.billingTierPolicy'\)\}[^\n]*channels=\{CHANNELS_CODEX_ONLY\}/)
-  assert.match(settings, /settings\.streamFlushPolicy'\)\}[^\n]*channels=\{CHANNELS_STREAMING\}/)
-  assert.match(settings, /value: 'response_failed', channels: CHANNELS_CODEX_ONLY/)
-  assert.match(settings, /<ChannelScopeBadges channels=\{CHANNELS_RELAY\} size="xs" \/>/)
+test('settings has no provider tabs, provider cards or channel scope badges left', () => {
+  assert.doesNotMatch(settings, /ChannelScopeBadges|ALL_UPSTREAM_CHANNELS|CHANNELS_(CODEX|RELAY|STREAMING)/)
+  assert.doesNotMatch(settings, /VisibleChannelsPicker|ClaudeCodeSettingsCard|antigravityOAuth|grokSettings/)
   for (const locale of [zh, en]) {
-    assert.match(locale.settings.channelScope, /\{\{channels\}\}/)
-    assert.equal(typeof locale.settings.channelScopeAll, 'string')
+    assert.doesNotMatch(JSON.stringify(locale.settings.nav), /claude|antigravity|grok/i)
+    assert.doesNotMatch(locale.settings.schedulerModeDesc, /Claude|Grok|Antigravity/)
   }
+  assert.match(settings, /title=\{t\('settings\.modelCooldownTitle'\)\}/)
 })
 
 test('multi-section tabs render a section index that mirrors the rendered sections', () => {
@@ -167,15 +149,5 @@ test('single-toggle compatibility settings are one row-list card, not three narr
   for (const locale of [zh, en]) {
     assert.equal(typeof locale.settings.codexCompatToggles, 'string')
     assert.equal(typeof locale.settings.codexCompatTogglesDesc, 'string')
-  }
-})
-
-test('provider visibility picker lives in general and keeps the fallback channel locked', () => {
-  assert.match(settings, /<VisibleChannelsPicker \/>/)
-  assert.match(settings, /if \(channel === FALLBACK_VISIBLE_CHANNEL \|\| saving\) return/)
-  for (const locale of [zh, en]) {
-    for (const key of ['visibleChannelsTitle', 'visibleChannelsDesc', 'visibleChannelsFallbackHint', 'visibleChannelsSaveFailed']) {
-      assert.equal(typeof locale.settings?.[key], 'string', `settings.${key}`)
-    }
   }
 })

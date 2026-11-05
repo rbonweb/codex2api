@@ -150,8 +150,6 @@ func sendAPIKeyModelRequestQuotaError(c *gin.Context, err error) bool {
 	protocol := continuousRetryProtocolOpenAI
 	if c.Request != nil {
 		switch {
-		case strings.HasSuffix(c.Request.URL.Path, "/messages"):
-			protocol = continuousRetryProtocolAnthropic
 		case strings.HasSuffix(c.Request.URL.Path, "/chat/completions"):
 			protocol = continuousRetryProtocolChat
 		case strings.HasSuffix(c.Request.URL.Path, "/responses"):

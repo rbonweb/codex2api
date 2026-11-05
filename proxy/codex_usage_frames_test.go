@@ -757,21 +757,6 @@ func TestCodexRateLimitsFrameIgnoresSingleCreditsFlag(t *testing.T) {
 	}
 }
 
-func TestCodexUsageFramesSkipRelayAccounts(t *testing.T) {
-	acc := newUsageFrameTestAccount()
-	acc.UpstreamType = auth.UpstreamOpenAIResponses
-	acc.BaseURL = "relay.example"
-	acc.APIKey = "relay-key"
-	frame := gjson.Parse(`{"rate_limits":{"primary":{"used_percent":42,"window_minutes":300}}}`)
-
-	ApplyCodexUsageEventFrame(nil, acc, "codex.rate_limits", frame, time.Now())
-	ApplyCodexIdleUsageFrame(nil, acc, "codex.rate_limits", []byte(`{"rate_limits":{"primary":{"used_percent":42,"window_minutes":300}}}`))
-
-	if pct, ok := acc.GetUsagePercent5h(); ok {
-		t.Fatalf("relay account ingested a forwarded frame: usage=%v", pct)
-	}
-}
-
 func TestApplyCodexUsageEventFrameIgnoresOlderObservation(t *testing.T) {
 	acc := newUsageFrameTestAccount()
 	t2 := time.Unix(1_700_000_000, 0)

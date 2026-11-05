@@ -2,7 +2,6 @@ package proxy
 
 import (
 	"context"
-	"encoding/json"
 	"io"
 	"net/http"
 	"net/http/httptest"
@@ -87,86 +86,73 @@ func TestStrictResponsesCompatibilityHTTPDispatch(t *testing.T) {
 	t.Cleanup(func() { ApplyRuntimeSettings(previous) })
 	for _, endpoint := range []string{"responses", "compact"} {
 		for _, channel := range []string{database.UpstreamChannelAuto, database.UpstreamChannelCodex} {
-			for _, native := range []bool{true, false} {
-				for _, strict := range []bool{false, true} {
-					name := endpoint + "/" + channel + "/"
-					if native {
-						name += "native"
-					} else {
-						name += "relay"
-					}
-					if strict {
-						name += "/strict"
-					} else {
-						name += "/default"
-					}
-					t.Run(name, func(t *testing.T) {
-						var calls atomic.Int32
-						var seen []byte
-						upstream := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-							calls.Add(1)
-							seen = readUpstreamRequestBody(r)
-							if strings.HasSuffix(r.URL.Path, "/compact") {
-								w.Header().Set("Content-Type", "application/json")
-								_, _ = io.WriteString(w, `{"id":"resp_compact","output":[],"usage":{"input_tokens":1,"output_tokens":1}}`)
-							} else {
-								w.Header().Set("Content-Type", "text/event-stream")
-								_, _ = io.WriteString(w, strictCompatibilitySSE)
-							}
-						}))
-						defer upstream.Close()
-						previousResin := resinCfg.Load()
-						SetResinConfig(&ResinConfig{BaseURL: upstream.URL, PlatformName: "test"})
-						defer resinCfg.Store(previousResin)
-						store := auth.NewStore(nil, nil, &database.SystemSettings{MaxConcurrency: 2, MaxRetries: 0, MaxRateLimitRetries: 0})
-						defer store.Stop()
-						account := &auth.Account{DBID: 1, AccessToken: "local-test", PlanType: "pro", Models: []string{"gpt-5.5"}}
-						if !native {
-							account.UpstreamType = auth.UpstreamOpenAIResponses
-							account.BaseURL, account.APIKey, account.PlanType = upstream.URL, "local-test", "api"
-						}
-						store.AddAccount(account)
-						h := NewHandler(store, nil, nil, nil)
-						body := []byte(`{"model":"gpt-5.5","input":"hi","stream":true,"metadata":{"tenant":"demo"},"background":false}`)
-						handler := h.Responses
-						if endpoint == "compact" {
-							handler = h.ResponsesCompact
-						}
-						response := invokeResponsesHandlerWithContext(t, func(c *gin.Context) {
-							c.Set(contextAPIKeyRow, &database.APIKeyRow{ID: 7, Limits: database.APIKeyLimits{UpstreamChannel: channel}})
-							if strict {
-								c.Request.Header.Set(strictResponsesCompatibilityHeader, "true")
-							}
-						}, handler, body)
-						if native && strict {
-							if response.Code != http.StatusBadRequest || gjson.GetBytes(response.Body.Bytes(), "error.code").String() != string(api.ErrCodeUnsupportedFeature) || calls.Load() != 0 {
-								t.Fatalf("native strict response=%d %s calls=%d", response.Code, response.Body.String(), calls.Load())
-							}
-						} else {
-							if response.Code != http.StatusOK || calls.Load() != 1 {
-								t.Fatalf("response=%d %s calls=%d", response.Code, response.Body.String(), calls.Load())
-							}
-							if got := gjson.GetBytes(seen, "metadata.tenant"); got.Exists() == native {
-								t.Fatalf("wrong metadata preservation: native=%v body=%s", native, seen)
-							}
-							if !native && gjson.GetBytes(seen, "metadata.tenant").String() != "demo" {
-								t.Fatalf("relay lost metadata: %s", seen)
-							}
-							if native && gjson.GetBytes(seen, "background").Exists() {
-								t.Fatalf("native synchronous background not normalized: %s", seen)
-							}
-							gjson.GetBytes(seen, "tools").ForEach(func(_, tool gjson.Result) bool {
-								if tool.Get("background").Exists() {
-									t.Errorf("boolean background misrouted into image tool: %s", tool.Raw)
-								}
-								return true
-							})
-						}
-						if account.ActiveRequests.Load() != 0 {
-							t.Fatalf("account lease leaked: %d", account.ActiveRequests.Load())
-						}
-					})
+			for _, strict := range []bool{false, true} {
+				name := endpoint + "/" + channel + "/"
+				name += "native"
+				if strict {
+					name += "/strict"
+				} else {
+					name += "/default"
 				}
+				t.Run(name, func(t *testing.T) {
+					var calls atomic.Int32
+					var seen []byte
+					upstream := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+						calls.Add(1)
+						seen = readUpstreamRequestBody(r)
+						if strings.HasSuffix(r.URL.Path, "/compact") {
+							w.Header().Set("Content-Type", "application/json")
+							_, _ = io.WriteString(w, `{"id":"resp_compact","output":[],"usage":{"input_tokens":1,"output_tokens":1}}`)
+						} else {
+							w.Header().Set("Content-Type", "text/event-stream")
+							_, _ = io.WriteString(w, strictCompatibilitySSE)
+						}
+					}))
+					defer upstream.Close()
+					previousResin := resinCfg.Load()
+					SetResinConfig(&ResinConfig{BaseURL: upstream.URL, PlatformName: "test"})
+					defer resinCfg.Store(previousResin)
+					store := auth.NewStore(nil, nil, &database.SystemSettings{MaxConcurrency: 2, MaxRetries: 0, MaxRateLimitRetries: 0})
+					defer store.Stop()
+					account := &auth.Account{DBID: 1, AccessToken: "local-test", PlanType: "pro", Models: []string{"gpt-5.5"}}
+					store.AddAccount(account)
+					h := NewHandler(store, nil, nil, nil)
+					body := []byte(`{"model":"gpt-5.5","input":"hi","stream":true,"metadata":{"tenant":"demo"},"background":false}`)
+					handler := h.Responses
+					if endpoint == "compact" {
+						handler = h.ResponsesCompact
+					}
+					response := invokeResponsesHandlerWithContext(t, func(c *gin.Context) {
+						c.Set(contextAPIKeyRow, &database.APIKeyRow{ID: 7, Limits: database.APIKeyLimits{UpstreamChannel: channel}})
+						if strict {
+							c.Request.Header.Set(strictResponsesCompatibilityHeader, "true")
+						}
+					}, handler, body)
+					if strict {
+						if response.Code != http.StatusBadRequest || gjson.GetBytes(response.Body.Bytes(), "error.code").String() != string(api.ErrCodeUnsupportedFeature) || calls.Load() != 0 {
+							t.Fatalf("native strict response=%d %s calls=%d", response.Code, response.Body.String(), calls.Load())
+						}
+					} else {
+						if response.Code != http.StatusOK || calls.Load() != 1 {
+							t.Fatalf("response=%d %s calls=%d", response.Code, response.Body.String(), calls.Load())
+						}
+						if got := gjson.GetBytes(seen, "metadata.tenant"); got.Exists() {
+							t.Fatalf("native request kept discarded metadata: body=%s", seen)
+						}
+						if gjson.GetBytes(seen, "background").Exists() {
+							t.Fatalf("native synchronous background not normalized: %s", seen)
+						}
+						gjson.GetBytes(seen, "tools").ForEach(func(_, tool gjson.Result) bool {
+							if tool.Get("background").Exists() {
+								t.Errorf("boolean background misrouted into image tool: %s", tool.Raw)
+							}
+							return true
+						})
+					}
+					if account.ActiveRequests.Load() != 0 {
+						t.Fatalf("account lease leaked: %d", account.ActiveRequests.Load())
+					}
+				})
 			}
 		}
 	}
@@ -183,74 +169,6 @@ func TestStrictResponsesCompatibilityPreservesErrorAfterSSECommit(t *testing.T) 
 	if !strings.Contains(body, `"type":"response.failed"`) || !strings.Contains(body, `"code":"unsupported_feature"`) || !strings.Contains(body, `"field":"metadata"`) {
 		t.Fatalf("committed SSE lost structured compatibility error: %s", body)
 	}
-}
-
-func TestStrictResponsesCompatibilityWebSocketRelayPreservesFields(t *testing.T) {
-	gin.SetMode(gin.TestMode)
-	resetOpenAIResponsesWebsocketPool()
-	t.Cleanup(resetOpenAIResponsesWebsocketPool)
-	seen := make(chan []byte, 1)
-	upgrader := websocket.Upgrader{CheckOrigin: func(*http.Request) bool { return true }}
-	upstream := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		conn, err := upgrader.Upgrade(w, r, nil)
-		if err != nil {
-			return
-		}
-		defer conn.Close()
-		_, payload, err := conn.ReadMessage()
-		if err != nil {
-			return
-		}
-		seen <- payload
-		_ = conn.WriteMessage(websocket.TextMessage, []byte(`{"type":"response.completed","response":{"id":"resp_strict_ws","status":"completed","output":[]}}`))
-		// Leave the pooled upstream connection usable until the downstream closes.
-		_, _, _ = conn.ReadMessage()
-	}))
-	defer upstream.Close()
-	store := auth.NewStore(nil, nil, &database.SystemSettings{MaxConcurrency: 2})
-	defer store.Stop()
-	account := &auth.Account{DBID: 1, UpstreamType: auth.UpstreamOpenAIResponses, BaseURL: upstream.URL, APIKey: "local-only", PlanType: "api", Models: []string{"gpt-5.5"}, ResponsesUpstreamTransport: auth.OpenAIResponsesTransportWebsocket}
-	store.AddAccount(account)
-	h := NewHandler(store, nil, &config.Config{AllowAnonymousV1: true}, nil)
-	router := gin.New()
-	h.RegisterRoutes(router)
-	server := httptest.NewServer(router)
-	defer server.Close()
-	headers := http.Header{strictResponsesCompatibilityHeader: []string{"true"}}
-	conn, _, err := websocket.DefaultDialer.Dial("ws"+strings.TrimPrefix(server.URL, "http")+"/v1/responses", headers)
-	if err != nil {
-		t.Fatal(err)
-	}
-	defer conn.Close()
-	payload := `{"type":"response.create","model":"gpt-5.5","input":"hi","store":true,"metadata":{"tenant":"demo"},"max_output_tokens":100,"background":false,"text":{"verbosity":"low"}}`
-	if err := conn.WriteMessage(websocket.TextMessage, []byte(payload)); err != nil {
-		t.Fatal(err)
-	}
-	_ = conn.SetReadDeadline(time.Now().Add(2 * time.Second))
-	_, event, err := conn.ReadMessage()
-	if err != nil {
-		t.Fatal(err)
-	}
-	if gjson.GetBytes(event, "type").String() != "response.completed" {
-		t.Fatalf("event=%s", event)
-	}
-	select {
-	case sent := <-seen:
-		var want, got map[string]any
-		_ = json.Unmarshal([]byte(payload), &want)
-		_ = json.Unmarshal(sent, &got)
-		for _, field := range []string{"store", "metadata", "max_output_tokens", "background", "text"} {
-			w, _ := json.Marshal(want[field])
-			g, _ := json.Marshal(got[field])
-			if string(w) != string(g) {
-				t.Errorf("relay changed %s: got %s want %s body=%s", field, g, w, sent)
-			}
-		}
-	case <-time.After(time.Second):
-		t.Fatal("relay upstream did not receive request")
-	}
-	conn.Close()
-	resetOpenAIResponsesWebsocketPool()
 }
 
 func TestStrictResponsesCompatibilityWebSocketNativeSelection(t *testing.T) {

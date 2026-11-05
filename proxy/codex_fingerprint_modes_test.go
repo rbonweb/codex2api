@@ -96,14 +96,6 @@ func TestSingleMachineFingerprintMissingIdentityAndBodyFallback(t *testing.T) {
 	if got := ApplyCodexFingerprintToBody([]byte(`{"input":"hello"}`), a, prepared); string(got) != `{"input":"hello"}` {
 		t.Fatal("invented metadata")
 	}
-	for _, mode := range []string{auth.CodexFingerprintModeSingleMachineMultiWindow} {
-		for _, provider := range []string{auth.UpstreamOpenAIResponses, auth.UpstreamGrok} {
-			relay := &auth.Account{DBID: 1, UpstreamType: provider, BaseURL: "https://relay.example.test", APIKey: "relay-key", CodexFingerprintMode: mode}
-			if resolveCodexFingerprintIDs(relay, prepared) != nil {
-				t.Fatalf("relay %s rewritten", provider)
-			}
-		}
-	}
 }
 
 func TestSingleMachineFingerprintPoolIdentityIsolation(t *testing.T) {

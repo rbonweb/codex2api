@@ -82,18 +82,6 @@ func TestResolveConfiguredModelMappingIgnoresInvalidJSON(t *testing.T) {
 	}
 }
 
-func TestResolveAnthropicModelUsesWildcardBeforeDefaultFallback(t *testing.T) {
-	got := resolveAnthropicModel("claude-opus-4-7", `{"claude-opus-*":"gpt-5.5"}`, []string{"gpt-5.5", "gpt-5.4"})
-	if got != "gpt-5.5" {
-		t.Fatalf("resolveAnthropicModel wildcard = %q, want gpt-5.5", got)
-	}
-
-	got = resolveAnthropicModel("claude-haiku-4-5", `{}`, []string{"gpt-5.6-luna"})
-	if got != "gpt-5.6-luna" {
-		t.Fatalf("resolveAnthropicModel default = %q, want gpt-5.6-luna", got)
-	}
-}
-
 func TestApplyConfiguredModelMappingToBodyRewritesBeforeValidation(t *testing.T) {
 	store := auth.NewStore(nil, nil, nil)
 	store.SetCodexModelMapping(`{"gpt-legacy-*":"gpt-5.5"}`)
@@ -137,32 +125,6 @@ func TestApplyReasoningEffortModelAliasToBody(t *testing.T) {
 	}
 	if got := gjson.GetBytes(body, "reasoning.effort").String(); got != "xhigh" {
 		t.Fatalf("reasoning.effort = %q, want xhigh; body=%s", got, body)
-	}
-}
-
-// /v1/messages 路径的 codexBody 是 Responses 形态且不再经过 PrepareResponsesBody
-// 净化，别名注入的顶层 reasoning_effort 必须在映射后剥离，否则上游 400
-// Unsupported parameter（issue #412）。reasoning.effort 需保留并覆写为别名档位。
-func TestApplyMessagesModelMappingStripsTopLevelReasoningEffort(t *testing.T) {
-	store := auth.NewStore(nil, nil, nil)
-	store.SetReasoningEffortModels(`[{"model":"gpt-5.5","effort":"xhigh"}]`)
-	handler := NewHandler(store, nil, nil, nil)
-
-	body := handler.applyMessagesModelMapping(
-		[]byte(`{"model":"gpt-5.5(xhigh)","input":[],"reasoning":{"effort":"medium","summary":"auto"}}`),
-		[]string{"gpt-5.5", "gpt-5.5(xhigh)"},
-	)
-	if got := gjson.GetBytes(body, "model").String(); got != "gpt-5.5" {
-		t.Fatalf("body model = %q, want gpt-5.5; body=%s", got, body)
-	}
-	if gjson.GetBytes(body, "reasoning_effort").Exists() {
-		t.Fatalf("top-level reasoning_effort should be stripped; body=%s", body)
-	}
-	if got := gjson.GetBytes(body, "reasoning.effort").String(); got != "xhigh" {
-		t.Fatalf("reasoning.effort = %q, want xhigh (alias overrides request effort); body=%s", got, body)
-	}
-	if got := gjson.GetBytes(body, "reasoning.summary").String(); got != "auto" {
-		t.Fatalf("reasoning.summary = %q, want auto preserved; body=%s", got, body)
 	}
 }
 
@@ -468,70 +430,19 @@ func TestCompactMappingTargetSuffixIsStripped(t *testing.T) {
 	}
 }
 
-// 账号级映射：合成别名命中恒等规则（suffixed→suffixed）时不得把带后缀
-// 名字发往上游；候选回退到基础名后应保持 PR #350 之前的行为。
-func TestResolveAccountCompactModelMappingNormalizesIdentitySuffixRule(t *testing.T) {
-	account := &auth.Account{
-		DBID:         1,
-		UpstreamType: auth.UpstreamOpenAIResponses,
-		BaseURL:      "http://example.invalid",
-		APIKey:       "sk-x",
-		Models:       []string{"gpt-5.6-sol", "gpt-5.6-sol-openai-compact"},
-		ModelMapping: `{"gpt-5.6-sol-openai-compact":"gpt-5.6-sol-openai-compact"}`,
-		PlanType:     "api",
-	}
+// The relay version covered per-account Models lists and stale suffix mapping rules. Codex accounts
+// carry no account-level mapping, so this keeps the Codex side: a Codex account passes the compact
+// filter only when Codex accounts are allowed, and a nil account never passes.
+func TestCompactAccountFilterAcceptsCodexAccountOnlyWhenAllowed(t *testing.T) {
+	codex := &auth.Account{DBID: 3, AccessToken: "at-codex", PlanType: "plus"}
 
-	mapped, ok := resolveAccountCompactModelMappingForCandidates(account, compactMappingCandidates("gpt-5.6-sol"))
-	if !ok || mapped != "gpt-5.6-sol" {
-		t.Fatalf("mapped = %q (ok=%v), want base gpt-5.6-sol", mapped, ok)
+	if !accountFilterForCompactResponsesModelWithOriginal("gpt-5.5", "gpt-5.5", true)(codex) {
+		t.Error("codex account should pass the compact filter when codex accounts are allowed")
 	}
-}
-
-// 账号级映射：合成别名不吃通用通配规则，基础名的精确规则优先。
-func TestResolveAccountCompactModelMappingKeepsExactBaseRulePrecedence(t *testing.T) {
-	account := &auth.Account{
-		DBID:         2,
-		UpstreamType: auth.UpstreamOpenAIResponses,
-		BaseURL:      "http://example.invalid",
-		APIKey:       "sk-x",
-		Models:       []string{"model-a", "model-b"},
-		ModelMapping: `{"gpt-5.5":"model-a","gpt-*":"model-b"}`,
-		PlanType:     "api",
+	if accountFilterForCompactResponsesModelWithOriginal("gpt-5.5", "gpt-5.5", false)(codex) {
+		t.Error("codex account must be rejected when codex accounts are not allowed")
 	}
-
-	mapped, ok := resolveAccountCompactModelMappingForCandidates(account, compactMappingCandidates("gpt-5.5"))
-	if !ok || mapped != "model-a" {
-		t.Fatalf("mapped = %q (ok=%v), want exact base rule model-a", mapped, ok)
-	}
-}
-
-// 恒等 suffixed→suffixed 规则不得把仅列出带后缀名字的账号从 compact 池中
-// 踢除（PR #350 之前该规则是死配置，账号按基础名参与过滤）。
-func TestCompactAccountFilterParityWithStaleSuffixRule(t *testing.T) {
-	rejected := &auth.Account{
-		DBID:         3,
-		UpstreamType: auth.UpstreamOpenAIResponses,
-		BaseURL:      "http://example.invalid",
-		APIKey:       "sk-x",
-		Models:       []string{"gpt-5.6-sol-openai-compact"},
-		ModelMapping: `{"gpt-5.6-sol-openai-compact":"gpt-5.6-sol-openai-compact"}`,
-		PlanType:     "api",
-	}
-	accepted := &auth.Account{
-		DBID:         4,
-		UpstreamType: auth.UpstreamOpenAIResponses,
-		BaseURL:      "http://example.invalid",
-		APIKey:       "sk-x",
-		Models:       []string{"gpt-5.6-sol", "gpt-5.6-sol-openai-compact"},
-		ModelMapping: `{"gpt-5.6-sol-openai-compact":"gpt-5.6-sol-openai-compact"}`,
-		PlanType:     "api",
-	}
-
-	filter := accountFilterForCompactResponsesModelWithOriginal("gpt-5.6-sol", "gpt-5.6-sol", false)
-	if filter(rejected) {
-		t.Error("account without the base model should stay rejected (pre-#350 parity)")
-	}
-	if !filter(accepted) {
-		t.Error("account listing the base model should be accepted")
+	if accountFilterForCompactResponsesModelWithOriginal("gpt-5.5", "gpt-5.5", true)(nil) {
+		t.Error("nil account must be rejected")
 	}
 }

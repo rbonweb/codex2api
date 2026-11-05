@@ -21,6 +21,20 @@ import (
 	"github.com/tidwall/gjson"
 )
 
+// newRetryCodexStore builds a store with one Codex OAuth account whose upstream is the local test server, reached through the Resin forwarder.
+func newRetryCodexStore(t *testing.T, upstreamURL string) *auth.Store {
+	t.Helper()
+	codexRestoredUseResin(t, upstreamURL)
+	store := auth.NewStore(nil, nil, &database.SystemSettings{
+		MaxConcurrency:      2,
+		MaxRetries:          0,
+		MaxRateLimitRetries: 0,
+	})
+	t.Cleanup(store.Stop)
+	store.AddAccount(&auth.Account{DBID: 1, AccessToken: "at-1", PlanType: "pro", AccountID: "acct-1"})
+	return store
+}
+
 func newAttemptSequenceSSEServer(t *testing.T, attempts [][]string) (*httptest.Server, *atomic.Int32) {
 	t.Helper()
 	var calls atomic.Int32
@@ -133,21 +147,20 @@ func TestChatCompletionsLooseTTFTDoesNotBlockPreContentContinuousRetry(t *testin
 	}
 }
 
-func TestRelayResponsesLooseTTFTDefersMetadataForContinuousRetry(t *testing.T) {
+func TestCodexResponsesLooseTTFTDefersMetadataForContinuousRetry(t *testing.T) {
 	gin.SetMode(gin.TestMode)
 	enableLooseResponseFailedContinuousRetry(t)
 
 	attempts := looseTTFTFailureThenSuccessEvents("recovered-responses")
 	attempts[0][1] = `{"type":"codex.rate_limits","rate_limits":{"primary":{"used_percent":10}}}`
 	upstream, calls := newAttemptSequenceSSEServer(t, attempts)
-	store := newOpenAIResponsesRelayStore(upstream.URL)
-	t.Cleanup(store.Stop)
+	store := newRetryCodexStore(t, upstream.URL)
 	handler := NewHandler(store, nil, nil, nil)
 
 	recorder := httptest.NewRecorder()
 	ctx, _ := gin.CreateTestContext(recorder)
 	ctx.Request = httptest.NewRequest(http.MethodPost, "/v1/responses", bytes.NewBufferString(
-		`{"model":"gpt-4.1-direct","input":"hello","stream":true}`,
+		`{"model":"gpt-5.5","input":"hello","stream":true}`,
 	))
 	ctx.Request.Header.Set("Content-Type", "application/json")
 	handler.Responses(ctx)
@@ -164,7 +177,7 @@ func TestRelayResponsesLooseTTFTDefersMetadataForContinuousRetry(t *testing.T) {
 	}
 }
 
-func TestRelayResponsesCatchAllRetriesHTTP200ErrorJSONBeforeReply(t *testing.T) {
+func TestCodexResponsesCatchAllRetriesHTTP200ErrorEventBeforeReply(t *testing.T) {
 	gin.SetMode(gin.TestMode)
 	enableLooseResponseFailedContinuousRetry(t)
 	settings := CurrentRuntimeSettings()
@@ -173,47 +186,41 @@ func TestRelayResponsesCatchAllRetriesHTTP200ErrorJSONBeforeReply(t *testing.T) 
 
 	var calls atomic.Int32
 	upstream := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
-		w.Header().Set("Content-Type", "application/json")
+		w.Header().Set("Content-Type", "text/event-stream")
 		if calls.Add(1) == 1 {
-			_, _ = io.WriteString(w, `{"error":{"code":"future_relay_failure","message":"temporary pseudo-success"}}`)
+			_, _ = io.WriteString(w, "event: error\ndata: {\"error\":{\"code\":\"future_upstream_failure\",\"message\":\"temporary pseudo-success\"}}\n\n")
 			return
 		}
-		_, _ = io.WriteString(w, `{"id":"resp_recovered","object":"response","status":"completed","output":[{"type":"message","content":[{"type":"output_text","text":"recovered-json"}]}],"usage":{"input_tokens":1,"output_tokens":1,"total_tokens":2}}`)
+		_, _ = io.WriteString(w, "data: {\"type\":\"response.completed\",\"response\":{\"id\":\"resp_recovered\",\"object\":\"response\",\"status\":\"completed\",\"output\":[{\"type\":\"message\",\"content\":[{\"type\":\"output_text\",\"text\":\"recovered-json\"}]}],\"usage\":{\"input_tokens\":1,\"output_tokens\":1,\"total_tokens\":2}}}\n\n")
 	}))
 	t.Cleanup(upstream.Close)
 
-	store := newOpenAIResponsesRelayStore(upstream.URL)
-	store.AddAccount(&auth.Account{
-		DBID:         2,
-		UpstreamType: auth.UpstreamOpenAIResponses,
-		BaseURL:      upstream.URL,
-		APIKey:       "sk-direct-2",
-		Models:       []string{"gpt-4.1-direct"},
-		PlanType:     "api",
-	})
-	t.Cleanup(store.Stop)
+	store := newRetryCodexStore(t, upstream.URL)
+	store.AddAccount(&auth.Account{DBID: 2, AccessToken: "at-2", PlanType: "pro", AccountID: "acct-2"})
 	handler := NewHandler(store, nil, nil, nil)
 
 	recorder := httptest.NewRecorder()
 	ctx, _ := gin.CreateTestContext(recorder)
+	requestCtx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+	defer cancel()
 	ctx.Request = httptest.NewRequest(http.MethodPost, "/v1/responses", bytes.NewBufferString(
-		`{"model":"gpt-4.1-direct","input":"hello","stream":false}`,
-	))
+		`{"model":"gpt-5.5","input":"hello","stream":false}`,
+	)).WithContext(requestCtx)
 	ctx.Request.Header.Set("Content-Type", "application/json")
 	handler.Responses(ctx)
 
 	if got := calls.Load(); got != 2 {
-		t.Fatalf("upstream calls = %d, want 2 after HTTP 200 error JSON", got)
+		t.Fatalf("upstream calls = %d, want 2 after HTTP 200 error event", got)
 	}
 	if recorder.Code != http.StatusOK || !strings.Contains(recorder.Body.String(), "recovered-json") {
 		t.Fatalf("recovered non-stream response missing: status=%d body=%q", recorder.Code, recorder.Body.String())
 	}
-	if strings.Contains(recorder.Body.String(), "temporary pseudo-success") || strings.Contains(recorder.Body.String(), "future_relay_failure") {
+	if strings.Contains(recorder.Body.String(), "temporary pseudo-success") || strings.Contains(recorder.Body.String(), "future_upstream_failure") {
 		t.Fatalf("HTTP 200 error payload leaked downstream: %q", recorder.Body.String())
 	}
 }
 
-func TestRelayResponsesCatchAllDiscardsOutputFromFailedAttempt(t *testing.T) {
+func TestCodexResponsesCatchAllDiscardsOutputFromFailedAttempt(t *testing.T) {
 	gin.SetMode(gin.TestMode)
 	enableCatchAllContinuousRetry(t)
 
@@ -230,14 +237,13 @@ func TestRelayResponsesCatchAllDiscardsOutputFromFailedAttempt(t *testing.T) {
 		},
 	}
 	upstream, calls := newAttemptSequenceSSEServer(t, attempts)
-	store := newOpenAIResponsesRelayStore(upstream.URL)
-	t.Cleanup(store.Stop)
+	store := newRetryCodexStore(t, upstream.URL)
 	handler := NewHandler(store, nil, nil, nil)
 
 	recorder := httptest.NewRecorder()
 	ctx, _ := gin.CreateTestContext(recorder)
 	ctx.Request = httptest.NewRequest(http.MethodPost, "/v1/responses", bytes.NewBufferString(
-		`{"model":"gpt-4.1-direct","input":"hello","stream":true}`,
+		`{"model":"gpt-5.5","input":"hello","stream":true}`,
 	))
 	ctx.Request.Header.Set("Content-Type", "application/json")
 	handler.Responses(ctx)
@@ -254,7 +260,7 @@ func TestRelayResponsesCatchAllDiscardsOutputFromFailedAttempt(t *testing.T) {
 	}
 }
 
-func TestRelayResponsesCatchAllDiscardsExplicitErrorEventAfterPartialOutput(t *testing.T) {
+func TestCodexResponsesCatchAllDiscardsExplicitErrorEventAfterPartialOutput(t *testing.T) {
 	gin.SetMode(gin.TestMode)
 	enableCatchAllContinuousRetry(t)
 
@@ -269,14 +275,13 @@ func TestRelayResponsesCatchAllDiscardsExplicitErrorEventAfterPartialOutput(t *t
 			"data: {\"type\":\"response.completed\",\"response\":{\"id\":\"resp_success\",\"status\":\"completed\",\"usage\":{\"input_tokens\":1,\"output_tokens\":1,\"total_tokens\":2}}}\n\n",
 		},
 	})
-	store := newOpenAIResponsesRelayStore(upstream.URL)
-	t.Cleanup(store.Stop)
+	store := newRetryCodexStore(t, upstream.URL)
 	handler := NewHandler(store, nil, nil, nil)
 
 	recorder := httptest.NewRecorder()
 	ctx, _ := gin.CreateTestContext(recorder)
 	ctx.Request = httptest.NewRequest(http.MethodPost, "/v1/responses", bytes.NewBufferString(
-		`{"model":"gpt-4.1-direct","input":"hello","stream":true}`,
+		`{"model":"gpt-5.5","input":"hello","stream":true}`,
 	))
 	ctx.Request.Header.Set("Content-Type", "application/json")
 	handler.Responses(ctx)
@@ -293,7 +298,7 @@ func TestRelayResponsesCatchAllDiscardsExplicitErrorEventAfterPartialOutput(t *t
 	}
 }
 
-func TestRelayResponsesCatchAllDiscardsPartialAttemptWithoutTerminal(t *testing.T) {
+func TestCodexResponsesCatchAllDiscardsPartialAttemptWithoutTerminal(t *testing.T) {
 	gin.SetMode(gin.TestMode)
 	enableCatchAllContinuousRetry(t)
 
@@ -307,14 +312,13 @@ func TestRelayResponsesCatchAllDiscardsPartialAttemptWithoutTerminal(t *testing.
 			`{"type":"response.completed","response":{"id":"resp_success","status":"completed","usage":{"input_tokens":1,"output_tokens":1,"total_tokens":2}}}`,
 		},
 	})
-	store := newOpenAIResponsesRelayStore(upstream.URL)
-	t.Cleanup(store.Stop)
+	store := newRetryCodexStore(t, upstream.URL)
 	handler := NewHandler(store, nil, nil, nil)
 
 	recorder := httptest.NewRecorder()
 	ctx, _ := gin.CreateTestContext(recorder)
 	ctx.Request = httptest.NewRequest(http.MethodPost, "/v1/responses", bytes.NewBufferString(
-		`{"model":"gpt-4.1-direct","input":"hello","stream":true}`,
+		`{"model":"gpt-5.5","input":"hello","stream":true}`,
 	))
 	ctx.Request.Header.Set("Content-Type", "application/json")
 	handler.Responses(ctx)
@@ -711,8 +715,7 @@ func TestResponsesHTTPReplayCachesOnlyAfterSuccessfulFilteredWrite(t *testing.T)
 	}))
 	t.Cleanup(upstream.Close)
 
-	store := newOpenAIResponsesRelayStore(upstream.URL)
-	t.Cleanup(store.Stop)
+	store := newRetryCodexStore(t, upstream.URL)
 	filterConfig := promptfilter.DefaultConfig()
 	filterConfig.Enabled = true
 	filterConfig.Mode = promptfilter.ModeBlock
@@ -727,7 +730,7 @@ func TestResponsesHTTPReplayCachesOnlyAfterSuccessfulFilteredWrite(t *testing.T)
 	recorder := httptest.NewRecorder()
 	ctx, _ := gin.CreateTestContext(recorder)
 	ctx.Request = httptest.NewRequest(http.MethodPost, "/v1/responses", bytes.NewBufferString(
-		`{"model":"gpt-4.1-direct","input":"hello","stream":true}`,
+		`{"model":"gpt-5.5","input":"hello","stream":true}`,
 	))
 	ctx.Request.Header.Set("Content-Type", "application/json")
 	handler.Responses(ctx)

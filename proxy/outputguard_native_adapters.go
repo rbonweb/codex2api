@@ -4,7 +4,6 @@ import (
 	"errors"
 	"strings"
 
-	"github.com/codex2api/auth"
 	"github.com/codex2api/security/outputguard"
 )
 
@@ -46,19 +45,5 @@ func selectNativeProjectorWithScope(protocol string, _ bool, isCodexResponses bo
 		return NewResponsesProjector()
 	default:
 		return NewChatProjector()
-	}
-}
-
-// grokProtocolGuardName 把上游 Grok 协议映射为 04a 终止原语使用的下游协议枚举
-// （严格小写："anthropic"、"chat"、"responses"）。ChatCompletions 不能直接写成
-// "chat_completions"，否则 04a 会退化到通用 envelope。
-func grokProtocolGuardName(protocol GrokProtocol) string {
-	switch auth.NormalizeGrokProtocol(string(protocol)) {
-	case auth.GrokProtocolMessages:
-		return "anthropic"
-	case auth.GrokProtocolChatCompletions:
-		return "chat"
-	default:
-		return "responses"
 	}
 }

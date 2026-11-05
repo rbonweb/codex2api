@@ -21,21 +21,14 @@ func TestResponsesSensitiveWordBoundaryReachesUpstreamOnlyForAllowedPrompt(t *te
 	var upstreamCalls atomic.Int32
 	upstream := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		upstreamCalls.Add(1)
-		if r.URL.Path != "/v1/responses" {
-			t.Fatalf("upstream path = %q, want /v1/responses", r.URL.Path)
+		if want := "/" + codexRestoredResinPlatform + "/https/chatgpt.com/backend-api/codex/responses"; r.URL.Path != want {
+			t.Fatalf("upstream path = %q, want %q", r.URL.Path, want)
 		}
-		w.Header().Set("Content-Type", "application/json")
-		_, _ = w.Write([]byte(`{
-			"id":"resp_sensitive_boundary",
-			"object":"response",
-			"created_at":1710000000,
-			"model":"gpt-5.6-sol",
-			"output":[],
-			"usage":{"input_tokens":3,"output_tokens":1,"total_tokens":4},
-			"service_tier":"default"
-		}`))
+		w.Header().Set("Content-Type", "text/event-stream")
+		_, _ = w.Write([]byte(`data: {"type":"response.completed","response":{"id":"resp_sensitive_boundary","object":"response","created_at":1710000000,"status":"completed","model":"gpt-5.6-sol","output":[],"usage":{"input_tokens":3,"output_tokens":1,"total_tokens":4},"service_tier":"default"}}` + "\n\n"))
 	}))
 	defer upstream.Close()
+	codexRestoredUseResin(t, upstream.URL)
 
 	store := auth.NewStore(nil, nil, &database.SystemSettings{
 		MaxConcurrency:                    2,
@@ -54,12 +47,11 @@ func TestResponsesSensitiveWordBoundaryReachesUpstreamOnlyForAllowedPrompt(t *te
 		PromptFilterDisabledPatterns:      "[]",
 	})
 	store.AddAccount(&auth.Account{
-		DBID:         1,
-		UpstreamType: auth.UpstreamOpenAIResponses,
-		BaseURL:      upstream.URL,
-		APIKey:       "sk-test",
-		Models:       []string{"gpt-5.6-sol"},
-		PlanType:     "api",
+		DBID:        1,
+		AccessToken: "at-test",
+		AccountID:   "acct-1",
+		Models:      []string{"gpt-5.6-sol"},
+		PlanType:    "pro",
 	})
 	handler := NewHandler(store, nil, nil, nil)
 

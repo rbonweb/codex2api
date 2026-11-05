@@ -383,22 +383,6 @@ func TestPromptFilterTextOpenAIUsesConfiguredLocalBlockMessage(t *testing.T) {
 	}
 }
 
-func TestPromptFilterAnthropicUsesConfiguredLocalBlockMessage(t *testing.T) {
-	gin.SetMode(gin.TestMode)
-	handler := newConfiguredLocalBlockMessageHandler("Blocked by Example Gateway")
-	recorder := httptest.NewRecorder()
-	c, _ := gin.CreateTestContext(recorder)
-	c.Request = httptest.NewRequest(http.MethodPost, "/v1/messages", nil)
-
-	blocked := handler.inspectPromptFilterAnthropic(c, []byte(`{"model":"gpt-5.5","messages":[{"role":"user","content":"blocked-content"}]}`), "/v1/messages", "gpt-5.5")
-
-	if !blocked || recorder.Code != http.StatusBadRequest {
-		t.Fatalf("blocked=%v status=%d", blocked, recorder.Code)
-	}
-	if body := recorder.Body.String(); !strings.Contains(body, `"message":"Blocked by Example Gateway"`) {
-		t.Fatalf("response did not use configured message: %s", body)
-	}
-}
 
 func TestPromptFilterEmptyLocalBlockMessageKeepsDefault(t *testing.T) {
 	cfg := promptfilter.DefaultConfig()

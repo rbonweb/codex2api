@@ -2,7 +2,6 @@ package proxy
 
 import (
 	"context"
-	"errors"
 	"io"
 	"net/http"
 	"net/http/httptest"
@@ -98,51 +97,6 @@ func TestAccountBoundEgressInvalidProxyFailsClosed(t *testing.T) {
 	}
 }
 
-func TestAccountBoundEgressRelayHTTPUsesSnapshot(t *testing.T) {
-	t.Setenv("CODEX_TRANSPORT_MODE", "standard")
-	var direct, bound atomic.Int32
-	target := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) { direct.Add(1); io.WriteString(w, "direct") }))
-	defer target.Close()
-	boundProxy := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) { bound.Add(1); io.WriteString(w, "bound") }))
-	defer boundProxy.Close()
-	withResin(t, &ResinConfig{BaseURL: "http://127.0.0.1:1", PlatformName: "unused"})
-	for i, claude := range []bool{false, true} {
-		account := &auth.Account{DBID: int64(998110 + i), UpstreamType: auth.UpstreamOpenAIResponses, BaseURL: target.URL, APIKey: "local-key", ProxyURL: boundProxy.URL}
-		if claude {
-			account.UpstreamType = auth.UpstreamClaude
-			account.ClaudeAuthKind = auth.ClaudeAuthKindAPIKey
-			account.ClaudeBaseURL = target.URL
-			account.AccessToken = "local-key"
-		}
-		for _, route := range []string{"", boundProxy.URL} {
-			ctx := WithAccountBoundEgress(context.Background(), route)
-			// Both the current account value and inherited override disagree with
-			// the frozen direct route; neither may take it over.
-			var resp *http.Response
-			var err error
-			if claude {
-				resp, err = ExecuteClaudeMessagesRequest(ctx, account, []byte(claudeAPIKeyTestBody), boundProxy.URL, nil, "")
-			} else {
-				resp, err = ExecuteOpenAIResponsesRequest(ctx, account, []byte(`{"model":"gpt-5.4","input":"test"}`), boundProxy.URL, nil)
-			}
-			if err != nil {
-				t.Fatal(err)
-			}
-			body, _ := io.ReadAll(resp.Body)
-			resp.Body.Close()
-			want := "direct"
-			if route != "" {
-				want = "bound"
-			}
-			if string(body) != want {
-				t.Errorf("claude=%t route=%q want=%q", claude, body, want)
-			}
-		}
-	}
-	if direct.Load() != 2 || bound.Load() != 2 {
-		t.Errorf("captures direct=%d bound=%d", direct.Load(), bound.Load())
-	}
-}
 
 func TestAccountBoundEgressTransportModeAndAccountPools(t *testing.T) {
 	account := &auth.Account{DBID: 998120}
@@ -162,45 +116,3 @@ func TestAccountBoundEgressTransportModeAndAccountPools(t *testing.T) {
 	}
 }
 
-func TestAccountBoundEgressFailureRecyclesOnlyRequestPool(t *testing.T) {
-	t.Setenv("CODEX_TRANSPORT_MODE", "standard")
-	withResin(t, nil)
-	for i, kind := range []string{"codex", "responses", "claude-api-key", "claude-oauth"} {
-		t.Run(kind, func(t *testing.T) {
-			account := &auth.Account{DBID: int64(998130 + i), AccessToken: "local-token", BaseURL: "http://127.0.0.1:1", APIKey: "local-key", ClaudeBaseURL: "http://127.0.0.1:1"}
-			ctx := WithAccountBoundEgress(WithCodexDetectorRequest(context.Background()), "")
-			business := getPooledClient(account, "")
-			strict := getRequestClient(ctx, account, "")
-			strict.Transport = claudeBoundaryRoundTripper(func(*http.Request) (*http.Response, error) {
-				return nil, errors.New("write: broken pipe")
-			})
-			var resp *http.Response
-			var err error
-			switch kind {
-			case "codex":
-				resp, err = ExecuteRequest(ctx, account, []byte(`{"model":"gpt-5.4","input":"test"}`), "", "", "local-key", nil, nil, false)
-			case "responses":
-				account.UpstreamType = auth.UpstreamOpenAIResponses
-				resp, err = ExecuteOpenAIResponsesRequest(ctx, account, []byte(`{"model":"gpt-5.4","input":"test"}`), "", nil)
-			default:
-				account.UpstreamType = auth.UpstreamClaude
-				if kind == "claude-api-key" {
-					account.ClaudeAuthKind = auth.ClaudeAuthKindAPIKey
-				}
-				resp, err = ExecuteClaudeMessagesRequest(ctx, account, []byte(claudeAPIKeyTestBody), "", nil, "")
-			}
-			if resp != nil {
-				resp.Body.Close()
-			}
-			if err == nil || !strings.Contains(err.Error(), "broken pipe") {
-				t.Fatalf("expected injected connection failure, got %v", err)
-			}
-			if getPooledClient(account, "") != business {
-				t.Error("detection failure recycled the ordinary business pool")
-			}
-			if getRequestClient(ctx, account, "") == strict {
-				t.Error("detection failure retained the failed request pool")
-			}
-		})
-	}
-}

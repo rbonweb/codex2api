@@ -22,7 +22,6 @@ const ICON_URLS = import.meta.glob(
     '../../node_modules/@lobehub/icons-static-svg/icons/sora-color.svg',
     '../../node_modules/@lobehub/icons-static-svg/icons/dalle.svg',
     '../../node_modules/@lobehub/icons-static-svg/icons/dalle-color.svg',
-    '../../node_modules/@lobehub/icons-static-svg/icons/claudecode-color.svg',
     '../../node_modules/@lobehub/icons-static-svg/icons/cherrystudio.svg',
     '../../node_modules/@lobehub/icons-static-svg/icons/cherrystudio-color.svg',
     '../../node_modules/@lobehub/icons-static-svg/icons/gemma.svg',
