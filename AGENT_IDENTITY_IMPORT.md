@@ -1,30 +1,27 @@
-# Codex Agent Identity 导入接口文档
+# Codex Agent Identity Import API
 
-向 codex2api 网关导入 Codex **Agent Identity** 账号。这类账号**不保存** OAuth
-access/refresh token,只保存 Ed25519 私钥 + `agent_runtime_id`,由网关对每一次上游请求
-动态签名(`Authorization: AgentAssertion <签名信封>`)。
+Import Codex **Agent Identity** accounts into the codex2api gateway. These accounts **do not store** OAuth access or refresh tokens. They store only an Ed25519 private key and an `agent_runtime_id`, and the gateway signs every upstream request on the fly (`Authorization: AgentAssertion <signed envelope>`).
 
 ---
 
-## 1. 通用约定
+## 1. General conventions
 
-| 项 | 值 |
+| Item | Value |
 |---|---|
-| 网关地址 | `{BASE_URL}`(如 `http://127.0.0.1:2004`) |
-| 管理鉴权头 | `X-Admin-Key: {ADMIN_KEY}` |
-| 管理接口前缀 | `/api/admin` |
-| Content-Type | `application/json`(入口 A/B);`multipart/form-data`(入口 C) |
+| Gateway address | `{BASE_URL}` (for example `http://127.0.0.1:2004`) |
+| Admin auth header | `X-Admin-Key: {ADMIN_KEY}` |
+| Admin API prefix | `/api/admin` |
+| Content-Type | `application/json` (entry points A/B); `multipart/form-data` (entry point C) |
 
-- 去重按 `agent_runtime_id`:已存在的账号会被跳过,不会重复建号。
-- 导入后网关会自动跑一次签名 `/responses` 探针,填充用量进度条。
-- **不要对同一个 `agent_runtime_id` 短时间反复导入/删除**——上游对 task 注册有限流,
-  会返回 403(临时),影响该账号首次用量采样。
+- Deduplication is by `agent_runtime_id`: an account that already exists is skipped and is not created twice.
+- After an import, the gateway runs one signed `/responses` probe automatically to fill in the usage progress bar.
+- **Do not import or delete the same `agent_runtime_id` repeatedly in a short time.** The upstream rate-limits task registration and returns 403 (temporary), which delays the first usage sample for that account.
 
 ---
 
-## 2. auth.json 格式
+## 2. auth.json format
 
-每个账号一份 JSON:
+One JSON file per account:
 
 ```json
 {
@@ -41,40 +38,40 @@ access/refresh token,只保存 Ed25519 私钥 + `agent_runtime_id`,由网关对�
 }
 ```
 
-| 字段 | 必填 | 说明 |
+| Field | Required | Description |
 |---|:---:|---|
-| `agent_runtime_id` | ✅ | 上游 agent 运行时 ID(`agent-` 前缀) |
-| `agent_private_key` | ✅ | **PKCS#8 base64 的 Ed25519 私钥** |
-| `account_id` | ✅ | ChatGPT 账号(工作区)ID |
-| `chatgpt_user_id` | ✅ | ChatGPT 用户 ID(`user-` 前缀) |
-| `email` | ⭕ | 账号邮箱,用作显示名 |
-| `plan_type` | ⭕ | 套餐(free/plus/pro/team/k12…),缺省 `free` |
-| `chatgpt_account_is_fedramp` | ⭕ | 布尔,默认 `false` |
+| `agent_runtime_id` | Yes | Upstream agent runtime ID (`agent-` prefix) |
+| `agent_private_key` | Yes | **Ed25519 private key in PKCS#8 base64** |
+| `account_id` | Yes | ChatGPT account (workspace) ID |
+| `chatgpt_user_id` | Yes | ChatGPT user ID (`user-` prefix) |
+| `email` | No | Account email, used as the display name |
+| `plan_type` | No | Plan (free/plus/pro/team/k12…), defaults to `free` |
+| `chatgpt_account_is_fedramp` | No | Boolean, defaults to `false` |
 
-- `auth_mode` 同时兼容 `agent_identity`(下划线)与 `agentIdentity`(驼峰)。
-- 只要带 `agent_identity` 对象即可被识别,`auth_mode` 可省略。
+- `auth_mode` accepts both `agent_identity` (snake case) and `agentIdentity` (camel case).
+- An `agent_identity` object is enough to be recognized, so `auth_mode` can be omitted.
 
 ---
 
-## 3. 三个导入入口
+## 3. Three import entry points
 
-### 入口 A — 单个导入
+### Entry A: single import
 
 ```
 POST /api/admin/accounts/codex/agent-identity
 ```
 
-请求体:
+Request body:
 
 ```json
 {
-  "auth_json": "<一份 auth.json 的原始 JSON 字符串>",
-  "name": "可选自定义名",
-  "proxy_url": "可选,如 http://user:pass@host:port"
+  "auth_json": "<the raw JSON string of one auth.json>",
+  "name": "optional custom name",
+  "proxy_url": "optional, for example http://user:pass@host:port"
 }
 ```
 
-> 注意:`auth_json` 是把整份 auth.json **作为字符串**放进去(需转义)。
+> Note: `auth_json` takes the whole auth.json **as a string** (escape it).
 
 curl:
 
@@ -84,33 +81,33 @@ curl -s -X POST "{BASE_URL}/api/admin/accounts/codex/agent-identity" \
   -d "$(jq -Rs '{auth_json: .}' path/to/one.json)"
 ```
 
-响应:
+Response:
 
 ```json
-{ "message": "成功导入 Agent Identity 账号", "id": 123, "email": "someone@example.com" }
+{ "message": "Agent Identity account imported successfully", "id": 123, "email": "someone@example.com" }
 ```
 
-已存在:`409` `{"error":"该 Agent Identity 账号已存在"}`
-字段缺失/私钥无效:`400`,`error` 说明原因。
+Already exists: `409` with `{"error":"This Agent Identity account already exists"}`.
+Missing field or invalid private key: `400`, with `error` giving the reason.
 
 ---
 
-### 入口 B — 批量文件导入(推荐)
+### Entry B: batch file import (recommended)
 
 ```
 POST /api/admin/accounts/codex/agent-identity/import
 ```
 
-请求体:`files` 数组,每项是**一份 auth.json 的原始 JSON 字符串**;单批上限 **200**。
+Request body: a `files` array, where each item is **the raw JSON string of one auth.json**. The limit is **200 per batch**.
 
 ```json
 {
-  "files": ["<auth.json 内容1>", "<auth.json 内容2>"],
-  "proxy_url": "可选"
+  "files": ["<auth.json content 1>", "<auth.json content 2>"],
+  "proxy_url": "optional"
 }
 ```
 
-curl(把一个目录下所有 `*.json` 打成 `files` 数组):
+curl (packs all `*.json` files in a directory into a `files` array):
 
 ```bash
 jq -Rs . *.json | jq -s '{files: .}' | \
@@ -118,7 +115,7 @@ curl -s -X POST "{BASE_URL}/api/admin/accounts/codex/agent-identity/import" \
   -H "X-Admin-Key: {ADMIN_KEY}" -H "Content-Type: application/json" -d @-
 ```
 
-响应:
+Response:
 
 ```json
 {
@@ -127,21 +124,20 @@ curl -s -X POST "{BASE_URL}/api/admin/accounts/codex/agent-identity/import" \
   "failed": 1,
   "items": [
     { "email": "a@x.com", "id": 123, "ok": true },
-    { "email": "b@x.com", "ok": false, "error": "账号已存在，已跳过" }
+    { "email": "b@x.com", "ok": false, "error": "Account already exists, skipped" }
   ]
 }
 ```
 
 ---
 
-### 入口 C — 通用导入(自动识别,multipart)
+### Entry C: generic import (auto-detected, multipart)
 
 ```
 POST /api/admin/accounts/import
 ```
 
-把 auth.json 当普通 JSON 文件走通用导入,网关会自动识别 `agent_identity` 并按
-Agent Identity 建号(通用导入同样兼容 CLIProxyAPI / Sub2Api JSON 与文件夹扫描)。
+Send auth.json through the generic import as a plain JSON file. The gateway detects `agent_identity` automatically and creates the account as an Agent Identity account. The generic import also accepts CLIProxyAPI and Sub2Api JSON files, and folder scanning.
 
 ```bash
 curl -s -X POST "{BASE_URL}/api/admin/accounts/import" \
@@ -151,13 +147,12 @@ curl -s -X POST "{BASE_URL}/api/admin/accounts/import" \
   -F "file=@two.json"
 ```
 
-表单字段:`format=json`(必填)、`file`(可多个)、`proxy_url`(可选)、
-`allow_duplicate=true`(可选,跳过去重强制新建)。
-响应为 SSE 进度流或 JSON 汇总,含新增/跳过/失败计数。
+Form fields: `format=json` (required), `file` (repeatable), `proxy_url` (optional), and `allow_duplicate=true` (optional, skips deduplication and forces a new account).
+The response is either an SSE progress stream or a JSON summary with created, skipped and failed counts.
 
 ---
 
-## 4. Python 批量示例
+## 4. Python batch example
 
 ```python
 import json, glob, requests
@@ -167,7 +162,7 @@ ADMIN_KEY = "your-admin-key"
 
 files = [open(p, encoding="utf-8").read() for p in glob.glob("auth_jsons/*.json")]
 
-# 单批上限 200,超过则分批
+# The batch limit is 200; split larger sets into batches
 for i in range(0, len(files), 200):
     batch = files[i:i + 200]
     r = requests.post(
@@ -177,18 +172,16 @@ for i in range(0, len(files), 200):
         timeout=120,
     )
     out = r.json()
-    print(f"批次 {i//200+1}: 新增 {out['imported']} / 跳过或失败 {out['failed']} / 共 {out['total']}")
+    print(f"Batch {i//200+1}: imported {out['imported']} / skipped or failed {out['failed']} / total {out['total']}")
     for it in out["items"]:
         if not it["ok"]:
-            print("  失败:", it.get("email") or "?", "—", it.get("error"))
+            print("  failed:", it.get("email") or "?", "—", it.get("error"))
 ```
 
 ---
 
-## 5. 注意事项
+## 5. Notes
 
-- 私钥是敏感凭据,**不要打印到日志**。
-- 导入的账号在账号列表带蓝色「Agent Identity」徽章;这类账号走 HTTP(不走长连接 WS),
-  且不做 ChatGPT wham 探针(无 AT),用量靠 `/responses` 响应头填充。
-- 大批量导入时,并发 task 注册可能撞上游 403 限流,个别账号的用量进度条会延后到
-  下次探针 / 真实流量时再填,不影响账号本身可用。
+- The private key is a sensitive credential. **Do not print it to logs.**
+- Imported accounts show a blue "Agent Identity" badge in the account list. These accounts use HTTP (not the long-lived WebSocket connection), and they skip the ChatGPT wham probe (there is no access token). Their usage is filled in from the `/responses` response headers.
+- During large batch imports, concurrent task registration may hit upstream 403 rate limits. For some accounts, the usage progress bar is filled in later, at the next probe or on real traffic. This does not affect whether the account works.
