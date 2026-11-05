@@ -18,7 +18,7 @@ func TestNativeHTTP_SelectNativeProjectorDispatchesByUpstreamProtocol(t *testing
 	}
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
-			got := selectNativeProjector(tc.protocol, false, tc.codexResponses)
+			got := selectNativeProjector(tc.protocol, tc.codexResponses)
 			switch tc.wantProjector.(type) {
 			case *ResponsesProjector:
 				if _, ok := got.(*ResponsesProjector); !ok {

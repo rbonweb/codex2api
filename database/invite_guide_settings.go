@@ -8,9 +8,7 @@ import (
 	"strings"
 )
 
-// 导入后的邀请引导配置存放在 system_settings.invite_guide_config。和
-// antigravity_oauth_config 一样刻意用独立的小 UPDATE 读写，不进 SaveSettings 的
-// 巨型 UPSERT——那条语句的占位符已经排到 $119，每加一列都要整体顺移。
+// 导入后的邀请引导配置存放在 system_settings.invite_guide_config。刻意用独立的小 UPDATE 读写，不进 SaveSettings 的巨型 UPSERT——那条语句的占位符已经排到 $119，每加一列都要整体顺移。
 
 // InviteGuideDefaultEnabled 是用户从未做过选择时的默认值：默认弹出引导。
 const InviteGuideDefaultEnabled = true

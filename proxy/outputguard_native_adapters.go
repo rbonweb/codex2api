@@ -24,16 +24,9 @@ func nativeGuardCoreConfig() outputguard.Config {
 	}
 }
 
-// selectNativeProjector selects the real upstream projector for the upstream channel.
-// Never guess the upstream protocol blindly from the downstream client request path: Codex/Responses is always Responses SSE, and the rest dispatch by upstream protocol name.
-// isNativeClaude is kept only for callers not yet migrated and no longer takes part in selection.
-func selectNativeProjector(protocol string, isNativeClaude bool, isCodexResponses bool) ProtocolProjector {
-	return selectNativeProjectorWithScope(protocol, isNativeClaude, isCodexResponses, "")
-}
-
-// selectNativeProjectorWithScope selects the projector for the specified attempt scope.
-// Responses and Chat projectors have no per-block channel, so scope does not take part in selection.
-func selectNativeProjectorWithScope(protocol string, _ bool, isCodexResponses bool, _ string) ProtocolProjector {
+// selectNativeProjector 为上游通道选择真实 upstream projector。
+// 严禁按客户端下游请求路径盲目推测上游协议：Codex/Responses 永远是 Responses SSE，其余按上游协议名分派。
+func selectNativeProjector(protocol string, isCodexResponses bool) ProtocolProjector {
 	if isCodexResponses {
 		return NewResponsesProjector()
 	}

@@ -13,7 +13,6 @@ import (
 // the complete credentials document.
 func (db *DB) ListAccountListProjection(ctx context.Context, channel string) ([]*AccountRow, error) {
 	where := `status <> 'deleted' AND COALESCE(error_message, '') <> 'deleted'`
-	upstreamExpr := `LOWER(COALESCE(credentials->>'upstream_type', ''))`
 	fromClause := `FROM accounts
 		CROSS JOIN LATERAL jsonb_to_record(accounts.credentials) AS account_public(
 			upstream_type text, email text, base_url text, plan_type text,
@@ -37,7 +36,6 @@ func (db *DB) ListAccountListProjection(ctx context.Context, channel string) ([]
 		COALESCE(account_public.subscription_sync_state, ''),
 		COALESCE(account_public.subscription_grace_until, '')`
 	if db.isSQLite() {
-		upstreamExpr = `LOWER(COALESCE(json_extract(credentials, '$.upstream_type'), ''))`
 		fromClause = `FROM accounts`
 		credentialColumns = `
 			COALESCE(json_extract(credentials, '$.upstream_type'), ''),
@@ -55,7 +53,6 @@ func (db *DB) ListAccountListProjection(ctx context.Context, channel string) ([]
 			COALESCE(json_extract(credentials, '$.subscription_sync_state'), ''),
 			COALESCE(json_extract(credentials, '$.subscription_grace_until'), '')`
 	}
-	where += accountChannelFilterSQL(channel, upstreamExpr)
 	query := `SELECT id, name, type, proxy_url, status, cooldown_reason, cooldown_until,
 		COALESCE(error_message, ''), COALESCE(enabled, true), COALESCE(locked, false),
 		score_bias_override, base_concurrency_override, COALESCE(tags, '[]'), created_at, updated_at,

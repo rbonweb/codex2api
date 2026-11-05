@@ -2,7 +2,6 @@ package proxy
 
 import (
 	"sort"
-	"strings"
 
 	"github.com/codex2api/database"
 )
@@ -36,7 +35,7 @@ type modelsDevProvider struct {
 	Models map[string]modelsDevModel `json:"models"`
 }
 
-var modelsDevFirstPartyProviders = []string{"openai", "xai", "anthropic", "google"}
+var modelsDevFirstPartyProviders = []string{"openai"}
 
 // convertModelsDevPricing prefers canonical model IDs and merges only first-party provider data.
 func convertModelsDevPricing(providers map[string]modelsDevProvider) map[string]database.ModelPricingOverride {
@@ -75,12 +74,6 @@ func mergeModelsDevProviders(providers map[string]modelsDevProvider, names []str
 	merged := make(map[string]modelsDevModel)
 	for _, name := range names {
 		for id, model := range providers[name].Models {
-			if name == "anthropic" && !strings.HasPrefix(id, "claude-") {
-				continue
-			}
-			if name == "google" && !strings.HasPrefix(id, "gemini-") {
-				continue
-			}
 			if _, exists := merged[id]; !exists {
 				merged[id] = model
 			}

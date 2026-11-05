@@ -28,10 +28,7 @@ type AccountGroup struct {
 }
 
 const (
-	AccountGroupChannelCodex       = "codex"
-	AccountGroupChannelGrok        = "grok"
-	AccountGroupChannelAntigravity = "antigravity"
-	AccountGroupChannelClaude      = "claude"
+	AccountGroupChannelCodex = "codex"
 )
 
 // NormalizeAccountGroupChannel 归一分组渠道:只剩 codex 一个渠道,任何输入都按 codex。

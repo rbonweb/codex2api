@@ -143,35 +143,8 @@ func TestCodexAlphaSearchHandler_PassesThroughUpstreamError(t *testing.T) {
 	}
 }
 
-// When the pool has only relay (OpenAI Responses API) accounts, fail fast with 503: the search endpoint exists only on the ChatGPT backend.
-func TestCodexAlphaSearchHandler_RelayOnlyPoolFastFails(t *testing.T) {
-	gin.SetMode(gin.TestMode)
-
-	store := auth.NewStore(nil, nil, &database.SystemSettings{MaxConcurrency: 2})
-	store.AddAccount(&auth.Account{
-		DBID:         1,
-		UpstreamType: auth.UpstreamOpenAIResponses,
-		BaseURL:      "http://example.invalid",
-		APIKey:       "sk-relay",
-		Models:       []string{"gpt-5.5"},
-		PlanType:     "api",
-	})
-	handler := NewHandler(store, nil, nil, nil)
-
-	req := httptest.NewRequest(http.MethodPost, "/v1/alpha/search", strings.NewReader(`{"id":"srch_3","model":"gpt-5.5"}`))
-	rec := httptest.NewRecorder()
-	ctx, _ := gin.CreateTestContext(rec)
-	ctx.Request = req
-
-	handler.CodexAlphaSearchHandler(ctx)
-
-	if rec.Code != http.StatusServiceUnavailable {
-		t.Fatalf("status = %d, want 503; body=%s", rec.Code, rec.Body.String())
-	}
-}
-
-// TestCodexAlphaSearchHandler_KeepsJSONResponseAliveWhileReadingBody verifies that while reading a silent
-// non-streaming JSON response body, HTTP 102 is sent and the final JSON response is still kept.
+// TestCodexAlphaSearchHandler_KeepsJSONResponseAliveWhileReadingBody 验证读取静默的
+// 非流式 JSON 响应体时会发送 HTTP 102，同时保留最终 JSON 响应。
 func TestCodexAlphaSearchHandler_KeepsJSONResponseAliveWhileReadingBody(t *testing.T) {
 	gin.SetMode(gin.TestMode)
 	previousInterval := continuousRetryKeepaliveInterval

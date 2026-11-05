@@ -132,38 +132,6 @@ func (h *Handler) nextAccountForSessionWithDispatchGuard(sessionID string, apiKe
 	return h.store.NextForSessionWithDispatchGuardForProvider(opts, sessionID, apiKeyID, exclude, filter)
 }
 
-// selectionOptionsForRequest builds the account-selection context from the current request channel and the public model,
-// and hands it to the Store to run the existing selection logic.
-func selectionOptionsForRequest(c *gin.Context, model string, policy auth.DispatchPolicy) auth.SelectionOptions {
-	return selectionOptionsForRequestWithProvider(c, model, policy, "")
-}
-
-// selectionOptionsForRequestWithProvider is the same as selectionOptionsForRequest, except that it uses
-// forceProvider as the selection channel instead of the request channel (an empty forceProvider keeps the request channel).
-func selectionOptionsForRequestWithProvider(c *gin.Context, model string, policy auth.DispatchPolicy, forceProvider string) auth.SelectionOptions {
-	provider := strings.TrimSpace(forceProvider)
-	if provider == "" {
-		provider = requestUpstreamChannel(c)
-	}
-	return auth.SelectionOptions{
-		Provider: provider,
-		Model:    strings.TrimSpace(model),
-		Policy:   policy,
-	}
-}
-
-// selectionOptionsForCandidatePool builds the selection context, and the entry point declares whether to ignore the request channel
-// (antigravityExcluded).
-//
-// When true, only Policy is kept and no Provider is set: the compact executor and native remote compaction
-// candidate pools do not inherit the request channel.
-func selectionOptionsForCandidatePool(c *gin.Context, model string, policy auth.DispatchPolicy, antigravityExcluded bool) auth.SelectionOptions {
-	if antigravityExcluded {
-		return auth.SelectionOptions{Policy: policy}
-	}
-	return selectionOptionsForRequest(c, model, policy)
-}
-
 func dispatchPolicyForModel(model string) auth.DispatchPolicy {
 	if isProOnlyModel(model) {
 		return auth.DispatchPolicySpark
@@ -2545,6 +2513,8 @@ func (h *Handler) RegisterRoutes(r *gin.Engine) {
 	v1.POST("/alpha/search", h.CodexAlphaSearchHandler)
 	v1.POST("/live", h.LiveCreate)
 	v1.GET("/live/:call_id", h.LiveSideband)
+	v1.POST("/realtime/calls", h.RealtimeCalls)
+	v1.POST("/audio/transcriptions", h.AudioTranscriptions)
 
 	// Routes without a prefix (for clients whose base_url already includes /v1)
 	r.POST("/chat/completions", auth, h.ChatCompletions)
@@ -2559,6 +2529,8 @@ func (h *Handler) RegisterRoutes(r *gin.Engine) {
 	r.POST("/alpha/search", auth, h.CodexAlphaSearchHandler)
 	r.POST("/live", auth, h.LiveCreate)
 	r.GET("/live/:call_id", auth, h.LiveSideband)
+	r.POST("/realtime/calls", auth, h.RealtimeCalls)
+	r.POST("/audio/transcriptions", auth, h.AudioTranscriptions)
 
 	codexDirect := r.Group("/backend-api/codex")
 	codexDirect.Use(auth)
@@ -3458,8 +3430,8 @@ func (h *Handler) Responses(c *gin.Context) {
 
 	capacityShedRetries := map[int64]int{}
 	dispatchPolicy := dispatchPolicyForModel(effectiveModel)
-	// The candidate pool for native remote compaction does not reuse the request channel; it only carries the scheduling policy.
-	selectionOpts := selectionOptionsForCandidatePool(c, effectiveModel, dispatchPolicy, nativeRemoteCompactionV2)
+	// native remote compaction 的候选池不沿用请求渠道，只带调度策略。
+	selectionOpts := auth.SelectionOptions{Policy: dispatchPolicy}
 	var affinityGuard auth.SessionAffinityGuard
 	var selectionErr error
 	for attempt := 0; ; attempt++ {
@@ -4750,7 +4722,7 @@ func (h *Handler) ResponsesCompact(c *gin.Context) {
 	invalidEncryptedContentRetried := false
 
 	dispatchPolicy := dispatchPolicyForModel(effectiveModel)
-	selectionOpts := selectionOptionsForCandidatePool(c, effectiveModel, dispatchPolicy, true)
+	selectionOpts := auth.SelectionOptions{Policy: dispatchPolicy}
 	for attempt := 0; ; attempt++ {
 		var account *auth.Account
 		var stickyProxyURL string
@@ -5383,7 +5355,7 @@ func (h *Handler) ChatCompletions(c *gin.Context) {
 
 	capacityShedRetries := map[int64]int{}
 	dispatchPolicy := dispatchPolicyForModel(effectiveModel)
-	selectionOpts := selectionOptionsForRequest(c, effectiveModel, dispatchPolicy)
+	selectionOpts := auth.SelectionOptions{Policy: dispatchPolicy}
 	var affinityGuard auth.SessionAffinityGuard
 	var selectionErr error
 	for attempt := 0; ; attempt++ {

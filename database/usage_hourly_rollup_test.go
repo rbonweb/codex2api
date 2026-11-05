@@ -135,8 +135,8 @@ func generateHourlyTestLogs(now time.Time, keyIDs []int64, count int) []hourlyTe
 		prompt, completion := rng.Intn(5000), rng.Intn(2000)
 		logs = append(logs, hourlyTestLog{
 			at: at, apiKeyID: keyID, keyName: keyName, keyMasked: keyMasked,
-			channel:   pick("codex", "codex", "grok", "claude", ""),
-			model:     pick("gpt-5.5", "gpt-5.6-luna", "gpt-image-2", "grok-4.7", ""),
+			channel:   pick("codex", "codex", "legacy-a", "legacy-b", ""),
+			model:     pick("gpt-5.5", "gpt-5.6-luna", "gpt-image-2", "gpt-5.4", ""),
 			effective: pick("", "gpt-5.5", "gpt-5.6-sol"),
 			inbound:   pick("/v1/responses", "/v1/chat/completions", "/v1/messages", "/v1/images/generations", ""),
 			endpoint:  pick("/v1/responses", "/backend-api/codex/responses", ""),
@@ -313,7 +313,7 @@ func runUsageHourlyEquivalence(t *testing.T, db *DB) {
 		{name: "channel", start: now.Add(-30 * 24 * time.Hour), end: now, channel: "codex"},
 		{name: "model", start: now.Add(-30 * 24 * time.Hour), end: now, dim: UsageLogFilter{Model: "gpt-5.5"}},
 		{name: "endpoint", start: now.Add(-30 * 24 * time.Hour), end: now, dim: UsageLogFilter{Endpoint: "/v1/responses"}},
-		{name: "api-key", start: now.Add(-30 * 24 * time.Hour), end: now, channel: "grok", dim: UsageLogFilter{APIKeyID: &keyID, Model: "gpt-5.6-sol"}},
+		{name: "api-key", start: now.Add(-30 * 24 * time.Hour), end: now, channel: "legacy-a", dim: UsageLogFilter{APIKeyID: &keyID, Model: "gpt-5.6-sol"}},
 		{name: "raw-only-dims", start: now.Add(-30 * 24 * time.Hour), end: now, dim: UsageLogFilter{AccountID: &accountID, StreamOnly: &streamOnly}},
 	}
 	type selfCase struct {
@@ -339,7 +339,7 @@ func runUsageHourlyEquivalence(t *testing.T, db *DB) {
 		{APIKeyID: &keyID, StatusCode: 429},
 		{StatusFamily: "5xx", IncludeCanceled: true},
 		{ErrorOnly: true},
-		{ErrorOnly: true, IncludeCanceled: true, Channel: "grok"},
+		{ErrorOnly: true, IncludeCanceled: true, Channel: "legacy-a"},
 		{ErrorKind: "timeout"},
 		{StreamOnly: &errorOnly},
 	}
@@ -349,7 +349,7 @@ func runUsageHourlyEquivalence(t *testing.T, db *DB) {
 		{now.Truncate(time.Hour).Add(-26 * time.Hour), now.Truncate(time.Hour).Add(-time.Hour)},
 	}
 	filters := []APIKeySelfLogFilter{
-		{Model: "gpt-5.5"}, {Endpoint: "/v1/responses"}, {Endpoint: "unknown"}, {Channel: "claude"},
+		{Model: "gpt-5.5"}, {Endpoint: "/v1/responses"}, {Endpoint: "unknown"}, {Channel: "legacy-b"},
 		{Status: "success"}, {Status: "error"}, {Status: "4xx"}, {Status: "5xx"}, {Status: "429"},
 		{Stream: "stream"}, {Stream: "sync", Model: "gpt-5.6-sol", Status: "error"},
 	}

@@ -911,62 +911,29 @@ func TestSQLiteListActiveByChannel(t *testing.T) {
 	if err != nil {
 		t.Fatalf("InsertAccount codex 返回错误: %v", err)
 	}
-	relayID, err := db.InsertAccountWithUpstream(ctx, "relay-one", "openai", "relay", map[string]interface{}{
-		"upstream_type": "openai_responses",
-		"api_key":       "relay-key",
+	agentID, err := db.InsertAccountWithUpstream(ctx, "agent-one", "openai", "oauth", map[string]interface{}{
+		"upstream_type": "codex",
+		"auth_mode":     "agentIdentity",
+		"email":         "agent@example.com",
 	}, "")
 	if err != nil {
-		t.Fatalf("InsertAccountWithUpstream relay 返回错误: %v", err)
-	}
-	grokID, err := db.InsertAccountWithUpstream(ctx, "grok-one", "xai", "oauth", map[string]interface{}{
-		"upstream_type": "grok",
-		"refresh_token": "rt-grok",
-		"access_token":  "at-grok",
-		"email":         "g@example.com",
-	}, "")
-	if err != nil {
-		t.Fatalf("InsertAccountWithUpstream grok 返回错误: %v", err)
-	}
-	antigravityID, err := db.InsertAccountWithUpstream(ctx, "antigravity-one", "google", "oauth", map[string]interface{}{
-		"upstream_type": "antigravity",
-		"refresh_token": "rt-antigravity",
-		"access_token":  "at-antigravity",
-		"email":         "antigravity@example.com",
-	}, "")
-	if err != nil {
-		t.Fatalf("InsertAccountWithUpstream antigravity 返回错误: %v", err)
+		t.Fatalf("InsertAccountWithUpstream agent identity 返回错误: %v", err)
 	}
 
 	all, err := db.ListActiveByChannel(ctx, "")
 	if err != nil {
 		t.Fatalf("ListActiveByChannel(\"\") 返回错误: %v", err)
 	}
-	if len(all) != 4 {
-		t.Fatalf("ListActiveByChannel(\"\") len = %d, want 4", len(all))
-	}
-
-	grokRows, err := db.ListActiveByChannel(ctx, UpstreamChannelGrok)
-	if err != nil {
-		t.Fatalf("ListActiveByChannel(grok) 返回错误: %v", err)
-	}
-	if len(grokRows) != 1 || grokRows[0].ID != grokID {
-		t.Fatalf("ListActiveByChannel(grok) = %+v, want id %d", grokRows, grokID)
+	if len(all) != 2 {
+		t.Fatalf("ListActiveByChannel(\"\") len = %d, want 2", len(all))
 	}
 
 	codexRows, err := db.ListActiveByChannel(ctx, UpstreamChannelCodex)
 	if err != nil {
 		t.Fatalf("ListActiveByChannel(codex) 返回错误: %v", err)
 	}
-	if len(codexRows) != 2 || codexRows[0].ID != codexID || codexRows[1].ID != relayID {
-		t.Fatalf("ListActiveByChannel(codex) = %+v, want ids %d and %d", codexRows, codexID, relayID)
-	}
-
-	antigravityRows, err := db.ListActiveByChannel(ctx, UpstreamChannelAntigravity)
-	if err != nil {
-		t.Fatalf("ListActiveByChannel(antigravity) 返回错误: %v", err)
-	}
-	if len(antigravityRows) != 1 || antigravityRows[0].ID != antigravityID {
-		t.Fatalf("ListActiveByChannel(antigravity) = %+v, want id %d", antigravityRows, antigravityID)
+	if len(codexRows) != 2 || codexRows[0].ID != codexID || codexRows[1].ID != agentID {
+		t.Fatalf("ListActiveByChannel(codex) = %+v, want ids %d and %d", codexRows, codexID, agentID)
 	}
 }
 
@@ -3245,12 +3212,12 @@ func TestUsageLogsIncludeAccountNameForOpenAIResponsesAccount(t *testing.T) {
 
 	ctx := context.Background()
 	now := time.Now().UTC()
-	accountID, err := db.InsertOpenAIResponsesAccount(ctx, "API 别名", map[string]interface{}{
+	accountID, err := db.InsertAccountWithUpstream(ctx, "API 别名", "openai", "oauth", map[string]interface{}{
 		"base_url": "https://api.example.com",
 		"email":    "https://api.example.com",
 	}, "")
 	if err != nil {
-		t.Fatalf("InsertOpenAIResponsesAccount 返回错误: %v", err)
+		t.Fatalf("InsertAccountWithUpstream 返回错误: %v", err)
 	}
 	if err := db.InsertUsageLog(ctx, &UsageLogInput{
 		AccountID:  accountID,
@@ -3608,9 +3575,9 @@ func TestAccountUsageAggregatesExcludeTransportRetries(t *testing.T) {
 	insertUsage(2, now.Add(-time.Hour), 400, 4, 1, 429)
 	// Capability probes remain in raw logs but must not inflate user-facing
 	// request, token, or billing totals.
-	insertUsage(1, now.Add(-10*time.Minute), 500, 5, 0, 200, "grok_capability_probe")
+	insertUsage(1, now.Add(-10*time.Minute), 500, 5, 0, 200, "maintenance_probe")
 	var rawProbeCount int
-	if err := db.conn.QueryRowContext(ctx, `SELECT COUNT(*) FROM usage_logs WHERE internal_reason = 'grok_capability_probe'`).Scan(&rawProbeCount); err != nil {
+	if err := db.conn.QueryRowContext(ctx, `SELECT COUNT(*) FROM usage_logs WHERE internal_reason = 'maintenance_probe'`).Scan(&rawProbeCount); err != nil {
 		t.Fatalf("query raw capability probe: %v", err)
 	}
 	if rawProbeCount != 1 {
@@ -3692,7 +3659,7 @@ func TestAccountUsageAggregatesExcludeTransportRetries(t *testing.T) {
 }
 
 func TestUsageStatsExcludeInternalCapabilityProbe(t *testing.T) {
-	db := newGrokStateTestDB(t)
+	db := newSQLiteTestDB(t)
 	ctx := context.Background()
 	now := time.Now().UTC().Truncate(time.Second)
 	for _, fixture := range []struct {
@@ -3700,25 +3667,25 @@ func TestUsageStatsExcludeInternalCapabilityProbe(t *testing.T) {
 		tokens int
 	}{
 		{tokens: 100},
-		{reason: "grok_capability_probe", tokens: 900},
+		{reason: "maintenance_probe", tokens: 900},
 	} {
 		if _, err := db.conn.ExecContext(ctx, `INSERT INTO usage_logs
 			(account_id, channel, model, status_code, total_tokens, input_tokens, internal_reason, created_at)
-			VALUES (1, 'grok', 'grok-test', 200, $1, $1, $2, $3)`, fixture.tokens, fixture.reason, sqliteTimeParam(now)); err != nil {
+			VALUES (1, 'codex', 'gpt-test', 200, $1, $1, $2, $3)`, fixture.tokens, fixture.reason, sqliteTimeParam(now)); err != nil {
 			t.Fatalf("insert usage fixture: %v", err)
 		}
 	}
 	if err := db.rebuildUsageStatsRollup(ctx); err != nil {
 		t.Fatalf("rebuildUsageStatsRollup: %v", err)
 	}
-	stats, err := db.GetUsageStats(ctx, now.Add(-time.Hour), now.Add(time.Hour), "grok")
+	stats, err := db.GetUsageStats(ctx, now.Add(-time.Hour), now.Add(time.Hour), "codex")
 	if err != nil {
 		t.Fatalf("GetUsageStats: %v", err)
 	}
 	if stats.TodayRequests != 1 || stats.TodayTokens != 100 || stats.TotalRequests != 1 || stats.TotalTokens != 100 {
 		t.Fatalf("usage stats = today %d/%d total %d/%d, want 1/100", stats.TodayRequests, stats.TodayTokens, stats.TotalRequests, stats.TotalTokens)
 	}
-	chart, err := db.GetChartAggregation(ctx, now.Add(-time.Hour), now.Add(time.Hour), 5, "grok")
+	chart, err := db.GetChartAggregation(ctx, now.Add(-time.Hour), now.Add(time.Hour), 5, "codex")
 	if err != nil {
 		t.Fatalf("GetChartAggregation: %v", err)
 	}
@@ -3737,10 +3704,10 @@ func TestNonRetryUsageLogPredicateUsesDatabaseBooleanType(t *testing.T) {
 }
 
 func TestAccountUsageAggregatesExcludeStaleCredentialGeneration(t *testing.T) {
-	db := newGrokStateTestDB(t)
+	db := newSQLiteTestDB(t)
 	ctx := context.Background()
-	accountID, err := db.InsertAccountWithUpstream(ctx, "generation-usage", "xai", "grok", map[string]interface{}{
-		"upstream_type": "grok", "api_key": "first-key",
+	accountID, err := db.InsertAccountWithUpstream(ctx, "generation-usage", "openai", "oauth", map[string]interface{}{
+		"upstream_type": "codex", "refresh_token": "first-token",
 	}, "")
 	if err != nil {
 		t.Fatalf("insert account: %v", err)
@@ -3763,7 +3730,7 @@ func TestAccountUsageAggregatesExcludeStaleCredentialGeneration(t *testing.T) {
 			t.Fatalf("insert usage fixture: %v", err)
 		}
 	}
-	if err := db.UpdateCredentials(ctx, accountID, map[string]interface{}{"api_key": "rotated-key"}); err != nil {
+	if err := db.UpdateCredentials(ctx, accountID, map[string]interface{}{"refresh_token": "rotated-token"}); err != nil {
 		t.Fatalf("rotate identity: %v", err)
 	}
 	rotated, err := db.GetAccountByID(ctx, accountID)

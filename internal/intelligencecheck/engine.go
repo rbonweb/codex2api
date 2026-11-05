@@ -27,7 +27,6 @@ type Settings struct {
 	Revision               int64      `json:"revision"`
 	Enabled                bool       `json:"enabled"`
 	GPTModel               string     `json:"gpt_model"`
-	ClaudeModel            string     `json:"claude_model"`
 	ReasoningEffort        string     `json:"reasoning_effort"`
 	JudgeMode              string     `json:"judge_mode"`
 	IntervalSeconds        int        `json:"interval_seconds"`
@@ -49,17 +48,17 @@ type Settings struct {
 const CandyPrompt = "不允许调用工具和联网。在一个黑色的袋子里放有三种口味的糖果，每种糖果有两种不同的形状，分别为圆形和五角星形，不同的形状靠手感可以分辨，现已知苹果味圆形有7颗、苹果味五角星形有7颗、桃子味圆形有9颗、桃子味五角星形有6颗、西瓜味圆形有8颗、西瓜味五角星形有4颗，参赛者需要在活动前决定摸出的糖果数目，那么最少取出多少个糖果才能保证手中同时拥有不同形状的苹果味和桃子味的糖，同时手中有圆形苹果味匹配五角星桃子味糖果，或者有圆形桃子味匹配五角星苹果味糖果都满足要求，最终只回复数字结果。"
 
 func DefaultSettings() Settings {
-	return Settings{PauseInitialSeconds: 1800, PauseMaxSeconds: 172800, RecoveryInitialSeconds: 300, RecoveryMinSeconds: 120, Revision: 1, GPTModel: "gpt-6-astra", ClaudeModel: "claude-sonnet-4-6", ReasoningEffort: "high", JudgeMode: "answer", IntervalSeconds: 300, RetrySeconds: 60, TimeoutSeconds: 180, Concurrency: 4, Retention: 200, NewAccountsEnabled: true, Action: "none", DegradeThreshold: 2, RecoverThreshold: 1, Questions: []Question{{ID: "candy", Name: "Candy pairing", Prompt: CandyPrompt, ExpectedAnswer: "21", MatchMode: "exact", MaxDurationMS: 20000, Enabled: true}}}
+	return Settings{PauseInitialSeconds: 1800, PauseMaxSeconds: 172800, RecoveryInitialSeconds: 300, RecoveryMinSeconds: 120, Revision: 1, GPTModel: "gpt-6-astra", ReasoningEffort: "high", JudgeMode: "answer", IntervalSeconds: 300, RetrySeconds: 60, TimeoutSeconds: 180, Concurrency: 4, Retention: 200, NewAccountsEnabled: true, Action: "none", DegradeThreshold: 2, RecoverThreshold: 1, Questions: []Question{{ID: "candy", Name: "Candy pairing", Prompt: CandyPrompt, ExpectedAnswer: "21", MatchMode: "exact", MaxDurationMS: 20000, Enabled: true}}}
 }
 func ValidateSettings(s Settings) error {
 	s = AdaptiveDefaults(s)
 	if s.PauseInitialSeconds < 1 || s.PauseMaxSeconds < s.PauseInitialSeconds || s.PauseMaxSeconds > 30*86400 || s.RecoveryMinSeconds < 1 || s.RecoveryInitialSeconds < s.RecoveryMinSeconds || s.RecoveryInitialSeconds > s.PauseInitialSeconds {
 		return fmt.Errorf("invalid adaptive check intervals")
 	}
-	if strings.TrimSpace(s.GPTModel) == "" || strings.TrimSpace(s.ClaudeModel) == "" {
-		return fmt.Errorf("both channel models are required")
+	if strings.TrimSpace(s.GPTModel) == "" {
+		return fmt.Errorf("model is required")
 	}
-	if len(s.GPTModel) > 255 || len(s.ClaudeModel) > 255 {
+	if len(s.GPTModel) > 255 {
 		return fmt.Errorf("model too long")
 	}
 	switch s.ReasoningEffort {

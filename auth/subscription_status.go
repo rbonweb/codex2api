@@ -12,8 +12,7 @@ import (
 // 按业务时区计算；同步状态（confirmed / pending / failed ...）描述最近一次查询
 // 的结果与数据新鲜度。两者分开保存，查询失败时仍能保留最后一次已知业务状态。
 //
-// 元数据落在账号 credentials 键值里（与 Claude 用量探针元数据同款做法），
-// 不需要建表迁移。
+// 元数据落在账号 credentials 键值里，不需要建表迁移。
 
 // 订阅元数据 credentials 键。
 const (

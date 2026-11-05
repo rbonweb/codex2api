@@ -106,18 +106,7 @@ Rate limits are returned in response headers:
 | `/api/admin/accounts/:id/refresh` | POST | Manually refresh AT |
 | `/api/admin/accounts/:id/test` | GET | Test account connection |
 | `/api/admin/accounts/:id/usage` | GET | View account usage |
-| `/api/admin/accounts/claude/oauth/auth-url` | POST | Generate a Claude OAuth PKCE authorization URL (`mode=oauth|setup_token`) |
-| `/api/admin/accounts/claude/oauth/exchange-code` | POST | Exchange the Claude OAuth code and store the account |
-| `/api/admin/accounts/claude/oauth/exchange-session-key` | POST | Exchange a claude.ai sessionKey for OAuth credentials / Setup Token in one step and store them |
-| `/api/admin/accounts/claude/import` | POST | Import Claude Token JSON / object array / `accounts` bundle (`auth_kind=oauth|setup_token|api_key`; OAuth may give only refresh_token; api_key requires api_key/base_url) |
-| `/api/admin/accounts/claude/import-tokens` | POST | Batch paste `sk-ant-oat01-` Setup Tokens / `sk-ant-ort01-` Refresh Tokens and store them (former name `/import-setup-tokens`) |
-| `/api/admin/accounts/claude/export` | GET | Export full Claude OAuth credentials (single JSON / multi-account ZIP) |
-| `/api/admin/accounts/:id/claude/models` | POST | Refresh the model catalog of one Claude upstream |
-| `/api/admin/accounts/claude/models/refresh` | POST | Batch refresh Claude model catalogs |
 | `/api/admin/accounts/:id/models/sync-upstream` | POST | Read-only preview of the account's upstream model catalog |
-| `/api/admin/accounts/:id/models` | PATCH | Set the account-level Claude `claude-*` model allowlist |
-| `/api/admin/accounts/:id/usage/refresh` | POST | Run native Claude usage sampling |
-| `/api/admin/accounts/:id/models/probe` | POST | Read-only probe of Claude model capabilities |
 | `/api/admin/accounts/batch-test` | POST | Batch test connections (SSE) |
 | `/api/admin/accounts/export` | GET | Export accounts |
 | `/api/admin/accounts/migrate` | POST | Migrate accounts from a remote instance (SSE) |
@@ -126,7 +115,6 @@ Rate limits are returned in response headers:
 | `/api/admin/accounts/clean-rate-limited` | POST | Clean up 429 accounts |
 | `/api/admin/accounts/clean-error` | POST | Clean up error accounts |
 
-The Claude credential export supports `ids`, `filter=all|healthy` and `format=auto|json|zip`. The response contains OAuth tokens and is accessible only to admins. Clients should treat it as `Cache-Control: no-store` and, after the migration completes, securely delete the downloaded file. The import endpoint accepts a single object, an object array or `{"accounts":[...]}`, and maps groups by name and channel; it does not use numeric group IDs from another instance.
 
 **OAuth authorization:**
 
@@ -154,7 +142,6 @@ The Claude credential export supports `ids`, `filter=all|healthy` and `format=au
 | `/api/admin/settings` | PUT | Update system settings |
 | `/api/admin/models` | GET | List supported models |
 | `/api/admin/models/sync` | POST | Sync the model registry from OpenAI's official Codex models page |
-| `/api/admin/settings/claude-config` | GET/PUT | Default Claude fingerprint, time zone and session window settings |
 
 **Usage statistics:**
 

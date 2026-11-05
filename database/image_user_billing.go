@@ -15,8 +15,7 @@ const (
 // Those requests retain their existing token billing policy.
 func SupportsImageBilling(model string) bool {
 	model = normalizeBillingModelName(model)
-	return strings.HasPrefix(model, "gpt-image-") || model == "grok-2-image" ||
-		model == "grok-2-image-1212" || model == "grok-imagine-image" || model == "grok-imagine-image-pro" || model == "grok-imagine-image-quality"
+	return strings.HasPrefix(model, "gpt-image-")
 }
 
 func ValidateModelUserBilling(model string, o ModelPricingOverride) error {
@@ -32,7 +31,7 @@ func ValidateModelUserBilling(model string, o ModelPricingOverride) error {
 		return fmt.Errorf("media_unit_cost must be a finite non-negative USD amount")
 	}
 	if o.MediaUnitCost > 0 && MediaBillingUnit(model) == "" {
-		return fmt.Errorf("media_unit_cost requires a Grok Imagine media model")
+		return fmt.Errorf("media_unit_cost requires a media model")
 	}
 	switch o.UserBillingMode {
 	case UserBillingModePerImage:

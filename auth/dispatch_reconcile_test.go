@@ -32,14 +32,9 @@ func TestReconcileDispatchStateLoadsAccountAddedAfterStartup(t *testing.T) {
 		t.Fatalf("Next() before insert = account %d, want nil", got.ID())
 	}
 
-	accountID, err := db.InsertOpenAIResponsesAccount(ctx, "new-endpoint", map[string]interface{}{
-		"upstream_type": UpstreamOpenAIResponses,
-		"base_url":      "https://healthy.example",
-		"api_key":       "sk-new",
-		"models":        []string{"gpt-5.6"},
-	}, "")
+	accountID, err := db.InsertATAccount(ctx, "new-endpoint", "at-new-endpoint", "")
 	if err != nil {
-		t.Fatalf("InsertOpenAIResponsesAccount: %v", err)
+		t.Fatalf("InsertATAccount: %v", err)
 	}
 
 	_, err = store.ReconcileDispatchState(ctx)
@@ -75,14 +70,9 @@ func TestTriggerDispatchStateReconcileAsyncLoadsAccount(t *testing.T) {
 		t.Fatalf("Store.Init: %v", err)
 	}
 
-	accountID, err := db.InsertOpenAIResponsesAccount(ctx, "async-endpoint", map[string]interface{}{
-		"upstream_type": UpstreamOpenAIResponses,
-		"base_url":      "https://healthy.example",
-		"api_key":       "sk-async",
-		"models":        []string{"gpt-5.6"},
-	}, "")
+	accountID, err := db.InsertATAccount(ctx, "async-endpoint", "at-async-endpoint", "")
 	if err != nil {
-		t.Fatalf("InsertOpenAIResponsesAccount: %v", err)
+		t.Fatalf("InsertATAccount: %v", err)
 	}
 
 	done := store.TriggerDispatchStateReconcileAsync()
@@ -151,14 +141,9 @@ func TestAsyncReconcileCoalescesOntoActiveRunCompletion(t *testing.T) {
 	if err := store.Init(ctx); err != nil {
 		t.Fatalf("Store.Init: %v", err)
 	}
-	accountID, err := db.InsertOpenAIResponsesAccount(ctx, "interleaved-endpoint", map[string]interface{}{
-		"upstream_type": UpstreamOpenAIResponses,
-		"base_url":      "https://healthy.example",
-		"api_key":       "sk-interleaved",
-		"models":        []string{"gpt-5.6"},
-	}, "")
+	accountID, err := db.InsertATAccount(ctx, "interleaved-endpoint", "at-interleaved-endpoint", "")
 	if err != nil {
-		t.Fatalf("InsertOpenAIResponsesAccount: %v", err)
+		t.Fatalf("InsertATAccount: %v", err)
 	}
 
 	activeDone, owner := store.beginDispatchStateReconcile()

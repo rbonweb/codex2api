@@ -280,6 +280,16 @@ Each successful budget change receives a read-only generation and is polled by e
 
 See [API.md](docs/API.md) for full request formats, response formats, and error codes.
 
+### Real-time audio
+
+Voice runs over WebRTC (`POST /v1/realtime/calls`) and WebSocket (`/v1/realtime` with an audio model), and `POST /v1/audio/transcriptions` transcribes uploads on the same backend.
+
+The API key needs `limits.allow_live`, and audio uses the account's ChatGPT voice minutes.
+
+The binary needs the `opus` build tag and CGO, which the Docker image already has. Release binaries without it answer 501 `audio_bridge_unavailable`.
+
+See [Real-time audio](docs/API.md#real-time-audio-chatgpt-live) for events, voices, formats and limits.
+
 ### Token Upload and Account Management
 
 The following admin endpoints require the `X-Admin-Key` header.
@@ -392,6 +402,7 @@ Open `/admin/` in a browser.
 Codex2API is not just a forwarding proxy. It is a long-running Codex gateway with a full admin dashboard:
 
 - Exposes a unified OpenAI-style API surface.
+- Serves real-time voice over WebRTC and WebSocket, plus `/v1/audio/transcriptions`, backed by ChatGPT Live.
 - Maintains a Refresh Token account pool and Access Token lifecycle.
 - Coordinates persistence and runtime state through PostgreSQL + Redis or SQLite + in-memory cache.
 - Provides operational observability through the `/admin` dashboard.

@@ -52,7 +52,7 @@ const COPY = {
   reviewSubtitle: 'The admin secret is already configured. Confirm the entry URL, data paths, and request monitoring before opening the dashboard.',
   serviceTitle: 'Service URL',
   serviceLabel: 'Client base URL',
-  serviceDesc: 'Used by OpenAI / Anthropic compatible clients.',
+  serviceDesc: 'Used by OpenAI compatible clients.',
   adminEntry: 'Admin entry',
   apiEntry: 'API entry',
   secretTitle: 'Admin secret',

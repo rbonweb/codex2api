@@ -6,40 +6,9 @@ import (
 	"testing"
 
 	"github.com/codex2api/api"
-	"github.com/codex2api/auth"
 	"github.com/codex2api/database"
 	"github.com/gin-gonic/gin"
 )
-
-
-func TestResponsesCompactFilterRejectsClaudeProtocol(t *testing.T) {
-	claude := &auth.Account{DBID: 6, UpstreamType: auth.UpstreamClaude, AccessToken: "claude", Models: []string{"claude-sonnet-4-5"}}
-	filter := accountFilterForCompactResponsesModelWithOriginal("claude-sonnet-4-5", "claude-sonnet-4-5", true)
-	if filter(claude) {
-		t.Fatal("Responses Compact admitted Claude native Messages account")
-	}
-}
-
-
-func TestApplyCooldownForModelSkipsAntigravityUnauthorizedBan(t *testing.T) {
-	account := &auth.Account{
-		DBID:         5,
-		UpstreamType: auth.UpstreamAntigravity,
-		AccessToken:  "google-token",
-		RefreshToken: "google-refresh",
-		HealthTier:   auth.HealthTierHealthy,
-		Status:       auth.StatusReady,
-	}
-	store := auth.NewStore(nil, nil, nil)
-	handler := &Handler{store: store}
-	decision := handler.applyCooldownForModel(account, http.StatusUnauthorized, []byte(`{"error":"invalid_grant"}`), &http.Response{Header: make(http.Header)}, "gemini-2.5-flash")
-	if decision.Reason != "" {
-		t.Fatalf("applyCooldownForModel decision = %+v, want empty for Antigravity", decision)
-	}
-	if account.IsBanned() || account.HasActiveCooldown() {
-		t.Fatal("Codex unauthorized cooldown must not ban an Antigravity account")
-	}
-}
 
 func TestInternalResponseAttributionPreservesParentAuditIdentity(t *testing.T) {
 	gin.SetMode(gin.TestMode)
@@ -53,7 +22,7 @@ func TestInternalResponseAttributionPreservesParentAuditIdentity(t *testing.T) {
 		Limits: database.APIKeyLimits{
 			AutoCompactOnOverflow: true,
 			ModelAllow:            []string{"gpt-5.4"},
-			UpstreamChannel:       database.UpstreamChannelGrok,
+			UpstreamChannel:       database.UpstreamChannelCodex,
 		},
 	}
 	parent.Set(contextAPIKeyID, row.ID)
@@ -97,8 +66,8 @@ func TestInternalResponseAttributionPreservesParentAuditIdentity(t *testing.T) {
 	if autoCompactOverflowEnabled(child) {
 		t.Fatal("attributed summary request must not recursively auto-compact")
 	}
-	if got := requestUpstreamChannel(child); got != database.UpstreamChannelGrok {
-		t.Fatalf("child upstream channel = %q, want grok", got)
+	if got := requestUpstreamChannel(child); got != database.UpstreamChannelCodex {
+		t.Fatalf("child upstream channel = %q, want codex", got)
 	}
 	if status, _ := (&Handler{}).enforceAPIKeyLimits(child, "gpt-other"); status != http.StatusForbidden {
 		t.Fatalf("child model restriction status = %d, want 403", status)

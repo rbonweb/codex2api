@@ -8,7 +8,6 @@ export interface ToastState {
 }
 
 export type AccountStatus = 'active' | 'ready' | 'cooldown' | 'error' | 'refreshing' | 'paused' | 'quota_paused' | string
-export type CodexClientMetadataMode = 'auto' | 'always' | 'off'
 /** Device fingerprint convergence level for official outbound Codex requests, default off (no convergence). */
 export type CodexFingerprintMode = 'off' | 'device' | 'session' | 'single_machine_multi_window' | 'full'
 export type ModelCooldownMode = 'off' | 'fixed' | 'adaptive'
@@ -103,7 +102,6 @@ export interface AccountRow {
   base_url?: string
   models?: string[]
   model_mapping?: string
-  codex_client_metadata_mode?: CodexClientMetadataMode
   codex_fingerprint_mode?: CodexFingerprintMode
   timezone?: string
   /** Account page link; when empty, falls back to opening base_url (api-base). */

@@ -1601,7 +1601,6 @@ type accountResponse struct {
 	BaseURL                       string                     `json:"base_url,omitempty"`
 	Models                        []string                   `json:"models,omitempty"`
 	ModelMapping                  string                     `json:"model_mapping,omitempty"`
-	CodexClientMetadataMode       string                     `json:"codex_client_metadata_mode,omitempty"`
 	CodexPassthroughMode          string                     `json:"codex_passthrough_mode,omitempty"`
 	ResponsesUpstreamTransport    string                     `json:"responses_upstream_transport,omitempty"`
 	CodexFingerprintMode          string                     `json:"codex_fingerprint_mode,omitempty"`

@@ -48,10 +48,10 @@ func sendCodexTelemetryJob(job codexTelemetryJob) error {
 
 // codexTelemetryHTTPClient clones the shared pooled client and forbids following redirects.
 //
-// Analytics requests carry the account's Bearer access token; Go's default policy only strips
-// Authorization on cross-host redirects, and an https→http downgrade on the same host is not stripped. The pooled client is reused per account,
-// and cannot be modified in place, so here we make a shallow copy and override CheckRedirect, to avoid forwarding the credential
-// to the redirect target. This matches the existing approach in grok_media.go / claude_api_key.go.
+// 分析请求携带账号的 Bearer access token；Go 默认策略只在跨 host 重定向时剥离
+// Authorization，同 host 的 https→http 降级不会剥离。池化客户端按账号复用、
+// 不可就地改写，因此这里浅拷贝一份并覆盖 CheckRedirect，避免凭证被转发到
+// 重定向目标。
 func codexTelemetryHTTPClient(base *http.Client) *http.Client {
 	if base == nil {
 		return &http.Client{CheckRedirect: codexTelemetryRejectRedirect}

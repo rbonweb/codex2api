@@ -253,8 +253,7 @@ func TestAcceptanceScenario12_WebSocketMatrix(t *testing.T) {
 		}, nil
 	}
 
-	handler, store, account := setupLifecycleTestHandler(t, "https://upstream.example", "gpt-5.5")
-	account.ResponsesUpstreamTransport = auth.OpenAIResponsesTransportHTTP
+	handler, store, _ := setupLifecycleTestHandler(t, "https://upstream.example", "gpt-5.5")
 	store.SetCodexModelMapping(`{"client-ws-alias":"gpt-5.5"}`)
 
 	router := gin.New()
@@ -373,8 +372,7 @@ func TestResponsesWebSocketGuardTripSkipsBufferedFlush(t *testing.T) {
 		}, nil
 	}
 
-	handler, store, account := setupLifecycleTestHandler(t, "https://upstream.example", "gpt-5.5")
-	account.ResponsesUpstreamTransport = auth.OpenAIResponsesTransportHTTP
+	handler, store, _ := setupLifecycleTestHandler(t, "https://upstream.example", "gpt-5.5")
 	store.SetCodexModelMapping(`{"client-ws-alias":"gpt-5.5"}`)
 	// Enable the output filter buffer, so that valid deltas from before the guard trip stay in outputBuffer;
 	// the buffer is still non-empty when the trip happens, so the "flush after terminal state" path is covered.
@@ -439,8 +437,7 @@ func TestResponsesWebSocketGuardTripWithPendingInterruptDropsFailedFrame(t *test
 		}, nil
 	}
 
-	handler, store, account := setupLifecycleTestHandler(t, "https://upstream.example", "gpt-5.5")
-	account.ResponsesUpstreamTransport = auth.OpenAIResponsesTransportHTTP
+	handler, store, _ := setupLifecycleTestHandler(t, "https://upstream.example", "gpt-5.5")
 	store.SetCodexModelMapping(`{"client-ws-alias":"gpt-5.5"}`)
 
 	router := gin.New()

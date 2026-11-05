@@ -294,7 +294,6 @@ func stripAccountDetailFields(resp *accountResponse) {
 		return
 	}
 	resp.ModelMapping = ""
-	resp.CodexClientMetadataMode = ""
 	resp.CodexPassthroughMode = ""
 	resp.CustomHeaders = nil
 	resp.AllowedAPIKeyIDs = nil
