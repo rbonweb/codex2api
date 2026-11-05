@@ -2253,6 +2253,22 @@ export default function Accounts() {
     </div>
   );
 
+  useEffect(() => {
+    return () => {
+      if (operationProgressHideTimer.current !== null) {
+        window.clearTimeout(operationProgressHideTimer.current);
+      }
+      if (operationProgressFrame.current !== null) {
+        window.cancelAnimationFrame(operationProgressFrame.current);
+      }
+      if (operationProgressFlushTimer.current !== null) {
+        window.clearTimeout(operationProgressFlushTimer.current);
+      }
+      pendingOperationProgress.current = null;
+      operationResultMap.current.clear();
+    };
+  }, []);
+
   const closeOperationProgress = useCallback(() => {
     if (operationProgressHideTimer.current !== null) {
       window.clearTimeout(operationProgressHideTimer.current);
@@ -11119,6 +11135,7 @@ function recycleBinRowToAccountRow(row: RecycleBinAccountRow): AccountRow {
     email: row.email,
     plan_type: row.plan_type,
     status: "deleted",
+    models: row.models,
     proxy_url: "",
     created_at: row.created_at,
     updated_at: row.deleted_at || row.created_at,
