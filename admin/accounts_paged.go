@@ -782,8 +782,7 @@ func requestCountCacheReady(entry *requestCountCacheEntry, now time.Time) bool {
 }
 
 // getCachedRequestCountsNonBlocking 返回指定渠道的请求数统计。统计按渠道独立
-// 缓存与刷新:在 codex 页刷新只扫 codex 账号的日志行,不为 grok 账号买单,
-// 反之亦然。ids 是该渠道当前的账号列表,过期时交给后台刷新用。
+// 缓存与刷新:在 codex 页刷新只扫 codex 账号的日志行。ids 是该渠道当前的账号列表,过期时交给后台刷新用。
 func (h *Handler) getCachedRequestCountsNonBlocking(channel string, ids []int64) (map[int64]*database.AccountRequestCount, map[int64]*database.AccountTimeRangeUsage, string) {
 	now := time.Now()
 	h.reqCountMu.RLock()
@@ -1035,7 +1034,7 @@ func accountListItemMatches(item *accountListSnapshotItem, query accountPageQuer
 		}
 	}
 	if query.AuthKind != "" && query.AuthKind != "all" {
-		// Only Codex OAuth accounts exist, so an API-key filter matches nothing.
+		// Only Codex OAuth accounts exist: an api_key filter is rejected with 400 at request validation, so only oauth and all reach this check.
 		if query.AuthKind != "oauth" {
 			return false
 		}

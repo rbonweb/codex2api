@@ -1,7 +1,6 @@
 package admin
 
 import (
-	"encoding/json"
 	"strconv"
 	"strings"
 	"time"
@@ -10,41 +9,6 @@ import (
 	"github.com/codex2api/database"
 	"github.com/codex2api/internal/openaiidentity"
 )
-
-func antigravityPersistedStatus(row *database.AccountRow) (string, string) {
-	if row == nil {
-		return "error", "账号不存在"
-	}
-	if syncErr := strings.TrimSpace(row.GetCredential("antigravity_sync_error")); syncErr != "" {
-		return "error", syncErr
-	}
-	if raw := strings.TrimSpace(row.GetCredential("antigravity_quota")); raw != "" {
-		var quota auth.AntigravityQuotaSnapshot
-		if json.Unmarshal([]byte(raw), &quota) == nil && quota.Forbidden {
-			return "error", "Google quota API denied access"
-		}
-	}
-	rawPermissions := strings.TrimSpace(row.GetCredential("antigravity_permissions"))
-	if rawPermissions == "" {
-		rawPermissions = strings.TrimSpace(row.GetCredential("antigravity_entitlements"))
-	}
-	if raw := rawPermissions; raw != "" {
-		var permissions auth.AntigravityEntitlements
-		if json.Unmarshal([]byte(raw), &permissions) == nil && !permissions.Allowed &&
-			(permissions.Reason != "" || !permissions.UpdatedAt.IsZero()) {
-			reason := strings.TrimSpace(permissions.Reason)
-			if reason == "" {
-				reason = "Google account is not allowed to use Antigravity"
-			}
-			return "error", reason
-		}
-	}
-	status := strings.TrimSpace(row.Status)
-	if status == "" {
-		status = "active"
-	}
-	return status, row.ErrorMessage
-}
 
 // buildAccountResponse enriches one database row with its in-memory scheduler
 // state and the already-scoped request/usage aggregates. Keeping this logic in
@@ -323,45 +287,6 @@ func (h *Handler) buildAccountResponse(
 		stripAccountDetailFields(&resp)
 	}
 	return resp
-}
-
-// Keep header-only windows when an OAuth probe has no equivalent bucket;
-// when both sources observed the same bucket, display the newer observation.
-func claudeAccountUsageWindows(row *database.AccountRow) []auth.ClaudeUsageWindow {
-	windows := parseClaudeUsageWindows(row.GetCredential(auth.ClaudeUsageWindowsCredentialKey))
-	var header auth.ClaudeHeaderUsageSnapshot
-	if json.Unmarshal([]byte(row.GetCredential(auth.ClaudeHeaderUsageCredentialKey)), &header) != nil {
-		return windows
-	}
-	probedAt, _ := time.Parse(time.RFC3339Nano, row.GetCredential(auth.ClaudeUsageProbeAtCredentialKey))
-	for _, observed := range header.Windows {
-		found := false
-		for i := range windows {
-			if windows[i].Name == observed.Name {
-				found = true
-				if !header.ObservedAt.Before(probedAt) {
-					windows[i] = observed
-				}
-				break
-			}
-		}
-		if !found {
-			windows = append(windows, observed)
-		}
-	}
-	return windows
-}
-
-func parseClaudeUsageWindows(raw string) []auth.ClaudeUsageWindow {
-	raw = strings.TrimSpace(raw)
-	if raw == "" {
-		return nil
-	}
-	var windows []auth.ClaudeUsageWindow
-	if err := json.Unmarshal([]byte(raw), &windows); err != nil {
-		return nil
-	}
-	return windows
 }
 
 func stripAccountDetailFields(resp *accountResponse) {

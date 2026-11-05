@@ -31,8 +31,6 @@ type testEvent struct {
 	Model   string `json:"model,omitempty"`   // 测试模型
 	Success bool   `json:"success,omitempty"` // 是否成功
 	Error   string `json:"error,omitempty"`   // 错误信息
-	// Diagnostics is a leftover of the removed Claude Messages probe; it stays only because quality_test_jobs.go and codex_test_diagnostics_test.go still reference it (phase 2 removes it).
-	Diagnostics *claudeTestDiagnostics `json:"diagnostics,omitempty"`
 	// Codex/Responses 测连诊断对象。
 	CodexDiagnostics *codexTestDiagnostics `json:"codex_diagnostics,omitempty"`
 	// Interrupted 标记 error 事件是传输/流中断(连接失败、读流失败、无终态即断开),
@@ -409,7 +407,16 @@ func buildConnectionTestPayload(store *auth.Store, model string) []byte {
 	return buildTestPayloadWithContent(model, auth.RenderTestContent(content))
 }
 
-// buildAccountConnectionTestPayload 构造 Responses 形状的测连请求体；用户输入取渠道自定义测活内容，留空沿用全局。
+// connectionTestContentForAccount 返回测连应发送的用户输入（已做多行抽取与变量展开），取全局测活内容。
+func (h *Handler) connectionTestContentForAccount(ctx context.Context, account *auth.Account) string {
+	content := auth.DefaultTestContent
+	if h != nil && h.store != nil {
+		content = h.store.GetTestContent()
+	}
+	return auth.RenderTestContent(content)
+}
+
+// buildAccountConnectionTestPayload 构造 Responses 形状的测连请求体；用户输入取全局测活内容。
 func (h *Handler) buildAccountConnectionTestPayload(ctx context.Context, account *auth.Account, model string) []byte {
 	content := h.connectionTestContentForAccount(ctx, account)
 	return buildTestPayloadWithContent(model, content)

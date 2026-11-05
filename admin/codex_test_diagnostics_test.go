@@ -4,7 +4,6 @@ import (
 	"encoding/json"
 	"io"
 	"net/http"
-	"net/http/httptest"
 	"strings"
 	"testing"
 	"time"
@@ -221,23 +220,18 @@ func TestCodexTestSecretsCollectsTokenAndAPIKey(t *testing.T) {
 	}
 }
 
-func newCodexDiagnosticsTestHandler(t *testing.T, upstream http.HandlerFunc) (*Handler, *auth.Account, *httptest.Server) {
+func newCodexDiagnosticsTestHandler(t *testing.T) (*Handler, *auth.Account) {
 	t.Helper()
 	gin.SetMode(gin.TestMode)
-	server := httptest.NewServer(upstream)
-	t.Cleanup(server.Close)
 	store := auth.NewStore(nil, nil, nil)
 	account := &auth.Account{
-		DBID:         42,
-		UpstreamType: auth.UpstreamOpenAIResponses,
-		BaseURL:      server.URL,
-		APIKey:       "sk-test-secret",
-		Models:       []string{"gpt-4o-mini"},
-		Status:       auth.StatusReady,
-		HealthTier:   auth.HealthTierHealthy,
+		DBID:        42,
+		AccessToken: "at-test-secret",
+		Status:      auth.StatusReady,
+		HealthTier:  auth.HealthTierHealthy,
 	}
 	store.AddAccount(account)
-	return &Handler{store: store}, account, server
+	return &Handler{store: store}, account
 }
 
 func TestCodexTestRecorderDetectsWebsocketTransportAndMetadataFrames(t *testing.T) {
