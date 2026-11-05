@@ -41,7 +41,7 @@ const COLORS = [
   '#db2777',
 ]
 
-// 官方统计的数据来源，展示在范围选择器旁边（与后端 proxy.WhamDailyUsageURL 一致）。
+// Data source of the official stats, shown next to the range selector (matches the backend proxy.WhamDailyUsageURL).
 const WHAM_DAILY_USAGE_ENDPOINT =
   'https://chatgpt.com/backend-api/wham/analytics/daily-workspace-usage-counts'
 
@@ -72,16 +72,16 @@ interface Props {
   account: AccountRow
   onClose: () => void
   onCreditsReset?: () => void
-  // Codex 专属的额度券/credit 设置区块;Grok 等非 Codex 账号传 false 隐藏。
+  // Codex-only credit voucher / credit settings block; pass false for non-Codex accounts such as Grok to hide it.
   showCreditSettings?: boolean
-  // 打开时直接停在指定 tab（列表里点「官方结算」成本就该落在官方统计上，
-  // 而不是让用户开完概览再自己切一次）。
+  // Open straight on the given tab (clicking the "official billing" cost in the list should land on the official stats,
+  // instead of making the user open the overview and switch again).
   initialPage?: UsagePage
-  // 官方统计同步成功后回调:列表页立刻用这次 7d 额度改徽章,
-  // 并重拉 page-stats 对齐快照,不用等下一次翻页。
+  // Callback after the official stats sync succeeds: the list page immediately updates the badge from this 7d quota,
+  // and refetches page-stats to align the snapshot, without waiting for the next page turn.
   onOfficialUsageRefreshed?: (patch: OfficialUsageRefreshPatch) => void
-  // 官方统计 tab 强制开关:Claude 等无 ChatGPT 官方结算链路的渠道传 false 隐藏;
-  // 缺省时按 supportsOfficialUsage(account) 自动判定。
+  // Force switch for the official stats tab: pass false for channels without a ChatGPT official billing path, such as Claude, to hide it;
+  // when omitted, it is decided automatically by supportsOfficialUsage(account).
   officialUsage?: boolean
 }
 
@@ -96,8 +96,8 @@ export default function AccountUsageModal({ account, onClose, onCreditsReset, sh
   const [range, setRange] = useState<UsageRangeKey>('30')
   const requestSeq = useRef(0)
 
-  // 官方结算统计只有 ChatGPT OAuth 账号能查（wham 端点属于 ChatGPT 后端）。
-  // codex_at、Responses API 中转和 Grok 没有这条链路，不显示这个 tab。
+  // Official billing stats can only be queried for ChatGPT OAuth accounts (the wham endpoint belongs to the ChatGPT backend).
+  // codex_at, Responses API relay and Grok have no such path, so this tab is not shown.
   const showOfficialUsage = officialUsage ?? supportsOfficialUsage(account)
 
   const [creditEnabled, setCreditEnabled] = useState(account.credit_enabled ?? false)
@@ -142,13 +142,13 @@ export default function AccountUsageModal({ account, onClose, onCreditsReset, sh
     navigate(`/usage?${params.toString()}`)
   }
 
-  // 单开关同时写两列：后端门控是 CreditEnabled && CreditSkipUsageWindow，保持不动，
-  // 只是界面不再暴露那个自身无行为的中间开关。
+  // One switch writes both columns: the backend gate is CreditEnabled && CreditSkipUsageWindow, left unchanged,
+  // the UI just no longer exposes the intermediate switch that has no behavior of its own.
   const handleCreditToggle = async (value: boolean) => {
     setCreditError(null)
     setSavingCredit(true)
-    // 乐观更新：开关立刻滑过去，不等请求往返（后端这一步可能顺带释放冷却、耗时可观）。
-    // 失败再回滚到原值并显示错误。
+    // Optimistic update: the switch slides over immediately without waiting for the round trip (the backend step may also release the cooldown, which can take a while).
+    // On failure, roll back to the original value and show the error.
     const prevEnabled = creditEnabled
     const prevSkipWindow = creditSkipWindow
     setCreditEnabled(value)
@@ -158,7 +158,7 @@ export default function AccountUsageModal({ account, onClose, onCreditsReset, sh
         credit_enabled: value,
         credit_skip_usage_window: value,
       })
-      // 后端在积分门打开时可能释放了用量窗口冷却，让外层刷新以更新状态与徽章。
+      // The backend may have released the usage window cooldown when the credit gate opened, so let the outer layer refresh the status and badge.
       onCreditsReset?.()
     } catch (err) {
       setCreditEnabled(prevEnabled)
@@ -169,9 +169,9 @@ export default function AccountUsageModal({ account, onClose, onCreditsReset, sh
     }
   }
 
-  // 从列表点「官方结算」进来时，官方统计不依赖本地 usage_logs。
-  // 先把官方页亮出来并立刻打上游，徽章才能对齐这次同步时间点，
-  // 不用卡在网关用量接口后面。
+  // When entering from the list via "official billing", the official stats do not depend on the local usage_logs.
+  // Show the official page first and hit upstream immediately, so the badge aligns with this sync time,
+  // instead of getting stuck behind the gateway usage endpoint.
   const officialReady = page === 'official' && showOfficialUsage
 
   return (
@@ -197,7 +197,7 @@ export default function AccountUsageModal({ account, onClose, onCreditsReset, sh
           account={account}
           accountLabel={accountLabel}
           data={data ?? emptyUsageDetail()}
-          // 中转账号没有官方统计 tab，深链进来时退回概览而不是停在空白页。
+          // Relay accounts have no official stats tab; on a deep link, fall back to the overview instead of stopping on a blank page.
           page={page === 'official' && !showOfficialUsage ? 'overview' : page}
           range={range}
           dataRange={dataRange || range}
@@ -257,8 +257,8 @@ function UsageStatsContent({
   onViewLogs: () => void
   showOfficialUsage: boolean
   onOfficialUsageRefreshed?: (patch: OfficialUsageRefreshPatch) => void
-  // 官方统计 tab 强制开关:Claude 等无 ChatGPT 官方结算链路的渠道传 false 隐藏;
-  // 缺省时按 supportsOfficialUsage(account) 自动判定。
+  // Force switch for the official stats tab: pass false for channels without a ChatGPT official billing path, such as Claude, to hide it;
+  // when omitted, it is decided automatically by supportsOfficialUsage(account).
   officialUsage?: boolean
 }) {
   const { t } = useTranslation()
@@ -357,8 +357,8 @@ function UsageStatsContent({
               />
             ))}
           </div>
-          {/* 官方统计与其他 tab 的数据源不同(上游账单 vs 本地 usage_logs),
-              把来源端点标出来,免得两套口径对不上时无从查起。 */}
+          {/* The official stats and the other tabs have different data sources (upstream billing vs local usage_logs),
+              so label the source endpoint; otherwise there is no way to investigate when the two figures disagree. */}
           {page === 'official' && (
             <span
               className="ml-auto inline-flex min-w-0 max-w-full items-center gap-1.5 rounded-lg border border-primary/20 bg-primary/5 px-2.5 py-1 text-[11px] text-muted-foreground"
@@ -394,7 +394,7 @@ function UsageStatsContent({
           <OfficialUsagePage
             accountId={account.id}
             range={range}
-            // 点进官方统计就打一次上游：列表「官方结算」徽章跟这次同步时间对齐。
+            // Hit upstream once on opening the official stats: the "official billing" badge in the list aligns with this sync time.
             autoRefresh
             onRefreshed={onOfficialUsageRefreshed}
           />
@@ -506,10 +506,10 @@ function QualityPage({ data }: { data: AccountUsageDetail }) {
   )
 }
 
-// OfficialUsagePage 展示 OpenAI 侧的结算口径用量，与其他 tab 的本地 usage_logs
-// 聚合是两套数据：这里的 credits 与 token 是官方账单数，且能按客户端入口拆分，
-// 能看出某个号有多少消耗来自本网关、多少来自官方客户端；按模型的成本来自
-// 模型×速度拆分端点的份额分摊（含 fast/priority 档）。
+// OfficialUsagePage shows usage on OpenAI's billing basis, which is a separate data set from the local usage_logs
+// aggregation of the other tabs: the credits and tokens here are official billing figures and can be split by client entry,
+// showing how much of an account's consumption came from this gateway and how much from the official client; per-model cost comes from
+// the share allocation of the model x speed breakdown endpoint (including the fast/priority tier).
 function OfficialUsagePage({
   accountId,
   range,
@@ -518,7 +518,7 @@ function OfficialUsagePage({
 }: {
   accountId: number
   range: UsageRangeKey
-  // 点进这个界面时先打上游，再让列表徽章跟上这次同步；换日期范围只读本地快照。
+  // On entering this view, hit upstream first, then let the list badge catch up with this sync; changing the date range only reads the local snapshot.
   autoRefresh?: boolean
   onRefreshed?: (patch: OfficialUsageRefreshPatch) => void
 }) {
@@ -530,7 +530,7 @@ function OfficialUsagePage({
   const [error, setError] = useState<string | null>(null)
   const requestSeq = useRef(0)
   const autoRefreshedAccountRef = useRef<number | null>(null)
-  // 'all' 在这里没有意义（本地快照最多留一年），按上限天数取。
+  // 'all' makes no sense here (the local snapshot keeps at most one year), so take the maximum number of days.
   const days = range === 'all' ? 365 : usageRangeToDays(range)
 
   const load = useCallback(async (refresh: boolean) => {
@@ -543,7 +543,7 @@ function OfficialUsagePage({
       const result = await api.getWhamDailyUsage(accountId, days, refresh)
       if (requestSeq.current !== seq) return
       setData(result)
-      // 只有真刷成功了才通知列表(refresh_error 时快照没变,重拉没意义)。
+      // Notify the list only when the refresh really succeeded (with refresh_error the snapshot did not change, so refetching is pointless).
       if (refresh && !result.refresh_error) {
         onRefreshed?.({
           accountId,
@@ -572,15 +572,15 @@ function OfficialUsagePage({
     () => items.reduce((max, item) => Math.max(max, item.credits), 0),
     [items],
   )
-  // 换算率由后端下发，前端不硬编码，官方改比例时只动一处。
+  // The conversion rate is sent by the backend and not hardcoded in the frontend, so only one place changes when the official ratio changes.
   const creditsPerUSD = data?.credits_per_usd || 25
-  // 客户端拆分按整个窗口累加：单看某一天噪声太大，看不出入口占比。
+  // The client breakdown is accumulated over the whole window: a single day is too noisy to show the entry share.
   const clientTotals = useMemo(
     () => aggregateSplits(items, 'clients', creditsPerUSD),
     [items, creditsPerUSD],
   )
-  // 模型维度的成本来自 daily-token-usage-breakdown 的份额分摊（counts 在模型维度
-  // 不给 credits）。窗口里一天拆分都没同步到时退回旧的按轮次展示。
+  // Per-model cost comes from the share allocation of daily-token-usage-breakdown (counts gives no credits
+  // at the model level). When not one day in the window has a breakdown synced, fall back to the old per-turn display.
   const modelSplit = useMemo(
     () => aggregateModelBreakdown(items, creditsPerUSD),
     [items, creditsPerUSD],
@@ -640,7 +640,7 @@ function OfficialUsagePage({
               icon={<Banknote className="size-4" />}
               label={t('accounts.usageOfficialCost')}
               value={formatUSD(data?.totals.usd ?? 0)}
-              // 美元是按 credits 折算出来的,原始 credits 一并给出,方便与官方后台对账。
+              // The dollar amount is converted from credits; the raw credits are shown as well, to ease reconciliation with the official console.
               detail={t('accounts.usageOfficialCredits', {
                 credits: formatCredits(data?.totals.credits ?? 0),
                 rate: data?.credits_per_usd ?? 25,
@@ -681,8 +681,8 @@ function OfficialUsagePage({
               title={t('accounts.usageOfficialByModel')}
               rows={modelSplit.rows}
               emptyLabel={t('accounts.usageOfficialEmpty')}
-              // 有拆分就按分摊成本展示；free 号 credits 恒 0 只有份额，改显示平均占比；
-              // 窗口内一天拆分都没有（旧快照）时退回只看轮次。
+              // With a breakdown, show the allocated cost; free accounts always have 0 credits and only a share, so show the average share instead;
+              // when no day in the window has a breakdown (old snapshot), fall back to turns only.
               costMode={!modelSplit.hasBreakdown ? 'none' : modelSplit.hasCost ? 'usd' : 'share'}
               footnote={
                 modelSplit.hasBreakdown && modelSplit.breakdownDays < modelSplit.totalDays
@@ -713,7 +713,7 @@ function OfficialUsageDayRow({ item, maxCredits }: { item: WhamDailyUsageItem; m
       >
         {formatUSD(item.usd)}
       </span>
-      {/* 当天（UTC）的行也带 token，只是全天在变：有数就显示，未结算时挂个标记。 */}
+      {/* The row for the current day (UTC) also carries tokens, but they keep changing through the day: show them when present, and add a marker while unsettled. */}
       <span
         className="w-20 shrink-0 text-right tabular-nums text-muted-foreground"
         title={item.settled ? undefined : t('accounts.usageOfficialUnsettled')}
@@ -725,10 +725,10 @@ function OfficialUsageDayRow({ item, maxCredits }: { item: WhamDailyUsageItem; m
   )
 }
 
-// OfficialCycleCards 展示当前重置周期的已用官方成本、实时已用百分比与额度估算。
-// 估算 = 已用成本 ÷ 已用百分比：两个上游端点都给不出周额度的绝对值（拆分端点的
-// percent 是区间峰值归一化），这是唯一站得住的推法。百分比只有整数精度，所以给出
-// ±0.5% 的区间，并在不足 10% 时标不可靠。
+// OfficialCycleCards shows the official cost used in the current reset cycle, the live used percentage and the quota estimate.
+// Estimate = used cost / used percentage: neither upstream endpoint gives the absolute weekly quota (the breakdown endpoint's
+// percent is normalized to the interval peak), and this is the only defensible derivation. The percentage has integer precision only, so a
+// +/-0.5% interval is given, and it is marked unreliable below 10%.
 function OfficialCycleCards({ cycle }: { cycle: WhamDailyUsageCycle }) {
   const { t } = useTranslation()
   const reasonText = (() => {
@@ -795,8 +795,8 @@ function OfficialCycleCards({ cycle }: { cycle: WhamDailyUsageCycle }) {
   )
 }
 
-// costMode 决定最右列：usd 显示分摊成本；share 显示窗口内的平均日份额（free 号只有
-// 份额没有 credits）；none 不显示（旧快照的模型维度没有成本）。
+// costMode decides the rightmost column: usd shows the allocated cost; share shows the average daily share over the window (free accounts only have
+// a share and no credits); none shows nothing (the model level of old snapshots has no cost).
 type SplitCostMode = 'usd' | 'share' | 'none'
 
 function OfficialSplitTable({
@@ -810,7 +810,7 @@ function OfficialSplitTable({
   rows: AggregatedSplit[]
   emptyLabel: string
   costMode?: SplitCostMode
-  // 表格下方的说明，例如拆分只覆盖了窗口内的一部分天数。
+  // Note below the table, for example when the breakdown covers only part of the days in the window.
   footnote?: string
 }) {
   const { t } = useTranslation()
@@ -860,28 +860,28 @@ interface AggregatedSplit {
   usd: number
   turns: number
   tokens: number
-  // 窗口内的平均日份额（0~1），只有模型拆分会填；份额不能跨天相加，这里是按天平均。
+  // Average daily share over the window (0~1), filled only by the model breakdown; shares cannot be added across days, so this is a per-day average.
   share: number
 }
 
 interface ModelBreakdownSplit {
   rows: AggregatedSplit[]
-  // 窗口内至少一天同步到了拆分；否则退回 counts.models 的轮次视图。
+  // At least one day in the window synced the breakdown; otherwise fall back to the per-turn view of counts.models.
   hasBreakdown: boolean
-  // 拆分里有任何非零成本；free 号全为 0，此时只有份额可看。
+  // The breakdown has any non-zero cost; free accounts are all 0, in which case only the share can be viewed.
   hasCost: boolean
-  // 有拆分的天数 / 窗口内的天数：老快照只有最近几天带拆分，成本与轮次只统计这些天，
-  // 覆盖不全时表格下方要说明，否则会被当成整个窗口的模型成本。
+  // Days with a breakdown / days in the window: old snapshots only have a breakdown for the latest few days, and cost and turns count only those days,
+  // so when coverage is incomplete the table needs a note below it, otherwise it would be read as the model cost of the whole window.
   breakdownDays: number
   totalDays: number
 }
 
-// aggregateModelBreakdown 把每天的模型×速度份额分摊成本累加到整个窗口。
+// aggregateModelBreakdown accumulates the daily model x speed share-allocated cost over the whole window.
 //
-// 行按 (model, speed) 分；fast（priority 档）单独成行并在标签上标出。轮次来自
-// counts.models（只有模型维度、没有速度维度）：一个模型有 standard 行就记在
-// standard 行上，只有 fast 行就记在 fast 行上，绝不重复计入。counts 里有、拆分里没有
-// 的模型（例如占比为 0 的目录项）补一行零成本，保证轮次不丢。
+// Rows are split by (model, speed); fast (priority tier) gets its own row and is marked on the label. Turns come from
+// counts.models (model dimension only, no speed dimension): if a model has a standard row, they are recorded on the standard row,
+// and if it only has a fast row, on the fast row, never counted twice. A model present in counts but not in the breakdown
+// (for example a catalog entry with a 0 share) gets a zero-cost row, so that no turns are lost.
 function aggregateModelBreakdown(items: WhamDailyUsageItem[], creditsPerUSD: number): ModelBreakdownSplit {
   const withBreakdown = items.filter((item) => item.breakdown_available && Array.isArray(item.breakdown))
   if (withBreakdown.length === 0) {
@@ -922,9 +922,9 @@ function aggregateModelBreakdown(items: WhamDailyUsageItem[], creditsPerUSD: num
     }
   }
 
-  // 轮次按模型汇总，再挂到该模型的 standard 行（没有则挂到它唯一的其他速度行）。
-  // 只统计带拆分的那些天：成本与轮次必须是同一个窗口，否则 7 天的成本配 30 天的轮次
-  // 会让人误读单轮成本。
+  // Turns are summed by model, then attached to that model's standard row (if none, to its only other speed row).
+  // Only the days with a breakdown are counted: cost and turns must cover the same window, otherwise 7 days of cost paired with 30 days of turns
+  // would make the per-turn cost misleading.
   const turnsByModel = new Map<string, number>()
   for (const item of withBreakdown) {
     for (const split of item.models ?? []) {
@@ -970,9 +970,9 @@ function aggregateModelBreakdown(items: WhamDailyUsageItem[], creditsPerUSD: num
   return { rows: out, hasBreakdown: true, hasCost, breakdownDays: days, totalDays: items.length }
 }
 
-// aggregateSplits 把每天的拆分数组按 client_id / model 累加到整个窗口，按成本降序。
-// counts 在模型维度不给 credits，直接用这个函数看模型时只能按轮次排序；模型成本
-// 走 aggregateModelBreakdown。
+// aggregateSplits accumulates the daily split arrays by client_id / model over the whole window, in descending cost order.
+// counts gives no credits at the model level, so using this function directly for models can only sort by turns; the model cost
+// goes through aggregateModelBreakdown.
 function aggregateSplits(
   items: WhamDailyUsageItem[],
   field: 'clients' | 'models',
@@ -994,7 +994,7 @@ function aggregateSplits(
   return [...totals.values()].sort((a, b) => (b.usd - a.usd) || (b.turns - a.turns))
 }
 
-// credits 是官方的原始计费单位,保留两位小数(上游给的是小数),整数则不补零。
+// credits is the official raw billing unit, kept to two decimals (upstream gives decimals); integers are not zero-padded.
 function formatCredits(value: number): string {
   if (!Number.isFinite(value)) return '0'
   const rounded = Math.round(value * 100) / 100
@@ -1010,7 +1010,7 @@ function formatUSD(value: number): string {
   return `$${value.toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`
 }
 
-// 份额（0~1）显示成百分比；小于 0.1% 的碎屑显示 "<0.1%"。
+// A share (0~1) is shown as a percentage; fragments below 0.1% are shown as "<0.1%".
 function formatShare(value: number): string {
   if (!Number.isFinite(value) || value <= 0) return '0%'
   const percent = value * 100
@@ -1146,7 +1146,7 @@ function DetailPage({
                     cy="50%"
                     innerRadius={62}
                     outerRadius={92}
-                    // 与 Usage / Key Usage 门户一致：无扇区间隙，避免环形图出现白缝
+                    // Consistent with the Usage / Key Usage portals: no gap between sectors, to avoid white seams in the donut chart
                     paddingAngle={0}
                     strokeWidth={0}
                   >
@@ -1330,15 +1330,15 @@ function KeyRow({
   )
 }
 
-// CreditSettings 只暴露一个开关：「使用积分顶替限流」。
+// CreditSettings exposes only one switch: "Use credits to bypass rate limits".
 //
-// 历史上这里是两级开关，外层「启用信用」是 commit c72e267 加的前置保险栓
-// （把原本单独生效的 CreditSkipUsageWindow 改成两者同真才生效）。但它自身不产生
-// 任何行为，只是把真正干活的开关藏了起来，反而让人找不到功能。
+// Historically there were two switch levels here, and the outer "Enable credit" was a front fuse added in commit c72e267
+// (it changed the formerly independent CreditSkipUsageWindow so that it takes effect only when both are true). But it produced
+// no behavior of its own and only hid the switch that does the real work, making the feature hard to find.
 //
-// 后端 `CreditEnabled && CreditSkipUsageWindow` 的门控**保持不动**：线上可能存在
-// 只开了其中一列的历史数据，拆掉门控会让它们突然开始绕过限流。这里改为一个开关
-// 同时写两列，行为零变化，只是界面上不再暴露那个没有意义的中间态。
+// The backend gate `CreditEnabled && CreditSkipUsageWindow` is **left unchanged**: production may hold historical data
+// with only one of the columns on, and removing the gate would suddenly make them bypass rate limits. Here one switch
+// writes both columns, so behavior is unchanged and the UI just no longer exposes the meaningless middle state.
 function CreditSettings({
   account,
   creditEnabled,
@@ -1355,8 +1355,8 @@ function CreditSettings({
   onToggle: (value: boolean) => Promise<void>
 }) {
   const { t } = useTranslation()
-  // 积分门的几种状态，用来告诉用户这个开关此刻到底生不生效：
-  // unlimited / has_credits 为 true → 顶替限流；上游报超额或工作区受限 → 已恢复限流；未探测 → 按没积分处理。
+  // The states of the credit gate, telling the user whether this switch actually takes effect right now:
+  // unlimited / has_credits true -> bypass rate limits; upstream reports overage or restricted workspace -> rate limits restored; not probed -> treated as no credits.
   const rawBalance = (account.credits_balance ?? '').trim()
   const balance = Number.parseFloat(rawBalance)
   const unlimited = account.credits_unlimited === true
@@ -1383,7 +1383,7 @@ function CreditSettings({
               : t('accounts.creditSkipWindowHintAvailable'))
           : t('accounts.creditSkipWindowHintDrained')
 
-  // 两列同真才算开。历史数据里只开了一列的组合在后端本就不生效，显示为关是准确的。
+  // It counts as on only when both columns are true. A combination with only one column on in historical data does not take effect in the backend anyway, so showing it as off is accurate.
   const skipActive = creditEnabled && creditSkipWindow
 
   return (
@@ -1400,14 +1400,14 @@ function CreditSettings({
           disabled={savingCredit}
           onClick={() => void onToggle(!skipActive)}
         />
-        {/* 开关开着但当下没积分可花时明确说清：调度不会放行，状态仍是限流。 */}
+        {/* When the switch is on but there are no credits to spend right now, say so clearly: scheduling will not let requests through, and the state is still rate limited. */}
         {skipActive && !hasCredits && (
           <p className="flex items-start gap-1.5 rounded-lg bg-amber-500/10 px-2.5 py-2 text-xs text-amber-700 dark:text-amber-300">
             <AlertTriangle className="mt-0.5 size-3.5 shrink-0" />
             <span>{t('accounts.creditSkipWindowInactive')}</span>
           </p>
         )}
-        {/* 开着且有积分时给出正向确认，避免"开了但不知道有没有用"。 */}
+        {/* When on and credits are available, give positive confirmation, to avoid "turned on but unsure whether it helps". */}
         {skipActive && hasCredits && (
           <p className="flex items-start gap-1.5 rounded-lg bg-teal-500/10 px-2.5 py-2 text-xs text-teal-700 dark:text-teal-300">
             <Coins className="mt-0.5 size-3.5 shrink-0" />
@@ -1419,7 +1419,7 @@ function CreditSettings({
   )
 }
 
-// formatCreditsBalance 把 "1000.0000000000" 这类长小数收敛到 2 位，避免开关说明被撑长。
+// formatCreditsBalance reduces long decimals such as "1000.0000000000" to 2 places, so the switch description is not stretched.
 function formatCreditsBalance(balance: number): string {
   if (!Number.isFinite(balance)) return '-'
   return balance.toFixed(2)
@@ -1445,9 +1445,9 @@ function ResetCreditsSection({
   const [error, setError] = useState<string | null>(null)
   const [done, setDone] = useState(false)
 
-  // 打开弹窗时拉取重置券明细（每张的有效期，issue #322）。
-  // 明细端点同时返回权威可用张数，一并校准本地计数。
-  // 仅对已知有重置次数语义的账号发起（count===null 表示非 Codex 账号或未探测）。
+  // On opening the dialog, fetch the reset voucher details (the validity of each one, issue #322).
+  // The details endpoint also returns the authoritative number of available vouchers, which calibrates the local count.
+  // Only issued for accounts known to have reset-count semantics (count===null means a non-Codex account or not yet probed).
   const loadDetail = useCallback(async () => {
     setDetailError(null)
     try {
@@ -1457,7 +1457,7 @@ function ResetCreditsSection({
         setCount(res.available_count)
       }
     } catch (err) {
-      // 明细拉取失败不影响原有的次数展示与重置按钮,仅提示明细不可用。
+      // A failure to fetch the details does not affect the existing count display and reset button; it only notes that the details are unavailable.
       setDetailError(getErrorMessage(err))
     }
   }, [account.id])
@@ -1467,7 +1467,7 @@ function ResetCreditsSection({
     void loadDetail()
   }, [initial, loadDetail])
 
-  // 次数未知（非 Codex 账号或尚未探测）时不显示该区块。
+  // When the count is unknown (non-Codex account or not yet probed), this block is not shown.
   if (count === null) return null
 
   const handleReset = async () => {
@@ -1482,13 +1482,13 @@ function ResetCreditsSection({
       setCount(next)
       setDone(true)
       setConfirming(false)
-      // 后端已等过用量探针，此时刷新拿到的是新的用量与状态。
+      // The backend has already waited for the usage probe, so the refresh now gets the new usage and status.
       onResetDone?.()
-      // 探针超时未落地（usage_refreshed=false）时补刷一次，否则进度条会停在旧值。
+      // When the probe times out without landing (usage_refreshed=false), refresh once more, otherwise the progress bar stays on the old value.
       if (res.usage_refreshed === false) {
         window.setTimeout(() => onResetDone?.(), 5000)
       }
-      // 重置消耗了一张券,重新拉取明细同步有效期列表。
+      // The reset consumed one voucher; refetch the details to sync the validity list.
       void loadDetail()
     } catch (err) {
       setError(getErrorMessage(err))
@@ -1586,8 +1586,8 @@ function ResetCreditsSection({
   )
 }
 
-// 重置券有效期明细列表：按过期时间升序展示每张券,最快过期的在最前,
-// 并对 7 天内到期的券以醒目色提示,方便优先消耗快过期的券(issue #322)。
+// Reset voucher validity detail list: shows each voucher in ascending expiry order, the soonest to expire first,
+// and highlights vouchers expiring within 7 days, so those closest to expiry are used first (issue #322).
 function ResetCreditExpiryList({
   credits,
   detailError,
@@ -1736,7 +1736,7 @@ function CompactMetric({
   icon: ReactNode
   label: string
   value: string
-  // 副行:展示换算前的原始口径(如美元下面的 credits 原值)。
+  // Sub-row: shows the raw figure before conversion (such as the original credits value under a dollar amount).
   detail?: string
 }) {
   return (
@@ -2125,8 +2125,8 @@ function formatNumber(value: number): string {
   return Math.round(Number(value || 0)).toLocaleString()
 }
 
-// 数字格式统一走 lib/usageFormat：它认「显示完整用量数字」设置，且紧凑单位
-// 覆盖到 B/T（本地实现原来顶到 M 就不再进位，几十亿 token 会显示成 6609M）。
+// Number formatting all goes through lib/usageFormat: it honors the "show full usage numbers" setting, and the compact units
+// extend to B/T (the local implementation used to stop carrying at M, so billions of tokens showed as 6609M).
 function formatCompactNumber(value: number, full: boolean): string {
   return formatUsageNumber(Number(value || 0), full)
 }

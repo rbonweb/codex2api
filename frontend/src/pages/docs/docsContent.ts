@@ -86,7 +86,7 @@ export function buildEndpointSpecs(baseUrl: string): EndpointSpec[] {
         {
           code: 503,
           body: `{
-  "error": {"message": "No available account, please retry later", "type": "server_error", "code": "no_available_account"}
+  "error": {"message": "no available account, please retry later", "type": "server_error", "code": "no_available_account"}
 }`,
         },
         {

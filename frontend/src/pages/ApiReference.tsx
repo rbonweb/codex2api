@@ -702,7 +702,7 @@ export default function ApiReference() {
 }` },
           { code: 503, body: `{
   "error": {
-    "message": "No available accounts, please retry later",
+    "message": "no available account, please retry later",
     "type": "server_error",
     "code": "no_available_account"
   }
