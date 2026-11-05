@@ -21,9 +21,9 @@ const (
 	MinResponseCacheReconstructMaxBytes = int64(8 << 20)
 	MaxResponseCacheReconstructMaxBytes = int64(512 << 20)
 
-	// ResponseCacheWritePolicyAlways 对每个含工具调用的响应都写缓存（历史行为）。
-	// ResponseCacheWritePolicyOnDemand 仅当下游 Key 近期发过 previous_response_id
-	// 续链请求时才写：客户端全量发上下文的部署里写放大直接归零。
+	// ResponseCacheWritePolicyAlways writes the cache for every response that contains tool calls (historical behavior).
+	// ResponseCacheWritePolicyOnDemand writes only when the downstream key recently sent a previous_response_id
+	// chain-continuation request: in deployments where clients send the full context every time, write amplification drops straight to zero.
 	ResponseCacheWritePolicyAlways   = "always"
 	ResponseCacheWritePolicyOnDemand = "on_demand"
 	DefaultResponseCacheWritePolicy  = ResponseCacheWritePolicyAlways
@@ -63,7 +63,7 @@ func ValidResponseCacheWritePolicy(policy string) bool {
 	return policy == ResponseCacheWritePolicyAlways || policy == ResponseCacheWritePolicyOnDemand
 }
 
-// NormalizeResponseCacheWritePolicy 把零值（历史调用方未设置该字段）归一为默认策略。
+// NormalizeResponseCacheWritePolicy normalizes the zero value (a historical caller that did not set this field) to the default policy.
 func NormalizeResponseCacheWritePolicy(policy string) string {
 	if policy == "" {
 		return DefaultResponseCacheWritePolicy

@@ -7,10 +7,10 @@ import (
 	"time"
 )
 
-// 存量升级路径:旧版 prompt_conversation_locks 表没有 identity_kind 列。
-// 全新建表的测试覆盖不到这条路径——它一开始就带新列。本测试构造一张旧表、
-// 灌入一行旧锁,再触发建表逻辑,验证:迁移不报错、旧行回落到 'newapi' 语义、
-// 且随后可正常写入 codex_session 降级身份的新锁。
+// Existing-data upgrade path: the old prompt_conversation_locks table has no identity_kind column.
+// Tests that create a fresh table do not cover this path — the table already has the new column from the start. This test builds an old table,
+// inserts one old lock row, then triggers the table-creation logic, and verifies: the migration reports no error, old rows fall back to 'newapi' semantics,
+// and new locks with the codex_session downgraded identity can be written afterwards.
 func TestPromptConversationLockIdentityKindMigrationFromLegacyTable(t *testing.T) {
 	db, err := New("sqlite", filepath.Join(t.TempDir(), "lock-migration.db"))
 	if err != nil {
@@ -19,13 +19,13 @@ func TestPromptConversationLockIdentityKindMigrationFromLegacyTable(t *testing.T
 	t.Cleanup(func() { _ = db.Close() })
 	ctx := context.Background()
 
-	// New() 启动时已建好新表(含 identity_kind)。为模拟存量旧库,先删除它,
-	// 再建一张缺少 identity_kind 的旧 schema——这正是升级前磁盘上的样子。
+	// New() has already created the new table (with identity_kind) at startup. To simulate an existing old database, drop it first,
+	// then create an old schema that lacks the identity_kind column — this is exactly what is on disk before the upgrade.
 	if _, err := db.conn.ExecContext(ctx, `DROP TABLE IF EXISTS prompt_conversation_locks`); err != nil {
 		t.Fatalf("drop pre-created table: %v", err)
 	}
 
-	// 旧 schema:与当前 DDL 相同,唯独缺少 identity_kind 列。
+	// Old schema: the same as the current DDL, except that it lacks the identity_kind column.
 	legacyDDL := `CREATE TABLE prompt_conversation_locks (
 		id INTEGER PRIMARY KEY AUTOINCREMENT,
 		lock_key VARCHAR(64) NOT NULL UNIQUE,
@@ -61,7 +61,7 @@ func TestPromptConversationLockIdentityKindMigrationFromLegacyTable(t *testing.T
 		t.Fatalf("insert legacy row: %v", err)
 	}
 
-	// 触发建表/迁移逻辑并读回旧行。
+	// Trigger the table-creation/migration logic and read back the old row.
 	if err := db.ensurePromptConversationLocksTable(ctx); err != nil {
 		t.Fatalf("migrate legacy table: %v", err)
 	}
@@ -76,7 +76,7 @@ func TestPromptConversationLockIdentityKindMigrationFromLegacyTable(t *testing.T
 		t.Fatalf("legacy row corrupted after migration: %#v", lock)
 	}
 
-	// 迁移后可写入降级身份的新锁。
+	// After migration, new locks with the downgraded identity can be written.
 	item, activated, err := db.LockPromptConversation(ctx, PromptConversationLockInput{
 		LockKey:            "bb" + repeatByte("0", 62),
 		IdentityKind:       PromptConversationLockIdentityCodexSession,
@@ -95,7 +95,7 @@ func TestPromptConversationLockIdentityKindMigrationFromLegacyTable(t *testing.T
 		t.Fatalf("new lock identity_kind = %q, want codex_session", item.IdentityKind)
 	}
 
-	// 迁移是幂等的:再次触发不应报错或破坏数据。
+	// The migration is idempotent: triggering it again must not error or corrupt data.
 	if err := db.ensurePromptConversationLocksTable(ctx); err != nil {
 		t.Fatalf("second ensure (idempotency): %v", err)
 	}

@@ -168,7 +168,7 @@ func codexInviteRecipientDDL(sqlite bool) []string {
 
 func (db *DB) ensureCodexInviteRecipientTable(ctx context.Context) error {
 	if db == nil || db.conn == nil {
-		return fmt.Errorf("数据库不可用")
+		return fmt.Errorf("database unavailable")
 	}
 	codexInviteRecipientInitMu.Lock()
 	defer codexInviteRecipientInitMu.Unlock()
@@ -265,14 +265,14 @@ func (db *DB) listCodexInviteRecipientsByKeys(ctx context.Context, queryer codex
 func (db *DB) ReserveCodexInviteRecipients(ctx context.Context, reservationID string, senderAccountID int64, programID, entrypoint string, emails []string) ([]CodexInviteRecipient, error) {
 	reservationID = strings.TrimSpace(reservationID)
 	if reservationID == "" {
-		return nil, fmt.Errorf("reservation_id 不能为空")
+		return nil, fmt.Errorf("reservation_id must not be empty")
 	}
 	normalized := normalizeCodexInviteRecipientEmails(emails)
 	if len(normalized) == 0 {
-		return nil, fmt.Errorf("被邀请邮箱不能为空")
+		return nil, fmt.Errorf("invited email must not be empty")
 	}
-	// PostgreSQL 的 ON CONFLICT 可能等待另一事务持有的唯一键；固定锁顺序避免
-	// 两个重叠批次以相反邮箱顺序预占时形成循环等待。
+	// PostgreSQL's ON CONFLICT may wait on a unique key held by another transaction; a fixed lock order avoids
+	// a circular wait when two overlapping batches reserve in opposite email order.
 	sort.Slice(normalized, func(i, j int) bool { return normalized[i].key < normalized[j].key })
 	if err := db.ensureCodexInviteRecipientTable(ctx); err != nil {
 		return nil, err
@@ -318,7 +318,7 @@ func (db *DB) ReserveCodexInviteRecipients(ctx context.Context, reservationID st
 func (db *DB) FinalizeCodexInviteRecipients(ctx context.Context, reservationID, requestID string, upstreamStatus int, evidence []CodexInviteRecipientEvidence, invitedAt time.Time) ([]CodexInviteRecipient, error) {
 	reservationID = strings.TrimSpace(reservationID)
 	if reservationID == "" {
-		return nil, fmt.Errorf("reservation_id 不能为空")
+		return nil, fmt.Errorf("reservation_id must not be empty")
 	}
 	if err := db.ensureCodexInviteRecipientTable(ctx); err != nil {
 		return nil, err
@@ -374,7 +374,7 @@ func (db *DB) FinalizeCodexInviteRecipients(ctx context.Context, reservationID, 
 func (db *DB) MarkCodexInviteRecipientsKnownInvited(ctx context.Context, reservationID, requestID string, upstreamStatus int, evidence []CodexInviteRecipientEvidence, observedAt time.Time) ([]CodexInviteRecipient, error) {
 	reservationID = strings.TrimSpace(reservationID)
 	if reservationID == "" {
-		return nil, fmt.Errorf("reservation_id 不能为空")
+		return nil, fmt.Errorf("reservation_id must not be empty")
 	}
 	items := normalizeCodexInviteRecipientEvidence(evidence)
 	if len(items) == 0 {
@@ -429,7 +429,7 @@ func (db *DB) MarkCodexInviteRecipientsKnownInvited(ctx context.Context, reserva
 func (db *DB) MarkCodexInviteRecipientsUnknown(ctx context.Context, reservationID, requestID string, upstreamStatus int) (int64, error) {
 	reservationID = strings.TrimSpace(reservationID)
 	if reservationID == "" {
-		return 0, fmt.Errorf("reservation_id 不能为空")
+		return 0, fmt.Errorf("reservation_id must not be empty")
 	}
 	if err := db.ensureCodexInviteRecipientTable(ctx); err != nil {
 		return 0, err
@@ -456,7 +456,7 @@ func (db *DB) MarkCodexInviteRecipientsUnknown(ctx context.Context, reservationI
 func (db *DB) ReleaseCodexInviteRecipients(ctx context.Context, reservationID string) (int64, error) {
 	reservationID = strings.TrimSpace(reservationID)
 	if reservationID == "" {
-		return 0, fmt.Errorf("reservation_id 不能为空")
+		return 0, fmt.Errorf("reservation_id must not be empty")
 	}
 	if err := db.ensureCodexInviteRecipientTable(ctx); err != nil {
 		return 0, err

@@ -27,7 +27,7 @@ func TestNormalizeVisibleChannels(t *testing.T) {
 }
 
 func TestVisibleChannelsConfigRoundTrip(t *testing.T) {
-	// 显式空列表必须序列化出 channels 字段，否则读回来会被当成「从未配置」而全部显示。
+	// An explicit empty list must serialize a channels field, otherwise reading it back would be treated as "never configured" and show all.
 	raw, err := json.Marshal(VisibleChannelsConfig{Channels: NormalizeVisibleChannels([]string{})})
 	if err != nil {
 		t.Fatal(err)

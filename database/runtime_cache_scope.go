@@ -11,7 +11,7 @@ func (db *DB) initializeRuntimeCacheScope(ctx context.Context) error {
 	return nil
 }
 
-// RuntimeCacheScope 隔离使用同一个 Redis 的不同数据库，不包含连接凭证原文。
+// RuntimeCacheScope isolates different databases that use the same Redis, and does not include the raw connection credentials.
 func (db *DB) RuntimeCacheScope() string {
 	if db == nil {
 		return ""

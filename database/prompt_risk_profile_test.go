@@ -39,7 +39,7 @@ func TestPromptRiskProfilesSeparatePersonTenantNetworkAndAccount(t *testing.T) {
 	incident.NewAPIPolicyStatus = "verified"
 	incident.NewAPIPlatform = "newapi-prod"
 	incident.NewAPIUserID = "user-42"
-	incident.NewAPIUserName = "示例平台用户"
+	incident.NewAPIUserName = "Example platform user"
 	incident.NewAPIUserEmail = "gateway-a-user@example.com"
 	incident.NewAPIUserGroup = "gateway-a-paid"
 	incident.NewAPIRequestID = "req-cy-42"
@@ -59,7 +59,7 @@ func TestPromptRiskProfilesSeparatePersonTenantNetworkAndAccount(t *testing.T) {
 	if user == nil || !user.IsPerson || user.IdentityConfidence != 100 || user.EventCount != 2 || user.ConfirmedMissCount != 1 || user.RiskScore < 60 {
 		t.Fatalf("signed user profile = %#v", user)
 	}
-	if user.SubjectDisplay != "示例平台用户" || user.NewAPIUserID != "user-42" || user.NewAPIUserEmail != "gateway-a-user@example.com" || user.NewAPIUserGroup != "gateway-a-paid" {
+	if user.SubjectDisplay != "Example platform user" || user.NewAPIUserID != "user-42" || user.NewAPIUserEmail != "gateway-a-user@example.com" || user.NewAPIUserGroup != "gateway-a-paid" {
 		t.Fatalf("signed user identity = %#v", user)
 	}
 	key := findPromptRiskProfile(profiles, PromptRiskSubjectAPIKey)
@@ -77,7 +77,7 @@ func TestPromptRiskProfilesSeparatePersonTenantNetworkAndAccount(t *testing.T) {
 	if err != nil || eventTotal != 2 || len(events) != 1 {
 		t.Fatalf("user events total=%d items=%#v err=%v", eventTotal, events, err)
 	}
-	if events[0].NewAPIUserName != "示例平台用户" || events[0].NewAPIUserID != "user-42" {
+	if events[0].NewAPIUserName != "Example platform user" || events[0].NewAPIUserID != "user-42" {
 		t.Fatalf("event identity = %#v", events[0])
 	}
 	filtered, filteredTotal, err := db.ListPromptRiskProfiles(ctx, PromptRiskProfileQuery{Page: 1, PageSize: 20, Query: "gateway-a-user@example.com"})
@@ -600,9 +600,9 @@ func TestPromptRiskProfileAggregationStaysBoundedWithManyClearedEvents(t *testin
 		t.Fatal(err)
 	}
 
-	// 性能界限门:30k 事件的聚合必须在 2s 内完成。-race 构建的开销是
-	// 5-20 倍(CI 的 2 核 runner 上实测超过 40s 也跑不完 2s 门),竞争
-	// 检测跑的是正确性不是性能,按倍率放宽。
+	// Performance bound gate: aggregating 30k events must finish within 2s. The overhead of a -race build is
+	// 5-20x (on the 2-core CI runner it measured over 40s and still could not pass the 2s gate), so race
+	// detection checks correctness, not performance, so the limit is relaxed by the multiplier.
 	deadline := 2 * time.Second
 	if raceDetectorEnabled {
 		deadline = 120 * time.Second

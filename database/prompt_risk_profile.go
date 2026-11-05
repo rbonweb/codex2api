@@ -983,8 +983,8 @@ func (db *DB) promptRiskActiveRestrictionSubjects(ctx context.Context, conversat
 			case PromptConversationLockIdentityCodexSession:
 				confidence = 50
 			case PromptConversationLockIdentityFingerprintReplay:
-				// 指纹重放锁只绑定 API Key、客户端 IP 与提示词指纹,不能解释
-				// 为人员身份;合成画像仅为了让活动冷却在管理端可见、可解锁。
+				// The fingerprint replay lock only binds the API Key, the client IP and the prompt fingerprint, and must not be read as
+				// a person's identity; the synthetic profile exists only so the activity cooldown is visible and unlockable in the admin panel.
 				confidence = 20
 				display = "replay-" + shortRiskKey(sessionHash)
 			}
@@ -1047,8 +1047,8 @@ func promptRiskActiveProfileMatchesQuery(profile PromptRiskProfile, query Prompt
 	if level := strings.TrimSpace(query.RiskLevel); level != "" && level != "all" && profile.RiskLevel != level {
 		return false
 	}
-	// 与 SQL 聚合侧的过滤语义保持一致:合成的活动锁画像没有事件计数,
-	// 不得泄漏进 cy_only / activity_state 过滤结果。
+	// Consistent with the filter semantics on the SQL aggregation side: the synthetic activity-lock profile has no event count,
+	// and must not leak into the cy_only / activity_state filter results.
 	if query.UpstreamCYOnly && profile.UpstreamCYCount == 0 {
 		return false
 	}

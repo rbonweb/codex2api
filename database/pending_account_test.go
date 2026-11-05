@@ -25,7 +25,7 @@ func TestPendingAccountTransaction(t *testing.T) {
 					ctx := context.Background()
 					if failure != "none" {
 						removeFault := injectPendingAccountFailure(t, db, failure)
-						id, err := db.InsertPendingAccountWithCredentials(ctx, "pending", map[string]interface{}{"access_token": "fixture-token"}, "", "联系人: O'Reilly", []string{"self-service", "待审核"})
+						id, err := db.InsertPendingAccountWithCredentials(ctx, "pending", map[string]interface{}{"access_token": "fixture-token"}, "", "contact: O'Reilly", []string{"self-service", "pending review"})
 						wantError := "injected"
 						if driver == "sqlite" && failure == "commit" {
 							wantError = "FOREIGN KEY constraint failed"
@@ -40,7 +40,7 @@ func TestPendingAccountTransaction(t *testing.T) {
 						removeFault()
 					}
 					// Retry uses exactly the same identity and review metadata.
-					id, err := db.InsertPendingAccountWithCredentials(ctx, "pending", map[string]interface{}{"access_token": "fixture-token"}, "", "联系人: O'Reilly", []string{"self-service", "待审核"})
+					id, err := db.InsertPendingAccountWithCredentials(ctx, "pending", map[string]interface{}{"access_token": "fixture-token"}, "", "contact: O'Reilly", []string{"self-service", "pending review"})
 					if err != nil {
 						t.Fatal(err)
 					}
@@ -48,7 +48,7 @@ func TestPendingAccountTransaction(t *testing.T) {
 					if err != nil {
 						t.Fatal(err)
 					}
-					if row.Enabled || row.Note != "联系人: O'Reilly" || !reflect.DeepEqual(row.Tags, []string{"self-service", "待审核"}) || row.CredentialFamilyID == "" || row.GetCredential("access_token") != "fixture-token" {
+					if row.Enabled || row.Note != "contact: O'Reilly" || !reflect.DeepEqual(row.Tags, []string{"self-service", "pending review"}) || row.CredentialFamilyID == "" || row.GetCredential("access_token") != "fixture-token" {
 						t.Fatalf("incomplete pending account: enabled=%v note=%q tags=%v family=%q", row.Enabled, row.Note, row.Tags, row.CredentialFamilyID)
 					}
 				})

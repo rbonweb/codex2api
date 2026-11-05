@@ -60,7 +60,7 @@ func (db *DB) ListAccountListProjection(ctx context.Context, channel string) ([]
 		` + fromClause + ` WHERE ` + where + ` ORDER BY id`
 	rows, err := db.conn.QueryContext(ctx, query)
 	if err != nil {
-		return nil, fmt.Errorf("查询账号列表投影失败: %w", err)
+		return nil, fmt.Errorf("failed to query account list projection: %w", err)
 	}
 	defer rows.Close()
 	result := make([]*AccountRow, 0)
@@ -98,21 +98,21 @@ func scanAccountListProjection(scanner accountProjectionScanner) (*AccountRow, e
 		&avatarURL, &verifiedEmail, &projectID,
 		&subscriptionExpiresAt, &subscriptionSyncState, &subscriptionGraceUntil,
 	); err != nil {
-		return nil, fmt.Errorf("扫描账号列表投影失败: %w", err)
+		return nil, fmt.Errorf("failed to scan account list projection: %w", err)
 	}
 	row.Tags = decodeTagsValue(tagsRaw)
 	var err error
 	row.CooldownUntil, err = parseDBNullTimeValue(cooldownRaw)
 	if err != nil {
-		return nil, fmt.Errorf("解析 cooldown_until 失败: %w", err)
+		return nil, fmt.Errorf("failed to parse cooldown_until: %w", err)
 	}
 	row.CreatedAt, err = parseDBTimeValue(createdRaw)
 	if err != nil {
-		return nil, fmt.Errorf("解析 created_at 失败: %w", err)
+		return nil, fmt.Errorf("failed to parse created_at: %w", err)
 	}
 	row.UpdatedAt, err = parseDBTimeValue(updatedRaw)
 	if err != nil {
-		return nil, fmt.Errorf("解析 updated_at 失败: %w", err)
+		return nil, fmt.Errorf("failed to parse updated_at: %w", err)
 	}
 	row.Credentials = map[string]interface{}{
 		"upstream_type": upstreamType,
@@ -120,8 +120,8 @@ func scanAccountListProjection(scanner accountProjectionScanner) (*AccountRow, e
 		"base_url":      baseURL,
 		"plan_type":     planType,
 	}
-	// 调度优先级参与列表排序(issue 截图反馈:排序不生效),投影缺了它会让
-	// 快照全员按 0 打平、退化成 ID 序。以文本取出交给 GetCredentialInt64 解析。
+	// Scheduling priority takes part in list sorting (issue screenshot feedback: sorting did not take effect); without it in the projection,
+	// all snapshots would tie at 0 and degrade to ID order. It is read as text and parsed by GetCredentialInt64.
 	if trimmed := strings.TrimSpace(schedulerPriority); trimmed != "" {
 		row.Credentials["scheduler_priority"] = trimmed
 	}
@@ -134,8 +134,8 @@ func scanAccountListProjection(scanner accountProjectionScanner) (*AccountRow, e
 	if trimmed := strings.TrimSpace(projectID); trimmed != "" {
 		row.Credentials["project_id"] = trimmed
 	}
-	// 订阅状态筛选按快照行计算业务状态（到期/宽限期/同步状态）;投影缺了这三个键会让
-	// 全部账号被判成"状态未知"。
+	// Subscription status filtering computes the business status (expiry / grace period / sync status) from the snapshot row; without these three keys in the projection,
+	// every account would be classified as "status unknown".
 	if trimmed := strings.TrimSpace(subscriptionExpiresAt); trimmed != "" {
 		row.Credentials["subscription_expires_at"] = trimmed
 	}
@@ -199,7 +199,7 @@ func (db *DB) ListActiveByIDs(ctx context.Context, ids []int64) ([]*AccountRow, 
 		AND id IN (` + strings.Join(placeholders, ",") + `) ORDER BY id`
 	rows, err := db.conn.QueryContext(ctx, query, args...)
 	if err != nil {
-		return nil, fmt.Errorf("批量查询账号失败: %w", err)
+		return nil, fmt.Errorf("failed to batch query accounts: %w", err)
 	}
 	defer rows.Close()
 	result := make([]*AccountRow, 0, len(ids))
@@ -213,7 +213,7 @@ func (db *DB) ListActiveByIDs(ctx context.Context, ids []int64) ([]*AccountRow, 
 			&row.BaseConcurrencyOverride, &tagsRaw, &row.Note, &createdRaw, &updatedRaw,
 			&row.CredentialGeneration, &row.CredentialFamilyID,
 		); err != nil {
-			return nil, fmt.Errorf("扫描账号行失败: %w", err)
+			return nil, fmt.Errorf("failed to scan account row: %w", err)
 		}
 		row.Credentials = decodeCredentials(credentialsRaw)
 		row.Tags = decodeTagsValue(tagsRaw)

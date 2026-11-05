@@ -8,18 +8,18 @@ import (
 	"time"
 )
 
-// 自然日限额(issue #460)的聚合边界:since 之前的不算、499 不算、OldestAt 取窗口内最早一笔。
+// Aggregation boundaries of the natural-day limit (issue #460): rows before since are not counted, 499 is not counted, and OldestAt is the earliest row within the window.
 func TestGetAPIKeyUsageSinceAggregatesFromBoundary(t *testing.T) {
 	db, err := New("sqlite", filepath.Join(t.TempDir(), "daily.db"))
 	if err != nil {
-		t.Fatalf("New(sqlite) 返回错误: %v", err)
+		t.Fatalf("New(sqlite) returned error: %v", err)
 	}
 	defer db.Close()
 
 	ctx := context.Background()
 	keyID, err := db.InsertAPIKey(ctx, "daily", "sk-daily-usage-a-1234567890")
 	if err != nil {
-		t.Fatalf("InsertAPIKey 返回错误: %v", err)
+		t.Fatalf("InsertAPIKey returned error: %v", err)
 	}
 
 	insert := func(statusCode, totalTokens int, userBilled float64, at time.Time) {
@@ -35,14 +35,14 @@ func TestGetAPIKeyUsageSinceAggregatesFromBoundary(t *testing.T) {
 	now := time.Now().UTC().Truncate(time.Second)
 	since := now.Add(-2 * time.Hour)
 	oldest := now.Add(-1 * time.Hour)
-	insert(200, 700, 7.00, now.Add(-3*time.Hour)) // since 之前,不计入
+	insert(200, 700, 7.00, now.Add(-3*time.Hour)) // before since, not counted
 	insert(200, 100, 0.10, oldest)
 	insert(200, 50, 0.05, now)
-	insert(499, 900, 9.99, now) // 客户端取消不计入
+	insert(499, 900, 9.99, now) // client cancellation is not counted
 
 	usage, err := db.GetAPIKeyUsageSince(ctx, keyID, since)
 	if err != nil {
-		t.Fatalf("GetAPIKeyUsageSince 返回错误: %v", err)
+		t.Fatalf("GetAPIKeyUsageSince returned error: %v", err)
 	}
 	if usage.Requests != 2 || usage.Tokens != 150 || math.Abs(usage.UserBilled-0.15) > 1e-9 {
 		t.Fatalf("usage = %+v, want 2 requests / 150 tokens / $0.15", usage)
@@ -52,18 +52,18 @@ func TestGetAPIKeyUsageSinceAggregatesFromBoundary(t *testing.T) {
 	}
 }
 
-// 自助报表的窗口语义:today 是 fixed 且 reset_at=次日零点;滑动窗口带 decay_at=OldestAt+窗口长度。
+// Window semantics of the self-service report: today is fixed with reset_at = midnight of the next day; the sliding window carries decay_at = OldestAt + window length.
 func TestGetAPIKeySelfUsageReportWindowMetadata(t *testing.T) {
 	db, err := New("sqlite", filepath.Join(t.TempDir(), "daily-report.db"))
 	if err != nil {
-		t.Fatalf("New(sqlite) 返回错误: %v", err)
+		t.Fatalf("New(sqlite) returned error: %v", err)
 	}
 	defer db.Close()
 
 	ctx := context.Background()
 	keyID, err := db.InsertAPIKey(ctx, "daily-report", "sk-daily-usage-b-1234567890")
 	if err != nil {
-		t.Fatalf("InsertAPIKey 返回错误: %v", err)
+		t.Fatalf("InsertAPIKey returned error: %v", err)
 	}
 	now := time.Now()
 	if _, err := db.conn.ExecContext(ctx, `
@@ -75,7 +75,7 @@ func TestGetAPIKeySelfUsageReportWindowMetadata(t *testing.T) {
 
 	report, err := db.GetAPIKeySelfUsageReport(ctx, keyID, time.Time{}, now, 1, 10)
 	if err != nil {
-		t.Fatalf("GetAPIKeySelfUsageReport 返回错误: %v", err)
+		t.Fatalf("GetAPIKeySelfUsageReport returned error: %v", err)
 	}
 
 	today := report.Windows.Today

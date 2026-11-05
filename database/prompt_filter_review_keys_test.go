@@ -30,8 +30,8 @@ func TestCompareAndSwapPromptFilterReviewAPIKeysRejectsStaleSnapshot(t *testing.
 	}
 }
 
-// SQL TRIM 只去空格,存量值带换行/制表符时曾导致 CAS 永远匹配不上;
-// 现按原值精确比较,调用方传入的 expected 必须是未 trim 的存储原值。
+// SQL TRIM only strips spaces, so when stored values carried newlines or tabs, the CAS could never match;
+// it now compares the raw value exactly, so the expected value passed by the caller must be the untrimmed stored raw value.
 func TestCompareAndSwapPromptFilterReviewAPIKeysMatchesPaddedStoredValue(t *testing.T) {
 	db, err := New("sqlite", filepath.Join(t.TempDir(), "review-keys.db"))
 	if err != nil {
@@ -53,8 +53,8 @@ func TestCompareAndSwapPromptFilterReviewAPIKeysMatchesPaddedStoredValue(t *test
 	}
 }
 
-// 设置保存未携带审查 Key 字段时必须保留数据库现值,防止别的实例用
-// 过期内存快照把已删除的 Key 写回(PreservePromptFilterReviewAPIKey)。
+// When a settings save does not carry the review key field, the current database value must be kept, to prevent another instance using
+// a stale in-memory snapshot to write back a deleted key (PreservePromptFilterReviewAPIKey).
 func TestUpdateSystemSettingsPreservesReviewAPIKeyWhenFlagged(t *testing.T) {
 	db, err := New("sqlite", filepath.Join(t.TempDir(), "review-keys.db"))
 	if err != nil {

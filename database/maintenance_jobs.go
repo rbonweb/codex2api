@@ -150,7 +150,7 @@ func (db *DB) FailMaintenanceJob(ctx context.Context, entityID int64, jobKind, o
 	if failure != nil {
 		message = failure.Error()
 		if len(message) > 500 {
-			// 中文错误信息按字节截断会产生非法 UTF-8,PostgreSQL 会拒绝该参数。
+			// Cutting a Chinese error message by bytes produces invalid UTF-8, and PostgreSQL rejects that parameter.
 			message = strings.ToValidUTF8(message[:500], "")
 		}
 	}

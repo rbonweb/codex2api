@@ -1,6 +1,6 @@
 package database
 
-// GetDefaultModelPricing 返回内置计费规则的副本，不读取管理员或自动同步覆盖。
+// GetDefaultModelPricing returns a copy of the built-in billing rules and does not read admin or auto-sync overrides.
 func GetDefaultModelPricing(model string) *ModelPricing {
 	pricing := *baseModelPricing(normalizeBillingModelName(model), CanonicalBillingModelKey(model))
 	return &pricing

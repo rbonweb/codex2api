@@ -7,19 +7,19 @@ import (
 	"time"
 )
 
-// AccountHealthBucket 是单个时间窗口内某账号的请求成败计数。
+// AccountHealthBucket is the request success/failure count of one account within one time window.
 type AccountHealthBucket struct {
 	Success int `json:"success"`
 	Failed  int `json:"failed"`
 }
 
-// GetAccountsHealthBuckets 返回每个账号最近 blockCount 个时间桶（由旧到新）的请求
-// 成败计数，每个桶跨度 bucketDuration，整体覆盖 [now-blockCount*dur, now]。用于账号
-// 管理页的「健康状态」条。
+// GetAccountsHealthBuckets returns, for each account, the request success/failure counts of its most recent blockCount time buckets (oldest first),
+// each bucket spanning bucketDuration, covering [now-blockCount*dur, now] overall. It is used for the "health status" bar
+// on the account admin page.
 //
-// 状态码 2xx 记为成功，其余记为失败；499（客户端主动取消）忽略，与图表聚合
-// (getChartAggregation) 的口径保持一致。PostgreSQL 在库内完成分桶；SQLite
-// 保留逐行分桶的兼容实现。
+// Status codes 2xx count as success and the rest as failure; 499 (client cancelled) is ignored, keeping the same rule as the chart
+// aggregation (getChartAggregation). PostgreSQL does the bucketing inside the database; SQLite
+// keeps the row-by-row bucketing compatible implementation.
 func (db *DB) GetAccountsHealthBuckets(ctx context.Context, now time.Time, blockCount int, bucketDuration time.Duration) (map[int64][]AccountHealthBucket, error) {
 	return db.GetAccountsHealthBucketsByIDs(ctx, nil, now, blockCount, bucketDuration)
 }

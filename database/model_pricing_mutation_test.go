@@ -48,7 +48,7 @@ func TestAstraPricingStaysFlatAcrossSettingsLoadAndMutation(t *testing.T) {
 	SetModelPricingOverrides(loaded)
 	assertFloatEqual(t, CalculateCost(300000, 1000, 100000, "gpt-6-astra", "fast"), 8.55)
 
-	// 所有手工/官方/JSON 同步共用此写入路径，Astra 长档应保持可生效。
+	// All manual, official and JSON sync paths share this write path, so Astra's long-context tier must stay effective.
 	var incoming map[string]ModelPricingOverride
 	if err := json.Unmarshal([]byte(legacy), &incoming); err != nil {
 		t.Fatalf("decode incoming pricing: %v", err)
@@ -64,7 +64,7 @@ func TestAstraPricingStaysFlatAcrossSettingsLoadAndMutation(t *testing.T) {
 	if err != nil {
 		t.Fatalf("read persisted pricing: %v", err)
 	}
-	// 直接解码存储值，避免读取时的归一化掩盖持久化遗漏。
+	// Decode the stored value directly so read-time normalization does not hide a persistence gap.
 	var stored map[string]ModelPricingOverride
 	if err := json.Unmarshal([]byte(settings.ModelPricingOverrides), &stored); err != nil {
 		t.Fatalf("decode stored pricing: %v", err)

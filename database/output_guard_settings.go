@@ -162,9 +162,9 @@ func (db *DB) UpdateOutputGuardSettings(ctx context.Context, update OutputGuardS
 	return committed, nil
 }
 
-// UpdateSystemSettingsWithOutputGuard 在同一个事务内保存全局设置和输出防护设置。
-// 防护列与 system_settings 的其余列同属一行；任一校验或写入失败时整体回滚，
-// 避免“整体保存失败但防护配置已单独提交并热应用”的部分提交。
+// UpdateSystemSettingsWithOutputGuard saves the global settings and the output guard settings in the same transaction.
+// The guard columns are in the same row as the other system_settings columns; if any validation or write fails, the whole thing rolls back,
+// to avoid a partial commit where the save fails overall but the guard config was already committed and hot-applied on its own.
 func (db *DB) UpdateSystemSettingsWithOutputGuard(ctx context.Context, settings *SystemSettings, update OutputGuardSettingsUpdate) (OutputGuardSettings, error) {
 	var committed OutputGuardSettings
 	err := db.withWriteTx(ctx, func(tx *sql.Tx) error {
@@ -181,9 +181,9 @@ func (db *DB) UpdateSystemSettingsWithOutputGuard(ctx context.Context, settings 
 	return committed, nil
 }
 
-// updateOutputGuardSettingsTx 在调用方提供的事务内读取当前防护配置、合并更新、
-// 校验并递增 generation。generation 的读取与写入同处一个事务，因此并发保存
-// 不会丢更新或产生重复 generation。
+// updateOutputGuardSettingsTx, inside a transaction supplied by the caller, reads the current guard config, merges the update,
+// validates it and increments generation. The generation read and write are in the same transaction, so concurrent saves
+// do not lose updates or produce duplicate generations.
 func (db *DB) updateOutputGuardSettingsTx(ctx context.Context, tx *sql.Tx, update OutputGuardSettingsUpdate) (OutputGuardSettings, error) {
 	current := DefaultOutputGuardSettings()
 	if err := scanOutputGuardSettings(

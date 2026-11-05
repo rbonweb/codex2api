@@ -8,20 +8,20 @@ import (
 	"strings"
 )
 
-// 导入后的邀请引导配置存放在 system_settings.invite_guide_config。刻意用独立的小 UPDATE 读写，不进 SaveSettings 的巨型 UPSERT——那条语句的占位符已经排到 $119，每加一列都要整体顺移。
+// The post-import invite guide config is stored in system_settings.invite_guide_config. It is read and written with a separate small UPDATE on purpose, not through the giant UPSERT in SaveSettings: that statement's placeholders already run up to $119, and every added column would shift them all.
 
-// InviteGuideDefaultEnabled 是用户从未做过选择时的默认值：默认弹出引导。
+// InviteGuideDefaultEnabled is the default when the user has never made a choice: show the guide by default.
 const InviteGuideDefaultEnabled = true
 
-// InviteGuideConfig 控制导入账号后是否弹出邀请积分引导。
+// InviteGuideConfig controls whether the invite-credits guide pops up after accounts are imported.
 //
-// Enabled 用指针区分「还没做过选择」与「明确关掉了」。列默认值是 '{}'，
-// 用裸 bool 会把「没配过」读成 false，导致默认关闭——与预期相反。
+// Enabled uses a pointer to tell "never chosen" apart from "explicitly turned off". The column default is '{}',
+// a bare bool would read "never configured" as false and turn the default off, which is the opposite of what is intended.
 type InviteGuideConfig struct {
 	Enabled *bool `json:"enabled,omitempty"`
 }
 
-// IsEnabled 解析出实际生效的开关值。
+// IsEnabled resolves the effective value of the switch.
 func (c InviteGuideConfig) IsEnabled() bool {
 	if c.Enabled == nil {
 		return InviteGuideDefaultEnabled
@@ -29,8 +29,8 @@ func (c InviteGuideConfig) IsEnabled() bool {
 	return *c.Enabled
 }
 
-// LoadInviteGuideConfig 读取配置。未配置、空串或 JSON 损坏都退回默认值——
-// 引导弹窗是锦上添花的功能，不该因为一行坏数据让设置页打不开。
+// LoadInviteGuideConfig reads the config. A missing, empty or corrupt JSON value falls back to the defaults—
+// the guide popup is a nice-to-have feature, and one bad row must not stop the settings page from opening.
 func (db *DB) LoadInviteGuideConfig(ctx context.Context) (InviteGuideConfig, error) {
 	var cfg InviteGuideConfig
 	var raw string
@@ -54,7 +54,7 @@ func (db *DB) LoadInviteGuideConfig(ctx context.Context) (InviteGuideConfig, err
 	return cfg, nil
 }
 
-// SaveInviteGuideConfig 持久化配置。
+// SaveInviteGuideConfig persists the config.
 func (db *DB) SaveInviteGuideConfig(ctx context.Context, cfg InviteGuideConfig) error {
 	payload, err := json.Marshal(cfg)
 	if err != nil {

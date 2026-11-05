@@ -18,10 +18,10 @@ type AccountGroup struct {
 	MemberCount             int64
 	AutoPause5hThreshold    float64
 	AutoPause7dThreshold    float64
-	// ProxyURLs 是组级代理列表(issue #479):组内账号未配置自身代理时按
-	// 账号 ID 粘性使用其中一条;空列表表示不设置,回退到全局代理链。
+	// ProxyURLs is the group-level proxy list (issue #479): accounts in the group without their own proxy configured stick to one of them by account ID;
+	// an empty list means not set, falling back to the global proxy chain.
 	ProxyURLs []string
-	// Channel 是分组渠道(现仅 codex):成员写入路径会校验账号平台与组渠道一致。
+	// Channel is the group channel (currently codex only): the member write path validates that the account platform matches the group channel.
 	Channel   string
 	CreatedAt time.Time
 	UpdatedAt time.Time
@@ -31,7 +31,7 @@ const (
 	AccountGroupChannelCodex = "codex"
 )
 
-// NormalizeAccountGroupChannel 归一分组渠道:只剩 codex 一个渠道,任何输入都按 codex。
+// NormalizeAccountGroupChannel normalizes the group channel: only codex remains, so any input is treated as codex.
 func NormalizeAccountGroupChannel(channel string) string {
 	return AccountGroupChannelCodex
 }
@@ -113,9 +113,9 @@ type UpdateAccountGroupOpts struct {
 	AutoPause5hThreshold    *float64
 	AutoPause7dThreshold    *float64
 	BaseConcurrencyOverride OptionalNullInt64
-	// ProxyURLs 为 nil 表示不修改;空切片表示清空组代理。
+	// ProxyURLs nil means do not change; an empty slice means clear the group proxy.
 	ProxyURLs *[]string
-	// Channel 为 nil 表示不修改;handler 层保证仅空组可改渠道。
+	// Channel nil means do not change; the handler layer guarantees that only empty groups may change the channel.
 	Channel *string
 }
 
@@ -282,9 +282,9 @@ func pruneDeletedGroupFromAPIKeyScopes(ctx context.Context, tx *sql.Tx, sqlite b
 	return nil
 }
 
-// pruneDeletedScopeFromAPIKeyLimits 清理指向已删除分组 / 账号的 scope 维度限额
-// (api_keys.limits.scope_limits)。与 allowed_group_ids 的处理不同,这里即使清空也无副作用:
-// 少一条限额只会让该 Key 恢复不限,不会把它变成能访问更多账号。
+// pruneDeletedScopeFromAPIKeyLimits removes scope-dimension limits that point to deleted groups / accounts
+// (api_keys.limits.scope_limits). Unlike the allowed_group_ids handling, this has no side effect even when emptied:
+// removing a limit only lets that key become unlimited again, it does not give it access to more accounts.
 func pruneDeletedScopeFromAPIKeyLimits(ctx context.Context, tx *sql.Tx, sqlite bool, scopeType string, scopeID int64) error {
 	if scopeID <= 0 {
 		return nil
@@ -388,10 +388,10 @@ func (db *DB) SetAccountGroups(ctx context.Context, accountID int64, groupIDs []
 	return nil
 }
 
-// BatchSetAccountGroups 在单个事务里把一批账号的分组归属整体替换成 groupIDs。
-// 导入时给「本次新建的账号」统一绑定分组用它，比逐个 SetAccountGroups 少 N 次事务。
-// accountIDs 或 groupIDs 为空时直接返回（空分组表示"不绑"，不是"清空"，
-// 因为导入路径不该顺手抹掉别处刚设好的归属）。
+// BatchSetAccountGroups replaces the group membership of a batch of accounts with groupIDs as a whole, in a single transaction.
+// The import path uses it to bind one group to "accounts created in this import", which saves N transactions compared with per-account SetAccountGroups.
+// It returns immediately when accountIDs or groupIDs is empty (an empty group list means "do not bind", not "clear"),
+// because the import path should not wipe out memberships that were just set elsewhere.
 func (db *DB) BatchSetAccountGroups(ctx context.Context, accountIDs []int64, groupIDs []int64) error {
 	accountIDs = normalizeIDSlice(accountIDs)
 	groupIDs = normalizeIDSlice(groupIDs)

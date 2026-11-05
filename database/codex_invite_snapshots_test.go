@@ -24,7 +24,7 @@ func TestCodexInviteSnapshotRoundTrip(t *testing.T) {
 	now := time.Now().UTC().Truncate(time.Second)
 
 	t.Run("missing returns nil without error", func(t *testing.T) {
-		// 「还没查过」是正常状态，不该冒出 sql.ErrNoRows 让调用方去分辨。
+		// "Not queried yet" is a normal state; it should not surface sql.ErrNoRows for callers to tell apart.
 		snap, err := db.GetCodexInviteSnapshot(ctx, 1, CodexInviteSnapshotEligibility, "p|persistent")
 		if err != nil {
 			t.Fatalf("unexpected error: %v", err)
@@ -78,8 +78,8 @@ func TestCodexInviteSnapshotRoundTrip(t *testing.T) {
 	})
 }
 
-// 作用域必须区分 limit 不同的跟踪查询，否则 limit=10 写下的快照会被 limit=100
-// 的请求当成自己的结果返回。
+// The scope must distinguish tracking queries with different limits, otherwise the snapshot written by limit=10
+// would be returned as the result of a limit=100 request.
 func TestCodexInviteSnapshotScopeIsolation(t *testing.T) {
 	ctx := context.Background()
 	db := newInviteSnapshotTestDB(t)
@@ -115,7 +115,7 @@ func TestCodexInviteSnapshotScopeIsolation(t *testing.T) {
 	}
 }
 
-// 重新授权后仍在途的旧探针回来时，不能压掉新一代凭据写下的快照。
+// After re-authorization, an old probe still in flight when it returns must not suppress the snapshot written under the new credential generation.
 func TestCodexInviteSnapshotGenerationFence(t *testing.T) {
 	ctx := context.Background()
 	db := newInviteSnapshotTestDB(t)
@@ -164,7 +164,7 @@ func TestCodexInviteSnapshotDeleteAndPurge(t *testing.T) {
 		}
 	}
 	seed(11, now.Add(time.Hour))
-	seed(12, now.Add(-time.Minute)) // 已过期
+	seed(12, now.Add(-time.Minute)) // expired
 
 	if err := db.DeleteCodexInviteSnapshots(ctx, 11); err != nil {
 		t.Fatalf("DeleteCodexInviteSnapshots: %v", err)

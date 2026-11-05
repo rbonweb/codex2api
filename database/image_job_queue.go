@@ -119,7 +119,7 @@ func (db *DB) RenewImageJobLease(ctx context.Context, id int64, owner string, un
 // Never resubmit an interrupted upstream request: its billing/result may be
 // unknown. Queued work is deliberately preserved across restarts.
 func (db *DB) ExpireImageJobLeases(ctx context.Context, now time.Time) error {
-	_, err := db.conn.ExecContext(ctx, `UPDATE image_generation_jobs SET status=$1,error_message=$2,completed_at=CURRENT_TIMESTAMP WHERE status=$3 AND queue_lease_until<$4`, ImageJobFailed, "图片任务执行中断，结果未知；未自动重新提交上游，请核对后手动重试", ImageJobRunning, now.Unix())
+	_, err := db.conn.ExecContext(ctx, `UPDATE image_generation_jobs SET status=$1,error_message=$2,completed_at=CURRENT_TIMESTAMP WHERE status=$3 AND queue_lease_until<$4`, ImageJobFailed, "image job was interrupted, result unknown; not automatically resubmitted upstream, please verify and retry manually", ImageJobRunning, now.Unix())
 	return err
 }
 

@@ -48,7 +48,7 @@ func (db *DB) GetCodexClientVersionCache(ctx context.Context) ([]CodexClientVers
 	return result, rows.Err()
 }
 
-// MutateCodexClientVersionCache 串行合并单个目标的缓存，不回写系统设置。
+// MutateCodexClientVersionCache merges the cache for a single target serially and does not write back to system settings.
 func (db *DB) MutateCodexClientVersionCache(ctx context.Context, key CodexClientVersionCacheKey, update func(string) (string, error)) (string, error) {
 	if db == nil || db.conn == nil {
 		return "", errors.New("database unavailable")

@@ -5,7 +5,7 @@ import (
 	"time"
 )
 
-// UpdateUsageSnapshot5h 持久化 5h 用量快照（无 7d 数据时使用）
+// UpdateUsageSnapshot5h persists the 5h usage snapshot (used when there is no 7d data)
 func (db *DB) UpdateUsageSnapshot5h(ctx context.Context, id int64, pct5h float64, reset5hAt time.Time, updatedAt time.Time) error {
 	return db.UpdateCredentials(ctx, id, map[string]interface{}{
 		"codex_5h_used_percent":     pct5h,
@@ -14,8 +14,8 @@ func (db *DB) UpdateUsageSnapshot5h(ctx context.Context, id int64, pct5h float64
 	})
 }
 
-// ClearUsageSnapshot5h 清除 credentials 中的 5h 窗口字段（上游未返回 5h 时调用，issue #382）。
-// 使用 null 写入：GetCredential / 加载路径会把 null 当作缺失，重启后不会再 hydrate 5h。
+// ClearUsageSnapshot5h clears the 5h window fields in credentials (called when upstream returns no 5h data, issue #382).
+// Writes null: GetCredential and the load path treat null as missing, so 5h is not hydrated again after a restart.
 func (db *DB) ClearUsageSnapshot5h(ctx context.Context, id int64) error {
 	return db.UpdateCredentials(ctx, id, map[string]interface{}{
 		"codex_5h_used_percent":     nil,
@@ -24,7 +24,7 @@ func (db *DB) ClearUsageSnapshot5h(ctx context.Context, id int64) error {
 	})
 }
 
-// UpdateUsageSnapshotSpark 持久化独立 spark 5h 用量快照。
+// UpdateUsageSnapshotSpark persists the separate spark 5h usage snapshot.
 func (db *DB) UpdateUsageSnapshotSpark(ctx context.Context, id int64, pct float64, resetAt time.Time, updatedAt time.Time) error {
 	return db.UpdateCredentials(ctx, id, map[string]interface{}{
 		"codex_spark_used_percent":     pct,
@@ -33,7 +33,7 @@ func (db *DB) UpdateUsageSnapshotSpark(ctx context.Context, id int64, pct float6
 	})
 }
 
-// ClearUsageSnapshotSpark 清除 credentials 中的 spark 窗口字段。
+// ClearUsageSnapshotSpark clears the spark window fields in credentials.
 func (db *DB) ClearUsageSnapshotSpark(ctx context.Context, id int64) error {
 	return db.UpdateCredentials(ctx, id, map[string]interface{}{
 		"codex_spark_used_percent":     nil,

@@ -170,7 +170,7 @@ func (db *DB) GetModelCooldownSettings(ctx context.Context) (ModelCooldownSettin
 		if err == sql.ErrNoRows {
 			return defaults, nil
 		}
-		return defaults, fmt.Errorf("读取模型冷却设置失败: %w", err)
+		return defaults, fmt.Errorf("failed to read model cooldown settings: %w", err)
 	}
 	value.setUnsupportedCooldownSeconds(unsupportedSeconds)
 	return NormalizeModelCooldownSettings(value), nil
@@ -205,7 +205,7 @@ func (db *DB) UpdateModelCooldownSettings(ctx context.Context, update ModelCoold
 	current = NormalizeModelCooldownSettings(current)
 
 	if _, err := db.conn.ExecContext(ctx, `INSERT INTO system_settings (id) VALUES (1) ON CONFLICT(id) DO NOTHING`); err != nil {
-		return ModelCooldownSettings{}, fmt.Errorf("初始化模型冷却设置失败: %w", err)
+		return ModelCooldownSettings{}, fmt.Errorf("failed to initialize model cooldown settings: %w", err)
 	}
 	_, err = db.conn.ExecContext(ctx, `
 		UPDATE system_settings SET
@@ -222,7 +222,7 @@ func (db *DB) UpdateModelCooldownSettings(ctx context.Context, update ModelCoold
 		current.UnsupportedCooldownSeconds(),
 	)
 	if err != nil {
-		return ModelCooldownSettings{}, fmt.Errorf("保存模型冷却设置失败: %w", err)
+		return ModelCooldownSettings{}, fmt.Errorf("failed to save model cooldown settings: %w", err)
 	}
 	return current, nil
 }

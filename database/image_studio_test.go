@@ -12,7 +12,7 @@ func TestSQLiteImageStudioTablesAndPersistence(t *testing.T) {
 	dbPath := filepath.Join(t.TempDir(), "codex2api.db")
 	db, err := New("sqlite", dbPath)
 	if err != nil {
-		t.Fatalf("New(sqlite) 返回错误: %v", err)
+		t.Fatalf("New(sqlite) returned error: %v", err)
 	}
 	defer db.Close()
 
@@ -24,11 +24,11 @@ func TestSQLiteImageStudioTablesAndPersistence(t *testing.T) {
 	} {
 		got, err := db.sqliteTableColumns(ctx, table)
 		if err != nil {
-			t.Fatalf("sqliteTableColumns(%s) 返回错误: %v", table, err)
+			t.Fatalf("sqliteTableColumns(%s) returned error: %v", table, err)
 		}
 		for _, column := range columns {
 			if _, ok := got[column]; !ok {
-				t.Fatalf("%s 缺少列 %q", table, column)
+				t.Fatalf("%s is missing column %q", table, column)
 			}
 		}
 	}
@@ -42,37 +42,37 @@ func TestSQLiteImageStudioTablesAndPersistence(t *testing.T) {
 		OutputFormat: "png",
 		Background:   "transparent",
 		Style:        "flat",
-		Tags:         []string{"贴纸", "贴纸", "Icon"},
+		Tags:         []string{"sticker", "sticker", "Icon"},
 		Favorite:     true,
 	})
 	if err != nil {
-		t.Fatalf("InsertImagePromptTemplate 返回错误: %v", err)
+		t.Fatalf("InsertImagePromptTemplate returned error: %v", err)
 	}
 	template, err := db.GetImagePromptTemplate(ctx, templateID)
 	if err != nil {
-		t.Fatalf("GetImagePromptTemplate 返回错误: %v", err)
+		t.Fatalf("GetImagePromptTemplate returned error: %v", err)
 	}
 	if template.Name != "Sticker" || template.Model != "gpt-image-2-2k" || !template.Favorite {
 		t.Fatalf("template = %#v", template)
 	}
-	if len(template.Tags) != 2 || template.Tags[0] != "贴纸" || template.Tags[1] != "Icon" {
+	if len(template.Tags) != 2 || template.Tags[0] != "sticker" || template.Tags[1] != "Icon" {
 		t.Fatalf("template tags = %#v", template.Tags)
 	}
 
-	list, err := db.ListImagePromptTemplates(ctx, "rocket", "贴纸")
+	list, err := db.ListImagePromptTemplates(ctx, "rocket", "sticker")
 	if err != nil {
-		t.Fatalf("ListImagePromptTemplates 返回错误: %v", err)
+		t.Fatalf("ListImagePromptTemplates returned error: %v", err)
 	}
 	if len(list) != 1 || list[0].ID != templateID {
 		t.Fatalf("filtered templates = %#v", list)
 	}
 
 	if err := db.IncrementImagePromptTemplateUsage(ctx, templateID); err != nil {
-		t.Fatalf("IncrementImagePromptTemplateUsage 返回错误: %v", err)
+		t.Fatalf("IncrementImagePromptTemplateUsage returned error: %v", err)
 	}
 	template, err = db.GetImagePromptTemplate(ctx, templateID)
 	if err != nil {
-		t.Fatalf("GetImagePromptTemplate after usage 返回错误: %v", err)
+		t.Fatalf("GetImagePromptTemplate after usage returned error: %v", err)
 	}
 	if template.UsageCount != 1 || template.LastUsedAt.IsZero() {
 		t.Fatalf("usage fields = count %d last %v", template.UsageCount, template.LastUsedAt)
@@ -85,13 +85,13 @@ func TestSQLiteImageStudioTablesAndPersistence(t *testing.T) {
 		Size:         "3840x2160",
 		Quality:      "medium",
 		OutputFormat: "webp",
-		Tags:         []string{"壁纸"},
+		Tags:         []string{"wallpaper"},
 	}); err != nil {
-		t.Fatalf("UpdateImagePromptTemplate 返回错误: %v", err)
+		t.Fatalf("UpdateImagePromptTemplate returned error: %v", err)
 	}
 	template, err = db.GetImagePromptTemplate(ctx, templateID)
 	if err != nil {
-		t.Fatalf("GetImagePromptTemplate after update 返回错误: %v", err)
+		t.Fatalf("GetImagePromptTemplate after update returned error: %v", err)
 	}
 	if template.Name != "Updated" || template.Model != "gpt-image-2-4k" || template.OutputFormat != "webp" {
 		t.Fatalf("updated template = %#v", template)
@@ -105,30 +105,30 @@ func TestSQLiteImageStudioTablesAndPersistence(t *testing.T) {
 		APIKeyMasked: "sk-****",
 	})
 	if err != nil {
-		t.Fatalf("InsertImageGenerationJob 返回错误: %v", err)
+		t.Fatalf("InsertImageGenerationJob returned error: %v", err)
 	}
 	job, err := db.GetImageGenerationJob(ctx, jobID)
 	if err != nil {
-		t.Fatalf("GetImageGenerationJob 返回错误: %v", err)
+		t.Fatalf("GetImageGenerationJob returned error: %v", err)
 	}
 	if job.Status != ImageJobQueued || job.APIKeyID != 7 || job.ParamsJSON == "" {
 		t.Fatalf("queued job = %#v", job)
 	}
 	if err := db.UpdateImageGenerationJobParamsJSON(ctx, jobID, `{"output_format":"jpeg"}`); err != nil {
-		t.Fatalf("UpdateImageGenerationJobParamsJSON 返回错误: %v", err)
+		t.Fatalf("UpdateImageGenerationJobParamsJSON returned error: %v", err)
 	}
 	job, err = db.GetImageGenerationJob(ctx, jobID)
 	if err != nil {
-		t.Fatalf("GetImageGenerationJob after params update 返回错误: %v", err)
+		t.Fatalf("GetImageGenerationJob after params update returned error: %v", err)
 	}
 	if job.ParamsJSON != `{"output_format":"jpeg"}` {
 		t.Fatalf("params_json = %q, want jpeg fallback params", job.ParamsJSON)
 	}
 	if err := db.MarkImageJobRunning(ctx, jobID); err != nil {
-		t.Fatalf("MarkImageJobRunning 返回错误: %v", err)
+		t.Fatalf("MarkImageJobRunning returned error: %v", err)
 	}
 	if err := db.MarkImageJobSucceeded(ctx, jobID, 1234); err != nil {
-		t.Fatalf("MarkImageJobSucceeded 返回错误: %v", err)
+		t.Fatalf("MarkImageJobSucceeded returned error: %v", err)
 	}
 
 	assetID, err := db.InsertImageAsset(ctx, ImageAssetInput{
@@ -148,11 +148,11 @@ func TestSQLiteImageStudioTablesAndPersistence(t *testing.T) {
 		RevisedPrompt: "revised prompt",
 	})
 	if err != nil {
-		t.Fatalf("InsertImageAsset 返回错误: %v", err)
+		t.Fatalf("InsertImageAsset returned error: %v", err)
 	}
 	job, err = db.GetImageGenerationJob(ctx, jobID)
 	if err != nil {
-		t.Fatalf("GetImageGenerationJob with assets 返回错误: %v", err)
+		t.Fatalf("GetImageGenerationJob with assets returned error: %v", err)
 	}
 	if job.Status != ImageJobSucceeded || job.DurationMs != 1234 || job.CompletedAt == nil || len(job.Assets) != 1 {
 		t.Fatalf("succeeded job = %#v", job)
@@ -163,14 +163,14 @@ func TestSQLiteImageStudioTablesAndPersistence(t *testing.T) {
 
 	page, err := db.ListImageAssets(ctx, 1, 10, 0)
 	if err != nil {
-		t.Fatalf("ListImageAssets 返回错误: %v", err)
+		t.Fatalf("ListImageAssets returned error: %v", err)
 	}
 	if page.Total != 1 || len(page.Assets) != 1 {
 		t.Fatalf("asset page = %#v", page)
 	}
 	jobs, err := db.ListImageGenerationJobs(ctx, 1, 10, 0)
 	if err != nil {
-		t.Fatalf("ListImageGenerationJobs 返回错误: %v", err)
+		t.Fatalf("ListImageGenerationJobs returned error: %v", err)
 	}
 	if jobs.Total != 1 || len(jobs.Jobs) != 1 || len(jobs.Jobs[0].Assets) != 1 {
 		t.Fatalf("job page = %#v", jobs)
@@ -185,32 +185,32 @@ func TestSQLiteImageStudioTablesAndPersistence(t *testing.T) {
 		APIKeyMasked: "sk-other",
 	})
 	if err != nil {
-		t.Fatalf("InsertImageGenerationJob other 返回错误: %v", err)
+		t.Fatalf("InsertImageGenerationJob other returned error: %v", err)
 	}
 	filteredJobs, err := db.ListImageGenerationJobs(ctx, 1, 10, 7)
 	if err != nil {
-		t.Fatalf("ListImageGenerationJobs by api_key 返回错误: %v", err)
+		t.Fatalf("ListImageGenerationJobs by api_key returned error: %v", err)
 	}
 	if filteredJobs.Total != 1 || len(filteredJobs.Jobs) != 1 || filteredJobs.Jobs[0].APIKeyID != 7 {
 		t.Fatalf("filtered jobs = %#v", filteredJobs)
 	}
 	filteredAssets, err := db.ListImageAssets(ctx, 1, 10, 7)
 	if err != nil {
-		t.Fatalf("ListImageAssets by api_key 返回错误: %v", err)
+		t.Fatalf("ListImageAssets by api_key returned error: %v", err)
 	}
 	if filteredAssets.Total != 1 || len(filteredAssets.Assets) != 1 {
 		t.Fatalf("filtered assets = %#v", filteredAssets)
 	}
 	emptyAssets, err := db.ListImageAssets(ctx, 1, 10, 99)
 	if err != nil {
-		t.Fatalf("ListImageAssets empty key 返回错误: %v", err)
+		t.Fatalf("ListImageAssets empty key returned error: %v", err)
 	}
 	if emptyAssets.Total != 0 {
 		t.Fatalf("empty key assets total = %d, want 0", emptyAssets.Total)
 	}
 	ownerKeyID, err := db.GetImageAssetJobAPIKeyID(ctx, assetID)
 	if err != nil {
-		t.Fatalf("GetImageAssetJobAPIKeyID 返回错误: %v", err)
+		t.Fatalf("GetImageAssetJobAPIKeyID returned error: %v", err)
 	}
 	if ownerKeyID != 7 {
 		t.Fatalf("ownerKeyID = %d, want 7", ownerKeyID)
@@ -218,7 +218,7 @@ func TestSQLiteImageStudioTablesAndPersistence(t *testing.T) {
 	_ = otherJobID
 
 	if err := db.DeleteImageAsset(ctx, assetID); err != nil {
-		t.Fatalf("DeleteImageAsset 返回错误: %v", err)
+		t.Fatalf("DeleteImageAsset returned error: %v", err)
 	}
 	if _, err := db.GetImageAsset(ctx, assetID); !errors.Is(err, sql.ErrNoRows) {
 		t.Fatalf("GetImageAsset after delete err = %v, want sql.ErrNoRows", err)
@@ -228,10 +228,10 @@ func TestSQLiteImageStudioTablesAndPersistence(t *testing.T) {
 		ParamsJSON: `{"model":"gpt-image-2"}`,
 	})
 	if err != nil {
-		t.Fatalf("InsertImageGenerationJob job2 返回错误: %v", err)
+		t.Fatalf("InsertImageGenerationJob job2 returned error: %v", err)
 	}
 	if err := db.MarkImageJobFailed(ctx, jobID2, "upstream failed", 456); err != nil {
-		t.Fatalf("MarkImageJobFailed 返回错误: %v", err)
+		t.Fatalf("MarkImageJobFailed returned error: %v", err)
 	}
 	assetID2, err := db.InsertImageAsset(ctx, ImageAssetInput{
 		JobID:       jobID2,
@@ -241,10 +241,10 @@ func TestSQLiteImageStudioTablesAndPersistence(t *testing.T) {
 		Bytes:       1024,
 	})
 	if err != nil {
-		t.Fatalf("InsertImageAsset job2 返回错误: %v", err)
+		t.Fatalf("InsertImageAsset job2 returned error: %v", err)
 	}
 	if err := db.DeleteImageGenerationJob(ctx, jobID2); err != nil {
-		t.Fatalf("DeleteImageGenerationJob 返回错误: %v", err)
+		t.Fatalf("DeleteImageGenerationJob returned error: %v", err)
 	}
 	if _, err := db.GetImageGenerationJob(ctx, jobID2); !errors.Is(err, sql.ErrNoRows) {
 		t.Fatalf("GetImageGenerationJob after delete err = %v, want sql.ErrNoRows", err)
@@ -253,7 +253,7 @@ func TestSQLiteImageStudioTablesAndPersistence(t *testing.T) {
 		t.Fatalf("GetImageAsset after job delete err = %v, want sql.ErrNoRows", err)
 	}
 	if err := db.DeleteImagePromptTemplate(ctx, templateID); err != nil {
-		t.Fatalf("DeleteImagePromptTemplate 返回错误: %v", err)
+		t.Fatalf("DeleteImagePromptTemplate returned error: %v", err)
 	}
 }
 
@@ -261,29 +261,29 @@ func TestImageJobsInterruptedOnStartup(t *testing.T) {
 	dbPath := filepath.Join(t.TempDir(), "codex2api.db")
 	db, err := New("sqlite", dbPath)
 	if err != nil {
-		t.Fatalf("New(sqlite) 返回错误: %v", err)
+		t.Fatalf("New(sqlite) returned error: %v", err)
 	}
 	defer db.Close()
 
 	ctx := context.Background()
 	queuedID, err := db.InsertImageGenerationJob(ctx, ImageGenerationJobInput{Prompt: "queued"})
 	if err != nil {
-		t.Fatalf("InsertImageGenerationJob queued 返回错误: %v", err)
+		t.Fatalf("InsertImageGenerationJob queued returned error: %v", err)
 	}
 	runningID, err := db.InsertImageGenerationJob(ctx, ImageGenerationJobInput{Prompt: "running"})
 	if err != nil {
-		t.Fatalf("InsertImageGenerationJob running 返回错误: %v", err)
+		t.Fatalf("InsertImageGenerationJob running returned error: %v", err)
 	}
 	if err := db.MarkImageJobRunning(ctx, runningID); err != nil {
-		t.Fatalf("MarkImageJobRunning 返回错误: %v", err)
+		t.Fatalf("MarkImageJobRunning returned error: %v", err)
 	}
 	if err := db.MarkInterruptedImageJobs(ctx); err != nil {
-		t.Fatalf("MarkInterruptedImageJobs 返回错误: %v", err)
+		t.Fatalf("MarkInterruptedImageJobs returned error: %v", err)
 	}
 	for _, id := range []int64{queuedID, runningID} {
 		job, err := db.GetImageGenerationJob(ctx, id)
 		if err != nil {
-			t.Fatalf("GetImageGenerationJob(%d) 返回错误: %v", id, err)
+			t.Fatalf("GetImageGenerationJob(%d) returned error: %v", id, err)
 		}
 		if job.Status != ImageJobFailed || job.ErrorMessage == "" || job.CompletedAt == nil {
 			t.Fatalf("interrupted job = %#v", job)

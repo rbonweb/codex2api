@@ -8,7 +8,7 @@ import (
 	"fmt"
 )
 
-// DaybreakSnapshot 独立保存完整权限目录，成功刷新时替换而非合并。
+// DaybreakSnapshot stores the full permission catalog on its own; on a successful refresh it is replaced, not merged.
 type DaybreakSnapshot struct {
 	Identity   string              `json:"identity"`
 	ObservedAt int64               `json:"observed_at"`
@@ -60,7 +60,7 @@ func (db *DB) LoadDaybreakSnapshot(ctx context.Context, id int64) (DaybreakSnaps
 	return snapshot, err
 }
 
-// 身份编辑与权限清理共用事务，切回旧身份也必须重新检查目录。
+// Identity edits and permission cleanup share a transaction; switching back to an old identity must also recheck the catalog.
 func invalidateDaybreakIdentity(ctx context.Context, tx *sql.Tx, id int64) error {
 	var raw any
 	if err := tx.QueryRowContext(ctx, `SELECT credentials FROM accounts WHERE id=$1`, id).Scan(&raw); err != nil {

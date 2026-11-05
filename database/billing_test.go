@@ -155,8 +155,8 @@ func TestGPT55PricingDoesNotMatchGPT54(t *testing.T) {
 	_ = gpt54
 }
 
-// gpt-5.6 三个变体官方定价各不相同（developers.openai.com/api/docs/pricing）：
-// sol $5/$30、terra $2/$12、luna $0.20/$1.20（standard）；priority 均为 2× standard。
+// The three gpt-5.6 variants have different official prices (developers.openai.com/api/docs/pricing):
+// sol $5/$30, terra $2/$12, luna $0.20/$1.20 (standard); priority is 2× standard for all of them.
 func TestGPT56VariantPricing(t *testing.T) {
 	cases := []struct {
 		model                   string
@@ -167,7 +167,7 @@ func TestGPT56VariantPricing(t *testing.T) {
 		{"gpt-5.6-terra", 2.0, 12.0, 0.2, 4.0, 24.0},
 		{"gpt-5.6-luna", 0.2, 1.2, 0.02, 0.4, 2.4},
 		{"gpt-5.6-sol-high", 5.0, 30.0, 0.5, 10.0, 60.0},
-		// Blue 的默认快照为 Sol；Red/Cyber 使用独立公开价目。
+		// Blue's default snapshot is Sol; Red/Cyber use their own public price lists.
 		{"gpt-daybreak-blue-latest", 5.0, 30.0, 0.5, 10.0, 60.0},
 		{"gpt-daybreak-red-latest", 12.5, 75, 1.25, 25, 150},
 		{"gpt-5.6-cyber", 12.5, 75, 1.25, 25, 150},
@@ -178,7 +178,7 @@ func TestGPT56VariantPricing(t *testing.T) {
 		assertFloatEqual(t, p.OutputPricePerMToken, c.output)
 		assertFloatEqual(t, p.CacheReadPricePerMToken, c.cache)
 
-		// priority(fast)档短上下文：用 100K tokens(低于长上下文阈值 272K)。
+		// priority (fast) tier, short context: use 100K tokens (below the 272K long-context threshold).
 		const n = 100_000
 		got := CalculateCost(n, n, 0, c.model, "fast")
 		want := (c.priorityIn + c.priorityOut) * float64(n) / 1_000_000.0
@@ -186,10 +186,10 @@ func TestGPT56VariantPricing(t *testing.T) {
 	}
 }
 
-// gpt-6-astra 跨过 272K 后按长档计价：输入/缓存 2×、输出 1.5×。
-// standard 短档 $10/$50、缓存 $1；长档 $20/$75、缓存 $2；
-// 保留现有 fast 2× 倍率，Ultrafast 按所处档位 standard 价的 6×。
-// 变体后缀 / 思考强度别名同价；未知 gpt-6 变体按 astra 兜底，绝不能掉进默认价。
+// gpt-6-astra is priced at the long-context tier once it crosses 272K: input/cache 2×, output 1.5×.
+// standard short tier $10/$50, cache $1; long tier $20/$75, cache $2;
+// keep the existing fast 2× multiplier; Ultrafast is 6× the standard price of the tier it is in.
+// Variant suffixes and reasoning effort aliases share the same price; unknown gpt-6 variants fall back to astra and must never fall into the default price.
 func TestGPT6AstraPricing(t *testing.T) {
 	for _, model := range []string{"gpt-6-astra", "gpt-6-astra-high", "gpt-6-astra(xhigh)", "GPT-6-Astra", "gpt-6", "gpt-6-nova"} {
 		if got := CanonicalBillingModelKey(model); got != "gpt-6-astra" {
@@ -227,7 +227,7 @@ func TestGPT6AstraPricing(t *testing.T) {
 		}
 	}
 
-	// gpt-5.6 家族不得被 gpt-6 前缀误伤。
+	// The gpt-5.6 family must not be caught by the gpt-6 prefix.
 	if got := CanonicalBillingModelKey("gpt-5.6-sol"); got != "gpt-5.6-sol" {
 		t.Fatalf("CanonicalBillingModelKey(gpt-5.6-sol) = %q, want gpt-5.6-sol", got)
 	}
@@ -424,7 +424,7 @@ func TestCanonicalBillingModelKeyDaybreakAliases(t *testing.T) {
 			t.Fatalf("CanonicalBillingModelKey(%q) = %q, want %s", model, got, target)
 		}
 	}
-	// 只认 gpt-daybreak- 前缀：带版本号的 ID 仍按自身版本计费，无关模型不沾光。
+	// Only the gpt-daybreak- prefix matches: IDs with a version number are still billed by their own version, and unrelated models do not benefit.
 	if got := CanonicalBillingModelKey("gpt-5.4-daybreak"); got != "gpt-5.4" {
 		t.Fatalf("CanonicalBillingModelKey(gpt-5.4-daybreak) = %q, want gpt-5.4", got)
 	}
@@ -433,19 +433,19 @@ func TestCanonicalBillingModelKeyDaybreakAliases(t *testing.T) {
 	}
 }
 
-// Astra 的 Ultrafast 倍率是模型自有的：管理员配的 priority 价只影响 Fast，
-// 自定义 standard 价仍作为 Ultrafast 6× 的基数。
+// Astra's Ultrafast multiplier is the model's own: the admin-configured priority price only affects Fast,
+// the custom standard price still serves as the base for the Ultrafast 6× multiplier.
 func TestGPT6AstraUltrafastIgnoresPriorityOverride(t *testing.T) {
 	withPricingOverrides(t, map[string]ModelPricingOverride{
 		"gpt-6-astra": {Input: 20, Output: 100, CachedInput: 2, InputPriority: 30, OutputPriority: 150},
 	})
-	// 短档：100K 输入 + 100K 输出。
+	// Short tier: 100K input + 100K output.
 	got := CalculateCostBreakdown(100_000, 100_000, 0, "gpt-6-astra", "ultrafast")
 	assertFloatEqual(t, got.ServiceTierCostMultiplier, 6)
 	assertFloatEqual(t, got.TotalCost, (20+100)*0.1*6)
 	fast := CalculateCostBreakdown(100_000, 100_000, 0, "gpt-6-astra", "priority")
 	assertFloatEqual(t, fast.TotalCost, (30+150)*0.1)
-	// 长档：未覆盖的长档字段沿用内置 $20/$75，Ultrafast 同样乘 6。
+	// Long tier: long-tier fields not overridden keep the built-in $20/$75; Ultrafast is also multiplied by 6.
 	long := CalculateCostBreakdown(1_000_000, 1_000_000, 0, "gpt-6-astra", "ultrafast")
 	if !long.LongContext {
 		t.Fatalf("1M-token Astra request did not use long-context pricing: %+v", long)

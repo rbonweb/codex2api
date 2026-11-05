@@ -6,8 +6,8 @@ import (
 	"testing"
 )
 
-// TestMain 只初始化一次 SQLite schema 模板：之后每个测试建库直接复制模板、跳过迁移，
-// 把 -race 下每个测试 ~1.2s 的建库开销压到毫秒级。
+// TestMain initializes the SQLite schema template only once: after that, each test that creates a database copies the template directly and skips the migrations,
+// reducing the per-test database creation overhead of ~1.2s under -race to milliseconds.
 func TestMain(m *testing.M) {
 	cleanup, err := PrepareSQLiteSchemaTemplate()
 	if err != nil {

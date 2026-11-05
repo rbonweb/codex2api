@@ -5,9 +5,9 @@ import (
 	"strings"
 )
 
-// PromptRiskIncidentSubject 是一条 CY 记录关联到的风险画像主体（newapi_user / session /
-// api_key / client_ip / upstream_account），附带已核实的 NewAPI 身份信息，供 CY 详情页
-// 直接跳到对应画像。
+// PromptRiskIncidentSubject is a risk profile subject linked to a CY record (newapi_user / session /
+// api_key / client_ip / upstream_account), carrying verified NewAPI identity information, for the CY detail page
+// to jump directly to the matching profile.
 type PromptRiskIncidentSubject struct {
 	SubjectType        string `json:"subject_type"`
 	SubjectKey         string `json:"subject_key"`
@@ -22,8 +22,8 @@ type PromptRiskIncidentSubject struct {
 	EventCount         int    `json:"event_count"`
 }
 
-// ListPromptRiskSubjectsForIncident 返回挂在该 CY 上的全部画像主体（按主体去重），
-// 并用 prompt_risk_identities 补齐 NewAPI 用户 ID / 名称 / 邮箱 / 分组。
+// ListPromptRiskSubjectsForIncident returns all profile subjects attached to this CY (deduplicated by subject),
+// and fills in the NewAPI user ID / name / email / group from prompt_risk_identities.
 func (db *DB) ListPromptRiskSubjectsForIncident(ctx context.Context, incidentID string) ([]PromptRiskIncidentSubject, error) {
 	incidentID = strings.TrimSpace(incidentID)
 	if db == nil || db.conn == nil || incidentID == "" {

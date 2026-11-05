@@ -9,16 +9,16 @@ import (
 	"time"
 )
 
-// Prompt 审核日志保留策略。
+// Prompt review log retention policy.
 //
-// 三张"日志型"表会随流量无限增长：prompt_filter_logs（本地过滤 / 复核日志）、
-// prompt_risk_events（风险事件）、prompt_risk_event_sources（事件来源去重表）。
-// 保留策略按天数清理过期行，但**与仍存在的上游 CY 记录（prompt_policy_incidents）
-// 关联的行永不清理**——它们是 CY 的证据链。管理员删除 CY 记录时，关联的审核日志随之
-// 级联删除；风险画像保留，之后按保留天数自然过期。
+// Three "log-type" tables grow without limit with traffic: prompt_filter_logs (local filter / review logs),
+// prompt_risk_events (risk events), prompt_risk_event_sources (deduplicated event source table).
+// The retention policy purges expired rows by age in days, but **rows linked to a still-existing upstream CY record (prompt_policy_incidents)
+// are never purged** — they are the evidence chain of the CY. When an admin deletes a CY record, the linked review logs go with it
+// through cascade deletion; risk profiles are kept and then expire naturally after the retention days.
 //
-// 删除一律分批（默认 5000 行/批）并在批间让出写锁，避免一条大 DELETE 长时间锁住
-// SQLite；清理循环直到没有可删行或上下文结束。
+// Deletes are always done in batches (5000 rows per batch by default) and release the write lock between batches, to avoid one large DELETE locking
+// SQLite for a long time; the purge loop continues until there are no more rows to delete or the context ends.
 
 const (
 	DefaultPromptLogRetentionDays = 7
@@ -36,8 +36,8 @@ type PromptLogRetentionConfig struct {
 	LastError          string       `json:"last_error,omitempty"`
 }
 
-// PromptLogPurgeResult 是一次清理的统计。Interrupted 表示因上下文结束提前停止，
-// 剩余过期行会留给下一轮。
+// PromptLogPurgeResult is the statistics of one purge. Interrupted means it stopped early because the context ended,
+// and the remaining expired rows are left for the next round.
 type PromptLogPurgeResult struct {
 	Logs        int64 `json:"logs"`
 	Events      int64 `json:"events"`
@@ -46,8 +46,8 @@ type PromptLogPurgeResult struct {
 	Interrupted bool  `json:"interrupted"`
 }
 
-// PromptLogPurgeFilter 限定 prompt_filter_logs 的清理范围（手动清空按钮用）；
-// 零值表示按 Cutoff 清理全部来源。
+// PromptLogPurgeFilter limits the purge scope of prompt_filter_logs (used by the manual clear button);
+// the zero value means purge all sources by Cutoff.
 type PromptLogPurgeFilter struct {
 	Reviewed *bool
 	Source   string
@@ -70,7 +70,7 @@ func NormalizePromptLogRetentionDays(days int) int {
 
 func (db *DB) ensurePromptLogRetentionConfig(ctx context.Context) error {
 	if db == nil || db.conn == nil {
-		return fmt.Errorf("数据库不可用")
+		return fmt.Errorf("database unavailable")
 	}
 	promptRetentionConfigInitMu.Lock()
 	defer promptRetentionConfigInitMu.Unlock()
@@ -145,28 +145,28 @@ func (db *DB) RecordPromptLogRetentionRun(ctx context.Context, ranAt time.Time, 
 	return err
 }
 
-// ==================== 清理 ====================
+// ==================== Cleanup ====================
 
-// promptLogProtectedByIncidentSQL 是"该日志行受 CY 记录保护"的条件（l 为 prompt_filter_logs 别名）：
-// 与某条仍存在的 CY 共享 request_correlation_id（CY 与本地审核日志由同一请求的
-// correlation id 关联；不反查 prompt_risk_events，该表没有 prompt_filter_log_id 索引）。
+// promptLogProtectedByIncidentSQL is the condition "this log row is protected by a CY record" (l is the prompt_filter_logs alias):
+// it shares request_correlation_id with a still-existing CY (the CY and the local review log are linked by the same request's
+// correlation id); it does not reverse-look-up prompt_risk_events, since that table has no prompt_filter_log_id index.
 const promptLogProtectedByIncidentSQL = `(l.request_correlation_id <> '' AND EXISTS (
 	SELECT 1 FROM prompt_policy_incidents i WHERE i.request_correlation_id = l.request_correlation_id))`
 
-// promptEventProtectedSQL 是"该风险事件受保护"的条件（e 为 prompt_risk_events 别名）：
-// 挂在仍存在的 CY 上，或其来源日志仍存在（日志本身受保护或尚未过期）。
+// promptEventProtectedSQL is the condition "this risk event is protected" (e is the prompt_risk_events alias):
+// it is attached to a still-existing CY, or its source log still exists (the log itself is protected or has not yet expired).
 const promptEventProtectedSQL = `(
 	(e.incident_id <> '' AND EXISTS (SELECT 1 FROM prompt_policy_incidents i WHERE i.incident_id = e.incident_id))
 	OR (e.prompt_filter_log_id > 0 AND EXISTS (SELECT 1 FROM prompt_filter_logs l WHERE l.id = e.prompt_filter_log_id)))`
 
-// PurgeExpiredPromptLogs 按 cutoff 分批清理三张日志表中过期且不受 CY 保护的行。
-// 顺序：日志 → 风险事件 → 事件来源，保证后一张表的保护判定能看到前一张表的最终状态。
+// PurgeExpiredPromptLogs purges, in batches by cutoff, the expired rows in the three log tables that are not protected by a CY.
+// Order: logs → risk events → event sources, so that the protection check for each later table sees the final state of the earlier one.
 func (db *DB) PurgeExpiredPromptLogs(ctx context.Context, cutoff time.Time, batchSize int, pause time.Duration) (PromptLogPurgeResult, error) {
 	return db.purgePromptLogs(ctx, cutoff, PromptLogPurgeFilter{}, batchSize, pause, true)
 }
 
-// PurgePromptFilterLogs 只清理 prompt_filter_logs（手动清空按钮）：
-// 同样跳过 CY 关联行；风险事件与来源记录不动（与"风险画像已保留"的既有语义一致）。
+// PurgePromptFilterLogs only purges prompt_filter_logs (the manual clear button):
+// it also skips CY-linked rows; risk events and source records are left alone (consistent with the existing semantics that "risk profiles are kept").
 func (db *DB) PurgePromptFilterLogs(ctx context.Context, cutoff time.Time, filter PromptLogPurgeFilter, batchSize int, pause time.Duration) (PromptLogPurgeResult, error) {
 	return db.purgePromptLogs(ctx, cutoff, filter, batchSize, pause, false)
 }
@@ -174,12 +174,12 @@ func (db *DB) PurgePromptFilterLogs(ctx context.Context, cutoff time.Time, filte
 func (db *DB) purgePromptLogs(ctx context.Context, cutoff time.Time, filter PromptLogPurgeFilter, batchSize int, pause time.Duration, includeEvents bool) (PromptLogPurgeResult, error) {
 	var result PromptLogPurgeResult
 	if db == nil || db.conn == nil {
-		return result, fmt.Errorf("数据库不可用")
+		return result, fmt.Errorf("database unavailable")
 	}
 	if batchSize <= 0 {
 		batchSize = DefaultPromptLogPurgeBatch
 	}
-	// 三张表都按需建表；清理前确保存在，避免在从未产生过 CY / 风险事件的部署上报错。
+	// The three tables are created on demand; ensure they exist before purging, to avoid errors on deployments that never produced a CY or risk event.
 	if err := db.ensurePromptPolicyIncidentsTable(ctx); err != nil {
 		return result, err
 	}
@@ -209,8 +209,8 @@ func (db *DB) purgePromptLogs(ctx context.Context, cutoff time.Time, filter Prom
 	}
 
 	if !includeEvents {
-		// 手动清空日志只动 prompt_filter_logs：风险画像（事件/来源）按现有语义保留，
-		// 只由保留策略按天龄清理。
+		// Manually clearing logs only touches prompt_filter_logs: risk profiles (events / sources) are kept per the existing semantics,
+		// and are purged by age only by the retention policy.
 		return result, nil
 	}
 
@@ -230,7 +230,7 @@ func (db *DB) purgePromptLogs(ctx context.Context, cutoff time.Time, filter Prom
 	return result, err
 }
 
-// purgeOrphanPromptRiskSources 清理过期且已无任何风险事件引用的来源记录。
+// purgeOrphanPromptRiskSources purges expired source records that no risk event references any more.
 func (db *DB) purgeOrphanPromptRiskSources(ctx context.Context, cutoffArg interface{}, batchSize int, pause time.Duration, result *PromptLogPurgeResult) (int64, error) {
 	stmt := `DELETE FROM prompt_risk_event_sources WHERE (source_type, source_id) IN (
 		SELECT s.source_type, s.source_id FROM prompt_risk_event_sources s
@@ -240,8 +240,8 @@ func (db *DB) purgeOrphanPromptRiskSources(ctx context.Context, cutoffArg interf
 	return db.purgeInBatches(ctx, stmt, []interface{}{cutoffArg, batchSize}, batchSize, pause, result)
 }
 
-// purgeInBatches 反复执行带 LIMIT 的删除语句直到一批不满或没有可删行；
-// 每批持有一次 SQLite 写锁，批间 pause 让出给正常请求。
+// purgeInBatches repeatedly runs the DELETE statement with LIMIT until a batch is not full or there are no rows left to delete;
+// each batch holds the SQLite write lock once, and pauses between batches to yield to normal requests.
 func (db *DB) purgeInBatches(ctx context.Context, stmt string, args []interface{}, batchSize int, pause time.Duration, result *PromptLogPurgeResult) (int64, error) {
 	var total int64
 	for {
@@ -281,13 +281,13 @@ func (db *DB) purgeInBatches(ctx context.Context, stmt string, args []interface{
 	}
 }
 
-// ==================== CY 级联 ====================
+// ==================== CY cascade ====================
 
-// deletePromptIncidentEvidenceTx 在删除 CY 记录前清掉与之关联的审核日志
-// （共享 request_correlation_id，且没有其他 CY 还引用同一 correlation id）。
-// 风险画像（prompt_risk_events / 来源记录）不在级联范围内：它们是账号 / 用户维度的
-// 历史，按既有语义在删除 CY 后仍保留，失去 CY 和日志后由保留策略按天龄清理。
-// 调用方必须在同一事务里随后删除 CY 本身。
+// deletePromptIncidentEvidenceTx clears the review logs linked to a CY record before deleting it
+// (sharing request_correlation_id, and no other CY still references the same correlation id).
+// Risk profiles (prompt_risk_events / source records) are outside the cascade scope: they are account / user-level
+// history, kept after the CY is deleted per the existing semantics, and purged by age by the retention policy once the CY and logs are gone.
+// The caller must delete the CY itself afterwards in the same transaction.
 func deletePromptIncidentEvidenceTx(ctx context.Context, tx *sql.Tx, incidentID string) error {
 	var correlationID string
 	if err := tx.QueryRowContext(ctx, `SELECT COALESCE(request_correlation_id, '') FROM prompt_policy_incidents WHERE incident_id=$1`, incidentID).Scan(&correlationID); err != nil {
@@ -307,8 +307,8 @@ func deletePromptIncidentEvidenceTx(ctx context.Context, tx *sql.Tx, incidentID 
 	return err
 }
 
-// deleteAllPromptIncidentEvidenceTx 是「清空 CY」的级联：删除所有与任一 CY 共享
-// correlation id 的审核日志；风险画像同样保留。
+// deleteAllPromptIncidentEvidenceTx is the cascade of "clear CY": it deletes all review logs that share
+// a correlation id with any CY; risk profiles are kept as well.
 func deleteAllPromptIncidentEvidenceTx(ctx context.Context, tx *sql.Tx) error {
 	_, err := tx.ExecContext(ctx, `DELETE FROM prompt_filter_logs WHERE request_correlation_id <> '' AND EXISTS (
 		SELECT 1 FROM prompt_policy_incidents i WHERE i.request_correlation_id = prompt_filter_logs.request_correlation_id)`)

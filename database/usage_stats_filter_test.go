@@ -7,8 +7,8 @@ import (
 	"time"
 )
 
-// 用量页选中某个账号后,顶部区间卡片曾经仍按全局口径显示(接口没有账号维度)。
-// 现在区间字段(today_*/rpm/tpm/错误率/分项)跟随维度筛选,累计字段保持全局。
+// After the usage page selected an account, the top range cards still showed global figures (the endpoint has no account dimension).
+// Range fields (today_*/rpm/tpm/error rate/breakdowns) now follow the dimension filter; cumulative fields stay global.
 func TestGetUsageStatsFilteredNarrowsRangeFieldsKeepsTotals(t *testing.T) {
 	db, err := New("sqlite", filepath.Join(t.TempDir(), "stats-filter.db"))
 	if err != nil {
@@ -54,7 +54,7 @@ func TestGetUsageStatsFilteredNarrowsRangeFieldsKeepsTotals(t *testing.T) {
 		t.Fatalf("account error rate = %.2f, want 50", byAccount.ErrorRate)
 	}
 	if byAccount.TotalRequests != 5 || byAccount.TotalTokens != global.TotalTokens {
-		t.Fatalf("account totals = %d/%d, want global 5/%d (累计保持全局)", byAccount.TotalRequests, byAccount.TotalTokens, global.TotalTokens)
+		t.Fatalf("account totals = %d/%d, want global 5/%d (cumulative totals stay global)", byAccount.TotalRequests, byAccount.TotalTokens, global.TotalTokens)
 	}
 	if len(byAccount.ModelStats) != 1 || byAccount.ModelStats[0].Model != "gpt-5.4" {
 		t.Fatalf("account model stats = %+v, want only gpt-5.4", byAccount.ModelStats)
@@ -66,7 +66,7 @@ func TestGetUsageStatsFilteredNarrowsRangeFieldsKeepsTotals(t *testing.T) {
 		t.Fatalf("account api key stats = %+v, want only key 10", byAccount.APIKeyStats)
 	}
 
-	// 搜索词命中模型名也能收窄。
+	// A search term that matches the model name also narrows the results.
 	byQuery, err := db.GetUsageStatsFiltered(ctx, start, end, "", UsageLogFilter{Query: "5.6-sol"}, false)
 	if err != nil {
 		t.Fatalf("GetUsageStatsFiltered(query): %v", err)
@@ -75,7 +75,7 @@ func TestGetUsageStatsFilteredNarrowsRangeFieldsKeepsTotals(t *testing.T) {
 		t.Fatalf("query today=%d tokens=%d, want 3/3000", byQuery.TodayRequests, byQuery.TodayTokens)
 	}
 
-	// 状态类条件不是维度:带 ErrorOnly 的筛选与不带等价。
+	// Status conditions are not dimensions: a filter with ErrorOnly is equivalent to one without it.
 	if (UsageLogFilter{ErrorOnly: true, StatusFamily: "5xx"}).HasDimensionFilter() {
 		t.Fatal("status-only filter must not count as dimension filter")
 	}
@@ -91,10 +91,10 @@ func TestGetUsageStatsFilteredNarrowsRangeFieldsKeepsTotals(t *testing.T) {
 	}
 }
 
-// 回归:搜索词不应命中账号凭据 JSON(如模型目录)。
-// 真实环境里账号 credentials 含 "gpt-5.6-*" 模型目录,旧实现把
-// CAST(credentials AS TEXT) 纳入 LIKE,导致搜 "5.6" 时该账号的 gpt-6-*、
-// gpt-5.5 等不含搜索词的日志全部被带入搜索结果与统计卡片。
+// Regression: a search term should not match the account credentials JSON (such as the model catalog).
+// In real environments, account credentials contain the "gpt-5.6-*" model catalog, and the old code put
+// CAST(credentials AS TEXT) into LIKE, so searching "5.6" pulled in that account's gpt-6-*,
+// gpt-5.5 and other logs without the search term all got pulled into the search results and stats cards.
 func TestUsageLogSearchIgnoresAccountCredentials(t *testing.T) {
 	db, err := New("sqlite", filepath.Join(t.TempDir(), "search-cred.db"))
 	if err != nil {
@@ -104,7 +104,7 @@ func TestUsageLogSearchIgnoresAccountCredentials(t *testing.T) {
 
 	ctx := context.Background()
 
-	// 账号 A 凭据含 5.6 模型目录(旧实现会命中 credentials LIKE),账号 B 凭据干净。
+	// Account A's credentials contain the 5.6 model catalog (the old code matched credentials LIKE), account B's credentials are clean.
 	accA, err := db.InsertAccountWithCredentials(ctx, "acc-a@example.com", map[string]interface{}{
 		"models": []string{"codex-auto-review", "gpt-5.5", "gpt-5.6-luna", "gpt-5.6-sol", "gpt-5.6-terra", "gpt-6-astra", "gpt-6-sol"},
 	}, "")
@@ -134,7 +134,7 @@ func TestUsageLogSearchIgnoresAccountCredentials(t *testing.T) {
 	now := time.Now()
 	start, end := now.Add(-time.Hour), now.Add(time.Hour)
 
-	// 搜 "5.6":只应命中 gpt-5.6-sol 一条,不得因账号凭据含 "5.6" 带入 gpt-6-*/gpt-5.5。
+	// Search "5.6": it should match only the gpt-5.6-sol row, and must not pull in gpt-6-*/gpt-5.5 just because the account credentials contain "5.6".
 	byQuery, err := db.GetUsageStatsFiltered(ctx, start, end, "", UsageLogFilter{Query: "5.6"}, true)
 	if err != nil {
 		t.Fatalf("GetUsageStatsFiltered(query=5.6): %v", err)
@@ -146,7 +146,7 @@ func TestUsageLogSearchIgnoresAccountCredentials(t *testing.T) {
 		t.Fatalf("query 5.6 model stats = %+v, want only gpt-5.6-sol", byQuery.ModelStats)
 	}
 
-	// 分页日志(用量页列表)同样只返回含 "5.6" 的记录。
+	// The paginated logs (usage page list) likewise return only records containing "5.6".
 	page, err := db.ListUsageLogsByTimeRangePaged(ctx, UsageLogFilter{Start: start, End: end, Query: "5.6", Page: 1, PageSize: 50})
 	if err != nil {
 		t.Fatalf("ListUsageLogsByTimeRangePaged(query=5.6): %v", err)
@@ -156,7 +156,7 @@ func TestUsageLogSearchIgnoresAccountCredentials(t *testing.T) {
 			page.Total, len(page.Logs), firstUsageLogModel(page.Logs))
 	}
 
-	// 按账号名/邮箱搜索仍然有效(name 匹配保留)。
+	// Searching by account name or email still works (name matching is kept).
 	byName, err := db.GetUsageStatsFiltered(ctx, start, end, "", UsageLogFilter{Query: "acc-a@example.com"}, true)
 	if err != nil {
 		t.Fatalf("GetUsageStatsFiltered(query=account name): %v", err)

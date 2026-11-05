@@ -20,7 +20,7 @@ func TestPromptRiskAdaptiveTrustLifecycleAndAutomaticSuspension(t *testing.T) {
 	}
 	subjectKey := PromptRiskNewAPIUserSubjectKey("gateway-a", "trusted-user")
 	policy, err := db.UpsertPromptRiskTrustPolicy(ctx, PromptRiskTrustPolicyInput{
-		SubjectType: PromptRiskSubjectNewAPIUser, SubjectKey: subjectKey, Reason: "低风险付费用户首字优化",
+		SubjectType: PromptRiskSubjectNewAPIUser, SubjectKey: subjectKey, Reason: "Low-risk paid user first-token optimization",
 		RiskThreshold: 35, ValidUntil: time.Now().UTC().Add(24 * time.Hour),
 	})
 	if err != nil || policy.Status != PromptRiskTrustStatusActive {

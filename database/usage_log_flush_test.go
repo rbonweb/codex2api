@@ -12,7 +12,7 @@ import (
 	"github.com/jackc/pgx/v5/pgconn"
 )
 
-// insertUsageLogs 往缓冲里塞 count 条最简用量日志。
+// insertUsageLogs pushes count minimal usage logs into the buffer.
 func insertUsageLogs(t *testing.T, db *DB, count int) {
 	t.Helper()
 	ctx := context.Background()
@@ -23,20 +23,20 @@ func insertUsageLogs(t *testing.T, db *DB, count int) {
 			StatusCode:  200,
 			TotalTokens: 10,
 		}); err != nil {
-			t.Fatalf("InsertUsageLog(%d) 返回错误: %v", i, err)
+			t.Fatalf("InsertUsageLog(%d) returned error: %v", i, err)
 		}
 	}
 }
 
-// TestFlushUsageLogsDrainsBeyondOneBatch 覆盖 flush 的分批语义：flushLogs 每次只取
-// usage_log_batch_size 条，FlushUsageLogs 必须循环刷完整个缓冲。
+// TestFlushUsageLogsDrainsBeyondOneBatch covers the batching semantics of flush: flushLogs takes only
+// usage_log_batch_size rows at a time, and FlushUsageLogs must loop until the whole buffer is flushed.
 func TestFlushUsageLogsDrainsBeyondOneBatch(t *testing.T) {
 	dbPath := filepath.Join(t.TempDir(), "codex2api.db")
 	db, err := New("sqlite", dbPath)
 	if err != nil {
-		t.Fatalf("New(sqlite) 返回错误: %v", err)
+		t.Fatalf("New(sqlite) returned error: %v", err)
 	}
-	// 停掉后台 flusher，让刷新时机完全由用例控制。
+	// Stop the background flusher so the test fully controls when flushing happens.
 	close(db.logStop)
 	db.logWg.Wait()
 	defer db.conn.Close()
@@ -49,22 +49,22 @@ func TestFlushUsageLogsDrainsBeyondOneBatch(t *testing.T) {
 	db.flushLogs()
 	logs, err := db.ListRecentUsageLogs(context.Background(), total*2)
 	if err != nil {
-		t.Fatalf("ListRecentUsageLogs 返回错误: %v", err)
+		t.Fatalf("ListRecentUsageLogs returned error: %v", err)
 	}
 	if len(logs) != batchSize {
-		t.Fatalf("flushLogs 后落库 %d 条，want %d（单次只应刷一个批次）", len(logs), batchSize)
+		t.Fatalf("flushLogs persisted %d rows, want %d (a single call should flush only one batch)", len(logs), batchSize)
 	}
 
 	db.FlushUsageLogs()
 	logs, err = db.ListRecentUsageLogs(context.Background(), total*2)
 	if err != nil {
-		t.Fatalf("ListRecentUsageLogs 返回错误: %v", err)
+		t.Fatalf("ListRecentUsageLogs returned error: %v", err)
 	}
 	if len(logs) != total {
-		t.Fatalf("FlushUsageLogs 后落库 %d 条，want %d", len(logs), total)
+		t.Fatalf("FlushUsageLogs persisted %d rows, want %d", len(logs), total)
 	}
 	if stats := db.GetUsageLogRuntimeStats(); stats.BufferLength != 0 {
-		t.Fatalf("BufferLength = %d，want 0", stats.BufferLength)
+		t.Fatalf("BufferLength = %d, want 0", stats.BufferLength)
 	}
 }
 
@@ -72,7 +72,7 @@ func TestSQLiteUsageLogFlushWaitsForUnifiedWriteLock(t *testing.T) {
 	dbPath := filepath.Join(t.TempDir(), "codex2api.db")
 	db, err := New("sqlite", dbPath)
 	if err != nil {
-		t.Fatalf("New(sqlite) 返回错误: %v", err)
+		t.Fatalf("New(sqlite) returned error: %v", err)
 	}
 	close(db.logStop)
 	db.logWg.Wait()
@@ -99,21 +99,21 @@ func TestSQLiteUsageLogFlushWaitsForUnifiedWriteLock(t *testing.T) {
 	}
 	logs, err := db.ListRecentUsageLogs(context.Background(), 10)
 	if err != nil {
-		t.Fatalf("ListRecentUsageLogs 返回错误: %v", err)
+		t.Fatalf("ListRecentUsageLogs returned error: %v", err)
 	}
 	if len(logs) != 1 {
 		t.Fatalf("flushed logs = %d, want 1", len(logs))
 	}
 }
 
-// TestCloseFlushesEntireUsageLogBuffer 覆盖优雅关闭：Close 会先停掉后台 flusher，
-// 此时再走「只刷一个批次 + notifyLogFlush」的路径没人消费信号，超出一个批次的日志
-// 会被静默丢弃，所以收尾必须刷完整个缓冲。
+// TestCloseFlushesEntireUsageLogBuffer covers graceful shutdown: Close stops the background flusher first,
+// at that point the path of `flush one batch + notifyLogFlush` has no consumer for the signal, so logs beyond one batch
+// would be silently dropped, so the shutdown must flush the whole buffer.
 func TestCloseFlushesEntireUsageLogBuffer(t *testing.T) {
 	dbPath := filepath.Join(t.TempDir(), "codex2api.db")
 	db, err := New("sqlite", dbPath)
 	if err != nil {
-		t.Fatalf("New(sqlite) 返回错误: %v", err)
+		t.Fatalf("New(sqlite) returned error: %v", err)
 	}
 
 	const total = 35
@@ -122,32 +122,32 @@ func TestCloseFlushesEntireUsageLogBuffer(t *testing.T) {
 	db.SetUsageLogConfig(UsageLogModeFull, 10, maxUsageLogFlushIntervalSeconds)
 
 	if err := db.Close(); err != nil {
-		t.Fatalf("Close 返回错误: %v", err)
+		t.Fatalf("Close returned error: %v", err)
 	}
 
 	reopened, err := New("sqlite", dbPath)
 	if err != nil {
-		t.Fatalf("重新打开数据库返回错误: %v", err)
+		t.Fatalf("reopening the database returned error: %v", err)
 	}
 	defer reopened.Close()
 
 	logs, err := reopened.ListRecentUsageLogs(context.Background(), total*2)
 	if err != nil {
-		t.Fatalf("ListRecentUsageLogs 返回错误: %v", err)
+		t.Fatalf("ListRecentUsageLogs returned error: %v", err)
 	}
 	if len(logs) != total {
-		t.Fatalf("Close 后落库 %d 条，want %d（缓冲里的日志被丢了）", len(logs), total)
+		t.Fatalf("after Close, persisted %d rows, want %d (logs in the buffer were dropped)", len(logs), total)
 	}
 }
 
-// TestUsageLogTextClampedToColumnWidth 覆盖超长字段截断：reasoning_effort / service_tier
-// 等直接来自下游请求体，超过列宽会让整条批量 INSERT 回滚，失败批次又被放回缓冲区头部，
-// 一条脏数据就能永久堵死日志写入。
+// TestUsageLogTextClampedToColumnWidth covers truncation of over-long fields: reasoning_effort / service_tier
+// and similar values come straight from the downstream request body; exceeding the column width rolls back the whole batch INSERT, and the failed batch is put back at the head of the buffer,
+// so a single bad row can block log writes forever.
 func TestUsageLogTextClampedToColumnWidth(t *testing.T) {
 	dbPath := filepath.Join(t.TempDir(), "codex2api.db")
 	db, err := New("sqlite", dbPath)
 	if err != nil {
-		t.Fatalf("New(sqlite) 返回错误: %v", err)
+		t.Fatalf("New(sqlite) returned error: %v", err)
 	}
 	defer db.Close()
 
@@ -163,13 +163,13 @@ func TestUsageLogTextClampedToColumnWidth(t *testing.T) {
 		Channel:              long,
 		StatusCode:           200,
 	}); err != nil {
-		t.Fatalf("InsertUsageLog 返回错误: %v", err)
+		t.Fatalf("InsertUsageLog returned error: %v", err)
 	}
 	db.FlushUsageLogs()
 
 	logs, err := db.ListRecentUsageLogs(context.Background(), 10)
 	if err != nil {
-		t.Fatalf("ListRecentUsageLogs 返回错误: %v", err)
+		t.Fatalf("ListRecentUsageLogs returned error: %v", err)
 	}
 	if len(logs) != 1 {
 		t.Fatalf("len(logs) = %d, want 1", len(logs))
@@ -190,7 +190,7 @@ func TestUsageLogTextClampedToColumnWidth(t *testing.T) {
 		{"channel", got.Channel, usageLogChannelMaxLen},
 	} {
 		if len(tc.value) != tc.max {
-			t.Fatalf("%s 长度 = %d，want %d", tc.name, len(tc.value), tc.max)
+			t.Fatalf("%s length = %d, want %d", tc.name, len(tc.value), tc.max)
 		}
 	}
 }
@@ -202,11 +202,11 @@ func TestClampUsageLogText(t *testing.T) {
 		max  int
 		want string
 	}{
-		{"未超长原样返回", "high", 100, "high"},
-		{"刚好等于上限", "abcd", 4, "abcd"},
-		{"按字符截断", "abcdef", 4, "abcd"},
-		{"多字节按字符而非字节截断", "思考强度很高", 3, "思考强"},
-		{"上限非正数不截断", "abc", 0, "abc"},
+		{"returned as is when not over-long", "high", 100, "high"},
+		{"exactly at the limit", "abcd", 4, "abcd"},
+		{"truncates by characters", "abcdef", 4, "abcd"},
+		{"multibyte input is truncated by characters, not bytes", "思考强度很高", 3, "思考强"},
+		{"non-positive limit does not truncate", "abc", 0, "abc"},
 	}
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
@@ -217,24 +217,24 @@ func TestClampUsageLogText(t *testing.T) {
 	}
 }
 
-// TestUsageLogInsertRowsStayUnderPostgresBindLimit 锁住每条 INSERT 的行数上限：
-// 行数 * 每行列数必须低于 PostgreSQL 的 65535 个 bind 参数。
+// TestUsageLogInsertRowsStayUnderPostgresBindLimit locks the row limit of each INSERT:
+// rows * columns per row must stay below PostgreSQL's 65535 bind parameters.
 func TestUsageLogInsertRowsStayUnderPostgresBindLimit(t *testing.T) {
 	if maxUsageLogInsertRowsPerSQL*usageLogInsertColumnCount > postgresMaxBindParams {
-		t.Fatalf("单条 INSERT 参数数 = %d，超过 PostgreSQL 上限 %d",
+		t.Fatalf("single INSERT parameter count = %d, exceeds the PostgreSQL limit %d",
 			maxUsageLogInsertRowsPerSQL*usageLogInsertColumnCount, postgresMaxBindParams)
 	}
 	if maxUsageLogBatchSize*usageLogInsertColumnCount <= postgresMaxBindParams {
-		t.Logf("提示：当前 batch size 上限 %d 即使不分片也不会超参数上限", maxUsageLogBatchSize)
+		t.Logf("note: the current batch size limit %d would not exceed the parameter limit even without sharding", maxUsageLogBatchSize)
 	}
 }
 
-// dataError 构造一个 PostgreSQL 数据类错误（class 22：超长、非法字节、数值溢出这类）。
+// dataError builds a PostgreSQL data-class error (class 22: over-long values, invalid bytes, numeric overflow and similar).
 func dataError() error {
 	return &pgconn.PgError{Code: "22001", Message: "value too long for type character varying(100)"}
 }
 
-// transientError 构造一个瞬时故障（class 08：连接异常）。
+// transientError builds a transient failure (class 08: connection exception).
 func transientError() error {
 	return &pgconn.PgError{Code: "08006", Message: "connection failure"}
 }
@@ -245,15 +245,15 @@ func TestIsUsageLogDataError(t *testing.T) {
 		err  error
 		want bool
 	}{
-		{"nil 不是数据错误", nil, false},
-		{"class 22 数据异常", dataError(), true},
-		{"class 23 约束冲突", &pgconn.PgError{Code: "23505"}, true},
-		{"class 08 连接异常要重试", transientError(), false},
-		{"class 40 死锁要重试", &pgconn.PgError{Code: "40P01"}, false},
-		{"class 53 资源不足要重试", &pgconn.PgError{Code: "53100"}, false},
-		{"包装后的数据错误仍能识别", fmt.Errorf("执行插入: %w", dataError()), true},
-		{"非 PostgreSQL SQLSTATE 错误按瞬时处理", context.DeadlineExceeded, false},
-		{"SQLSTATE 过短不按数据错误处理", &pgconn.PgError{Code: "2"}, false},
+		{"nil is not a data error", nil, false},
+		{"class 22 data exception", dataError(), true},
+		{"class 23 constraint violation", &pgconn.PgError{Code: "23505"}, true},
+		{"class 08 connection exception, should retry", transientError(), false},
+		{"class 40 deadlock, should retry", &pgconn.PgError{Code: "40P01"}, false},
+		{"class 53 insufficient resources, should retry", &pgconn.PgError{Code: "53100"}, false},
+		{"a wrapped data error is still recognized", fmt.Errorf("exec insert: %w", dataError()), true},
+		{"non-PostgreSQL SQLSTATE error is treated as transient", context.DeadlineExceeded, false},
+		{"SQLSTATE too short is not treated as a data error", &pgconn.PgError{Code: "2"}, false},
 	}
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
@@ -264,8 +264,8 @@ func TestIsUsageLogDataError(t *testing.T) {
 	}
 }
 
-// TestSalvageDropsOnlyPoisonRows 覆盖脏数据隔离：整批因为一条写不进去的日志回滚时，
-// 二分只丢那一条，其余必须照常落库（而不是整批一起放回缓冲区无限重试）。
+// TestSalvageDropsOnlyPoisonRows covers poison-row isolation: when a whole batch is rolled back because one log cannot be written,
+// bisection drops only that one row, and the rest must still be persisted (instead of the whole batch going back into the buffer to retry forever).
 func TestSalvageDropsOnlyPoisonRows(t *testing.T) {
 	batch := make([]usageLogEntry, 16)
 	for i := range batch {
@@ -291,20 +291,20 @@ func TestSalvageDropsOnlyPoisonRows(t *testing.T) {
 		t.Fatalf("dropped = %d, want 1", dropped)
 	}
 	if len(pending) != 0 {
-		t.Fatalf("pending = %d 条, want 0", len(pending))
+		t.Fatalf("pending = %d rows, want 0", len(pending))
 	}
 	if len(written) != len(batch)-1 {
-		t.Fatalf("落库 %d 条，want %d", len(written), len(batch)-1)
+		t.Fatalf("persisted %d rows, want %d", len(written), len(batch)-1)
 	}
 	for _, model := range written {
 		if model == poison {
-			t.Fatalf("脏数据 %q 不应落库", poison)
+			t.Fatalf("poison row %q should not be persisted", poison)
 		}
 	}
 }
 
-// TestSalvageKeepsTransientFailuresForRetry 瞬时故障不能被当成脏数据丢掉：
-// 那半批要原样交回重试，且已经写进去的部分不能再交回（否则重复落库、重复计费）。
+// TestSalvageKeepsTransientFailuresForRetry: transient failures must not be dropped as poison rows:
+// that half batch must be handed back for retry as is, and the part already written must not be handed back again (otherwise rows are persisted twice and billed twice).
 func TestSalvageKeepsTransientFailuresForRetry(t *testing.T) {
 	batch := make([]usageLogEntry, 8)
 	for i := range batch {
@@ -313,7 +313,7 @@ func TestSalvageKeepsTransientFailuresForRetry(t *testing.T) {
 
 	var written []string
 	insert := func(chunk []usageLogEntry) error {
-		// 后半批遇到连接故障，前半批正常写入。
+		// The second half of the batch hits a connection failure; the first half is written normally.
 		for _, e := range chunk {
 			if e.Model >= "m-04" {
 				return transientError()
@@ -327,30 +327,30 @@ func TestSalvageKeepsTransientFailuresForRetry(t *testing.T) {
 
 	pending, dropped := salvageUsageLogBatchWith(batch, dataError(), insert, func(usageLogEntry, error) {})
 	if dropped != 0 {
-		t.Fatalf("dropped = %d, want 0（瞬时故障不该丢日志）", dropped)
+		t.Fatalf("dropped = %d, want 0 (transient failures must not drop logs)", dropped)
 	}
 	if len(pending) != 4 {
-		t.Fatalf("pending = %d 条, want 4", len(pending))
+		t.Fatalf("pending = %d rows, want 4", len(pending))
 	}
 	if len(written) != 4 {
-		t.Fatalf("落库 %d 条，want 4", len(written))
+		t.Fatalf("persisted %d rows, want 4", len(written))
 	}
 	for _, e := range pending {
 		for _, model := range written {
 			if e.Model == model {
-				t.Fatalf("%q 已落库，不应再放回缓冲区重试", model)
+				t.Fatalf("%q was already persisted and should not be put back in the buffer for retry", model)
 			}
 		}
 	}
 }
 
-// TestUsageLogBufferHonorsHardLimit 覆盖缓冲硬上限：数据库长时间写不进去时缓冲不能无限涨，
-// 超限丢最旧的并计数，运维能从运行状态里看见丢了多少。
+// TestUsageLogBufferHonorsHardLimit covers the buffer's hard limit: when the database cannot be written for a long time, the buffer must not grow without bound,
+// the oldest rows are dropped past the limit and counted, so operators can see from the runtime status how many were dropped.
 func TestUsageLogBufferHonorsHardLimit(t *testing.T) {
 	dbPath := filepath.Join(t.TempDir(), "codex2api.db")
 	db, err := New("sqlite", dbPath)
 	if err != nil {
-		t.Fatalf("New(sqlite) 返回错误: %v", err)
+		t.Fatalf("New(sqlite) returned error: %v", err)
 	}
 	close(db.logStop)
 	db.logWg.Wait()
@@ -362,22 +362,22 @@ func TestUsageLogBufferHonorsHardLimit(t *testing.T) {
 
 	stats := db.GetUsageLogRuntimeStats()
 	if stats.BufferLength != usageLogBufferHardLimit {
-		t.Fatalf("BufferLength = %d，want %d", stats.BufferLength, usageLogBufferHardLimit)
+		t.Fatalf("BufferLength = %d, want %d", stats.BufferLength, usageLogBufferHardLimit)
 	}
 	if stats.DroppedTotal != overflow {
-		t.Fatalf("DroppedTotal = %d，want %d", stats.DroppedTotal, overflow)
+		t.Fatalf("DroppedTotal = %d, want %d", stats.DroppedTotal, overflow)
 	}
 	if stats.BufferLimit != usageLogBufferHardLimit {
-		t.Fatalf("BufferLimit = %d，want %d", stats.BufferLimit, usageLogBufferHardLimit)
+		t.Fatalf("BufferLimit = %d, want %d", stats.BufferLimit, usageLogBufferHardLimit)
 	}
 }
 
-// TestRequeueHonorsHardLimit 失败批次放回缓冲区同样要守住上限。
+// TestRequeueHonorsHardLimit: failed batches put back into the buffer must also respect the limit.
 func TestRequeueHonorsHardLimit(t *testing.T) {
 	dbPath := filepath.Join(t.TempDir(), "codex2api.db")
 	db, err := New("sqlite", dbPath)
 	if err != nil {
-		t.Fatalf("New(sqlite) 返回错误: %v", err)
+		t.Fatalf("New(sqlite) returned error: %v", err)
 	}
 	close(db.logStop)
 	db.logWg.Wait()
@@ -389,36 +389,36 @@ func TestRequeueHonorsHardLimit(t *testing.T) {
 	db.requeueUsageLogBatch(make([]usageLogEntry, 100))
 	stats := db.GetUsageLogRuntimeStats()
 	if stats.BufferLength != usageLogBufferHardLimit {
-		t.Fatalf("requeue 后 BufferLength = %d，want %d", stats.BufferLength, usageLogBufferHardLimit)
+		t.Fatalf("BufferLength after requeue = %d, want %d", stats.BufferLength, usageLogBufferHardLimit)
 	}
 	if stats.DroppedTotal != 100 {
-		t.Fatalf("DroppedTotal = %d，want 100", stats.DroppedTotal)
+		t.Fatalf("DroppedTotal = %d, want 100", stats.DroppedTotal)
 	}
 }
 
-// TestSalvageDropsPoisonRowAgainstPostgres 在真实 PostgreSQL 上验证脏数据隔离：
-// SQLite 不校验列宽也不返回 SQLSTATE，isUsageLogDataError 这条路只有真库能走通。
-// 需要一个可写的空库，用 CODEX2API_TEST_POSTGRES_DSN 指定，未设置时跳过。
+// TestSalvageDropsPoisonRowAgainstPostgres verifies poison-row isolation on a real PostgreSQL:
+// SQLite does not check column widths or return SQLSTATE, so the isUsageLogDataError path can only be exercised against a real database.
+// It needs a writable empty database, given by CODEX2API_TEST_POSTGRES_DSN; skipped when it is not set.
 func TestSalvageDropsPoisonRowAgainstPostgres(t *testing.T) {
 	dsn := os.Getenv("CODEX2API_TEST_POSTGRES_DSN")
 	if dsn == "" {
-		t.Skip("未设置 CODEX2API_TEST_POSTGRES_DSN，跳过 PostgreSQL 集成用例")
+		t.Skip("CODEX2API_TEST_POSTGRES_DSN is not set, skipping the PostgreSQL integration test")
 	}
 
 	db, err := New("postgres", dsn)
 	if err != nil {
-		t.Fatalf("New(postgres) 返回错误: %v", err)
+		t.Fatalf("New(postgres) returned error: %v", err)
 	}
 	close(db.logStop)
 	db.logWg.Wait()
 	defer db.conn.Close()
 
 	ctx := context.Background()
-	// 用一条 CHECK 约束造出「重试多少次都写不进去」的行：真实成因（超长、非法字节、
-	// 数值溢出）同属 SQLSTATE class 22/23，走的是同一条判定分支。
+	// Use a CHECK constraint to build a row that can never be written no matter how often it is retried: the real causes (over-long values, invalid bytes,
+	// numeric overflow) all fall under SQLSTATE class 22/23 and take the same decision branch.
 	if _, err := db.conn.ExecContext(ctx,
 		`ALTER TABLE usage_logs ADD CONSTRAINT tmp_salvage_poison CHECK (model <> '__poison__')`); err != nil {
-		t.Fatalf("创建约束返回错误: %v", err)
+		t.Fatalf("creating the constraint returned error: %v", err)
 	}
 	defer db.conn.ExecContext(ctx, `ALTER TABLE usage_logs DROP CONSTRAINT IF EXISTS tmp_salvage_poison`)
 
@@ -435,7 +435,7 @@ func TestSalvageDropsPoisonRowAgainstPostgres(t *testing.T) {
 			Model:      model,
 			StatusCode: 200,
 		}); err != nil {
-			t.Fatalf("InsertUsageLog(%d) 返回错误: %v", i, err)
+			t.Fatalf("InsertUsageLog(%d) returned error: %v", i, err)
 		}
 	}
 
@@ -444,16 +444,16 @@ func TestSalvageDropsPoisonRowAgainstPostgres(t *testing.T) {
 	var landed int
 	if err := db.conn.QueryRowContext(ctx,
 		`SELECT count(*) FROM usage_logs WHERE endpoint = $1`, marker).Scan(&landed); err != nil {
-		t.Fatalf("统计落库条数返回错误: %v", err)
+		t.Fatalf("counting persisted rows returned error: %v", err)
 	}
 	if landed != clean-1 {
-		t.Fatalf("落库 %d 条，want %d（脏数据之外的日志必须照常写入）", landed, clean-1)
+		t.Fatalf("persisted %d rows, want %d (logs other than the poison row must still be written)", landed, clean-1)
 	}
 	stats := db.GetUsageLogRuntimeStats()
 	if stats.DroppedTotal != 1 {
-		t.Fatalf("DroppedTotal = %d，want 1", stats.DroppedTotal)
+		t.Fatalf("DroppedTotal = %d, want 1", stats.DroppedTotal)
 	}
 	if stats.BufferLength != 0 {
-		t.Fatalf("BufferLength = %d，want 0（脏数据不应留在缓冲区反复重试）", stats.BufferLength)
+		t.Fatalf("BufferLength = %d, want 0 (a poison row should not stay in the buffer and be retried again and again)", stats.BufferLength)
 	}
 }

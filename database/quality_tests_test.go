@@ -206,12 +206,12 @@ func TestQualityTestSchemaAddsPresetColumnsToExistingTables(t *testing.T) {
 	if err := db.ensureQualityTestSchema(ctx); err != nil {
 		t.Fatal(err)
 	}
-	job, err := db.CreateQualityTestJob(ctx, QualityTestJob{AccountID: 9, PresetKind: "custom", PresetRef: "4", PresetName: "月球企鹅"})
+	job, err := db.CreateQualityTestJob(ctx, QualityTestJob{AccountID: 9, PresetKind: "custom", PresetRef: "4", PresetName: "Moon penguin"})
 	if err != nil {
 		t.Fatal(err)
 	}
 	stored, err := db.GetQualityTestJob(ctx, job.ID)
-	if err != nil || stored.PresetKind != "custom" || stored.PresetRef != "4" || stored.PresetName != "月球企鹅" {
+	if err != nil || stored.PresetKind != "custom" || stored.PresetRef != "4" || stored.PresetName != "Moon penguin" {
 		t.Fatalf("preset provenance after migration: %+v err=%v", stored, err)
 	}
 }

@@ -884,9 +884,9 @@ func promptFilterLogWhere(query PromptFilterLogQuery) (string, []any) {
 	return " WHERE " + strings.Join(clauses, " AND "), args
 }
 
-// FindNearestPromptFilterLog 返回与给定时间 at 最接近的一条提示词过滤日志，用于把
-// 「使用统计」里的某次报错关联到对应的拦截记录（含完整请求内容）。按 source /
-// api_key_id 过滤，时间窗口内取最接近的一条；endpoint 仅作为同等时间下的优先项。
+// FindNearestPromptFilterLog returns the prompt filter log entry closest to the given time at, used to link an error in the "usage statistics" view
+// to the matching block record (including the full request content). Filtered by source /
+// api_key_id; within the time window the closest entry is taken, and endpoint is only a priority among entries at the same time.
 func (db *DB) FindNearestPromptFilterLog(ctx context.Context, at time.Time, source, endpoint string, apiKeyID int64, windowSeconds int) (*PromptFilterLog, error) {
 	if db == nil {
 		return nil, nil
@@ -947,7 +947,7 @@ func (db *DB) FindNearestPromptFilterLog(ctx context.Context, at time.Time, sour
 		if delta < 0 {
 			delta = -delta
 		}
-		// endpoint 一致时给一点优先（减小有效距离），保证同一时刻多条时选对端点。
+		// When the endpoint matches, give it a small priority (reducing the effective distance), so that when several entries share the same moment, the right endpoint is chosen.
 		if endpoint != "" && item.Endpoint == endpoint {
 			if delta >= time.Second {
 				delta -= time.Second

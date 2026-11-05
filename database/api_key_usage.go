@@ -12,26 +12,26 @@ import (
 	"time"
 )
 
-// APIKeyWindowUsage 表示一个 API Key 在某时间窗口内的累计使用量。
-// 仅排除 499 客户端取消请求,保持与 GetUsageStats 一致的语义。
+// APIKeyWindowUsage is the cumulative usage of one API key within a time window.
+// Only excludes 499 client-cancelled requests, keeping semantics consistent with GetUsageStats.
 type APIKeyWindowUsage struct {
 	Requests   int64   `json:"requests"`
 	Tokens     int64   `json:"tokens"`
 	UserBilled float64 `json:"user_billed"`
-	// OldestAt 是窗口内最早一笔用量的时间,窗口内无用量时为空。滑动窗口下
-	// OldestAt+窗口长度 即额度开始回落的时刻,供自助用量页展示(issue #460)。
+	// OldestAt is the time of the earliest usage record within the window, empty when the window has no usage. Under a sliding window
+	// OldestAt+window length is the moment the quota starts to decay back, shown on the self-service usage page (issue #460).
 	OldestAt *time.Time `json:"oldest_at,omitempty"`
 }
 
-// StartOfDay 返回 t 所在自然日的零点(保留 t 的时区)。自然日限额与
-// key-usage 展示共用,保证判定与展示的日界一致。
+// StartOfDay returns midnight of the calendar day containing t (keeping the time zone of t). The calendar-day limit and
+// key-usage display share this, so the day boundary used for checks matches the one shown.
 func StartOfDay(t time.Time) time.Time {
 	return time.Date(t.Year(), t.Month(), t.Day(), 0, 0, 0, 0, t.Location())
 }
 
-// GetAPIKeyWindowUsage 聚合指定 API Key 在 [now-window, now] 时间窗口内的使用情况。
-// 用于 API Key 级别的滑动窗口限额校验(rpm/rpd/cost_5h/cost_7d/token_5h/token_7d)。
-// 手动额度重置只截断 5h/7d 窗口，RPM/RPD/30d 与自然日窗口保持原有口径。
+// GetAPIKeyWindowUsage aggregates the usage of the given API key within the time window [now-window, now].
+// Used for API key level sliding-window limit checks (rpm/rpd/cost_5h/cost_7d/token_5h/token_7d).
+// A manual quota reset only truncates the 5h/7d windows; RPM/RPD/30d and calendar-day windows keep their original definition.
 func (db *DB) GetAPIKeyWindowUsage(ctx context.Context, apiKeyID int64, window time.Duration) (*APIKeyWindowUsage, error) {
 	if window <= 0 {
 		return &APIKeyWindowUsage{}, nil
@@ -43,9 +43,9 @@ func isResettableAPIKeyWindow(window time.Duration) bool {
 	return window == 5*time.Hour || window == 7*24*time.Hour
 }
 
-// GetAPIKeyUsageSince 聚合指定 API Key 自 since 起的使用情况。自然日限额
-// (issue #460)以当天零点为 since 复用同一条查询。
-// 索引 idx_usage_logs_api_key_created_at 让该查询在数据量大时仍 O(log n)。
+// GetAPIKeyUsageSince aggregates the usage of the given API key since "since". The calendar-day limit
+// (issue #460) reuses this same query with midnight of the current day as "since".
+// Index idx_usage_logs_api_key_created_at keeps this query at O(log n) even when the data volume is large.
 func (db *DB) GetAPIKeyUsageSince(ctx context.Context, apiKeyID int64, since time.Time) (*APIKeyWindowUsage, error) {
 	return db.getAPIKeyUsageSince(ctx, apiKeyID, since, false)
 }
@@ -94,14 +94,14 @@ func (db *DB) getAPIKeyUsageSince(ctx context.Context, apiKeyID int64, since tim
 	return usage, nil
 }
 
-// GetAPIKeyAccountWindowUsage 聚合指定 API Key 在窗口内**按账号拆分**的使用情况,
-// 供 scope 维度限额(issue #439)判定。一次查询即可覆盖该 Key 的全部 scope 条目:
-// 分组维度在调用方按账号当前所属分组折算,因此分组成员变动即时生效,无需在
-// usage_logs 里冗余 group_id。
+// GetAPIKeyAccountWindowUsage aggregates the usage of the given API key within the window, **split by account**,
+// used for scope-level limit checks (issue #439). One query covers all scope entries of this key:
+// group-level totals are computed by the caller from each account's current group, so membership changes take effect immediately, without needing
+// a redundant group_id in usage_logs.
 //
-// 复用索引 idx_usage_logs_api_key_created_at,扫描量与同窗口的 Key 级 cost 聚合同级。
-// 已从账号池删除的账号仍会出现在返回值里,但调用方无法把它折算到分组——这部分历史
-// 用量在分组维度上会被忽略(账号维度仍准确)。
+// Reuses index idx_usage_logs_api_key_created_at; the scan volume is on par with the key-level cost aggregation over the same window.
+// Accounts deleted from the account pool still appear in the return value, but the caller cannot map them to a group, so this part of the historical
+// usage is ignored at group level (account-level totals stay accurate).
 func (db *DB) GetAPIKeyAccountWindowUsage(ctx context.Context, apiKeyID int64, window time.Duration) (map[int64]APIKeyWindowUsage, error) {
 	if apiKeyID <= 0 || window <= 0 {
 		return map[int64]APIKeyWindowUsage{}, nil
@@ -201,9 +201,9 @@ func (db *DB) GetAPIKeyAccountWindowsUsage(ctx context.Context, apiKeyID int64) 
 	return out, rows.Err()
 }
 
-// GetAPIKeysAccountWindowUsage 是 GetAPIKeyAccountWindowUsage 的批量版本:一次查询拿到
-// 多个 API Key 在同一窗口内、按账号拆分的用量,供列表页展示 scope 预算进度(issue #439)。
-// apiKeyIDs 为空时返回空表(刻意不退化成全表聚合,避免列表页误触发大查询)。
+// GetAPIKeysAccountWindowUsage is the batch version of GetAPIKeyAccountWindowUsage: one query returns
+// usage split by account within the same window for several API keys, used by the list page to show scope budget progress (issue #439).
+// Returns an empty table when apiKeyIDs is empty (deliberately not degraded into a full-table aggregation, so the list page does not trigger a large query by mistake).
 func (db *DB) GetAPIKeysAccountWindowUsage(ctx context.Context, apiKeyIDs []int64, window time.Duration) (map[int64]map[int64]APIKeyWindowUsage, error) {
 	out := make(map[int64]map[int64]APIKeyWindowUsage)
 	if len(apiKeyIDs) == 0 || window <= 0 {
@@ -261,8 +261,8 @@ func (db *DB) GetAPIKeysAccountWindowUsage(ctx context.Context, apiKeyIDs []int6
 	return out, rows.Err()
 }
 
-// APIKeyTokenStat 是 API Key 在某时间区间内的 token 使用排行项。
-// 比 UsageAPIKeyStat 更细——分列 input / output / cached token，便于 UI 单独排序。
+// APIKeyTokenStat is one entry in the token usage ranking of an API key within a time range.
+// More granular than UsageAPIKeyStat: input / output / cached tokens are listed separately so the UI can sort each one on its own.
 type APIKeyTokenStat struct {
 	APIKeyID     int64   `json:"api_key_id"`
 	APIKeyName   string  `json:"api_key_name"`
@@ -277,9 +277,9 @@ type APIKeyTokenStat struct {
 	UserBilled   float64 `json:"user_billed"`
 }
 
-// ListAPIKeyTokenStats 返回 [rangeStart, rangeEnd) 区间内按 API Key 聚合的 token 用量。
-// 两个时间都可零值；rangeStart 零值表示"今日 0 点"，rangeEnd 零值表示"至今"。
-// 返回结果**不限条数**，与 issue #162 一致；前端负责排序 / 搜索 / 分页。
+// ListAPIKeyTokenStats returns token usage aggregated by API key within [rangeStart, rangeEnd).
+// Both times may be zero values; a zero rangeStart means "today 0:00", and a zero rangeEnd means "until now".
+// The result is **not limited in count**, consistent with issue #162; the frontend handles sorting / search / paging.
 func (db *DB) ListAPIKeyTokenStats(ctx context.Context, rangeStart, rangeEnd time.Time) ([]APIKeyTokenStat, error) {
 	now := time.Now()
 	if rangeStart.IsZero() {
@@ -332,7 +332,7 @@ func (db *DB) ListAPIKeyTokenStats(ctx context.Context, rangeStart, rangeEnd tim
 		); err != nil {
 			return nil, err
 		}
-		// 计算 label（前端可直接展示）：优先 name，其次 masked，否则 "unknown"
+		// Compute the label (the frontend can display it directly): prefer name, then masked, otherwise "unknown"
 		switch {
 		case item.APIKeyName != "":
 			item.Label = item.APIKeyName
@@ -349,15 +349,15 @@ func (db *DB) ListAPIKeyTokenStats(ctx context.Context, rangeStart, rangeEnd tim
 	return items, nil
 }
 
-// APIKeyAccountGroup 是上游账号所属分组的精简展示项（Token 用量明细用）。
+// APIKeyAccountGroup is the condensed display item for the group an upstream account belongs to (used in token usage details).
 type APIKeyAccountGroup struct {
 	ID    int64  `json:"id"`
 	Name  string `json:"name"`
 	Color string `json:"color"`
 }
 
-// APIKeyAccountStat 是单个 API Key 在某时间区间内、按上游账号拆分的用量项。
-// 与 AccountKeyStat（账号 → 各 Key）互为转置：这里是 Key → 各账号。
+// APIKeyAccountStat is the usage item of a single API key within a time range, split by upstream account.
+// It is the transpose of AccountKeyStat (account → keys): here it is key → accounts.
 type APIKeyAccountStat struct {
 	AccountID      int64                `json:"account_id"`
 	AccountName    string               `json:"account_name"`
@@ -374,9 +374,9 @@ type APIKeyAccountStat struct {
 	UserBilled     float64              `json:"user_billed"`
 }
 
-// ListAPIKeyAccountStats 返回某个 API Key 在 [rangeStart, rangeEnd) 内按上游账号聚合的用量。
-// rangeStart 零值表示"今日 0 点"，rangeEnd 零值表示"至今"，与 ListAPIKeyTokenStats 语义一致。
-// account 标签(name/email)从 accounts 表 JOIN 得到；email 存在 credentials JSON 中，在 Go 侧解析。
+// ListAPIKeyAccountStats returns the usage of one API key within [rangeStart, rangeEnd), aggregated by upstream account.
+// A zero rangeStart means "today 0:00" and a zero rangeEnd means "until now", the same semantics as ListAPIKeyTokenStats.
+// Account labels (name/email) are JOINed from the accounts table; email is stored in the credentials JSON and parsed on the Go side.
 func (db *DB) ListAPIKeyAccountStats(ctx context.Context, apiKeyID int64, rangeStart, rangeEnd time.Time) ([]APIKeyAccountStat, error) {
 	now := time.Now()
 	if rangeStart.IsZero() {
@@ -462,9 +462,9 @@ func (db *DB) ListAPIKeyAccountStats(ctx context.Context, apiKeyID int64, rangeS
 	return items, nil
 }
 
-// attachAPIKeyAccountGroups 批量补齐上游账号的分组标签，避免 N+1。
-// account_group_members 保留回收站账号软删除前的最后归属，因此这里不按
-// accounts.status 过滤；统计历史用量时必须能看见该快照。
+// attachAPIKeyAccountGroups batch-fills the group labels of upstream accounts to avoid N+1.
+// account_group_members keeps each account's last group membership from before it was soft-deleted into the recycle bin, so this does not filter by
+// accounts.status; historical usage statistics must be able to see that snapshot.
 func (db *DB) attachAPIKeyAccountGroups(ctx context.Context, items []APIKeyAccountStat) error {
 	if len(items) == 0 {
 		return nil
@@ -529,8 +529,8 @@ func (db *DB) attachAPIKeyAccountGroups(ctx context.Context, items []APIKeyAccou
 	return nil
 }
 
-// emailFromCredentialsJSON 从账号 credentials JSON 文本里取展示用邮箱；
-// email 缺省时回落到 base_url。
+// emailFromCredentialsJSON takes the email used for display from the account credentials JSON text;
+// when email is absent it falls back to base_url.
 func emailFromCredentialsJSON(raw string) string {
 	if raw == "" {
 		return ""
@@ -548,10 +548,10 @@ func emailFromCredentialsJSON(raw string) string {
 	return ""
 }
 
-// ListAPIKeyLastUsedAt 返回每个 API Key 最近一次请求时间（来自 usage_logs）。
-// 仅包含有调用记录的 key。按 key 逐个沿 idx_usage_logs_api_key_created_at 倒序取第一条
-// 非 499 记录,代价是 O(key 数 × log n);旧写法 GROUP BY api_key_id 要回表读每一行的
-// status_code,等于每次打开密钥列表都把全部历史扫一遍。
+// ListAPIKeyLastUsedAt returns the most recent request time of each API key (from usage_logs).
+// Only includes keys that have call records. For each key it reads, via idx_usage_logs_api_key_created_at in descending order, the first
+// non-499 record; the cost is O(number of keys × log n). The old form, GROUP BY api_key_id, had to read back each row's
+// status_code, which meant the entire history was scanned every time the key list was opened.
 func (db *DB) ListAPIKeyLastUsedAt(ctx context.Context) (map[int64]time.Time, error) {
 	query := `
 		SELECT k.id, (
@@ -591,8 +591,8 @@ func (db *DB) ListAPIKeyLastUsedAt(ctx context.Context) (map[int64]time.Time, er
 	return result, nil
 }
 
-// GetAllAPIKeysWindowCost 批量聚合所有 API Key 在 [now-window, now] 窗口内的 user_billed。
-// 返回 map[apiKeyID] → cost。仅包含有使用记录的 key。
+// GetAllAPIKeysWindowCost batch-aggregates user_billed of all API keys within the window [now-window, now].
+// Returns map[apiKeyID] → cost. Only includes keys that have usage records.
 func (db *DB) GetAllAPIKeysWindowCost(ctx context.Context, window time.Duration) (map[int64]float64, error) {
 	if window <= 0 {
 		return make(map[int64]float64), nil
@@ -600,8 +600,8 @@ func (db *DB) GetAllAPIKeysWindowCost(ctx context.Context, window time.Duration)
 	return db.getAllAPIKeysCostSince(ctx, time.Now().Add(-window), isResettableAPIKeyWindow(window))
 }
 
-// GetAllAPIKeysCostSince 批量聚合所有 API Key 自 since 起的 user_billed。
-// 自然日限额(issue #460)以当天零点为 since 复用该查询。
+// GetAllAPIKeysCostSince batch-aggregates user_billed of all API keys since "since".
+// The calendar-day limit (issue #460) reuses this query with midnight of the current day as "since".
 func (db *DB) GetAllAPIKeysCostSince(ctx context.Context, since time.Time) (map[int64]float64, error) {
 	return db.getAllAPIKeysCostSince(ctx, since, false)
 }
@@ -651,9 +651,9 @@ func (db *DB) getAllAPIKeysCostSince(ctx context.Context, since time.Time, honor
 	return result, nil
 }
 
-// APIKeySelfUsageReport 是 API Key 自助统计页使用的只读聚合结果。
-// 只包含当前 key 自己的 usage_logs 数据(含经该 key 发起请求的客户端 IP 与 User-Agent,
-// 共享同一 key 的持有者可互相看到),不返回其他 key 的日志、账号池、raw key 等后台字段。
+// APIKeySelfUsageReport is the read-only aggregate result used by the API key self-service statistics page.
+// It only contains the current key's own usage_logs data (including the client IP and User-Agent of requests sent with this key;
+// holders sharing the same key can see each other's), and does not return logs of other keys, the account pool, raw keys or other admin-only fields.
 type APIKeySelfUsageReport struct {
 	Summary            APIKeySelfUsageSummary     `json:"summary"`
 	Windows            APIKeySelfUsageWindows     `json:"windows"`
@@ -663,24 +663,24 @@ type APIKeySelfUsageReport struct {
 	RecentLogsTotal    int64                      `json:"recent_logs_total"`
 	RecentLogsPage     int                        `json:"recent_logs_page"`
 	RecentLogsPageSize int                        `json:"recent_logs_page_size"`
-	// LogModels / LogEndpoints 是时间范围内出现过的请求模型与入站端点(不受日志筛选影响),
-	// 供自助页日志筛选下拉使用。
+	// LogModels / LogEndpoints are the request models and inbound endpoints seen in the time range (not affected by log filters),
+	// used by the log filter dropdowns on the self-service page.
 	LogModels    []string `json:"log_models"`
 	LogEndpoints []string `json:"log_endpoints"`
 }
 
-// APIKeySelfLogFilter 是自助页请求日志的筛选条件,只作用于 recent_logs,
-// 不影响汇总、窗口与排行。
+// APIKeySelfLogFilter is the filter condition for the self-service request log; it only applies to recent_logs,
+// and does not affect the summary, windows or rankings.
 type APIKeySelfLogFilter struct {
-	// Model 同时匹配请求模型与实际生效模型。
+	// Model matches both the requested model and the effective model.
 	Model string
-	// Endpoint 匹配入站端点(与 recent_logs.endpoint 同口径)。
+	// Endpoint matches the inbound endpoint (same basis as recent_logs.endpoint).
 	Endpoint string
-	// Status: success | error | 4xx | 5xx | 429;空表示不限。
+	// Status: success | error | 4xx | 5xx | 429; empty means no limit.
 	Status string
-	// Stream: stream | sync;空表示不限。
+	// Stream: stream | sync; empty means no limit.
 	Stream string
-	// Channel: codex;空表示不限。
+	// Channel: codex; empty means no limit.
 	Channel string
 }
 
@@ -700,13 +700,13 @@ type APIKeySelfUsageSummary struct {
 	TPM             int64   `json:"tpm"`
 }
 
-// APIKeySelfUsageWindow 是自助页的窗口条目:原始聚合之上附带窗口语义与重置/回落
-// 时刻(issue #460),由服务端计算,前端不做本地推算。
+// APIKeySelfUsageWindow is a window entry of the self-service page: on top of the raw aggregate it carries the window semantics and the reset / decay
+// moments (issue #460), computed on the server so the frontend does no local estimation.
 type APIKeySelfUsageWindow struct {
 	APIKeyWindowUsage
-	// WindowKind: fixed=自然日固定窗口,到 ResetAt 全额清零;
-	// sliding=滑动窗口,没有单一重置时刻,DecayAt 是最早一笔用量滚出窗口、
-	// 额度开始回落的时间(窗口内无用量时为空)。
+	// WindowKind: fixed=calendar-day fixed window, fully reset to zero at ResetAt;
+	// sliding=sliding window, with no single reset moment; DecayAt is the time when the earliest usage record rolls out of the window
+	// and the quota starts to decay back (empty when the window has no usage).
 	WindowKind string     `json:"window_kind"`
 	ResetAt    *time.Time `json:"reset_at,omitempty"`
 	DecayAt    *time.Time `json:"decay_at,omitempty"`
@@ -773,8 +773,8 @@ type APIKeySelfUsageLog struct {
 	CreatedAt              time.Time `json:"created_at"`
 }
 
-// populateBillingBreakdown 复用与管理端一致的计费拆解逻辑，按生效模型、Daybreak 程序与计费档位
-// 还原输入/输出/缓存读取的费用与单价，并在与实际计费总额不一致时等比缩放对齐。
+// populateBillingBreakdown reuses the billing breakdown logic that matches the admin side: by effective model, Daybreak program and billing tier,
+// it restores the cost and unit price of input / output / cached reads, and proportionally scales them to align when they differ from the actual billed total.
 func (l *APIKeySelfUsageLog) populateBillingBreakdown() {
 	if IsUnitUserBillingMode(l.UserBillingMode) {
 		l.TotalCost = l.UserBilled
@@ -830,8 +830,8 @@ func (db *DB) GetAPIKeySelfUsageReportFiltered(ctx context.Context, apiKeyID int
 		RecentLogsPageSize: recentPageSize,
 	}
 	var err error
-	// 汇总、排行、筛选选项与四个额度窗口同出一次扫描。以前是十来条各扫一遍区间的聚合
-	// 串行执行,自助页默认 30 天、整体 8 秒预算,慢盘 SQLite 上有效 Key 也会因报告超时而"登录失败"。
+	// Summary, rankings, filter options and the four quota windows come from one scan. Previously more than ten aggregations each scanned the range
+	// one after another, with the self-service page defaulting to 30 days and an 8-second overall budget; on a slow-disk SQLite, valid keys could also "fail to log in" because the report timed out.
 	if err = db.fillAPIKeySelfAggregates(ctx, report, apiKeyID, rangeStart, rangeEnd, time.Now()); err != nil {
 		return nil, err
 	}
@@ -844,7 +844,7 @@ func (db *DB) GetAPIKeySelfUsageReportFiltered(ctx context.Context, apiKeyID int
 
 const apiKeySelfEndpointExpr = "COALESCE(NULLIF(inbound_endpoint, ''), NULLIF(endpoint, ''), 'unknown')"
 
-// appendAPIKeySelfLogFilter 把日志筛选条件追加到 apiKeySelfUsageWhere 生成的 where 上。
+// appendAPIKeySelfLogFilter appends the log filter conditions to the where clause generated by apiKeySelfUsageWhere.
 func appendAPIKeySelfLogFilter(where string, args []interface{}, f APIKeySelfLogFilter) (string, []interface{}) {
 	if model := strings.TrimSpace(f.Model); model != "" {
 		args = append(args, model)
@@ -893,7 +893,7 @@ func normalizeAPIKeySelfRecentLogPagination(page, pageSize int) (int, int) {
 	return page, pageSize
 }
 
-// 窗口语义取值(APIKeySelfUsageWindow.WindowKind)。
+// Window semantics values (APIKeySelfUsageWindow.WindowKind).
 const (
 	usageWindowKindFixed   = "fixed"
 	usageWindowKindSliding = "sliding"
@@ -913,16 +913,16 @@ func (db *DB) apiKeySelfUsageWhere(apiKeyID int64, rangeStart, rangeEnd time.Tim
 	return where, args
 }
 
-// fillAPIKeySelfAggregates 同时填出区间汇总、模型/端点排行(前 8)、日志筛选下拉选项,
-// 以及今日/5h/7d/30d 四个额度窗口。
+// fillAPIKeySelfAggregates fills in, at once, the range summary, the model / endpoint rankings (top 8), the log filter dropdown options,
+// and the four quota windows: today / 5h / 7d / 30d.
 //
-// 扫描范围取区间与 30 天窗口的并集。区间起止、各窗口起点和"一分钟前"把时间轴切成几段,
-// 按(展示模型, 端点, 请求模型, 时间段)分组:每行只算一次段号,聚合都是普通 SUM;
-// 区间、窗口与 RPM 在 Go 里按段合并。分组只有几十到几百行。
-// 整点小时读用量小时汇总,只有边界所在的小时回明细扫描,30 天区间的明细读取量从全部行
-// 降到最多几个小时。
-// 窗口口径与限额判定用的 GetAPIKeyWindowUsage/GetAPIKeyUsageSince 一致:排除 499,
-// 5h/7d 从手动重置时刻起算。
+// The scan range is the union of the range and the 30-day window. The range start and end, each window start, and "one minute ago" cut the timeline into segments,
+// grouped by (display model, endpoint, requested model, time segment): each row computes its segment number once, and the aggregates are plain SUMs;
+// the range, windows and RPM are merged in Go by segment. The grouping has only a few dozen to a few hundred rows.
+// Whole-hour reads use the hourly usage summary; only the hour that holds a boundary falls back to a detail scan, so the detail rows read for the 30-day range drop from all rows
+// to at most a few hours.
+// The window basis matches GetAPIKeyWindowUsage / GetAPIKeyUsageSince, used for limit checks: 499 is excluded,
+// and the 5h/7d windows are counted from the manual reset moment.
 func (db *DB) fillAPIKeySelfAggregates(ctx context.Context, report *APIKeySelfUsageReport, apiKeyID int64, rangeStart, rangeEnd, now time.Time) error {
 	var lastResetRaw interface{}
 	err := db.conn.QueryRowContext(ctx, `SELECT last_reset_at FROM api_keys WHERE id = $1`, apiKeyID).Scan(&lastResetRaw)
@@ -945,7 +945,7 @@ func (db *DB) fillAPIKeySelfAggregates(ctx context.Context, report *APIKeySelfUs
 	windows := []struct {
 		target *APIKeySelfUsageWindow
 		since  time.Time
-		length time.Duration // 0 = 自然日固定窗口
+		length time.Duration // 0 = calendar-day fixed window
 	}{
 		{&report.Windows.Today, dayStart, 0},
 		{&report.Windows.Last5h, now.Add(-5 * time.Hour), 5 * time.Hour},
@@ -954,8 +954,8 @@ func (db *DB) fillAPIKeySelfAggregates(ctx context.Context, report *APIKeySelfUs
 	}
 	minuteAgo := now.Add(-1 * time.Minute)
 
-	// 时间边界降序去重;段 k 覆盖 [bounds[k], bounds[k-1]),最后一段覆盖 bounds 末项之前。
-	// 区间终点就是"现在"时不设上界,省一个边界。
+	// Boundaries are sorted descending and deduplicated by time; segment k covers [bounds[k], bounds[k-1]), and the last segment covers everything before the last bound.
+	// When the range end is "now", no upper bound is set, which saves one boundary.
 	hasRangeEnd := !rangeEnd.IsZero() && now.Sub(rangeEnd) > time.Second
 	scanStart := rangeStart
 	bounds := []time.Time{minuteAgo}
@@ -976,7 +976,7 @@ func (db *DB) fillAPIKeySelfAggregates(ctx context.Context, report *APIKeySelfUs
 	}
 	sort.Slice(bounds, func(i, j int) bool { return bounds[i].After(bounds[j]) })
 	bounds = slices.CompactFunc(bounds, time.Time.Equal)
-	segmentsFrom := func(t time.Time) int { // t 是某个边界:返回 created_at >= t 的段数
+	segmentsFrom := func(t time.Time) int { // t is a boundary: returns the number of segments with created_at >= t
 		return slices.IndexFunc(bounds, t.Equal) + 1
 	}
 	segmentExpr := func(column string, args []interface{}) (string, []interface{}) {
@@ -988,7 +988,7 @@ func (db *DB) fillAPIKeySelfAggregates(ctx context.Context, report *APIKeySelfUs
 		return expr + fmt.Sprintf(" ELSE %d END", len(bounds)), args
 	}
 
-	rangeFirst, rangeLast := 0, len(bounds) // 区间内的段号闭区间
+	rangeFirst, rangeLast := 0, len(bounds) // closed interval of segment numbers inside the range
 	if hasRangeEnd {
 		rangeFirst = segmentsFrom(rangeEnd)
 	}
@@ -1007,7 +1007,7 @@ func (db *DB) fillAPIKeySelfAggregates(ctx context.Context, report *APIKeySelfUs
 	endpoints := map[string]*APIKeySelfUsageBreakdown{}
 	requestModels := map[string]int64{}
 	windowOldest := make([]time.Time, len(windows))
-	// 明细与汇总两条查询列布局一致,共用这段累加。
+	// The detail and summary queries share the same column layout, so they share this accumulation block.
 	accumulate := func(query string, args []interface{}) error {
 		rows, err := db.conn.QueryContext(ctx, query, args...)
 		if err != nil {
@@ -1175,7 +1175,7 @@ func (db *DB) fillAPIKeySelfAggregates(ctx context.Context, report *APIKeySelfUs
 	return nil
 }
 
-// topAPIKeySelfBreakdowns 按计费降序、请求数降序、名称升序取前 limit 项。
+// topAPIKeySelfBreakdowns takes the top limit items, sorted by billing descending, then request count descending, then name ascending.
 func topAPIKeySelfBreakdowns(byName map[string]*APIKeySelfUsageBreakdown, limit int) []APIKeySelfUsageBreakdown {
 	items := make([]APIKeySelfUsageBreakdown, 0, len(byName))
 	for _, item := range byName {
@@ -1196,7 +1196,7 @@ func topAPIKeySelfBreakdowns(byName map[string]*APIKeySelfUsageBreakdown, limit 
 	return items
 }
 
-// apiKeySelfOptionsByCount 按请求量降序、取值升序列出筛选下拉选项,最多 apiKeySelfLogOptionLimit 个。
+// apiKeySelfOptionsByCount lists filter dropdown options sorted by request volume descending, then value ascending, up to apiKeySelfLogOptionLimit items.
 func apiKeySelfOptionsByCount(counts map[string]int64) []string {
 	values := make([]string, 0, len(counts))
 	for value := range counts {
@@ -1214,8 +1214,8 @@ func apiKeySelfOptionsByCount(counts map[string]int64) []string {
 	return values
 }
 
-// countAPIKeySelfLogs 统计自助页日志筛选命中的条数。筛选列都是用量小时汇总的维度,
-// 整点小时读汇总,首尾零头扫明细;带筛选时不必把区间内每一行明细都读一遍。
+// countAPIKeySelfLogs counts the rows that match the self-service log filter. The filter columns are all dimensions of the hourly usage summary,
+// so whole hours are read from the hourly summary and only the head and tail remainders are scanned from details; with a filter there is no need to read every detail row in the range.
 func (db *DB) countAPIKeySelfLogs(ctx context.Context, apiKeyID int64, rangeStart, rangeEnd time.Time, filter APIKeySelfLogFilter) (int64, error) {
 	var total int64
 	plan := db.planUsageHourlyQuery(ctx, rangeStart, rangeEnd, time.Now())
@@ -1240,8 +1240,8 @@ func (db *DB) countAPIKeySelfLogs(ctx context.Context, apiKeyID int64, rangeStar
 	return total, nil
 }
 
-// listAPIKeySelfRecentLogs 分页列出自助页请求日志。knownTotal >= 0 时表示调用方已从区间汇总
-// 得到同口径总数,筛选为空时直接复用,省一次计数扫描。
+// listAPIKeySelfRecentLogs pages through the self-service request log. When knownTotal >= 0 the caller has already obtained
+// the total on the same basis from the range summary; with an empty filter it is reused directly, saving one count scan.
 func (db *DB) listAPIKeySelfRecentLogs(ctx context.Context, apiKeyID int64, rangeStart, rangeEnd time.Time, page, pageSize int, filter APIKeySelfLogFilter, knownTotal int64) ([]APIKeySelfUsageLog, int64, int, int, error) {
 	page, pageSize = normalizeAPIKeySelfRecentLogPagination(page, pageSize)
 	baseWhere, args := db.apiKeySelfUsageWhere(apiKeyID, rangeStart, rangeEnd)

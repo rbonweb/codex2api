@@ -72,7 +72,7 @@ func parseDBTimeValue(value interface{}) (time.Time, error) {
 	case []byte:
 		return parseDBTimeString(string(v))
 	default:
-		return time.Time{}, fmt.Errorf("不支持的时间类型: %T", value)
+		return time.Time{}, fmt.Errorf("unsupported time type: %T", value)
 	}
 }
 
@@ -109,7 +109,7 @@ func parseDBTimeString(value string) (time.Time, error) {
 			return t, nil
 		}
 	}
-	return time.Time{}, fmt.Errorf("无法解析时间值: %q", value)
+	return time.Time{}, fmt.Errorf("cannot parse time value: %q", value)
 }
 
 func sqliteTimeParam(value time.Time) string {
@@ -146,7 +146,7 @@ func decodeCredentials(raw interface{}) map[string]interface{} {
 	if out == nil {
 		return map[string]interface{}{}
 	}
-	// 统一读扼要点:解密敏感字段,使所有 Go 读取端见明文(密钥未设时为 no-op)。
+	// Single read chokepoint: decrypts sensitive fields so every Go reader sees plaintext (no-op when no key is set).
 	decryptSensitiveCredentialsInPlace(out)
 	return out
 }

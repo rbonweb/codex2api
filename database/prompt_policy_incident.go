@@ -599,10 +599,10 @@ func mergePromptPolicyCandidateEvidenceMetadata(raw, outcome, comparison string,
 			return "", err
 		}
 	}
-	// JSON 转义(<>& 与控制字符→\u00XX)可把学习包的原始字节预算膨胀至 6 倍,
-	// 上面的降级无法保证收敛;继续按编码后体积收缩学习包正文,最终兜底丢弃
-	// 学习包。对账与持久化永远不因体积失败——报错会回滚整个日志事务,连带
-	// 丢掉安全遥测。
+	// JSON escaping (<>& and control characters → \u00XX) can inflate the raw byte budget of the learning package up to 6x,
+	// so the degradation above cannot guarantee convergence; keep shrinking the learning package body by the encoded size, and finally fall back to dropping
+	// the learning package. Reconciliation and persistence must never fail because of size — an error would roll back the whole log transaction, and along with it
+	// drop the security telemetry.
 	for len(encoded) > 64*1024 {
 		if text, ok := learning["prompt_text"].(string); ok && text != "" {
 			if len(text) > 256 {
@@ -770,8 +770,8 @@ func (db *DB) DeletePromptPolicyIncident(ctx context.Context, incidentID string)
 		if _, err := tx.ExecContext(ctx, `UPDATE prompt_rule_candidate_evidence SET prompt_policy_incident_id=NULL WHERE prompt_policy_incident_id=$1`, incidentID); err != nil {
 			return err
 		}
-		// 管理员主动删除 CY 时，其关联的审核日志 / 风险事件 / 来源记录一并清理；
-		// 保留策略平时会绕开这些行，只有这里才是它们的出口。
+		// When an admin deletes a CY, its linked review logs / risk events / source records are cleaned up together;
+		// the retention policy normally skips these rows, so this is the only exit for them.
 		if err := deletePromptIncidentEvidenceTx(ctx, tx, incidentID); err != nil {
 			return err
 		}
@@ -914,7 +914,7 @@ func (db *DB) ClearPromptPolicyIncidents(ctx context.Context) error {
 			return err
 		}
 		defer tx.Rollback()
-		// 清空 CY 同时清空其全部证据链（日志 / 风险事件 / 来源记录）。
+		// Clearing a CY also clears its entire evidence chain (logs / risk events / source records).
 		if err := deleteAllPromptIncidentEvidenceTx(ctx, tx); err != nil {
 			return err
 		}

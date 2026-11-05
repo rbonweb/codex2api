@@ -2,7 +2,7 @@ package database
 
 import "strings"
 
-// DaybreakProgram 只影响费率选择，不改变日志中的生效模型。
+// DaybreakProgram only affects rate selection and does not change the effective model in logs.
 func daybreakBillingModel(model, program string) string {
 	model = strings.TrimSpace(model)
 	if model == "" {
@@ -18,7 +18,7 @@ func daybreakBillingModel(model, program string) string {
 	}
 }
 
-// Daybreak 专属价格优先于基础模型，同步价不能覆盖管理员的手工价格。
+// Daybreak-specific prices take precedence over the base model; a synced price must not override the admin's manually entered price.
 func daybreakAliasPricing(baseModel, alias string) *ModelPricing {
 	pricing := *GetModelPricing(baseModel)
 	override, ok := lookupModelPricingOverride(alias)

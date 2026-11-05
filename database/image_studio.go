@@ -366,7 +366,7 @@ func (db *DB) MarkInterruptedImageJobs(ctx context.Context) error {
 		UPDATE image_generation_jobs
 		SET status=$1, error_message=$2, completed_at=CURRENT_TIMESTAMP
 		WHERE status IN ($3,$4)
-	`, ImageJobFailed, "服务重启，未完成的生图任务已中断", ImageJobQueued, ImageJobRunning)
+	`, ImageJobFailed, "service restarted, unfinished image generation job was interrupted", ImageJobQueued, ImageJobRunning)
 	return err
 }
 
@@ -707,15 +707,15 @@ func scanAPIKeyRow(scanner interface {
 	}
 	createdAt, err := parseDBTimeValue(createdAtRaw)
 	if err != nil {
-		return nil, fmt.Errorf("解析 API Key 创建时间失败: %w", err)
+		return nil, fmt.Errorf("failed to parse API Key creation time: %w", err)
 	}
 	expiresAt, err := parseDBNullTimeValue(expiresAtRaw)
 	if err != nil {
-		return nil, fmt.Errorf("解析 API Key 过期时间失败: %w", err)
+		return nil, fmt.Errorf("failed to parse API Key expiration time: %w", err)
 	}
 	lastResetAt, err := parseDBNullTimeValue(lastResetAtRaw)
 	if err != nil {
-		return nil, fmt.Errorf("解析 API Key 重置时间失败: %w", err)
+		return nil, fmt.Errorf("failed to parse API Key reset time: %w", err)
 	}
 	row.CreatedAt = createdAt
 	row.ExpiresAt = expiresAt
@@ -725,8 +725,8 @@ func scanAPIKeyRow(scanner interface {
 	return row, nil
 }
 
-// decodeAPIKeyLimits 把 SQL 取出来的 JSONB / TEXT 值解到 APIKeyLimits。
-// 空值 / 非法 JSON 一律返回零值,避免 nil panic。
+// decodeAPIKeyLimits decodes the JSONB / TEXT value read from SQL into APIKeyLimits.
+// Empty values and invalid JSON always return the zero value, to avoid a nil panic.
 func decodeAPIKeyLimits(raw interface{}) APIKeyLimits {
 	data := bytesFromDBValue(raw)
 	if len(data) == 0 {

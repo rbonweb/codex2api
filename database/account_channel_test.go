@@ -147,7 +147,7 @@ func TestUpdateAccountCredentialsCASKeepsEmbeddedFamilyCanonical(t *testing.T) {
 	}
 }
 
-// 列表投影必须带出订阅筛选依赖的三个键，否则账号页"订阅状态"筛选会把全部账号判成未知。
+// The list projection must carry the three keys that the subscription filter depends on, otherwise the account page's "subscription status" filter would classify every account as unknown.
 func TestListAccountListProjectionCarriesSubscriptionKeys(t *testing.T) {
 	ctx := context.Background()
 	db, err := New("sqlite", filepath.Join(t.TempDir(), "subscription-projection.db"))

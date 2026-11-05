@@ -224,7 +224,7 @@ func TestCleanupSchedulerOutboxThroughRespectsWatermark(t *testing.T) {
 		t.Fatalf("age scheduler outbox: %v", err)
 	}
 
-	// 只清到本实例已消费的水位:第 3 条虽然过期但未消费,必须保留。
+	// Clear only up to the watermark this instance has consumed: the 3rd entry, although expired, is not consumed yet and must be kept.
 	removed, err := db.CleanupSchedulerOutboxThrough(ctx, time.Now().Add(-7*24*time.Hour), 2, 10000)
 	if err != nil {
 		t.Fatalf("CleanupSchedulerOutboxThrough: %v", err)

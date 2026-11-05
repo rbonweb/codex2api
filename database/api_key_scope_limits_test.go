@@ -4,12 +4,12 @@ import "testing"
 
 func TestNormalizeAPIKeyScopeLimitsDropsInvalidEntries(t *testing.T) {
 	out := NormalizeAPIKeyScopeLimits([]APIKeyScopeLimit{
-		{ScopeType: "GROUP", ScopeID: 3, Cost1d: 5},          // 大写类型应被归一
-		{ScopeType: "team", ScopeID: 4, Cost1d: 5},           // 未知类型 → 丢弃
-		{ScopeType: "group", ScopeID: 0, Cost1d: 5},          // 非法 ID → 丢弃
-		{ScopeType: "group", ScopeID: 7},                     // 全 0 限额 → 丢弃
-		{ScopeType: "account", ScopeID: 9, Cost5h: -3},       // 负值置 0 后无限额 → 丢弃
-		{ScopeType: "account", ScopeID: 11, Requests1d: 100}, // 保留
+		{ScopeType: "GROUP", ScopeID: 3, Cost1d: 5},          // uppercase type should be normalized
+		{ScopeType: "team", ScopeID: 4, Cost1d: 5},           // unknown type → dropped
+		{ScopeType: "group", ScopeID: 0, Cost1d: 5},          // invalid ID → dropped
+		{ScopeType: "group", ScopeID: 7},                     // all-zero limit → dropped
+		{ScopeType: "account", ScopeID: 9, Cost5h: -3},       // negative value clamped to 0, so no limit remains → dropped
+		{ScopeType: "account", ScopeID: 11, Requests1d: 100}, // kept
 	})
 	if len(out) != 2 {
 		t.Fatalf("normalized %d entries, want 2: %+v", len(out), out)
@@ -44,7 +44,7 @@ func TestAPIKeyScopeLimitCheckWindow(t *testing.T) {
 	if _, exhausted := scope.CheckWindow("1d", APIKeyWindowUsage{UserBilled: 1.99, Requests: 9}); exhausted {
 		t.Fatal("under limit should not be exhausted")
 	}
-	// 达到上限即视为用尽（>=），与 Key 级限额一致。
+	// Reaching the cap counts as exhausted (>=), consistent with key-level limits.
 	hit, exhausted := scope.CheckWindow("1d", APIKeyWindowUsage{UserBilled: 2})
 	if !exhausted || hit.Metric != "cost" {
 		t.Fatalf("cost limit hit = %+v exhausted=%v, want cost", hit, exhausted)
@@ -57,7 +57,7 @@ func TestAPIKeyScopeLimitCheckWindow(t *testing.T) {
 	if !exhausted || hit.Metric != "tokens" {
 		t.Fatalf("token limit hit = %+v exhausted=%v, want tokens", hit, exhausted)
 	}
-	// 未配限额的窗口永不触发。
+	// A window with no limit configured never triggers.
 	if _, exhausted := scope.CheckWindow("30d", APIKeyWindowUsage{UserBilled: 9999}); exhausted {
 		t.Fatal("unconfigured window must never be exhausted")
 	}

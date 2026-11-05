@@ -80,7 +80,7 @@ func TestPromptFilterNewAPIBindingCRUDAndSecretRotationSQLite(t *testing.T) {
 		t.Fatalf("InsertAPIKey other: %v", err)
 	}
 	binding := &PromptFilterNewAPIBinding{
-		APIKeyID: apiKeyID, PlatformCode: "gateway-a", PlatformName: "示例平台 NewAPI",
+		APIKeyID: apiKeyID, PlatformCode: "gateway-a", PlatformName: "Example platform NewAPI",
 		Secret: "01234567890123456789012345678901", Enabled: true, RequireSignedIdentity: true,
 		PromptFilterScope: PromptFilterScopeLocalOnly,
 		PolicyMode:        PromptFilterPolicyModeEnforce, PolicyProfile: PromptFilterPolicyProfileBalanced,
@@ -113,7 +113,7 @@ func TestPromptFilterNewAPIBindingCRUDAndSecretRotationSQLite(t *testing.T) {
 	}
 
 	got.PlatformCode = "gateway-a-prod"
-	got.PlatformName = "示例平台生产站"
+	got.PlatformName = "Example platform production site"
 	got.PolicyMode = PromptFilterPolicyModeWarn
 	got.PolicyProfile = PromptFilterPolicyProfileStrict
 	got.PromptFilterScope = PromptFilterScopeOff

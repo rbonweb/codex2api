@@ -10,8 +10,8 @@ var (
 	gptPricingSnapshot    = regexp.MustCompile(`^\d{4}-\d{2}-\d{2}$`)
 )
 
-// discoveredGPTPricingKey 为尚未内置的 GPT 型号保留独立价格键。
-// 已知型号的快照、推理档位别名继续复用原有价格规则。
+// discoveredGPTPricingKey reserves a separate pricing key for GPT models that are not built in yet.
+// Known models keep reusing the original pricing rules for their snapshots and reasoning-tier aliases.
 func discoveredGPTPricingKey(model string) string {
 	model = normalizeBillingModelName(model)
 	model = strings.TrimSuffix(model, "-openai-compact")

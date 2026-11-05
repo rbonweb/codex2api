@@ -8,12 +8,12 @@ import (
 	"time"
 )
 
-// APIKeyScopeCounter 是「某 Key × 某分组/账号」的累计用量计数器(issue #439 v2)。
+// APIKeyScopeCounter is the cumulative usage counter for one "API key x group/account" pair (issue #439 v2).
 //
-// 与滑动窗口限额不同,累计额度不会随时间自动回落——用完必须手动重置,语义对齐
-// api_keys.quota_limit / quota_used / reset_count / last_reset_at。
-// 上限本身仍配在 limits.scope_limits 里(QuotaCost),这张表只存已用量与重置状态,
-// 避免同一份配置存两处产生漂移。
+// Unlike sliding-window limits, a cumulative quota does not fall back over time automatically: it must be reset manually once used up. The semantics align with
+// api_keys.quota_limit / quota_used / reset_count / last_reset_at.
+// The cap itself is still configured in limits.scope_limits (QuotaCost); this table only stores the used amount and reset state,
+// so the same configuration is not stored in two places and does not drift.
 type APIKeyScopeCounter struct {
 	APIKeyID     int64        `json:"api_key_id"`
 	ScopeType    string       `json:"scope_type"`
@@ -26,13 +26,13 @@ type APIKeyScopeCounter struct {
 	UpdatedAt    time.Time    `json:"updated_at"`
 }
 
-// APIKeyScopeCounterKey 唯一定位一条计数器。
+// APIKeyScopeCounterKey uniquely identifies one counter.
 type APIKeyScopeCounterKey struct {
 	ScopeType string
 	ScopeID   int64
 }
 
-// ListAPIKeyScopeCounters 返回某 Key 的全部累计计数器,按 (scope_type, scope_id) 索引。
+// ListAPIKeyScopeCounters returns all cumulative counters of a key, indexed by (scope_type, scope_id).
 func (db *DB) ListAPIKeyScopeCounters(ctx context.Context, apiKeyID int64) (map[APIKeyScopeCounterKey]APIKeyScopeCounter, error) {
 	out := make(map[APIKeyScopeCounterKey]APIKeyScopeCounter)
 	if db == nil || apiKeyID <= 0 {
@@ -74,8 +74,8 @@ func (db *DB) ListAPIKeyScopeCounters(ctx context.Context, apiKeyID int64) (map[
 	return out, rows.Err()
 }
 
-// ListAPIKeyScopeCountersForKeys 是 ListAPIKeyScopeCounters 的批量版本，供列表页概览
-// 一次拿到多个 Key 的累计计数器。
+// ListAPIKeyScopeCountersForKeys is the batch version of ListAPIKeyScopeCounters, used by the list page overview
+// to fetch the cumulative counters of many keys in one call.
 func (db *DB) ListAPIKeyScopeCountersForKeys(ctx context.Context, apiKeyIDs []int64) (map[int64]map[APIKeyScopeCounterKey]APIKeyScopeCounter, error) {
 	out := make(map[int64]map[APIKeyScopeCounterKey]APIKeyScopeCounter)
 	if db == nil || len(apiKeyIDs) == 0 {
@@ -117,15 +117,15 @@ func (db *DB) ListAPIKeyScopeCountersForKeys(ctx context.Context, apiKeyIDs []in
 	return out, rows.Err()
 }
 
-// ResetAPIKeyScopeCounter 把某条累计计数器清零并记一次重置。计数器行不存在时补一条,
-// 使「重置」在还没产生任何用量时也是幂等的成功操作。
+// ResetAPIKeyScopeCounter clears one cumulative counter to zero and records one reset. If the counter row does not exist, it adds one,
+// so that "reset" is an idempotent success even when no usage has happened yet.
 func (db *DB) ResetAPIKeyScopeCounter(ctx context.Context, apiKeyID int64, scopeType string, scopeID int64) error {
 	if db == nil || apiKeyID <= 0 || scopeID <= 0 {
 		return sql.ErrNoRows
 	}
 	scopeType = strings.ToLower(strings.TrimSpace(scopeType))
 	if scopeType != APIKeyScopeTypeGroup && scopeType != APIKeyScopeTypeAccount {
-		return fmt.Errorf("未知的 scope_type: %q", scopeType)
+		return fmt.Errorf("unknown scope_type: %q", scopeType)
 	}
 	query := `
 		INSERT INTO api_key_scope_counters (api_key_id, scope_type, scope_id, used_cost, used_tokens, used_requests, reset_count, last_reset_at, updated_at)
@@ -141,7 +141,7 @@ func (db *DB) ResetAPIKeyScopeCounter(ctx context.Context, apiKeyID int64, scope
 	return err
 }
 
-// nowExpr 返回当前时间的 SQL 表达式（两种驱动的写法不同）。
+// nowExpr returns the SQL expression for the current time (the two drivers are written differently).
 func (db *DB) nowExpr() string {
 	if db.isSQLite() {
 		return "CURRENT_TIMESTAMP"
@@ -149,18 +149,18 @@ func (db *DB) nowExpr() string {
 	return "NOW()"
 }
 
-// scopeCounterDelta 是一批日志折算出的累计增量。
+// scopeCounterDelta is the cumulative increment derived from one batch of logs.
 type scopeCounterDelta struct {
 	cost     float64
 	tokens   int64
 	requests int64
 }
 
-// applyAPIKeyScopeCountersWithExec 在批量落库的同一事务里累加 scope 累计计数器。
-// 只为「确实配了累计额度的 Key」记账（见 scopeQuotaKeyIDs 的 60s 缓存），其余 Key 零开销。
+// applyAPIKeyScopeCountersWithExec adds the scope cumulative counters within the same transaction as the batched write.
+// It books usage only for keys that actually have a cumulative quota configured (see the 60s cache in scopeQuotaKeyIDs); all other keys have zero overhead.
 //
-// 分组维度不在 Go 侧解析成员关系，而是让 SQL join account_group_members：账号可能属于多个
-// 分组，join 天然把一笔消耗记到它当前所属的每个分组上，也不必把内存里的分组关系带进 DB 层。
+// Group membership is not resolved on the Go side; instead SQL joins account_group_members. An account may belong to several
+// groups, so the join naturally books each usage to every group it currently belongs to, and the in-memory group relations do not need to be carried into the DB layer.
 func (db *DB) applyAPIKeyScopeCountersWithExec(ctx context.Context, execer sqlExecer, batch []usageLogEntry) error {
 	if db == nil || execer == nil || len(batch) == 0 {
 		return nil
@@ -230,9 +230,9 @@ func (db *DB) applyAPIKeyScopeCountersWithExec(ctx context.Context, execer sqlEx
 	return nil
 }
 
-// scopeQuotaKeyIDs 返回配了累计额度的 API Key 集合，带 60s 缓存。
-// 落库热路径上不能每批都全表解析 limits JSON；配置变更最迟 60s 后生效，
-// 期间少记的用量在下一批就会补上（计数器是累加的，不会丢）。
+// scopeQuotaKeyIDs returns the set of API keys with a cumulative quota configured, with a 60s cache.
+// The hot write path must not parse every key's limits JSON on every batch; config changes take effect within 60s at most,
+// and usage not booked during that window is caught up in the next batch (counters are cumulative, so nothing is lost).
 func (db *DB) scopeQuotaKeyIDs(ctx context.Context) map[int64]struct{} {
 	db.scopeQuotaMu.Lock()
 	if db.scopeQuotaKeys != nil && time.Now().Before(db.scopeQuotaExpiresAt) {
@@ -262,8 +262,8 @@ func (db *DB) scopeQuotaKeyIDs(ctx context.Context) map[int64]struct{} {
 	return fresh
 }
 
-// InvalidateScopeQuotaKeyCache 让下一次记账立刻重新解析哪些 Key 配了累计额度。
-// 管理端保存 Key 后调用，避免新配的累计额度要等一个缓存周期才开始记账。
+// InvalidateScopeQuotaKeyCache makes the next booking re-resolve immediately which keys have a cumulative quota configured.
+// The admin side calls it after saving a key, so a newly configured cumulative quota does not have to wait a whole cache period before booking starts.
 func (db *DB) InvalidateScopeQuotaKeyCache() {
 	if db == nil {
 		return
