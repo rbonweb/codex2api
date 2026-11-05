@@ -30,7 +30,7 @@ func TestParsePublicAPIKeyUsageLogFilter(t *testing.T) {
 		{status: "200"},
 		{stream: "ws"},
 		{channel: "openai"},
-		{channel: "claude"},
+		{channel: "unknown"},
 		{model: strings.Repeat("m", publicAPIKeyUsageMaxFilterLen+1)},
 	}
 	for _, tc := range invalid {

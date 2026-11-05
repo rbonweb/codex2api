@@ -2,7 +2,6 @@ package admin
 
 import (
 	"context"
-	"encoding/json"
 	"fmt"
 	"log"
 	"strings"
@@ -26,8 +25,7 @@ const (
 )
 
 // importProxyBinding 是一条待注册的「账号 → 代理」绑定。各渠道的导入条目结构互不
-// 相同（Codex 的 importToken、Grok 的原始文件内容、Antigravity 的 document），统一
-// 投影成这个形态后共用同一套注册逻辑。
+// 相同（如 Codex 的 importToken），统一投影成这个形态后共用同一套注册逻辑。
 type importProxyBinding struct {
 	// url 由 registerImportedProxyBindings 原地规范化：非法值被清空，调用方据此
 	// 回落到表单填写的代理。
@@ -167,47 +165,6 @@ func (h *Handler) accountHasProxyBinding(ctx context.Context, accountID int64) b
 		return true
 	}
 	return row != nil && strings.TrimSpace(row.ProxyURL) != ""
-}
-
-// grokFileProxyBinding 从一份 Grok 凭据文件里取出代理三件套。
-//
-// Grok 的导入走 ParseGrokAuthJSON，那条链路只认凭据字段、不认代理，所以这里单独
-// 扫一遍原始 JSON。代理写在顶层（本仓库导出的形态），tokens 包装形态则下探一层。
-// 解析失败一律当作"没带代理"：文件本身是否合法由 ParseGrokAuthJSON 判定并报错，
-// 这里再报一次只会把错误信息搅乱。
-func grokFileProxyBinding(content string) importProxyBinding {
-	var root map[string]json.RawMessage
-	if err := json.Unmarshal([]byte(content), &root); err != nil || root == nil {
-		return importProxyBinding{}
-	}
-	if binding := grokProxyBindingFromNode(root); binding.url != "" {
-		return binding
-	}
-	var nested map[string]json.RawMessage
-	if raw, ok := root["tokens"]; ok && json.Unmarshal(raw, &nested) == nil {
-		return grokProxyBindingFromNode(nested)
-	}
-	return importProxyBinding{}
-}
-
-func grokProxyBindingFromNode(node map[string]json.RawMessage) importProxyBinding {
-	var binding importProxyBinding
-	if raw, ok := node["proxy_url"]; ok {
-		var url string
-		if json.Unmarshal(raw, &url) == nil {
-			binding.url = strings.TrimSpace(url)
-		}
-	}
-	if binding.url == "" {
-		return importProxyBinding{}
-	}
-	if raw, ok := node["proxy_enabled"]; ok {
-		var enabled bool
-		if json.Unmarshal(raw, &enabled) == nil {
-			binding.enabled = &enabled
-		}
-	}
-	return binding
 }
 
 // countDisabledAtSource 统计源端标记为禁用的代理条数。这些代理一律以启用态

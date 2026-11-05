@@ -395,8 +395,6 @@ func main() {
 	adminHandler.StartOfficialPricingSync(backgroundCtx)
 	// Prompt 审核日志保留清理：默认保留 7 天，每小时分批清理过期行，CY 关联行不动。
 	adminHandler.StartPromptLogRetention(backgroundCtx)
-	// Responses API 渠道监控按账号启用，健康检查和倍率探测分别调度。
-	adminHandler.StartChannelMonitor(backgroundCtx)
 
 	// 版本闸与套餐闸上游同文案：版本抬升后旧版本下学到的模型不支持冷却作废（issue #793）。
 	proxy.OnCodexClientVersionRaised(func() {

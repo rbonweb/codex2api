@@ -7,10 +7,8 @@ import (
 	"sort"
 	"strconv"
 	"strings"
-	"sync/atomic"
 	"time"
 
-	"github.com/codex2api/auth"
 	"github.com/codex2api/database"
 	"github.com/codex2api/proxy"
 	"github.com/gin-gonic/gin"
@@ -138,74 +136,6 @@ type modelPricingRow struct {
 	// MediaUnit 非空表示媒体模型(image=按张、second=按秒),价格看 media_unit_cost
 	// 而非 token 单价;media_unit_cost 为 0 即未定价。
 	MediaUnit string `json:"media_unit,omitempty"`
-}
-
-// claudeChannelModels 返回定价页要展示的 Claude 模型:各 Claude 账号可见模型的并集。
-// 没有 Claude 账号时返回空,纯 Codex/其它部署的定价页不受影响。
-func (h *Handler) claudeChannelModels() []string {
-	if h == nil || h.store == nil {
-		return nil
-	}
-	seen := make(map[string]struct{})
-	models := make([]string, 0)
-	for _, account := range h.store.Accounts() {
-		if account == nil || !account.IsClaudeOAuth() {
-			continue
-		}
-		for _, model := range proxy.DefaultClaudeModelIDsForAccount(account) {
-			key := strings.ToLower(strings.TrimSpace(model))
-			if key == "" {
-				continue
-			}
-			if _, ok := seen[key]; ok {
-				continue
-			}
-			seen[key] = struct{}{}
-			models = append(models, model)
-		}
-	}
-	sort.Strings(models)
-	return models
-}
-
-// claudeAvailableChannelModels returns models from enabled, non-banned Claude
-// accounts for request-facing catalogs. Pricing/history still use
-// claudeChannelModels so a disabled account cannot make an unusable model
-// selectable while its historical cost data remains visible to administrators.
-func (h *Handler) claudeAvailableChannelModels() []string {
-	if h == nil || h.store == nil {
-		return nil
-	}
-	seen := make(map[string]struct{})
-	models := make([]string, 0)
-	for _, account := range h.store.Accounts() {
-		if account == nil || !account.IsClaudeOAuth() ||
-			atomic.LoadInt32(&account.Disabled) != 0 ||
-			atomic.LoadInt32(&account.DispatchPaused) != 0 {
-			continue
-		}
-		account.Mu().RLock()
-		status := account.Status
-		tier := account.HealthTier
-		account.Mu().RUnlock()
-		if status == auth.StatusError || tier == auth.HealthTierBanned {
-			continue
-		}
-		for _, model := range proxy.DefaultClaudeModelIDsForAccount(account) {
-			model = strings.TrimSpace(model)
-			key := strings.ToLower(model)
-			if key == "" || account.IsModelRateLimited(model) {
-				continue
-			}
-			if _, ok := seen[key]; ok {
-				continue
-			}
-			seen[key] = struct{}{}
-			models = append(models, model)
-		}
-	}
-	sort.Strings(models)
-	return models
 }
 
 func modelPricingManagementKeys(ids []string) []string {

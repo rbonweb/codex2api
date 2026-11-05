@@ -241,16 +241,6 @@ func (h *Handler) runQualityTestJob(parent context.Context, job database.Quality
 				job.ReasoningTokens = d.Usage.ReasoningTokens
 			}
 		}
-		if d := event.Diagnostics; d != nil {
-			job.ResponseModel = d.ResponseModel
-			if d.FirstContentMS != nil && job.Retries == 0 {
-				job.FirstContentMS = d.FirstContentMS
-			}
-			if d.Usage != nil {
-				job.InputTokens = d.Usage.InputTokens
-				job.OutputTokens = d.Usage.OutputTokens
-			}
-		}
 		dirty = true
 	}
 	done, watched := make(chan struct{}), make(chan struct{})

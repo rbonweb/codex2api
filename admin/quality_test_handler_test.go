@@ -26,7 +26,7 @@ func qualityTestHTTPRequest(body string) *http.Request {
 }
 
 func TestQualityTestRejectsInvalidInputBeforeUpstream(t *testing.T) {
-	h, _, _ := newCodexDiagnosticsTestHandler(t, func(http.ResponseWriter, *http.Request) { t.Error("invalid request reached upstream") })
+	h, _ := newCodexDiagnosticsTestHandler(t)
 	for _, body := range []string{
 		`{`,
 		`{"model":"gpt-4o-mini","prompt":" "}`,
