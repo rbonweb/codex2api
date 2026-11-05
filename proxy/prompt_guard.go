@@ -362,7 +362,7 @@ func (h *Handler) evaluatePromptGuardEnvelope(c *gin.Context, cfg promptfilter.C
 				}
 				reviewTrustRisk := promptRiskTrustReviewShouldSuspend(verdict)
 				if trusted && (localTrustRisk || reviewTrustRisk) {
-					h.suspendPromptRiskTrustPolicy(policy, subjectKey, "模型复核或本地高危规则命中")
+					h.suspendPromptRiskTrustPolicy(policy, subjectKey, "model review or local high-risk rule hit")
 				}
 			}
 		}
@@ -534,7 +534,7 @@ func (h *Handler) evaluateLegacyPromptGuard(c *gin.Context, ctx context.Context,
 			}
 			reviewTrustRisk := promptRiskTrustReviewShouldSuspend(verdict)
 			if trusted && (localTrustRisk || reviewTrustRisk) {
-				h.suspendPromptRiskTrustPolicy(policy, subjectKey, "模型复核或本地高危规则命中")
+				h.suspendPromptRiskTrustPolicy(policy, subjectKey, "model review or local high-risk rule hit")
 			}
 		}
 	}
@@ -684,8 +684,8 @@ func shouldReviewPromptGuardDecision(decision promptfilter.Decision, verdict pro
 	return shouldReviewPromptFilterVerdict(verdict, cfg)
 }
 
-// promptGuardDetectorExternalReview 标记这样一种 block:本地过滤器放行,唯一
-// 证据是外部审核模型打了 flag。
+// promptGuardDetectorExternalReview marks a block where the local filter allowed the request and the only
+// evidence is that an external review model flagged it.
 const promptGuardDetectorExternalReview = "external_review"
 
 func finalizePromptGuardDecision(decision promptfilter.Decision, verdict promptfilter.Verdict) promptfilter.Decision {

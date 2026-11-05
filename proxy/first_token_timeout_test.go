@@ -47,7 +47,7 @@ func TestFirstTokenTimeoutGuardMarkProgressIgnoresLifecycle(t *testing.T) {
 	guard := newFirstTokenTimeoutGuard(30*time.Millisecond, cancel)
 	defer guard.Stop()
 
-	// created / in_progress 不应解除看门狗：上游只发生命周期帧仍视为未开始响应。
+	// created / in_progress must not clear the watchdog: if the upstream only sends lifecycle frames, it still counts as not having started a response.
 	guard.MarkProgress("response.created")
 	guard.MarkProgress("response.in_progress")
 
@@ -67,8 +67,8 @@ func TestFirstTokenTimeoutGuardMarkProgressDisarmsOnStructuralFrame(t *testing.T
 	guard := newFirstTokenTimeoutGuard(30*time.Millisecond, cancel)
 	defer guard.Stop()
 
-	guard.MarkProgress("response.created")           // 生命周期帧：不解除
-	guard.MarkProgress("response.output_item.added") // 首个非生命周期帧：解除看门狗
+	guard.MarkProgress("response.created")           // lifecycle frame: does not clear
+	guard.MarkProgress("response.output_item.added") // first non-lifecycle frame: clears the watchdog
 
 	select {
 	case <-ctx.Done():
@@ -98,7 +98,7 @@ func TestNormalizeRuntimeSettingsFirstTokenMode(t *testing.T) {
 		t.Fatalf("FirstTokenMode = %q, want loose", settings.FirstTokenMode)
 	}
 
-	// 严格首字开关已取消：strict / 非法值 / 空值都归一化为 loose。
+	// The strict first-token switch has been removed: strict, invalid, and empty values are all normalized to loose.
 	for _, mode := range []string{"strict", "invalid", ""} {
 		settings = NormalizeRuntimeSettings(RuntimeSettings{FirstTokenMode: mode})
 		if settings.FirstTokenMode != FirstTokenModeLoose {
@@ -170,15 +170,15 @@ func TestApplyRuntimeSettingsFromSystemCodexWebSocketRetrySettings(t *testing.T)
 func TestFirstTokenTimeoutForRequestExemptsCompaction(t *testing.T) {
 	base := 30 * time.Second
 
-	// 普通请求保持配置阈值不变。
+	// Normal requests keep the configured threshold unchanged.
 	if got := firstTokenTimeoutForRequest(base, false); got != base {
 		t.Fatalf("non-compaction timeout = %s, want %s", got, base)
 	}
-	// 压缩轮豁免看门狗（返回 0）。
+	// Compaction turns are exempt from the watchdog (returns 0).
 	if got := firstTokenTimeoutForRequest(base, true); got != 0 {
 		t.Fatalf("compaction timeout = %s, want 0", got)
 	}
-	// 看门狗本身遇到 0 阈值不启动，保证豁免生效。
+	// The watchdog itself does not start when the threshold is 0, which keeps the exemption effective.
 	if guard := newFirstTokenTimeoutGuard(firstTokenTimeoutForRequest(base, true), func() {}); guard != nil {
 		t.Fatal("compaction round should not create a first token timeout guard")
 	}

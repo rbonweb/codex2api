@@ -15,37 +15,37 @@ import (
 	"github.com/tidwall/gjson"
 )
 
-// ==================== 上下文超窗自动压缩 ====================
-// 上游对超出模型上下文窗口的输入返回确定性 400（context_length_exceeded），
-// 换号重试也必然失败，此前网关只能把错误透传给下游（issue #310/#415）。
-// 上游不接受 truncation/context_management 参数（实测 400 Unsupported parameter），
-// 服务端截断不可用；不做压缩的客户端（chat UI / SDK）只能新开会话。
+// ==================== Context overflow auto-compaction ====================
+// Upstream returns a deterministic 400 (context_length_exceeded) for input that exceeds the model's context window,
+// retrying on another account always fails too, so until now the gateway could only pass the error through to the downstream client (issue #310/#415).
+// Upstream does not accept the truncation/context_management parameters (observed 400 Unsupported parameter),
+// so server-side truncation is unavailable; clients that do not compact (chat UI / SDK) can only start a new session.
 //
-// 本模块提供网关侧兜底：per-key 开关（limits.auto_compact_overflow）打开时，
-// 收到超窗错误后把 input[] 的旧轮次摘要成一条 developer message，保留最近的
-// 轮次原文，重试一次。摘要通过内部 Responses 调用完成；摘要失败时退化为
-// 直接丢弃旧轮次并插入省略标记（保证重试仍能发出）。
+// This module provides a gateway-side fallback: when the per-key switch (limits.auto_compact_overflow) is on,
+// after an overflow error, the old turns in input[] are summarized into one developer message, keeping the most recent
+// turns verbatim, then retries once. The summary is produced by an internal Responses call; if summarizing fails, it degrades to
+// dropping the old turns outright and inserting an omitted marker (so the retry can still be sent).
 
 const (
-	// overflowCompactTailBytesDefault 压缩后保留原文的“最近轮次”预算（字节）。
+	// overflowCompactTailBytesDefault is the budget (bytes) for the "recent turns" kept verbatim after compaction.
 	overflowCompactTailBytesDefault = 200 * 1024
-	// overflowCompactSummaryInputBytesDefault 送去摘要的旧轮次文本上限（字节），
-	// 保证摘要调用自身远离窗口限制。
+	// overflowCompactSummaryInputBytesDefault is the upper limit (bytes) of old-turn text sent for summarization,
+	// so the summary call itself stays well clear of the window limit.
 	overflowCompactSummaryInputBytesDefault = 512 * 1024
-	// overflowCompactSummaryTimeout 摘要调用的总超时（覆盖全部缩量重试）。
+	// overflowCompactSummaryTimeout is the total timeout of the summary call (covering all shrink-and-retry attempts).
 	overflowCompactSummaryTimeout = 120 * time.Second
-	// overflowCompactSummaryMinInputBytes 缩量重试的转写下限：再小的输入已经
-	// 承载不了有效信息，继续折半只是白费一次上游往返。
+	// overflowCompactSummaryMinInputBytes is the transcript floor for shrink retries: an input any smaller already
+	// cannot carry useful information, and halving further would only waste an upstream round trip.
 	overflowCompactSummaryMinInputBytes = 32 * 1024
-	// overflowCompactSummaryMaxAttempts 摘要调用（含缩量重试）的最大次数。
+	// overflowCompactSummaryMaxAttempts is the maximum number of summary calls (including shrink retries).
 	overflowCompactSummaryMaxAttempts = 3
-	// overflowCompactFallbackDigestBytes 模型摘要彻底失败时,直接摘录旧轮次原文
-	// 的预算。远小于 tail 预算,不会把刚压下去的体积重新顶穿。
+	// overflowCompactFallbackDigestBytes is the budget for excerpting old-turn text directly when the model summary fails completely.
+	// It is far smaller than the tail budget, so it will not blow the size that was just compacted back up.
 	overflowCompactFallbackDigestBytes = 16 * 1024
-	// overflowCompactMinItems input 少于该条数时不值得压缩（多半是单条超大输入，
-	// 压缩救不了，直接透传原错误）。
+	// overflowCompactMinItems is the minimum number of input items worth compacting (below it, the input is most likely one oversized item,
+	// which compaction cannot fix, so the original error is passed through).
 	overflowCompactMinItems = 4
-	// overflowCompactItemTextCap 单条旧轮次拍平后计入摘要转写的文本上限。
+	// overflowCompactItemTextCap is the text cap per old-turn item, after flattening, that counts toward the summary transcript.
 	overflowCompactItemTextCap = 8 * 1024
 )
 
@@ -71,10 +71,10 @@ func overflowCompactSummaryInputBytes() int {
 	return overflowCompactSummaryInputBytesDefault
 }
 
-// autoCompactOverflowEnabled 判断当前请求是否开启超窗自动压缩：
-// 全局实验性开关（系统设置 overflow_auto_compact_enabled）或 per-key
-// limits.auto_compact_overflow 任一开启即生效。内部摘要调用通过显式上下文标记
-// 阻断递归，不能再依赖“没有 Key 身份”这一偶然副作用。
+// autoCompactOverflowEnabled reports whether the current request has context overflow auto-compaction enabled:
+// the global experimental switch (system setting overflow_auto_compact_enabled) or the per-key
+// limits.auto_compact_overflow; either one being on is enough. The internal summary call uses an explicit context marker
+// to block recursion, and must not rely on the accidental side effect of "no key identity".
 func autoCompactOverflowEnabled(c *gin.Context) bool {
 	// The summary call is scheduled internally; a pinned request must not leave
 	// its account, so the context overflow error goes to the external scheduler.
@@ -98,9 +98,9 @@ func autoCompactOverflowEnabled(c *gin.Context) bool {
 	return CurrentRuntimeSettings().OverflowAutoCompact
 }
 
-// isCodexPreflightSSEEvent 判断是否为上游在响应内容前发送的元数据事件：
-// codex.*（codex.rate_limits / codex.response.metadata，WS 传输路径）与裸
-// response.metadata（HTTP 传输路径），均不携带模型产出。
+// isCodexPreflightSSEEvent reports whether an event is a metadata event that upstream sends before the response content:
+// codex.* (codex.rate_limits / codex.response.metadata, WS transport path) and bare
+// response.metadata (HTTP transport path); neither carries model output.
 func isCodexPreflightSSEEvent(eventType string) bool {
 	eventType = strings.TrimSpace(eventType)
 	if eventType == "response.metadata" {
@@ -109,19 +109,19 @@ func isCodexPreflightSSEEvent(eventType string) bool {
 	return strings.HasPrefix(eventType, "codex.")
 }
 
-// shouldDeferPreContentSSEEvent 决定首个内容事件前的 SSE 事件是否延迟冲刷。
-// 生命周期事件（response.created / response.in_progress）始终缓冲；前置元数据
-// 事件默认一并缓冲，preflightPassthrough 开启时立即写出（旧版兼容，issue #425）——
-// 代价是提前提交 200，该窗口内的 response.failed 无法再按真实错误码返回，
-// 也无法走静默换号或超窗压缩重试。
+// shouldDeferPreContentSSEEvent decides whether an SSE event before the first content event is held back from flushing.
+// Lifecycle events (response.created / response.in_progress) are always buffered; pre-content metadata
+// events are buffered too by default, and are written out immediately when preflightPassthrough is on (legacy compatibility, issue #425) —
+// the cost is committing a 200 early, so a response.failed within that window can no longer be returned with its real error code,
+// and it can no longer take the silent account-switch or overflow-compaction retry path.
 func shouldDeferPreContentSSEEvent(eventType string, contentTokenSeen, gotTerminal, preflightPassthrough bool) bool {
 	return !contentTokenSeen && !gotTerminal &&
 		(isPreContentLifecycleEvent(eventType) ||
 			(!preflightPassthrough && isCodexPreflightSSEEvent(eventType)))
 }
 
-// isContextLengthExceededBody 判断上游错误体（HTTP 错误响应或 response.failed
-// 的 error 对象）是否为上下文超窗。
+// isContextLengthExceededBody reports whether an upstream error body (an HTTP error response or the error object of a response.failed
+// event) is a context overflow.
 func isContextLengthExceededBody(body []byte) bool {
 	if len(body) == 0 {
 		return false
@@ -140,7 +140,7 @@ func isContextLengthExceededBody(body []byte) bool {
 	return false
 }
 
-// isContextLengthExceededFailedPayload 判断 response.failed 事件是否为上下文超窗。
+// isContextLengthExceededFailedPayload reports whether a response.failed event is a context overflow.
 func isContextLengthExceededFailedPayload(payload []byte) bool {
 	if len(payload) == 0 {
 		return false
@@ -152,9 +152,9 @@ func isContextLengthExceededFailedPayload(payload []byte) bool {
 	return isContextLengthExceededBody([]byte(errObj.Raw))
 }
 
-// compactOverflowResponsesBody 把已准备好的 Codex body 中 input[] 的旧轮次
-// 压缩为一条 developer 摘要消息，保留尾部最近轮次原文。返回压缩后的 body。
-// 无法压缩（input 太短 / 结构不符合预期）时返回 ok=false，调用方透传原错误。
+// compactOverflowResponsesBody compacts the old turns in input[] of the prepared Codex body
+// into one developer summary message, keeping the latest turns at the tail verbatim. It returns the compacted body.
+// When it cannot compact (input too short / structure not as expected) it returns ok=false, and the caller passes the original error through.
 func (h *Handler) compactOverflowResponsesBody(ctx context.Context, codexBody []byte) ([]byte, bool) {
 	return h.compactOverflowResponsesBodyWithAttribution(ctx, codexBody, nil)
 }
@@ -180,7 +180,7 @@ func (h *Handler) compactOverflowResponsesBodyWithAttribution(ctx context.Contex
 		return nil, false
 	}
 
-	// 从尾部往前累计字节数，保留 tailBudget 内的最近轮次原文。
+	// Accumulate bytes from the tail backwards, keeping the recent turns within tailBudget verbatim.
 	tailBudget := overflowCompactTailBytes()
 	cut := len(inputItems)
 	used := 0
@@ -195,7 +195,7 @@ func (h *Handler) compactOverflowResponsesBodyWithAttribution(ctx context.Contex
 		used += len(encoded)
 		cut = i
 	}
-	// 首条 developer/system 消息通常承载系统提示，始终保留原文。
+	// The first developer/system message usually carries the system prompt, so it is always kept verbatim.
 	headStart := 0
 	if first, ok := inputItems[0].(map[string]any); ok && isResponsesMessageInputItem(first) {
 		switch strings.TrimSpace(firstNonEmptyAnyString(first["role"])) {
@@ -204,8 +204,8 @@ func (h *Handler) compactOverflowResponsesBodyWithAttribution(ctx context.Contex
 		}
 	}
 	if cut <= headStart {
-		// 尾部预算已covers全部旧轮次，没有可压缩的头部——说明超窗来自
-		// 单条超大 item 或预算过大，压缩无意义。
+		// The tail budget already covers all old turns, so there is no head to compact: the overflow comes from
+		// a single oversized item or an oversized budget, so compaction is pointless.
 		return nil, false
 	}
 	head := inputItems[headStart:cut]
@@ -213,7 +213,7 @@ func (h *Handler) compactOverflowResponsesBodyWithAttribution(ctx context.Contex
 
 	summaryText := h.summarizeOverflowItems(ctx, firstNonEmptyAnyString(body["model"]), head, attribution)
 	replacement := overflowCompactSummaryPrefix + summaryText
-	mode := "模型摘要"
+	mode := "model summary"
 	if summaryText == "" {
 		replacement, mode = overflowCompactFallbackText(head)
 	}
@@ -230,38 +230,38 @@ func (h *Handler) compactOverflowResponsesBodyWithAttribution(ctx context.Contex
 	newInput = append(newInput, tail...)
 	body["input"] = newInput
 
-	// 压缩边界可能切断工具调用配对（尾部 output 的 call 被摘要掉），复用配对修复。
+	// The compaction boundary may cut a tool call pair (the call of a tail output gets summarized away), so the existing pair repair is reused.
 	repairResponsesToolCallPairing(body)
 
 	result, err := json.Marshal(body)
 	if err != nil {
 		return nil, false
 	}
-	log.Printf("超窗自动压缩: 旧轮次 %d 条 -> 摘要(%s), 保留最近 %d 条, body %dKB -> %dKB",
+	log.Printf("Context overflow auto-compaction: %d old turns -> summary (%s), keeping latest %d turns, body %dKB -> %dKB",
 		len(head), mode, len(tail), len(codexBody)/1024, len(result)/1024)
 	return result, true
 }
 
-// overflowCompactFallbackText 模型摘要不可用时的退化文本。此前只插一句"旧轮次
-// 已省略"，整段历史静默蒸发、模型在无上下文下作答且下游无从察觉；改为在省略
-// 标记后附一段直接摘录的旧轮次原文（远小于 tail 预算，不会重新顶穿窗口），
-// 至少保住用户目标、关键路径与未完成事项。摘录也拿不到时才退回纯标记。
+// overflowCompactFallbackText is the degraded text used when the model summary is unavailable. Before, it only inserted one line "old turns
+// have been omitted", so the whole history silently evaporated, the model answered without context, and downstream had no way to notice. It now adds, after the omitted marker,
+// a directly excerpted passage of the old turns (far smaller than the tail budget, so it will not push the window over again),
+// which keeps at least the user goal, the key path and the unfinished items. Only when even the excerpt is unavailable does it fall back to the bare marker.
 func overflowCompactFallbackText(items []any) (string, string) {
 	digest := strings.TrimSpace(flattenOverflowItemsTranscript(items, overflowCompactFallbackDigestBytes))
 	if digest == "" {
-		return overflowCompactOmittedMarker, "省略标记"
+		return overflowCompactOmittedMarker, "omitted marker"
 	}
-	return overflowCompactOmittedMarker + "\n" + overflowCompactDigestPrefix + digest, "机械摘录"
+	return overflowCompactOmittedMarker + "\n" + overflowCompactDigestPrefix + digest, "mechanical excerpt"
 }
 
-// summarizeOverflowItems 用内部 Responses 调用把旧轮次转写摘要成一段文本。
+// summarizeOverflowItems summarizes the old-turn transcript into one text via an internal Responses call.
 //
-// 摘要调用自身也可能超窗：转写上限是固定字节数，而模型窗口因账号/映射而异，
-// 小窗口模型上 512KB 转写必然再次 400。此时按实际转写长度折半重试，直到成功、
-// 触及下限或用尽次数——比"一次失败就丢弃全部旧轮次"保住多得多的上下文。
-// 其余失败（鉴权、无可用账号、限流、无文本输出）与输入体积无关，不重试。
-// 全部尝试共享一个 overflowCompactSummaryTimeout 截止时间，最坏耗时不变。
-// 返回空串表示彻底失败，调用方退化为机械摘录。
+// The summary call itself can overflow too: the transcript cap is a fixed byte count, but the model window varies by account/mapping,
+// so a 512KB transcript on a small-window model is bound to 400 again. In that case it halves the retry by the actual transcript length, until it succeeds,
+// hits the floor, or runs out of attempts. This keeps far more context than "one failure drops all old turns".
+// Other failures (auth, no usable account, rate limit, no text output) do not depend on input size, so they are not retried.
+// All attempts share one overflowCompactSummaryTimeout deadline, so the worst-case duration stays the same.
+// An empty string means complete failure, and the caller degrades to a mechanical excerpt.
 func (h *Handler) summarizeOverflowItems(ctx context.Context, model string, items []any, attribution *internalResponseAttribution) string {
 	model = strings.TrimSpace(model)
 	if model == "" {
@@ -281,32 +281,32 @@ func (h *Handler) summarizeOverflowItems(ctx context.Context, model string, item
 			return text
 		}
 		if callCtx.Err() != nil {
-			log.Printf("超窗自动压缩: 摘要调用超时 (attempt %d), 退化为机械摘录", attempt)
+			log.Printf("Context overflow auto-compaction: summary call timed out (attempt %d), degrading to mechanical excerpt", attempt)
 			return ""
 		}
 		if !overflowSummaryFailedForContextWindow(status, respBody) {
 			if status == 200 {
-				log.Printf("超窗自动压缩: 摘要调用无文本输出, 退化为机械摘录")
+				log.Printf("Context overflow auto-compaction: summary call returned no text output, degrading to mechanical excerpt")
 			} else {
-				log.Printf("超窗自动压缩: 摘要调用失败 (status %d), 退化为机械摘录", status)
+				log.Printf("Context overflow auto-compaction: summary call failed (status %d), degrading to mechanical excerpt", status)
 			}
 			return ""
 		}
-		// 按实际转写长度折半，保证严格缩小（budget 可能远大于转写本身）。
+		// Halve by the actual transcript length so it strictly shrinks (budget may be far larger than the transcript itself).
 		next := len(transcript) / 2
 		if attempt == overflowCompactSummaryMaxAttempts || next < overflowCompactSummaryMinInputBytes {
-			log.Printf("超窗自动压缩: 摘要调用自身超窗且已无法继续缩量 (attempt %d, %dKB), 退化为机械摘录", attempt, len(transcript)/1024)
+			log.Printf("Context overflow auto-compaction: summary call itself overflowed and can no longer shrink (attempt %d, %dKB), degrading to mechanical excerpt", attempt, len(transcript)/1024)
 			return ""
 		}
-		log.Printf("超窗自动压缩: 摘要调用自身超窗 (attempt %d, %dKB), 缩量至 %dKB 重试", attempt, len(transcript)/1024, next/1024)
+		log.Printf("Context overflow auto-compaction: summary call itself overflowed (attempt %d, %dKB), shrinking to %dKB and retrying", attempt, len(transcript)/1024, next/1024)
 		budget = next
 	}
 	return ""
 }
 
-// overflowSummaryFailedForContextWindow 判断摘要调用的失败是否源于其自身输入
-// 超窗——只有这一类失败缩量重试才有意义。非流式错误体是 JSON，可直接判定；
-// 流式响应体是 SSE 文本，gjson 解析不了整体，用错误码子串兜底。
+// overflowSummaryFailedForContextWindow reports whether a summary call failed because its own input
+// overflowed: only this kind of failure makes shrink-and-retry meaningful. A non-streaming error body is JSON and can be checked directly;
+// a streaming response body is SSE text that gjson cannot parse as a whole, so it falls back to matching the error code substring.
 func overflowSummaryFailedForContextWindow(status int, body []byte) bool {
 	if status == 200 || len(body) == 0 {
 		return false
@@ -318,8 +318,8 @@ func overflowSummaryFailedForContextWindow(status int, body []byte) bool {
 	return strings.Contains(lowered, "context_length") || strings.Contains(lowered, "exceeds the context window")
 }
 
-// requestOverflowSummary 执行一次摘要调用，返回提取出的摘要文本与原始状态/响应体
-// （供调用方判定失败原因）。
+// requestOverflowSummary runs one summary call and returns the extracted summary text along with the raw status/response body
+// (so the caller can determine the cause of failure).
 func (h *Handler) requestOverflowSummary(ctx context.Context, model, transcript string, attribution *internalResponseAttribution) (string, int, []byte) {
 	reqBody, err := json.Marshal(map[string]any{
 		"model":     model,
@@ -348,8 +348,8 @@ func (h *Handler) requestOverflowSummary(ctx context.Context, model, transcript 
 	return strings.TrimSpace(extractResponsesSSEOutputText(respBody)), status, respBody
 }
 
-// flattenOverflowItemsTranscript 把 input items 拍平成"role: text"转写文本，
-// 单条超长内容截断，总量超出 cap 时保留头尾、丢弃中段。
+// flattenOverflowItemsTranscript flattens the input items into a "role: text" transcript,
+// truncating over-long content per item, and when the total exceeds cap, keeping the head and tail and dropping the middle.
 func flattenOverflowItemsTranscript(items []any, capBytes int) string {
 	var lines []string
 	for _, raw := range items {
@@ -380,12 +380,12 @@ func flattenOverflowItemsTranscript(items []any, capBytes int) string {
 	if len(transcript) <= capBytes {
 		return transcript
 	}
-	// 头尾各留一半，中段用标记替换。
+	// Keep half for the head and half for the tail, and replace the middle with a marker.
 	half := capBytes / 2
 	return transcript[:half] + "\n[... middle of the transcript truncated ...]\n" + transcript[len(transcript)-half:]
 }
 
-// flattenMessageContentText 把 message content（string 或 content parts 数组）拍平成文本。
+// flattenMessageContentText flattens message content (a string or an array of content parts) into text.
 func flattenMessageContentText(content any) string {
 	switch v := content.(type) {
 	case string:
@@ -416,8 +416,8 @@ func capText(s string, max int) string {
 	return s[:max] + "...[truncated]"
 }
 
-// extractResponsesSSEOutputText 从内部 Responses 调用的 SSE 响应体中提取
-// response.completed 的全部 output_text。
+// extractResponsesSSEOutputText extracts from the SSE response body of an internal Responses call
+// all the output_text of response.completed.
 func extractResponsesSSEOutputText(sse []byte) string {
 	scanner := bufio.NewScanner(bytes.NewReader(sse))
 	scanner.Buffer(make([]byte, 0, 64*1024), 16*1024*1024)

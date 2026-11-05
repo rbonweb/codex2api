@@ -23,12 +23,12 @@ var (
 
 type openAIPriceData map[string]database.ModelPricingOverride
 
-// supplementContext 获取当前页面引用的价格组件，读取其中明确发布的长上下文价。
+// supplementContext fetches the pricing components referenced by the current page and reads the long-context prices they explicitly publish.
 func (prices openAIPriceData) supplementContext(ctx context.Context, client *http.Client, body []byte) error {
 	asset := openAIPricingAsset(body)
 	if asset == "" {
 		return nil
-	} // 普通 HTML 表格已包含全部列时无需组件。
+	} // Components are not needed when the regular HTML table already contains all columns.
 	script, err := fetchOpenAIPricingAsset(ctx, client, asset)
 	if err != nil {
 		return err
@@ -88,31 +88,31 @@ func fetchOpenAIPricingAsset(ctx context.Context, client *http.Client, asset str
 	}
 	defer resp.Body.Close()
 	if resp.StatusCode != http.StatusOK || !strings.Contains(strings.ToLower(resp.Header.Get("Content-Type")), "javascript") {
-		return nil, fmt.Errorf("OpenAI 价格组件响应格式不符")
+		return nil, fmt.Errorf("OpenAI pricing component response format is unexpected")
 	}
 	body, err := io.ReadAll(io.LimitReader(resp.Body, officialPricingBodyLimit+1))
 	if err != nil {
 		return nil, err
 	}
 	if len(body) == 0 || len(body) > officialPricingBodyLimit {
-		return nil, fmt.Errorf("OpenAI 价格组件大小不符")
+		return nil, fmt.Errorf("OpenAI pricing component size is unexpected")
 	}
 	return body, nil
 }
 
-// parseOpenAIContextData 通过组件的 longContextRows 默认绑定定位数据，仅解码 JSON 子集，绝不执行 JS。
+// parseOpenAIContextData locates the data through the component's longContextRows default binding, decodes only a JSON subset, and never executes JS.
 func parseOpenAIContextData(script string) (map[string]map[string]database.ModelPricingOverride, error) {
 	binding := openAILongBinding.FindStringSubmatch(script)
 	if len(binding) != 2 {
-		return nil, fmt.Errorf("OpenAI 长上下文组件结构已变化")
+		return nil, fmt.Errorf("OpenAI long-context component structure has changed")
 	}
 	reference := regexp.MustCompile(`\b` + regexp.QuoteMeta(binding[1]) + `\?\?([A-Za-z_$][\w$]*)\[[^]]+\]\?\?\{\}`).FindStringSubmatch(script)
 	if len(reference) != 2 {
-		return nil, fmt.Errorf("OpenAI 长上下文数据绑定缺失")
+		return nil, fmt.Errorf("OpenAI long-context data binding is missing")
 	}
 	declaration := regexp.MustCompile(`\b` + regexp.QuoteMeta(reference[1]) + `=(\{)`).FindStringSubmatchIndex(script)
 	if len(declaration) != 4 {
-		return nil, fmt.Errorf("OpenAI 长上下文数据缺失")
+		return nil, fmt.Errorf("OpenAI long-context data is missing")
 	}
 	object, err := openAIJSObject(script[declaration[2]:])
 	if err != nil {
@@ -137,18 +137,18 @@ func openAIJSObject(script string) (string, error) {
 			return script[:i+1], nil
 		}
 	}
-	return "", fmt.Errorf("OpenAI 长上下文数据不完整")
+	return "", fmt.Errorf("OpenAI long-context data is incomplete")
 }
 
 func decodeOpenAIContextRates(object string) (map[string]map[string]database.ModelPricingOverride, error) {
 	var raw map[string]map[string]map[string]json.RawMessage
 	if err := json.Unmarshal([]byte(object), &raw); err != nil {
-		return nil, fmt.Errorf("OpenAI 长上下文数据格式不符: %w", err)
+		return nil, fmt.Errorf("OpenAI long-context data format is unexpected: %w", err)
 	}
 	out := make(map[string]map[string]database.ModelPricingOverride)
 	for _, tier := range []string{"standard", "fast"} {
 		if len(raw[tier]) == 0 {
-			return nil, fmt.Errorf("OpenAI 长上下文档位缺失: %s", tier)
+			return nil, fmt.Errorf("OpenAI long-context tier is missing: %s", tier)
 		}
 		out[tier] = make(map[string]database.ModelPricingOverride)
 		for model, fields := range raw[tier] {

@@ -24,9 +24,9 @@ import (
 const (
 	promptConversationLockedReasonCode = "conversation_cyber_locked"
 	promptFingerprintReplayReasonCode  = "fingerprint_replay_cooldown"
-	promptConversationLockedMessage    = "当前对话因上游 CYB 已被锁定。本次锁定拦截不会重复累计处罚；可等待自动到期，或由管理员在「Prompt 检查 → 风险画像 → 会话详情」手动解锁。解除后再次触发 CYB 可能会停用账号。"
+	promptConversationLockedMessage    = "The current conversation is locked because of upstream CYB. This lock block does not count penalties again; wait for it to expire automatically, or have an administrator unlock it manually in 'Prompt Check → Risk Profile → Session Details'. Triggering CYB again after the lock is lifted may get the account deactivated."
 	promptUserCyberCooldownReasonCode  = "user_cyber_cooldown"
-	promptUserCyberCooldownMessage     = "该用户因上游 CYB 现处于安全冷却期。冷却期间的新请求不会继续转发，也不会重复累计处罚；可等待自动到期，或由管理员在「Prompt 检查 → 风险画像 → 用户详情」手动解除冷却。"
+	promptUserCyberCooldownMessage     = "This user is currently in a security cooldown period because of upstream CYB. New requests during the cooldown are not forwarded further and do not count penalties again; wait for it to expire automatically, or have an administrator lift the cooldown manually in 'Prompt Check → Risk Profile → User Details'."
 	promptConversationLockCacheTTL     = 30 * time.Second
 )
 
@@ -69,12 +69,12 @@ func verifiedPromptUserCooldownIdentity(c *gin.Context, policyContext verifiedNe
 	}, true
 }
 
-// promptConversationLockFallbackPlatform 标记降级身份来源,避免与真实 NewAPI
-// 平台代码混淆。
+// promptConversationLockFallbackPlatform marks the degraded identity source, so it is not confused with a real NewAPI
+// platform code.
 const promptConversationLockFallbackPlatform = "codex-local"
 
-// promptSessionFingerprint32 产出 32 位十六进制会话指纹,与 NewAPI 透传指纹的
-// 长度约定一致,因此降级身份可以复用同一套存储与校验不变量。
+// promptSessionFingerprint32 produces a 32-digit hexadecimal session fingerprint that follows the same length convention as the NewAPI pass-through fingerprint,
+// so the degraded identity can reuse the same storage and validation invariants.
 func promptSessionFingerprint32(value string) string {
 	if strings.TrimSpace(value) == "" {
 		return ""
@@ -83,9 +83,9 @@ func promptSessionFingerprint32(value string) string {
 	return hex.EncodeToString(sum[:16])
 }
 
-// promptConversationSessionSignal 提取 Codex 客户端自带的稳定会话标识。Codex
-// 请求必带 x-codex-* 头,其中 window-id / installation-id 与 session-id 头一起
-// 构成不依赖 NewAPI 的会话身份。
+// promptConversationSessionSignal extracts the stable session identifier that the Codex client sends itself. Codex
+// requests always carry x-codex-* headers, where the window-id / installation-id headers together with the session-id header
+// form a session identity that does not depend on NewAPI.
 func promptConversationSessionSignal(c *gin.Context) string {
 	if c == nil {
 		return ""
@@ -107,9 +107,9 @@ func promptConversationSessionSignal(c *gin.Context) string {
 	return ""
 }
 
-// promptConversationLockFallbackSessionHash 统一 codex-local 降级身份的 session
-// hash 派生。锁表和审计日志必须使用同一条信号提取与指纹链路，后台才能用审计
-// 记录里的 session_hash 定位并解锁对应会话。
+// promptConversationLockFallbackSessionHash unifies the session
+// hash derivation for the codex-local degraded identity. The lock table and the audit log must use the same signal extraction and fingerprint path, so the admin panel can use the audit
+// record's session_hash to locate and unlock the matching conversation.
 func promptConversationLockFallbackSessionHash(c *gin.Context) string {
 	return hashRiskIdentity(promptSessionFingerprint32(promptConversationSessionSignal(c)))
 }
@@ -167,9 +167,9 @@ func promptCyberRestrictionDecision(item *database.PromptConversationLock, cfg p
 		if result.AuditReference == "" {
 			result.AuditReference = result.RequestID
 		}
-		// 旧版本的本地锁没有单独保存 request_id，但 decision_id 一直使用
-		// local-block:<request_correlation_id>。兼容推导后，历史锁也能直接
-		// 粘贴定位到原始审核日志，而不需要等待新数据产生。
+		// Older local locks did not store a separate request_id, but decision_id has always used
+		// local-block:<request_correlation_id>. After compatible derivation, historical locks can also directly
+		// paste it to locate the original audit log without waiting for new data to be produced.
 		if result.AuditReference == "" && strings.HasPrefix(result.DecisionID, "local-block:") {
 			result.AuditReference = strings.TrimSpace(strings.TrimPrefix(result.DecisionID, "local-block:"))
 		}
@@ -193,34 +193,34 @@ func promptCyberRestrictionDecision(item *database.PromptConversationLock, cfg p
 	remainingText := promptCyberRestrictionRemainingText(result.RetryAfterSeconds)
 	auditText := ""
 	if result.AuditReference != "" {
-		auditText = fmt.Sprintf("审计编号：%s；", result.AuditReference)
+		auditText = fmt.Sprintf("audit ID: %s; ", result.AuditReference)
 	}
 	if result.Scope == database.PromptConversationRestrictionScopeUserCooldown {
-		result.Message = fmt.Sprintf("该用户因上游 CYB 进入安全冷却，剩余约 %s；冷却期间所有新请求均不会转发，也不会重复累计处罚。%s管理员可在「Prompt 检查 → 风险画像 → 用户详情」解除冷却。错误码：%s。", remainingText, auditText, result.ReasonCode)
+		result.Message = fmt.Sprintf("This user entered a security cooldown because of upstream CYB, about %s remaining; all new requests during the cooldown are not forwarded and do not count penalties again. %sAdministrators can lift the cooldown in 'Prompt Check → Risk Profile → User Details'. Error code: %s.", remainingText, auditText, result.ReasonCode)
 	} else if result.Scope == database.PromptConversationRestrictionScopeFingerprintReplay {
-		result.Message = fmt.Sprintf("相同 Prompt 指纹近期已收到上游 CYB，当前请求进入精确重放冷却，剩余约 %s；不会封禁整个 API Key。%s管理员可在「Prompt 检查 → 风险画像 → 会话详情」手动解锁。错误码：%s。", remainingText, auditText, result.ReasonCode)
+		result.Message = fmt.Sprintf("The same prompt fingerprint recently received upstream CYB, so the current request entered an exact replay cooldown, about %s remaining; the whole API key is not banned. %sAdministrators can unlock it manually in 'Prompt Check → Risk Profile → Session Details'. Error code: %s.", remainingText, auditText, result.ReasonCode)
 	} else if result.TriggerReasonCode != "" && result.TriggerReasonCode != newAPIUpstreamCyberPolicyReasonCode {
-		result.Message = fmt.Sprintf("当前对话因本地高风险规则已锁定，剩余约 %s；后续请求不会转发或重复累计处罚。触发原因：%s；%s管理员可在「Prompt 检查 → 风险画像 → 会话详情」审核并手动解锁。错误码：%s。", remainingText, result.TriggerReasonCode, auditText, result.ReasonCode)
+		result.Message = fmt.Sprintf("The current conversation is locked by a local high-risk rule, about %s remaining; later requests are not forwarded and do not count penalties again. Trigger reason: %s; %sAdministrators can review and unlock it manually in 'Prompt Check → Risk Profile → Session Details'. Error code: %s.", remainingText, result.TriggerReasonCode, auditText, result.ReasonCode)
 	} else {
-		result.Message = fmt.Sprintf("当前对话因上游 CYB 已锁定，剩余约 %s；后续请求不会转发或重复累计处罚。%s管理员可在「Prompt 检查 → 风险画像 → 会话详情」手动解锁。错误码：%s。", remainingText, auditText, result.ReasonCode)
+		result.Message = fmt.Sprintf("The current conversation is locked because of upstream CYB, about %s remaining; later requests are not forwarded and do not count penalties again. %sAdministrators can unlock it manually in 'Prompt Check → Risk Profile → Session Details'. Error code: %s.", remainingText, auditText, result.ReasonCode)
 	}
 	return result
 }
 
 func promptCyberRestrictionRemainingText(seconds int64) string {
 	if seconds <= 0 {
-		return "不到 1 分钟"
+		return "under 1 minute"
 	}
 	minutes := (seconds + 59) / 60
 	if minutes < 60 {
-		return fmt.Sprintf("%d 分钟", minutes)
+		return fmt.Sprintf("%d minutes", minutes)
 	}
 	hours := minutes / 60
 	remainingMinutes := minutes % 60
 	if remainingMinutes == 0 {
-		return fmt.Sprintf("%d 小时", hours)
+		return fmt.Sprintf("%d hours", hours)
 	}
-	return fmt.Sprintf("%d 小时 %d 分钟", hours, remainingMinutes)
+	return fmt.Sprintf("%d hours %d minutes", hours, remainingMinutes)
 }
 
 func promptCyberRestrictionDetails(restriction promptCyberRestriction, signedDetails gin.H) gin.H {
@@ -306,9 +306,9 @@ func promptCyberRestrictionLock(item *database.PromptConversationLock, exactConv
 	return &copy
 }
 
-// promptConversationLockFallbackIdentity 在没有 NewAPI 透传签名时,用下游
-// API Key 加 Codex 自带会话标识构成锁定身份。没有这条降级路径,未接 NewAPI 的
-// 部署完全无法锁定会话,拦截就只能逐条命中,无法封死一个正在试探的会话。
+// promptConversationLockFallbackIdentity, used when there is no NewAPI pass-through signature, uses the downstream
+// API key plus the Codex session identifier to form the lock identity. Without this fallback path, deployments that are not connected to NewAPI
+// cannot lock a session at all, so blocking works only request by request and cannot shut down a session that is probing.
 func promptConversationLockFallbackIdentity(c *gin.Context) (promptConversationLockIdentity, bool) {
 	if c == nil {
 		return promptConversationLockIdentity{}, false
@@ -412,8 +412,8 @@ func (h *Handler) unsignedUpstreamCyberLockIdentity(c *gin.Context, signedBody [
 	return promptConversationLockIdentity{}, "", false
 }
 
-// resolvePromptConversationLockIdentity 优先使用已验证的 NewAPI 身份,缺失时
-// 退化到 Codex 会话身份。NewAPI 场景的行为与升级前一致。
+// resolvePromptConversationLockIdentity prefers the verified NewAPI identity and, when it is missing,
+// falls back to the Codex session identity. Behavior for NewAPI deployments is the same as before the upgrade.
 func (h *Handler) resolvePromptConversationLockIdentity(c *gin.Context, cfg promptfilter.Config, signedBody []byte) (promptConversationLockIdentity, bool) {
 	if h == nil || c == nil {
 		return promptConversationLockIdentity{}, false
@@ -426,11 +426,11 @@ func (h *Handler) resolvePromptConversationLockIdentity(c *gin.Context, cfg prom
 	return promptConversationLockFallbackIdentity(c)
 }
 
-// 指纹重放冷却的存在性闸门:回退身份需要构建完整请求 envelope(全量 body
-// 遍历与脱敏),而绝大多数时间全局根本没有活动的指纹冷却。以短 TTL 缓存
-// "是否存在活动指纹锁"的结论,把每请求的 envelope 构建换成至多每 10 秒一次
-// 的轻量存在性查询。本实例新建指纹锁时立即置位;跨实例的新锁最多延迟一个
-// 闸门 TTL 才可见,对 best-effort 冷却可接受。
+// Existence gate for the fingerprint replay cooldown: the fallback identity needs a full request envelope (the whole body
+// traversal and redaction), yet most of the time there is no active fingerprint cooldown globally. A short-TTL cache of the
+// conclusion 'is there an active fingerprint lock' replaces the per-request envelope build with a lightweight
+// existence query, run at most once every 10 seconds. This instance sets the flag immediately when it creates a fingerprint lock; a new lock from another instance becomes visible only after up to one gate TTL,
+// which is acceptable for a best-effort cooldown.
 const promptFingerprintReplayGateTTL = 10 * time.Second
 
 func (h *Handler) hasActiveFingerprintReplayLocks(ctx context.Context, cooldownTTL time.Duration) bool {
@@ -449,7 +449,7 @@ func (h *Handler) hasActiveFingerprintReplayLocks(ctx context.Context, cooldownT
 	defer cancel()
 	active, err := h.db.HasActivePromptFingerprintReplayLocks(checkCtx, cooldownTTL)
 	if err != nil {
-		// 查询失败不缓存结论,并按"可能有锁"放行后续检查:冷却语义优先于省 CPU。
+		// A failed query does not cache the conclusion, and lets later checks pass as 'a lock may exist': cooldown semantics take priority over saving CPU.
 		return true
 	}
 	h.fpReplayGateMu.Lock()
@@ -513,8 +513,8 @@ func (h *Handler) activePromptConversationLock(c *gin.Context, cfg promptfilter.
 		return promptCyberRestrictionLock(item, exactConversation), true
 	}
 
-	// 未接入签名 NewAPI 的部署只按 API Key + Codex 会话锁定当前会话；不应用
-	// 用户级冷却，避免共享 Key 下不同用户相互影响。
+	// Deployments that are not connected to a signed NewAPI lock only the current session by API key + Codex session; they do not apply
+	// a user-level cooldown, so different users under a shared key do not affect each other.
 	identity, ok := promptConversationLockFallbackIdentity(c)
 	if !ok && h.hasActiveFingerprintReplayLocks(c.Request.Context(), promptUserCyberCooldownTTL(cfg)) {
 		identity, ok = h.promptConversationFingerprintReplayIdentity(c, signedBody, endpoint, model)
@@ -658,12 +658,12 @@ func (h *Handler) lockPromptConversationAfterUnsignedUpstreamCYB(c *gin.Context,
 	return item != nil && item.Status == database.PromptConversationLockStatusActive
 }
 
-// promptGuardBlockHasLocalEvidence 判断最终 block 是否有本地检测证据(规则命中/
-// 终局类别/分类器信号)支撑。仅由外部审核层产生的 block——审核模型对本地放行的
-// 请求打了 flag,或 fail-closed 下审核调用本身失败——只拒绝当次请求,不触发会话
-// 锁:概率型审核分数(如 moderation 各分类阈值)对正常会话存在误报,
-// finalizePromptGuardDecision 也早已把这类命中归为不计违规笔数的弱证据。
-// 一次误报锁死整段会话七天,代价与证据强度不匹配(issue #527)。
+// promptGuardBlockHasLocalEvidence reports whether the final block is supported by local detection evidence (rule hits /
+// final category / classifier signals). A block produced only by the external review layer, where the review model flagged a request that local checks allowed, or where the review call itself failed under fail-closed,
+// only rejects that one request and does not trigger a session
+// lock. Probabilistic review scores (such as per-category moderation thresholds) produce false positives for normal sessions,
+// and finalizePromptGuardDecision already classifies such hits as weak evidence that does not count toward violation strikes.
+// A single false positive would lock an entire session for seven days, a cost that does not match the strength of the evidence (issue #527).
 func promptGuardBlockHasLocalEvidence(decision promptfilter.Decision, verdict promptfilter.Verdict) bool {
 	if decision.PrimaryDetector == promptGuardDetectorExternalReview {
 		return false
@@ -675,14 +675,14 @@ func promptGuardBlockHasLocalEvidence(decision promptfilter.Decision, verdict pr
 	return true
 }
 
-// lockPromptConversationOnLocalBlock 在本地规则判定 block 时立即锁定会话,
-// 使风险在**发往上游供应商之前**就被扼杀。
+// lockPromptConversationOnLocalBlock locks the session immediately when a local rule decides to block,
+// so that the risk is stopped **before it is sent to the upstream provider**.
 //
-// 为什么必须前置:纯正则单轮命中率有限(见 promptfilter 对抗性基线,12 种绕过
-// 变形仅 3 种被拦),攻击者只要改写措辞、拆词、换语言就能让下一条请求穿透本地
-// 规则打到上游,从而产生真实的 cyber_policy 封号信号。等上游返回 CYB 再锁,
-// 风险已经泄露。会话级封锁把"逐条命中"变成"一次命中即封死整段会话",这是纵深
-// 防御里唯一能覆盖未知变形的一层。
+// Why it must come first: a pure regex single-turn hit rate is limited (see the promptfilter adversarial baseline, where 12 bypass
+// variants, only 3 of them were blocked). An attacker only needs to reword, split words, or switch languages to get the next request past the local
+// rules and onto upstream, producing a real cyber_policy account-ban signal. Locking only after upstream returns CYB means the
+// risk has already leaked. Session-level blocking turns 'hit each request' into 'one hit shuts down the whole session', which is the one
+// layer in defense in depth that covers unknown variants.
 func (h *Handler) lockPromptConversationOnLocalBlock(c *gin.Context, cfg promptfilter.Config, signedBody []byte, endpoint, model string, decision promptfilter.Decision, verdict promptfilter.Verdict) bool {
 	if h == nil || h.db == nil || c == nil || !cfg.Advanced.Enforcement.ConversationLockEnabled {
 		return false
@@ -698,8 +698,8 @@ func (h *Handler) lockPromptConversationOnLocalBlock(c *gin.Context, cfg promptf
 	if reasonCode == "" {
 		reasonCode = "local_prompt_block"
 	}
-	// 每次本地 block 使用独立的决策 ID,使 trigger_count 如实反映命中次数;
-	// 同一请求重放则保持幂等。
+	// Each local block uses its own decision ID, so trigger_count accurately reflects the number of hits;
+	// a replay of the same request stays idempotent.
 	decisionID := "local-block:" + ensurePromptPolicyRequestCorrelationID(c)
 	ctx, cancel := context.WithTimeout(c.Request.Context(), 3*time.Second)
 	defer cancel()

@@ -7,12 +7,12 @@ import (
 	"github.com/codex2api/security/outputguard"
 )
 
-// errModelOutputGuardTriggered 是 Native HTTP 流式转发在 Guard 命中后返回的
-// 请求内哨兵：它不会进入下游或日志，只用于让调用方识别“流已被安全终止”。
+// errModelOutputGuardTriggered is the per-request sentinel returned by the native HTTP streaming forwarder after the Guard trips:
+// it is never sent downstream or logged; it only lets the caller recognize that "the stream has been safely terminated".
 var errModelOutputGuardTriggered = errors.New("model output guard triggered")
 
-// nativeGuardCoreConfig 从当前已应用的运行时快照构造请求级 Guard 配置。
-// 快照在请求开始时取一次，后台轮询器的新 generation 不会篡改在途请求。
+// nativeGuardCoreConfig builds the per-request Guard config from the currently applied runtime snapshot.
+// The snapshot is taken once at request start, so new generations from the background poller do not alter in-flight requests.
 func nativeGuardCoreConfig() outputguard.Config {
 	applied := CurrentOutputGuardConfig()
 	return outputguard.Config{
@@ -24,15 +24,15 @@ func nativeGuardCoreConfig() outputguard.Config {
 	}
 }
 
-// selectNativeProjector 为上游通道选择真实 upstream projector。
-// 严禁按客户端下游请求路径盲目推测上游协议：Codex/Responses 永远是 Responses SSE，其余按上游协议名分派。
-// isNativeClaude 仅为兼容尚未迁移的调用方而保留，已不再参与选择。
+// selectNativeProjector selects the real upstream projector for the upstream channel.
+// Never guess the upstream protocol blindly from the downstream client request path: Codex/Responses is always Responses SSE, and the rest dispatch by upstream protocol name.
+// isNativeClaude is kept only for callers not yet migrated and no longer takes part in selection.
 func selectNativeProjector(protocol string, isNativeClaude bool, isCodexResponses bool) ProtocolProjector {
 	return selectNativeProjectorWithScope(protocol, isNativeClaude, isCodexResponses, "")
 }
 
-// selectNativeProjectorWithScope 为指定 attempt 作用域选择投影器。
-// Responses 与 Chat 投影器没有按 block 区分的通道，因此 scope 不参与选择。
+// selectNativeProjectorWithScope selects the projector for the specified attempt scope.
+// Responses and Chat projectors have no per-block channel, so scope does not take part in selection.
 func selectNativeProjectorWithScope(protocol string, _ bool, isCodexResponses bool, _ string) ProtocolProjector {
 	if isCodexResponses {
 		return NewResponsesProjector()

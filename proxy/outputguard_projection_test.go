@@ -19,8 +19,8 @@ func defaultProjectionTestConfig() outputguard.Config {
 	}
 }
 
-// 1. Responses 协议流式、3 个合法语义终态阶段快照与 alias 跨帧映射测试
-// 真实 delta 只有 item_id，output_item.done 才出现 call_id；多 content 完整遍历
+// 1. Responses protocol streaming: test of the 3 legal semantic terminal-stage snapshots and cross-frame alias mapping
+// Real deltas carry only item_id; call_id appears only at output_item.done. Full traversal of multiple content entries
 func TestResponsesProjectorStreamAndTerminalSnapshots(t *testing.T) {
 	guard := outputguard.NewRequestGuard(defaultProjectionTestConfig())
 	proj := NewResponsesProjector()
@@ -37,25 +37,25 @@ func TestResponsesProjectorStreamAndTerminalSnapshots(t *testing.T) {
 		t.Fatalf("thinking delta observe failed: %v", err)
 	}
 
-	// Tool call delta (初始仅有 item_id，缺失 call_id)
+	// Tool call delta (initially only item_id, call_id missing)
 	toolDelta := `{"type":"response.function_call_arguments.delta","item_id":"item_call_1","output_index":1,"delta":"{\"path\":"}`
 	if err := ObserveEvent(guard, proj, "response.function_call_arguments.delta", []byte(toolDelta)); err != nil {
 		t.Fatalf("tool delta observe failed: %v", err)
 	}
 
-	// function_call_arguments.done (终态阶段 1: arguments.done 快照)
+	// function_call_arguments.done (terminal stage 1: arguments.done snapshot)
 	argsDone := `{"type":"response.function_call_arguments.done","item_id":"item_call_1","call_id":"call_write_file","arguments":"{\"path\":\"test.txt\"}"}`
 	if err := ObserveEvent(guard, proj, "response.function_call_arguments.done", []byte(argsDone)); err != nil {
 		t.Fatalf("args done observe failed: %v", err)
 	}
 
-	// output_item.done (终态阶段 2: item.done 快照，晚到 call_id 绑定成功，不新建 channel)
+	// output_item.done (terminal stage 2: item.done snapshot; late call_id binding succeeds, no new channel created)
 	itemDone := `{"type":"response.output_item.done","item":{"id":"item_call_1","type":"function_call","call_id":"call_write_file","arguments":"{\"path\":\"test.txt\"}"}}`
 	if err := ObserveEvent(guard, proj, "response.output_item.done", []byte(itemDone)); err != nil {
 		t.Fatalf("item done observe failed: %v", err)
 	}
 
-	// response.completed (终态阶段 3: response.completed 纯终态确认快照，含多 content message 与 tool)
+	// response.completed (terminal stage 3: pure response.completed terminal confirmation snapshot, containing multiple content messages and a tool)
 	completed := `{"type":"response.completed","response":{"id":"resp_1","status":"completed","output":[{"id":"item_call_1","type":"function_call","call_id":"call_write_file","arguments":"{\"path\":\"test.txt\"}"},{"id":"msg_1","type":"message","content":[{"type":"output_text","text":"Hello, "},{"type":"reasoning","thinking":"thinking step 1"}]}]}}`
 	if err := ObserveEvent(guard, proj, "response.completed", []byte(completed)); err != nil {
 		t.Fatalf("response completed observe failed: %v", err)
@@ -66,30 +66,30 @@ func TestResponsesProjectorStreamAndTerminalSnapshots(t *testing.T) {
 	}
 }
 
-// 2. ChatCompletions 协议 choice/toolindex/callid alias 隔离、legacy function_call 及 finish_reason 尾检测试
+// 2. ChatCompletions protocol: choice/toolindex/callid alias isolation, legacy function_call, and finish_reason tail-check tests
 func TestChatProjectorStreamingAndNonStreaming(t *testing.T) {
 	guard := outputguard.NewRequestGuard(defaultProjectionTestConfig())
 	proj := NewChatProjector()
 
-	// 流式 Chunk 1: content + reasoning + tool_call 首帧 (带 call_id 与 index) + legacy delta.function_call
+	// Streaming chunk 1: content + reasoning + first tool_call frame (with call_id and index) + legacy delta.function_call
 	chunk1 := `{"id":"chatcmpl-1","choices":[{"index":0,"delta":{"content":"foo","reasoning_content":"think","tool_calls":[{"index":0,"id":"call_123","function":{"name":"search","arguments":"{\"q\":"}}],"function_call":{"name":"legacy_fn","arguments":"{\"a\":"}}}]}`
 	if err := ObserveEvent(guard, proj, "", []byte(chunk1)); err != nil {
 		t.Fatalf("chunk 1 observe error: %v", err)
 	}
 
-	// 流式 Chunk 2: tool_call 后续 delta (仅带 index, 缺失 id, 验证 aliasMap 稳定解析到同一 channel) + legacy function_call delta
+	// Streaming chunk 2: subsequent tool_call deltas (only index, id missing; verifies that aliasMap resolves stably to the same channel) + legacy function_call delta
 	chunk2 := `{"id":"chatcmpl-1","choices":[{"index":0,"delta":{"tool_calls":[{"index":0,"function":{"arguments":"\"golang\"}"}}],"function_call":{"arguments":"1}"}}}]}`
 	if err := ObserveEvent(guard, proj, "", []byte(chunk2)); err != nil {
 		t.Fatalf("chunk 2 observe error: %v", err)
 	}
 
-	// 验证不同 choice 隔离，不发生错合并；并测试 finish_reason 触发 EndChannel 尾检
+	// Verify that different choices stay isolated with no wrong merging; also test that finish_reason triggers the EndChannel tail check
 	chunkChoice1 := `{"id":"chatcmpl-1","choices":[{"index":1,"delta":{"content":"bar"},"finish_reason":"stop"}]}`
 	if err := ObserveEvent(guard, proj, "", []byte(chunkChoice1)); err != nil {
 		t.Fatalf("chunk choice 1 observe error: %v", err)
 	}
 
-	// 非流式 JSON 测试 (含 message.function_call 与 message.tool_calls)
+	// Non-streaming JSON test (contains message.function_call and message.tool_calls)
 	nonStream := `{"id":"chatcmpl-2","choices":[{"index":0,"message":{"role":"assistant","content":"final content","tool_calls":[{"id":"call_999","type":"function","function":{"name":"calc","arguments":"{\"val\":42}"}}],"function_call":{"name":"old","arguments":"{\"x\":1}"}},"finish_reason":"stop"}]}`
 	guardNonStream := outputguard.NewRequestGuard(defaultProjectionTestConfig())
 	projNonStream := NewChatProjector()
@@ -101,12 +101,12 @@ func TestChatProjectorStreamingAndNonStreaming(t *testing.T) {
 	}
 }
 
-// 5. 事件计数契约：每上游事件一次，unknown/control/empty 业务事件严格扣减事件预算，心跳注释除外
+// 5. Event-count contract: each upstream event counts once; unknown, control, and empty business events strictly deduct from the event budget; heartbeat comments are excluded
 func TestObserveEventBudgetAccountability(t *testing.T) {
 	guard := outputguard.NewRequestGuard(defaultProjectionTestConfig())
 	proj := NewResponsesProjector()
 
-	// SSE 注释与 ping 帧不消耗业务事件预算
+	// SSE comments and ping frames do not consume the business event budget
 	if err := ObserveEvent(guard, proj, "", []byte(": keep-alive ping\n")); err != nil {
 		t.Fatalf("comment frame should not fail: %v", err)
 	}
@@ -114,7 +114,7 @@ func TestObserveEventBudgetAccountability(t *testing.T) {
 		t.Fatalf("ping event should not fail: %v", err)
 	}
 
-	// 构造 131072 个 unknown / empty 业务事件洪泛
+	// Construct a flood of 131072 unknown and empty business events
 	for i := 0; i < outputguard.MaxRequestEvents; i++ {
 		unknownEvent := `{"type":"response.unknown_control_event","id":"ctrl_1"}`
 		if err := ObserveEvent(guard, proj, "response.unknown_control_event", []byte(unknownEvent)); err != nil {
@@ -122,7 +122,7 @@ func TestObserveEventBudgetAccountability(t *testing.T) {
 		}
 	}
 
-	// 第 131073 个事件必须被 request_events 坚决拦截
+	// The 131073rd event must be firmly blocked by request_events
 	err := ObserveEvent(guard, proj, "response.created", []byte(`{"type":"response.created"}`))
 	if err == nil || err.Error() != "request_events" {
 		t.Fatalf("expected request_events rejection for control/unknown flood, got %v", err)
@@ -132,12 +132,12 @@ func TestObserveEventBudgetAccountability(t *testing.T) {
 	}
 }
 
-// 6. 验证 Custom Tool Arguments String 仅解码当前 envelope，不每 delta 重 parse inner JSON
+// 6. Verify that Custom Tool Arguments String decodes only the current envelope and does not re-parse the inner JSON on every delta
 func TestCustomToolArgumentsEnvelopePreservation(t *testing.T) {
 	guard := outputguard.NewRequestGuard(defaultProjectionTestConfig())
 	proj := NewResponsesProjector()
 
-	// 构造未闭合且包含转义与大段文本的 arguments 片段
+	// Construct an unclosed arguments fragment containing escapes and a large block of text
 	incompleteJSONChunk := `{"type":"response.function_call_arguments.delta","item_id":"call_custom","delta":"{\"nested_key\":\"val\\nwith\\\"quotes and unclosed brackets..."}`
 	if err := ObserveEvent(guard, proj, "response.function_call_arguments.delta", []byte(incompleteJSONChunk)); err != nil {
 		t.Fatalf("custom tool envelope observe error: %v", err)
@@ -149,11 +149,11 @@ func TestCustomToolArgumentsEnvelopePreservation(t *testing.T) {
 }
 
 // -----------------------------------------------------------------------------
-// 03-C 回归测试：Chat finish_reason 全部活跃 tool_calls End 尾检与隔离
+// 03-C regression test: Chat finish_reason End tail check and isolation across all active tool_calls
 // -----------------------------------------------------------------------------
 
-// 03-C Important 回归测试：
-// ChatProjector 流式 tool_calls 在 finish_reason 时必须对所有活跃的 choice.tool_idx 触发 End 进行尾检。
+// 03-C important regression test:
+// On finish_reason, ChatProjector streaming tool_calls must trigger End tail checks for all active choice.tool_idx.
 func TestRegression03C_ChatToolChannelNoTailCheck(t *testing.T) {
 	guard := outputguard.NewRequestGuard(defaultProjectionTestConfig())
 	proj := NewChatProjector()
@@ -163,7 +163,7 @@ func TestRegression03C_ChatToolChannelNoTailCheck(t *testing.T) {
 	for i := 0; i < 820; i++ {
 		periodic.WriteString("0123456789")
 	}
-	// args = 100 杂散 + 8200 周期 = 8300 字节；Push 检查点 8192 处窗口=[100杂散+8092周期] 未命中
+	// args = 100 stray bytes + 8200 periodic bytes = 8300 bytes; at the Push checkpoint of 8192 the window [100 stray + 8092 periodic] does not hit
 	args1 := prefix + periodic.String()
 	chunk1 := `{"choices":[{"index":0,"delta":{"tool_calls":[{"index":0,"id":"call_1","function":{"name":"f","arguments":"` + args1 + `"}}]}}]}`
 	if err := ObserveEvent(guard, proj, "", []byte(chunk1)); err != nil {
@@ -173,8 +173,8 @@ func TestRegression03C_ChatToolChannelNoTailCheck(t *testing.T) {
 		t.Fatalf("chunk1 unexpectedly tripped: %s", guard.TrippedReason())
 	}
 
-	// chunk2: finish_reason 到达，无更多 args delta。
-	// 正确实现对 choice_0.tool_0 执行 ActionEnd 触发尾检，此时最新 8192 字节（包含 8192 字节纯周期）必须触发 repetition！
+	// chunk 2: finish_reason arrives, with no more args deltas.
+	// The correct implementation runs ActionEnd on choice_0.tool_0 to trigger the tail check; at this point the latest 8192 bytes (all 8192 bytes of pure periodic content) must trigger repetition!
 	chunk2 := `{"choices":[{"index":0,"delta":{},"finish_reason":"tool_calls"}]}`
 	err := ObserveEvent(guard, proj, "", []byte(chunk2))
 	if err == nil && !guard.IsTripped() {
@@ -186,12 +186,12 @@ func TestRegression03C_ChatToolChannelNoTailCheck(t *testing.T) {
 	}
 }
 
-// 03-C 补充测试：多 choice 与多 tool 隔离尾检测试
+// 03-C supplementary test: tail check with multiple choices and multiple tools kept isolated
 func TestRegression03C_MultiChoiceMultiToolIsolation(t *testing.T) {
 	guard := outputguard.NewRequestGuard(defaultProjectionTestConfig())
 	proj := NewChatProjector()
 
-	// choice 0 和 choice 1 分别有 tool 0 和 tool 1
+	// choice 0 and choice 1 have tool 0 and tool 1 respectively
 	chunk1 := `{"choices":[
 		{"index":0,"delta":{"tool_calls":[{"index":0,"id":"call_c0_t0","function":{"name":"f0","arguments":"normal"}}]}},
 		{"index":1,"delta":{"tool_calls":[{"index":1,"id":"call_c1_t1","function":{"name":"f1","arguments":"normal"}}]}}
@@ -200,7 +200,7 @@ func TestRegression03C_MultiChoiceMultiToolIsolation(t *testing.T) {
 		t.Fatalf("chunk1 error: %v", err)
 	}
 
-	// 确认两个 tool channel 均活跃
+	// Confirm that both tool channels are active
 	if got := guard.ActiveChannelCount(); got != 2 {
 		t.Fatalf("expected ActiveChannelCount=2, got %d", got)
 	}
@@ -222,7 +222,7 @@ func TestRegression03C_MultiChoiceMultiToolIsolation(t *testing.T) {
 	}
 }
 
-// 03-C 补充测试：晚到 ID 场景尾检正常生效
+// 03-C supplementary test: tail check works normally when the late ID arrives
 func TestRegression03C_ChatToolChannelLateArrivingIDTailCheck(t *testing.T) {
 	guard := outputguard.NewRequestGuard(defaultProjectionTestConfig())
 	proj := NewChatProjector()
@@ -234,19 +234,19 @@ func TestRegression03C_ChatToolChannelLateArrivingIDTailCheck(t *testing.T) {
 	}
 	args := prefix + periodic.String()
 
-	// chunk 1: 仅有 tool index 与部分参数，无 id
+	// chunk 1: only the tool index and partial arguments, no id
 	c1 := `{"choices":[{"index":0,"delta":{"tool_calls":[{"index":0,"function":{"name":"f","arguments":"` + args[:4000] + `"}}]}}]}`
 	if err := ObserveEvent(guard, proj, "", []byte(c1)); err != nil {
 		t.Fatalf("c1: %v", err)
 	}
 
-	// chunk 2: 晚到 call_id 与剩余参数
+	// chunk 2: late call_id plus the remaining arguments
 	c2 := `{"choices":[{"index":0,"delta":{"tool_calls":[{"index":0,"id":"call_late_1","function":{"arguments":"` + args[4000:] + `"}}]}}]}`
 	if err := ObserveEvent(guard, proj, "", []byte(c2)); err != nil {
 		t.Fatalf("c2: %v", err)
 	}
 
-	// chunk 3: finish_reason 到达，触发 choice 0 的所有 tool_calls EndChannel
+	// chunk 3: finish_reason arrives, triggering EndChannel for all tool_calls of choice 0
 	c3 := `{"choices":[{"index":0,"delta":{},"finish_reason":"tool_calls"}]}`
 	err := ObserveEvent(guard, proj, "", []byte(c3))
 	if err == nil && !guard.IsTripped() {
@@ -257,7 +257,7 @@ func TestRegression03C_ChatToolChannelLateArrivingIDTailCheck(t *testing.T) {
 	}
 }
 
-// 03-C 补充测试：完全缺失 ID 场景尾检正常生效
+// 03-C supplementary test: tail check works normally when the ID is missing entirely
 func TestRegression03C_ChatToolChannelMissingIDTailCheck(t *testing.T) {
 	guard := outputguard.NewRequestGuard(defaultProjectionTestConfig())
 	proj := NewChatProjector()
@@ -269,7 +269,7 @@ func TestRegression03C_ChatToolChannelMissingIDTailCheck(t *testing.T) {
 	}
 	args := prefix + periodic.String()
 
-	// chunk 1: 全程无 ID
+	// chunk 1: no ID throughout
 	c1 := `{"choices":[{"index":0,"delta":{"tool_calls":[{"index":0,"function":{"name":"f","arguments":"` + args + `"}}]}}]}`
 	if err := ObserveEvent(guard, proj, "", []byte(c1)); err != nil {
 		t.Fatalf("c1: %v", err)
@@ -287,7 +287,7 @@ func TestRegression03C_ChatToolChannelMissingIDTailCheck(t *testing.T) {
 }
 
 // -----------------------------------------------------------------------------
-// A1 回归测试：response.incomplete 终态投影（流式事件与非流式 body 两条路径）
+// A1 regression test: terminal projection for response.incomplete (both the streaming event and the non-streaming body paths)
 // -----------------------------------------------------------------------------
 
 func TestResponsesProjectorIncompleteProjection(t *testing.T) {
@@ -306,7 +306,7 @@ func TestResponsesProjectorIncompleteProjection(t *testing.T) {
 		}
 	}
 
-	// 流式 response.incomplete 事件：修复前 switch 不匹配该事件，观察数为 0。
+	// Streaming response.incomplete event: before the fix, the switch did not match this event, so the observation count was 0.
 	streamEvent := `{"type":"response.incomplete","response":{"id":"resp_1","status":"incomplete","incomplete_details":{"reason":"max_output_tokens"},"output":[{"id":"msg_1","type":"message","content":[{"type":"output_text","text":"partial stream"}]}]}}`
 	obs, err := proj.Project("response.incomplete", []byte(streamEvent))
 	if err != nil {
@@ -314,7 +314,7 @@ func TestResponsesProjectorIncompleteProjection(t *testing.T) {
 	}
 	assertPartial(t, obs, "msg_1", "partial stream")
 
-	// 非流式 body（eventType 为空）：修复前 default 仅接受 status=completed。
+	// Non-streaming body (eventType empty): before the fix, default accepted only status=completed.
 	nonStreamBody := `{"id":"resp_2","object":"response","status":"incomplete","incomplete_details":{"reason":"max_output_tokens"},"output":[{"id":"msg_2","type":"message","content":[{"type":"output_text","text":"partial body"}]}]}`
 	obs, err = proj.Project("", []byte(nonStreamBody))
 	if err != nil {
@@ -324,19 +324,19 @@ func TestResponsesProjectorIncompleteProjection(t *testing.T) {
 }
 
 // -----------------------------------------------------------------------------
-// A2 回归测试：content_block_start 直接携带的 text/input 必须作为 append 观察
+// A2 regression test: text and input carried directly by content_block_start must be emitted as append observations
 // -----------------------------------------------------------------------------
 
 // -----------------------------------------------------------------------------
-// A3 回归测试：finishReason 收尾 chunk 无 parts 时也必须结束前序已见索引
+// A3 regression test: when the finishReason closing chunk has no parts, the preceding seen indices must still be ended
 // -----------------------------------------------------------------------------
 
 // -----------------------------------------------------------------------------
-// I1 回归测试：reasoning summary/text delta 必须进入 thinking 通道
+// I1 regression test: reasoning summary and text deltas must enter the thinking channel
 // -----------------------------------------------------------------------------
 
-// I1: response.reasoning_summary_text.delta 与 response.reasoning_text.delta 必须产生
-// thinking 观察；summary 各 part 按 summary_index（而非 content_index）独立分通道。
+// I1: response.reasoning_summary_text.delta and response.reasoning_text.delta must each produce
+// thinking observations; each summary part is channelized independently by summary_index (not content_index).
 func TestResponsesProjectorReasoningSummaryDeltaChannels(t *testing.T) {
 	cfg := defaultProjectionTestConfig()
 	cfg.MaxChannelBytes = 1000
@@ -351,8 +351,8 @@ func TestResponsesProjectorReasoningSummaryDeltaChannels(t *testing.T) {
 		))
 	}
 
-	// 两个 part 各 600 字节，合计 1200 > MaxChannelBytes；若共享 content_index=0
-	// 或共享 alias，就会被合并成单通道而误触发 channel_bytes。
+	// Two parts of 600 bytes each, 1200 in total > MaxChannelBytes; if they shared content_index=0
+	// or shared an alias, they would be merged into a single channel and falsely trigger channel_bytes.
 	for _, part := range []struct {
 		index int
 		delta string
@@ -368,15 +368,15 @@ func TestResponsesProjectorReasoningSummaryDeltaChannels(t *testing.T) {
 		t.Fatalf("expected 2 independent summary channels, got %d", got)
 	}
 
-	// 同一个 summary part 继续追加并突破单通道字节预算，必须命中 channel_bytes，
-	// 证明 summary delta 真正进入了 thinking 通道预算检查。
+	// Continuing to append to the same summary part and exceeding the single-channel byte budget must trigger channel_bytes,
+	// proving that the summary delta really entered the thinking channel budget check.
 	err := ObserveEvent(guard, proj, "response.reasoning_summary_text.delta", summaryEvent(0, strings.Repeat("s", 600)))
 	if err == nil || guard.TrippedReason() != "channel_bytes" {
 		t.Fatalf("expected channel_bytes for summary delta overflow, got err=%v reason=%q", err, guard.TrippedReason())
 	}
 }
 
-// I1: summary / reasoning-text delta 的超长周期文本必须命中 repetition 检测。
+// I1: over-long periodic text in summary and reasoning-text deltas must trigger repetition detection.
 func TestResponsesProjectorReasoningDeltaRepetitionDetection(t *testing.T) {
 	periodic := strings.Repeat("reasoning-cycle-", 700)
 	cases := []struct {

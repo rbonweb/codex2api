@@ -39,7 +39,7 @@ func FetchLatestModelTraceRevision(ctx context.Context, proxyURL string) (string
 	}
 	revision := strings.ToLower(strings.TrimSpace(string(body)))
 	if !modelTraceRevisionPattern.MatchString(revision) {
-		return "", fmt.Errorf("ModelTrace 上游返回了无效的提交号")
+		return "", fmt.Errorf("ModelTrace upstream returned an invalid commit number")
 	}
 	return revision, nil
 }
@@ -48,7 +48,7 @@ func FetchLatestModelTraceRevision(ctx context.Context, proxyURL string) (string
 // the bytes through ParseModelTraceBankOverride before using them.
 func FetchModelTraceBank(ctx context.Context, revision, proxyURL string) ([]byte, error) {
 	if !modelTraceRevisionPattern.MatchString(revision) {
-		return nil, fmt.Errorf("无效的 ModelTrace 提交号")
+		return nil, fmt.Errorf("invalid ModelTrace commit number")
 	}
 	return fetchModelTraceURL(ctx, fmt.Sprintf(modelTraceBankURLTemplate, revision), "application/json", proxyURL, modelTraceBankMaxBytes)
 }
@@ -80,7 +80,7 @@ func fetchModelTraceURL(ctx context.Context, endpoint, accept, proxyURL string, 
 		return nil, fmt.Errorf("read ModelTrace response: %w", err)
 	}
 	if int64(len(body)) > limit {
-		return nil, fmt.Errorf("ModelTrace 响应超过 %d 字节上限", limit)
+		return nil, fmt.Errorf("ModelTrace response exceeds the %d byte limit", limit)
 	}
 	return body, nil
 }

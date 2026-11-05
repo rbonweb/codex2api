@@ -56,7 +56,7 @@ type ModelSyncResult struct {
 	Updated   int      `json:"updated"`
 	Unchanged int      `json:"unchanged"`
 	Skipped   []string `json:"skipped"`
-	// Removed 是本次同步删掉的 official_codex_docs 来源行（官方页已不存在）。
+	// Removed is the official_codex_docs source rows deleted by this sync (the official page no longer has them).
 	Removed      []string    `json:"removed,omitempty"`
 	Models       []string    `json:"models"`
 	Items        []ModelInfo `json:"items"`
@@ -65,21 +65,21 @@ type ModelSyncResult struct {
 }
 
 var builtinModelInfos = []ModelInfo{
-	// gpt-6-astra：官方模型页与定价页均已收录（$10/$50，长上下文 $20/$75）。
-	// 官方文档同步与 manifest 学习都能发现它，但内置一行保证冷启动 / 未同步的
-	// 部署也能直接调用，不必等一次同步或一次带清单的请求。
+	// gpt-6-astra: listed on both the official model page and the pricing page ($10/$50, long context $20/$75).
+	// Official docs sync and manifest learning can both discover it, but the built-in row guarantees that cold-start and unsynced
+	// deployments can also call it directly, without waiting for a sync or for a request that carries a manifest.
 	modelInfoForID("gpt-6-astra", ModelSourceBuiltin),
 	modelInfoForID("gpt-6-sol", ModelSourceBuiltin),
 	modelInfoForID("gpt-6-luna", ModelSourceBuiltin),
-	// gpt-5.6 系列（Sol/Terra/Luna）：官网已出现的新模型，先内置兜底，
-	// 官方文档页同步（SyncOfficialCodexModels）上线后会以同步结果为准。
+	// gpt-5.6 series (Sol/Terra/Luna): new models already listed on the official site, built in first as a fallback;
+	// once the official docs page sync (SyncOfficialCodexModels) is live, its synced results take precedence.
 	modelInfoForID("gpt-5.6-sol", ModelSourceBuiltin),
 	modelInfoForID("gpt-5.6-terra", ModelSourceBuiltin),
 	modelInfoForID("gpt-5.6-luna", ModelSourceBuiltin),
 	modelInfoForID("gpt-5.5", ModelSourceBuiltin),
-	// gpt-5.4 / gpt-5.4-mini 已下线（2026-09 上游 ChatGPT 账号 manifest 不再包含，
-	// 请求直接 400 "model is not supported when using Codex with a ChatGPT account"）；
-	// 5.3 只保留 spark 变体；gpt-5.3-codex 及 5.2/更低模型已下线（含上游同步过滤）。
+	// gpt-5.4 and gpt-5.4-mini have been retired (as of 2026-09, the upstream ChatGPT account manifest no longer includes them,
+	// and requests fail directly with 400 "model is not supported when using Codex with a ChatGPT account");
+	// 5.3 keeps only the spark variant; gpt-5.3-codex and 5.2 and lower models are retired (including upstream sync filtering).
 	modelInfoForID("gpt-5.3-codex-spark", ModelSourceBuiltin),
 	// codex-auto-review — Codex internal auto-review model.
 	// Upstream confirms: returns effective model "gpt-5.4" (tested 2026-05-20).
@@ -244,8 +244,8 @@ func mergeModelInfos(rows []database.ModelRegistryRow) []ModelInfo {
 		if info.ID == "" {
 			continue
 		}
-		// 退役模型（5.3 非 spark、5.2 及以下、gpt-4*）与内部变体（-wm）即使注册表里
-		// 有残留行也不再暴露，保证升级后 DB 旧行不会让它们复现。
+		// Retired models (5.3 non-spark, 5.2 and below, gpt-4*) and internal variants (-wm) are not exposed
+		// even if residual rows remain in the registry, so old DB rows after an upgrade cannot bring them back.
 		if isRetiredCodexModel(info.ID) || isInternalCodexModelVariant(info.ID) {
 			continue
 		}
@@ -259,10 +259,10 @@ func mergeModelInfos(rows []database.ModelRegistryRow) []ModelInfo {
 			delete(byID, info.ID)
 		}
 	}
-	// 同步/学习进来的非内置模型排在最前，按版本新→旧（gpt-6-x > gpt-5.6-x > …），
-	// 同版本按 ID 字典序；没有数字版本的代号族（daybreak 等）排在数字版本之后。
-	// 内置列表本身已是手工维护的新→旧顺序，接在后面；否则新发布的型号会被
-	// 压到 gpt-image-2-4k 之后、按字母序埋在列表末尾。
+	// Synced and learned non-built-in models are placed first, ordered newest to oldest by version (gpt-6-x > gpt-5.6-x > ...),
+	// same-version ties are ordered by ID lexicographically; codename families with no numeric version (daybreak etc.) come after numbered versions.
+	// The built-in list is already a hand-maintained newest-to-oldest order and is appended after them; otherwise newly released models would be
+	// pushed behind gpt-image-2-4k and buried alphabetically at the end of the list.
 	extras := make([]ModelInfo, 0, len(byID))
 	for _, info := range byID {
 		extras = append(extras, info)
@@ -273,9 +273,9 @@ func mergeModelInfos(rows []database.ModelRegistryRow) []ModelInfo {
 	return append(extras, builtins...)
 }
 
-// compareModelIDsNewestFirst 按"版本新→旧"比较两个模型 ID：先比 ID 中的数字序列
-// （逐段数值比较，长者视为更细的版本），有数字的排在无数字的前面，
-// 完全相同时按 ID 字典序。返回 <0 表示 a 应排在 b 前面。
+// compareModelIDsNewestFirst compares two model IDs by "newest version to oldest": it first compares the numeric sequence in each ID
+// (segment-by-segment numeric comparison, where the longer one is treated as the finer version). IDs with numbers sort before those without,
+// and fully identical IDs are ordered by lexicographic ID. It returns <0 when a should sort before b.
 func compareModelIDsNewestFirst(a, b string) int {
 	if a == b {
 		return 0
@@ -322,13 +322,13 @@ func modelIDVersionParts(id string) []int {
 	return parts
 }
 
-// internalCodexModelVariantSuffixes 是上游清单里会出现、但不该对外暴露的内部变体后缀。
-// gpt-5.6-sol-wm 这类 slug 只在个别账号的清单里出现，官方模型页与定价页都没有，
-// 学进注册表只会让 /v1/models 多出一个用户不认识、计费也只能按 sol 兜底的条目。
+// internalCodexModelVariantSuffixes are internal variant suffixes that appear in the upstream manifest but must not be exposed externally.
+// slugs such as gpt-5.6-sol-wm appear only in some accounts' manifests and are absent from both the official model page and the pricing page,
+// so learning them into the registry would only add an entry users do not recognize, and billing could only fall back to sol for it.
 var internalCodexModelVariantSuffixes = []string{"-wm"}
 
-// isInternalCodexModelVariant 判断是否为内部变体 slug：准入时拒绝，注册表里已有的
-// 残留行也不再暴露（与退役模型同一处过滤）。
+// isInternalCodexModelVariant reports whether a slug is an internal variant. It is rejected on admission, and residual rows already in the registry
+// are also no longer exposed (the same filter as retired models).
 func isInternalCodexModelVariant(id string) bool {
 	id = strings.TrimSpace(strings.ToLower(id))
 	if !strings.HasPrefix(id, "gpt-") {
@@ -342,10 +342,10 @@ func isInternalCodexModelVariant(id string) bool {
 	return false
 }
 
-// isRetiredCodexModel 判断模型是否已下线（不再对外暴露 / 不参与校验）：
-// gpt-5.4 全系、gpt-5.3 非 spark、gpt-5.2 及更低、gpt-4* 均退役；image、
-// codex-auto-review、非 gpt- 前缀及 5.5+ 保留。是 isAllowedUpstreamCodexModel 的
-// "暴露侧"补集，但对 image/非 gpt 模型返回 false（保留）。
+// isRetiredCodexModel reports whether a model has been retired (no longer exposed or used for validation):
+// the whole gpt-5.4 series, gpt-5.3 non-spark, gpt-5.2 and lower, and gpt-4* are retired; image,
+// codex-auto-review, non-gpt- prefixes, and 5.5+ are kept. It is the exposure-side complement of isAllowedUpstreamCodexModel,
+// but it returns false (kept) for image and non-gpt models.
 func isRetiredCodexModel(id string) bool {
 	id = strings.TrimSpace(strings.ToLower(id))
 	if !strings.HasPrefix(id, "gpt-") || strings.Contains(id, "image") {
@@ -505,10 +505,10 @@ func ParseOfficialCodexModelIDs(html string) (models []string, skipped []string)
 	return models, skipped
 }
 
-// officialCodexModelCatalogContexts 是官方模型页里模型卡片承载 ID 的结构化属性
-// （小写；astro-island props 里的引号是 HTML 实体 &quot;，服务端渲染的 DOM 属性是裸引号）：
-//   - data-model-slug="<id>"          卡片容器属性
-//   - "slug":[0,"<id>"] / "name":[0,"<id>"]   卡片组件 props
+// officialCodexModelCatalogContexts are the structured attributes where the model cards on the official model page carry the model IDs
+// (lowercase; the quotes in astro-island props are the HTML entity &quot;, while server-rendered DOM attributes use bare quotes):
+//   - data-model-slug="<id>"          card container attribute
+//   - "slug":[0,"<id>"] / "name":[0,"<id>"]   card component props
 var officialCodexModelCatalogContexts = []string{
 	`data-model-slug="`,
 	`"slug":[0,"`,
@@ -517,13 +517,13 @@ var officialCodexModelCatalogContexts = []string{
 	`&quot;name&quot;:[0,&quot;`,
 }
 
-// isOfficialCodexModelIDContext 只接受官方模型页里**模型目录卡片**承载 ID 的位置
-// （见 officialCodexModelCatalogContexts）。页面上其它"长得像模型 ID"的位置一律不算：
-// 导航文案（"Using GPT-6 Astra"→gpt-6）、锚点（#gpt-6-astra-in-enterprise）、
-// 图片文件名（gpt-6-astra-texture.webp），以及**用法示例代码里的占位模型名**——
-// `codex --model gpt-5.6` / `model = "gpt-5.6"` 这类示例写的是家族名，不是可调用的
-// 模型 ID，之前"引号包裹即算 ID"的宽松规则会把裸 gpt-5.6 学进注册表。
-// 页面改版导致一个都解析不到时，同步会报错并保留本地列表，不会静默学到噪声。
+// isOfficialCodexModelIDContext accepts an ID only where the official model page's **model catalog cards** carry it
+// (see officialCodexModelCatalogContexts). Other spots on the page that merely look like a model ID never count:
+// navigation copy ("Using GPT-6 Astra" -> gpt-6), anchors (#gpt-6-astra-in-enterprise),
+// image filenames (gpt-6-astra-texture.webp), and **placeholder model names in usage example code**:
+// `codex --model gpt-5.6` / `model = "gpt-5.6"` and similar examples use a family name, not a callable
+// model ID. The earlier lenient rule that anything in quotes counts as an ID would learn a bare gpt-5.6 into the registry.
+// If a page redesign leaves nothing parseable, the sync reports an error and keeps the local list instead of silently learning noise.
 func isOfficialCodexModelIDContext(lowered string, start, end int) bool {
 	before := lowered[:start]
 	after := lowered[end:]
@@ -551,14 +551,14 @@ func modelSortRank(id string) int {
 	return len(builtinModelInfos) + 1000
 }
 
-// isAllowedUpstreamCodexModel 判断上游发现的模型是否允许进入本地注册表
-// （官方文档同步 + manifest 学习共用）。策略：
-//   - gpt-5.5 及更高版本：允许
-//   - gpt-5.3：只允许 spark 变体（gpt-5.3-codex-spark），其余 5.3 下线
-//   - gpt-5.4 全系、gpt-5.2 及更低、image、非 gpt- 前缀：拒绝
-//   - gpt- 后不是数字版本号的代号族（gpt-daybreak-blue-latest 这类稳定别名，
-//     issue #624）：允许——版本退役规则对它们无从判断，而清单里出现即代表
-//     账号真实权益，拒掉只会让探测看得见、调用却 404 的模型永远进不了注册表
+// isAllowedUpstreamCodexModel reports whether a model discovered upstream may enter the local registry
+// (shared by official docs sync and manifest learning). Policy:
+//   - gpt-5.5 and later: allowed
+//   - gpt-5.3: only spark variants (gpt-5.3-codex-spark) are allowed; other 5.3 models are retired
+//   - the whole gpt-5.4 series, gpt-5.2 and lower, image, and non-gpt- prefixes: rejected
+//   - gpt- codename families whose segment after gpt- is not a numeric version (stable aliases such as gpt-daybreak-blue-latest,
+//     issue #624): allowed. The version-retirement rules cannot judge them, and their presence in the manifest reflects the account's real entitlement;
+//     rejecting them would leave a model that probes can see but that returns 404 on calls permanently out of the registry
 func isAllowedUpstreamCodexModel(id string) bool {
 	id = strings.TrimSpace(strings.ToLower(id))
 	if id == "" || strings.Contains(id, "image") {
@@ -574,15 +574,15 @@ func isAllowedUpstreamCodexModel(id string) bool {
 	if dash := strings.IndexByte(version, '-'); dash >= 0 {
 		version = version[:dash]
 	}
-	// 版本号可能只有大版本（gpt-6-astra、gpt-6），没有小数点时 minor 视为 0，
-	// 不能因为缺少 ".x" 就把新一代型号拒之门外。
+	// The version may be major-only (gpt-6-astra, gpt-6). Without a decimal point, minor is treated as 0,
+	// so a new-generation model must not be rejected merely for lacking ".x".
 	parts := strings.Split(version, ".")
 	major, err := strconv.Atoi(parts[0])
 	if err != nil {
-		// 以字母开头的首段是代号族别名（daybreak 等），无版本可比，按上游清单为准放行；
-		// 与 isRetiredCodexModel 对非数字 ID 恒返回 false（保留）保持一致。
-		// 以数字开头却解析不出的（gpt-4o 这类旧世代写法）仍按退役拒绝；
-		// 标点开头（gpt-.foo / gpt-_foo）不是任何已知命名，同样拒绝。
+		// A first segment that starts with a letter is a codename family alias (daybreak etc.) with no version to compare; allow it per the upstream manifest,
+		// consistent with isRetiredCodexModel, which always returns false (kept) for non-numeric IDs.
+		// IDs that start with a digit but cannot be parsed (old-generation spellings such as gpt-4o) are still rejected as retired;
+		// IDs that start with punctuation (gpt-.foo / gpt-_foo) match no known naming and are likewise rejected.
 		return version != "" && version[0] >= 'a' && version[0] <= 'z'
 	}
 	minor := 0
@@ -603,7 +603,7 @@ func isAllowedUpstreamCodexModel(id string) bool {
 		return true
 	}
 	if minor == 3 {
-		// 5.3 只保留 spark
+		// 5.3 keeps only spark
 		return strings.Contains(id, "spark")
 	}
 	return false
@@ -611,11 +611,11 @@ func isAllowedUpstreamCodexModel(id string) bool {
 }
 
 // SyncOfficialCodexModels fetches the fixed official docs page and merges discovered models.
-// proxyURL 为全局出站代理（可为空串直连）：官方模型页与其他上游链路一样可能
-// 被网络环境阻断，同步请求必须遵循全局 ProxyURL（issue #371）。
+// proxyURL is the global outbound proxy (may be an empty string for a direct connection). The official model page, like other upstream links, may
+// be blocked by the network environment, so the sync request must follow the global ProxyURL (issue #371).
 func SyncOfficialCodexModels(ctx context.Context, db *database.DB, proxyURL string) (*ModelSyncResult, error) {
 	if db == nil {
-		return nil, fmt.Errorf("数据库不可用，无法同步模型注册表")
+		return nil, fmt.Errorf("database unavailable, cannot sync model registry")
 	}
 	client := &http.Client{Transport: newCodexStandardTransport(proxyURL), Timeout: 10 * time.Second}
 	req, err := http.NewRequestWithContext(ctx, http.MethodGet, OfficialCodexModelsURL, nil)
@@ -624,11 +624,11 @@ func SyncOfficialCodexModels(ctx context.Context, db *database.DB, proxyURL stri
 	}
 	resp, err := client.Do(req)
 	if err != nil {
-		return nil, fmt.Errorf("官方模型页面暂时不可访问，已保留本地模型列表: %w", err)
+		return nil, fmt.Errorf("official model page is temporarily unreachable, keeping the local model list: %w", err)
 	}
 	defer resp.Body.Close()
 	if resp.StatusCode < 200 || resp.StatusCode >= 300 {
-		return nil, fmt.Errorf("官方模型页面返回 %d，已保留本地模型列表", resp.StatusCode)
+		return nil, fmt.Errorf("official model page returned %d, keeping the local model list", resp.StatusCode)
 	}
 	body, err := io.ReadAll(io.LimitReader(resp.Body, 5<<20))
 	if err != nil {
@@ -640,11 +640,11 @@ func SyncOfficialCodexModels(ctx context.Context, db *database.DB, proxyURL stri
 // ApplyOfficialCodexModelSync merges a fetched official docs page into the registry.
 func ApplyOfficialCodexModelSync(ctx context.Context, db *database.DB, html string, syncedAt time.Time) (*ModelSyncResult, error) {
 	if db == nil {
-		return nil, fmt.Errorf("数据库不可用，无法同步模型注册表")
+		return nil, fmt.Errorf("database unavailable, cannot sync model registry")
 	}
 	ids, skipped := ParseOfficialCodexModelIDs(html)
 	if len(ids) == 0 {
-		return nil, fmt.Errorf("未从官方模型页面解析到可用模型，已保留本地模型列表")
+		return nil, fmt.Errorf("no usable models parsed from the official model page, keeping the local model list")
 	}
 
 	existingRows, err := db.ListModelRegistry(ctx)
@@ -679,10 +679,10 @@ func ApplyOfficialCodexModelSync(ctx context.Context, db *database.DB, html stri
 		rows = append(rows, row)
 	}
 
-	// 官方页是 official_codex_docs 来源行的唯一真值：页面上已经不存在的行
-	// （早期解析噪声如裸 gpt-5.6，或官方下线的型号）随本次同步一并删除，
-	// 否则注册表没有删除入口，噪声会永久留在 /v1/models 里。只动本来源的
-	// 非内置行；manifest 学习、手工来源与内置模型不受影响。
+	// The official page is the single source of truth for official_codex_docs source rows: rows that no longer appear on the page
+	// (early parse noise such as a bare gpt-5.6, or models the official site has retired)
+	// are deleted along with this sync. Otherwise the registry has no delete path and noise would stay in /v1/models forever. Only the
+	// non-built-in rows of this source are touched; manifest learning, manual sources, and built-in models are unaffected.
 	builtin := make(map[string]struct{}, len(builtinModelInfos))
 	for _, info := range builtinModelInfos {
 		builtin[strings.ToLower(info.ID)] = struct{}{}
@@ -734,9 +734,9 @@ func modelRegistryMetadataEqual(a database.ModelRegistryRow, b database.ModelReg
 		a.APIKeyAuthAvailable == b.APIKeyAuthAvailable
 }
 
-// ExtractManifestModelSlugs 从上游模型清单里提取 models[].slug。
-// 只依赖 slug 这一个身份字段，清单 schema 的其余演进不影响提取；
-// 非法/超长的名字直接丢弃。解析不出任何 slug 时返回空切片（调用方按 no-op 处理）。
+// ExtractManifestModelSlugs extracts models[].slug from the upstream model manifest.
+// It depends only on the slug identity field, so other schema changes in the manifest do not affect extraction;
+// invalid or overlong names are dropped directly. When no slug can be parsed, it returns an empty slice (callers treat it as a no-op).
 func ExtractManifestModelSlugs(manifest []byte) []string {
 	if len(manifest) == 0 {
 		return nil
@@ -766,15 +766,15 @@ func ExtractManifestModelSlugs(manifest []byte) []string {
 	return slugs
 }
 
-// LearnModelsFromManifest 把上游清单里注册表尚不认识的模型学习进注册表。
+// LearnModelsFromManifest learns models the registry does not yet recognize from the upstream manifest into the registry.
 //
-// 严格"只增不改不删"：
-//   - 只插入内置列表和注册表全部行（含已禁用）都没有的新 slug——已存在的行
-//     一个字段不碰，管理员禁用过的模型不会被翻案；
-//   - 清单里缺席的模型不删除：清单反映的是本次所用账号的真实权限，不同套餐
-//     账号看到的清单不同，缺席不代表全局下线，注册表收敛为账号池权限的并集。
+// Strictly "add only, never modify or delete":
+//   - it inserts only new slugs that appear in neither the built-in list nor any registry row (including disabled rows); an existing row
+//     is not touched in any field, so a model an administrator disabled is never reversed;
+//   - models absent from the manifest are not deleted: the manifest reflects the real permissions of the account used this time, and accounts on different plans
+//     see different manifests, so absence does not mean global retirement; the registry converges to the union of pool-account permissions.
 //
-// 返回本次新插入的模型 ID（无新增时为空）。
+// It returns the model IDs newly inserted this time (empty when nothing was added).
 func LearnModelsFromManifest(ctx context.Context, db *database.DB, manifest []byte, seenAt time.Time) ([]string, error) {
 	if db == nil {
 		return nil, nil
@@ -802,7 +802,7 @@ func LearnModelsFromManifest(ctx context.Context, db *database.DB, manifest []by
 		if _, exists := known[strings.ToLower(slug)]; exists {
 			continue
 		}
-		// 上游同步不引入 5.3 以下模型（5.3 仅 spark）；与官方文档同步同一策略。
+		// Upstream sync does not introduce models below 5.3 (5.3 is spark only); same policy as official docs sync.
 		if !isAllowedUpstreamCodexModel(slug) {
 			continue
 		}

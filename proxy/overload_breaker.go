@@ -10,23 +10,23 @@ import (
 	"github.com/codex2api/database"
 )
 
-// Codex 过载熔断：上游返回 server_is_overloaded（service_unavailable_error，
-// "Our servers are currently overloaded"）时，单个账号在滑动窗口内该错误占比
-// 达到阈值就自动暂停调度一段时间，避免调度器持续把流量砸向已经过载的账号。
+// Codex overload circuit breaker: when upstream returns server_is_overloaded (service_unavailable_error,
+// "Our servers are currently overloaded"), once a single account's share of that error within the sliding window
+// reaches the threshold, scheduling is paused automatically for a while, so the scheduler does not keep sending traffic at an account that is already overloaded.
 //
-// 统计钩子挂在用量日志公共汇点（logUsage）：所有 attempt 无论成败都会经过那里，
-// 天然拿到 账号ID/渠道/状态码/错误摘要。只统计 Codex 渠道；触发后走既有账号冷却
-// 机制（reason=overload_paused），调度器跳过、账号页显示原因与恢复倒计时、到期
-// 自动恢复，均复用现成链路。计数为实例内存级，多实例部署各自独立熔断。
+// The counting hook is attached to the common usage-log sink (logUsage): every attempt passes through there, whether it succeeds or fails,
+// so it naturally gets the account ID / channel / status code / error summary. It counts only the Codex channel; once tripped, it goes through the existing account cooldown
+// mechanism (reason=overload_paused): the scheduler skips the account, the account page shows the reason and a recovery countdown, and it recovers
+// automatically when due, all reusing the existing path. Counts are kept in instance memory, so each instance of a multi-instance deployment trips independently.
 
-// overloadPauseReason 是过载熔断使用的冷却原因，进限流状态口径（accounts_paged）。
+// overloadPauseReason is the cooldown reason used by the overload circuit breaker; it feeds the rate-limit status view (accounts_paged).
 const overloadPauseReason = "overload_paused"
 
-// overloadMinSamples 触发判定的窗口内最小请求数：样本太少时比例没有意义，
-// 避免低流量账号被单次报错误伤。
+// overloadMinSamples is the minimum number of requests in the window before a trip is judged: with too few samples the ratio is meaningless,
+// so that a single error does not hurt a low-traffic account.
 const overloadMinSamples = 5
 
-// overloadErrorCode 按错误 code 识别过载，不匹配人类可读文案。
+// overloadErrorCode identifies overload by the error code, not by matching human-readable text.
 const overloadErrorCode = "server_is_overloaded"
 
 type overloadBucket struct {
@@ -36,13 +36,13 @@ type overloadBucket struct {
 
 type overloadBreaker struct {
 	mu sync.Mutex
-	// windows[accountID][unixMinute] -> 计数桶；record 时顺手剔除窗口外的旧桶。
+	// windows[accountID][unixMinute] -> count bucket; record also drops the old buckets outside the window.
 	windows map[int64]map[int64]*overloadBucket
 }
 
 var globalOverloadBreaker = &overloadBreaker{windows: make(map[int64]map[int64]*overloadBucket)}
 
-// record 记入一次请求结果并返回该账号窗口内的 (总数, 过载数)。
+// record logs one request result and returns the account's (total, overloaded) counts within the window.
 func (b *overloadBreaker) record(accountID int64, overloaded bool, windowMinutes int, now time.Time) (int, int) {
 	minute := now.Unix() / 60
 	cutoff := minute - int64(windowMinutes) + 1
@@ -76,14 +76,14 @@ func (b *overloadBreaker) record(accountID int64, overloaded bool, windowMinutes
 	return total, over
 }
 
-// reset 清空账号的统计窗口（触发暂停后调用，恢复时从零开始，避免立即复触）。
+// reset clears the account's counting window (called after a pause is triggered; counting starts from zero on recovery, so it does not trip again immediately).
 func (b *overloadBreaker) reset(accountID int64) {
 	b.mu.Lock()
 	delete(b.windows, accountID)
 	b.mu.Unlock()
 }
 
-// shouldTripOverload 报告窗口计数是否达到熔断条件。
+// shouldTripOverload reports whether the window counts meet the circuit-breaker condition.
 func shouldTripOverload(total, overloaded, thresholdPercent int) bool {
 	if overloaded == 0 || total < overloadMinSamples {
 		return false
@@ -91,14 +91,14 @@ func shouldTripOverload(total, overloaded, thresholdPercent int) bool {
 	return overloaded*100 >= total*thresholdPercent
 }
 
-// isOverloadedUsageError 报告该条用量日志是否为上游过载错误。
+// isOverloadedUsageError reports whether this usage log entry is an upstream overload error.
 func isOverloadedUsageError(input *database.UsageLogInput) bool {
 	return input != nil && input.StatusCode >= 400 &&
 		strings.Contains(input.ErrorMessage, overloadErrorCode)
 }
 
-// noteOverloadOutcome 在用量日志落库前记入过载统计，达到阈值时暂停该账号调度。
-// 要求 input.Channel 已解析（logUsage 里在渠道固化之后调用）。
+// noteOverloadOutcome records the overload count before the usage log is persisted, and pauses scheduling for that account when the threshold is reached.
+// Requires input.Channel to be resolved (logUsage calls it after the channel is fixed).
 func (h *Handler) noteOverloadOutcome(input *database.UsageLogInput) {
 	settings := CurrentRuntimeSettings()
 	if !settings.CodexOverloadPauseEnabled {
@@ -109,7 +109,7 @@ func (h *Handler) noteOverloadOutcome(input *database.UsageLogInput) {
 	}
 	overloaded := isOverloadedUsageError(input)
 	total, over := globalOverloadBreaker.record(input.AccountID, overloaded, settings.CodexOverloadWindowMinutes, time.Now())
-	// 只有本次是过载错误时才可能新越过阈值，顺带避免为成功请求做无谓判定。
+	// A threshold can only be newly crossed when this request is an overload error, which also avoids useless checks for successful requests.
 	if !overloaded || !shouldTripOverload(total, over, settings.CodexOverloadThresholdPercent) {
 		return
 	}
@@ -122,8 +122,8 @@ func (h *Handler) noteOverloadOutcome(input *database.UsageLogInput) {
 	}
 	globalOverloadBreaker.reset(input.AccountID)
 	pause := time.Duration(settings.CodexOverloadPauseMinutes) * time.Minute
-	message := fmt.Sprintf("过载熔断：%d 分钟窗口内 %d/%d 次 %s，暂停调度 %d 分钟",
+	message := fmt.Sprintf("overload circuit breaker: %d-minute window has %d/%d %s, scheduling paused for %d minutes",
 		settings.CodexOverloadWindowMinutes, over, total, overloadErrorCode, settings.CodexOverloadPauseMinutes)
 	h.store.MarkCooldownWithErrorExactDuration(account, pause, overloadPauseReason, message)
-	log.Printf("[账号 %d] %s", input.AccountID, message)
+	log.Printf("[account %d] %s", input.AccountID, message)
 }

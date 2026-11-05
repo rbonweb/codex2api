@@ -15,57 +15,57 @@ import (
 	"github.com/tidwall/sjson"
 )
 
-// ==================== Payload 请求体重写规则 ====================
+// ==================== Payload request body rewrite rules ====================
 //
-// 声明式规则引擎：管理员配置 JSON 规则，在请求体发往上游前按条件改写字段。
-// 典型用途：覆盖/追加 instructions（系统提示词）、覆盖 service_tier、
-// 按条件改写 reasoning.effort（如 medium → high）。
+// Declarative rule engine: admins configure JSON rules that rewrite fields by condition before the request body is sent upstream.
+// Typical uses: override/append instructions (system prompt), override service_tier,
+// rewrite reasoning.effort by condition (e.g. medium → high).
 //
-// 规则 JSON 结构（存于 system_settings.payload_rules）：
-//
-//	{
-//	  "default":      [ {rule} ],  // 字段缺失时才写入（first-write-wins）
-//	  "default_raw":  [ {rule} ],  // 同上，值为原始 JSON 字符串
-//	  "override":     [ {rule} ],  // 无条件覆盖（last-write-wins）
-//	  "override_raw": [ {rule} ],  // 同上，值为原始 JSON 字符串
-//	  "append":       [ {rule} ],  // 字符串字段追加（原值 + "\n\n" + 配置值）
-//	  "filter":       [ {rule} ]   // 删除字段（params 为路径数组）
-//	}
-//
-// 每条 rule 的匹配门（全部满足才应用；同一门内多值为 OR，门与门之间为 AND）：
+// Rule JSON structure (stored in system_settings.payload_rules):
 //
 //	{
-//	  "models":        ["gpt-*"],                    // 模型名通配，空=全部
-//	  "headers":       {"X-Client": "codex*"},       // 入站请求头通配
-//	  "api_key_ids":   ["12", "3*"],                 // 下游 API Key ID（字符串化）通配
-//	  "api_key_names": ["fast*"],                    // 下游 API Key 名称通配
-//	  "group_ids":     ["5"],                        // 该 Key 允许的账号组 ID（字符串化）通配
-//	  "group_names":   ["fast*"],                    // 该 Key 允许的账号组名通配
-//	  "account_group_ids":   ["5"],                  // 本次实际调度账号所属组 ID 通配
-//	  "account_group_names": ["plus*"],              // 本次实际调度账号所属组名通配
-//	  "account_plans":       ["plus"],               // 本次实际调度账号套餐通配
-//	  "match":         {"reasoning.effort": "medium"}, // JSON 路径等值
-//	  "not_match":     {"metadata.mode": "dev"},     // JSON 路径不等值
-//	  "exist":         ["tools.0"],                  // 路径必须存在
-//	  "not_exist":     ["metadata.skip"],            // 路径必须不存在
-//	  "params":        {...}                         // 动作参数
+//	  "default":      [ {rule} ],  // written only when the field is missing (first-write-wins)
+//	  "default_raw":  [ {rule} ],  // same as above, but the value is a raw JSON string
+//	  "override":     [ {rule} ],  // unconditional override (last-write-wins)
+//	  "override_raw": [ {rule} ],  // same as above, but the value is a raw JSON string
+//	  "append":       [ {rule} ],  // appends to a string field (original value + "\n\n" + configured value)
+//	  "filter":       [ {rule} ]   // deletes fields (params is an array of paths)
 //	}
 //
-// api_key_* / group_* 依赖请求身份（PayloadRuleIdentity）：无身份的内部/未鉴权路径下，
-// 凡配置了任一 key/组门的规则一律不匹配（fail-closed）。compact/relay 端点不套用本引擎。
+// Match gates of each rule (all must be satisfied to apply; multiple values within one gate are OR, and gates are AND-ed together):
 //
-// 注意 group_* 与 account_group_* 的语义区别（issue #410）：
-//   - group_*         匹配该 Key **允许使用**的账号组，与本次实际调度到哪个账号无关；
-//   - account_group_* / account_plans 匹配本次 attempt **实际选中账号**的组/套餐。
-//     重试换号后按新账号重新匹配。典型用途：pro Key 兜底到 plus 组账号时才覆写
-//     service_tier=fast，路由回 pro 账号则不覆写。
-//     账号身份未解析的路径（识别 AccountResolved）下，带 account_* 门的规则同样 fail-closed。
+//	{
+//	  "models":        ["gpt-*"],                    // model name wildcard, empty = all
+//	  "headers":       {"X-Client": "codex*"},       // inbound request header wildcard
+//	  "api_key_ids":   ["12", "3*"],                 // downstream API Key ID (stringified) wildcard
+//	  "api_key_names": ["fast*"],                    // downstream API Key name wildcard
+//	  "group_ids":     ["5"],                        // wildcard of the account group IDs this Key is allowed (stringified)
+//	  "group_names":   ["fast*"],                    // wildcard of the account group names this Key is allowed
+//	  "account_group_ids":   ["5"],                  // wildcard of the group IDs of the account actually scheduled this time
+//	  "account_group_names": ["plus*"],              // wildcard of the group names of the account actually scheduled this time
+//	  "account_plans":       ["plus"],               // wildcard of the plan of the account actually scheduled this time
+//	  "match":         {"reasoning.effort": "medium"}, // JSON path equals
+//	  "not_match":     {"metadata.mode": "dev"},     // JSON path does not equal
+//	  "exist":         ["tools.0"],                  // path must exist
+//	  "not_exist":     ["metadata.skip"],            // path must not exist
+//	  "params":        {...}                         // action parameters
+//	}
 //
-// 应用顺序：default → default_raw → override → override_raw → append → filter。
+// api_key_* / group_* depend on the request identity (PayloadRuleIdentity): on internal or unauthenticated paths with no identity,
+// any rule that configures a key or group gate never matches (fail-closed). The compact/relay endpoints do not use this engine.
+//
+// Note the semantic difference between group_* and account_group_* (issue #410):
+//   - group_*         matches the account groups this Key is **allowed to use**, regardless of which account was actually scheduled this time;
+//   - account_group_* / account_plans match the group/plan of the account **actually selected** for this attempt.
+//     After a retry switches accounts, matching is redone against the new account. Typical use: overwrite service_tier=fast only when a pro Key falls back to a plus group account
+//     service_tier=fast; routing back to a pro account does not overwrite it.
+//     On paths where the account identity is not resolved (AccountResolved is false), rules with account_* gates are likewise fail-closed.
+//
+// Application order: default → default_raw → override → override_raw → append → filter.
 
-// payloadProtectedRoots 是禁止改写的字段根：网关的调度、计费、会话隔离与
-// WS 帧协议依赖这些字段，规则应用又发生在选号之后，改写会造成状态错位。
-// 模型改写请使用现成的模型映射功能。
+// payloadProtectedRoots are the field roots that may not be rewritten: the gateway's scheduling, billing, session isolation and
+// WS frame protocol depend on these fields, and rule application happens after account selection, so rewriting them would misalign state.
+// To rewrite the model, use the existing model mapping feature.
 var payloadProtectedRoots = map[string]struct{}{
 	"model":            {},
 	"stream":           {},
@@ -75,50 +75,50 @@ var payloadProtectedRoots = map[string]struct{}{
 	"type":             {},
 }
 
-// PayloadRule 单条重写规则：匹配门 + 动作参数。
+// PayloadRule is one rewrite rule: match gates + action parameters.
 type PayloadRule struct {
 	Models  []string          `json:"models,omitempty"`
 	Headers map[string]string `json:"headers,omitempty"`
-	// 身份门：均为通配列表，命中任一即通过；空=该维度不限。id 门按字符串化后的值通配。
-	// 依赖 PayloadRuleIdentity；无身份时凡配置了任一身份门的规则一律不匹配（fail-closed）。
+	// Identity gates: all are wildcard lists, and matching any one passes; empty = this dimension is unrestricted. Id gates match on the stringified value.
+	// Depends on PayloadRuleIdentity; without an identity, any rule that configures an identity gate never matches (fail-closed).
 	APIKeyIDs   []string `json:"api_key_ids,omitempty"`
 	APIKeyNames []string `json:"api_key_names,omitempty"`
 	GroupIDs    []string `json:"group_ids,omitempty"`
 	GroupNames  []string `json:"group_names,omitempty"`
-	// 账号门：匹配本次实际调度选中账号的组/套餐（区别于上面按 Key 允许组匹配的
-	// group_*，见文件头注释）。账号身份未解析时 fail-closed 不匹配。
+	// Account gates: match the group/plan of the account actually selected this time (as opposed to the above, which match by the Key's allowed groups
+	// group_*, see the file header comment). When the account identity is unresolved, they fail-closed and never match.
 	AccountGroupIDs   []string       `json:"account_group_ids,omitempty"`
 	AccountGroupNames []string       `json:"account_group_names,omitempty"`
 	AccountPlans      []string       `json:"account_plans,omitempty"`
 	Match             map[string]any `json:"match,omitempty"`
-	NotMatch    map[string]any `json:"not_match,omitempty"`
-	Exist       []string       `json:"exist,omitempty"`
-	NotExist    []string       `json:"not_exist,omitempty"`
-	// Params 动作参数：default/override/append 为 路径→值 map，
-	// default_raw/override_raw 值须为合法 JSON 字符串，filter 为路径数组。
+	NotMatch          map[string]any `json:"not_match,omitempty"`
+	Exist             []string       `json:"exist,omitempty"`
+	NotExist          []string       `json:"not_exist,omitempty"`
+	// Params action parameters: default/override/append are path→value maps,
+	// default_raw/override_raw values must be valid JSON strings, and filter is an array of paths.
 	Params json.RawMessage `json:"params"`
 }
 
-// PayloadRuleIdentity 承载请求的下游身份，供 api_key_* / group_* / account_* 匹配门
-// 使用。由 handler 从鉴权 context 构造后经上游 context 传入（见 WithPayloadRuleIdentity）。
-// Account* 字段按 attempt 由 WithSelectedAccount 派生副本填充——重试换号后账号维度
-// 会变化，不能在共享实例上原地改。
+// PayloadRuleIdentity carries the request's downstream identity, for the api_key_* / group_* / account_* match gates
+// to use. The handler builds it from the auth context and passes it on through the upstream context (see WithPayloadRuleIdentity).
+// The Account* fields are filled per attempt by WithSelectedAccount, which derives a copy: after a retry switches accounts, the account dimension
+// changes, so it must not be modified in place on the shared instance.
 type PayloadRuleIdentity struct {
 	APIKeyID   int64
 	APIKeyName string
-	GroupIDs   []int64  // 该 Key 允许的账号组 ID（Key.AllowedGroupIDs）
-	GroupNames []string // 上述组 ID 解析出的组名
+	GroupIDs   []int64  // account group IDs this Key is allowed (Key.AllowedGroupIDs)
+	GroupNames []string // group names resolved from the group IDs above
 
-	// 本次 attempt 实际调度选中账号的维度（issue #410）。
-	AccountResolved   bool // 账号信息是否已填充；false 时带 account_* 门的规则 fail-closed
+	// Dimensions of the account actually selected for this attempt (issue #410).
+	AccountResolved   bool // whether account info has been filled; when false, rules with account_* gates fail-closed
 	AccountGroupIDs   []int64
 	AccountGroupNames []string
 	AccountPlan       string
 }
 
-// WithSelectedAccount 返回填充了实际调度账号维度的身份副本。原身份跨 attempt 共享，
-// 重试换号后账号信息不同，必须派生副本而非原地修改。id 为 nil（无鉴权身份）时保持
-// nil——与现有身份门的 fail-closed 语义一致。
+// WithSelectedAccount returns a copy of the identity filled with the dimensions of the account actually scheduled. The original identity is shared across attempts,
+// and account info differs after a retry switches accounts, so a copy must be derived rather than modified in place. When id is nil (no authenticated identity), it stays
+// nil, consistent with the fail-closed semantics of the existing identity gates.
 func (id *PayloadRuleIdentity) WithSelectedAccount(account *auth.Account, store *auth.Store) *PayloadRuleIdentity {
 	if id == nil || account == nil {
 		return id
@@ -135,9 +135,9 @@ func (id *PayloadRuleIdentity) WithSelectedAccount(account *auth.Account, store 
 
 type payloadRuleIdentityKey struct{}
 
-// WithPayloadRuleIdentity 把身份挂到 context 上（id 为 nil 时原样返回）。
-// 必须挂在真正流入 ExecuteRequest 的上游 context 上——client 请求 context 与上游
-// context 解耦（newDrainableUpstreamContext 从 background 派生），挂错则传不进引擎。
+// WithPayloadRuleIdentity attaches the identity to the context (returned unchanged when id is nil).
+// It must be attached to the upstream context that actually flows into ExecuteRequest: the client request context and the upstream
+// context are decoupled (newDrainableUpstreamContext derives from background), so attaching it to the wrong one means it never reaches the engine.
 func WithPayloadRuleIdentity(ctx context.Context, id *PayloadRuleIdentity) context.Context {
 	if ctx == nil || id == nil {
 		return ctx
@@ -145,7 +145,7 @@ func WithPayloadRuleIdentity(ctx context.Context, id *PayloadRuleIdentity) conte
 	return context.WithValue(ctx, payloadRuleIdentityKey{}, id)
 }
 
-// PayloadRuleIdentityFromContext 取出身份，缺失返回 nil。
+// PayloadRuleIdentityFromContext returns the identity, or nil if it is missing.
 func PayloadRuleIdentityFromContext(ctx context.Context) *PayloadRuleIdentity {
 	if ctx == nil {
 		return nil
@@ -154,7 +154,7 @@ func PayloadRuleIdentityFromContext(ctx context.Context) *PayloadRuleIdentity {
 	return id
 }
 
-// PayloadRuleSet 全部规则组。
+// PayloadRuleSet is all rule groups.
 type PayloadRuleSet struct {
 	Default     []PayloadRule `json:"default,omitempty"`
 	DefaultRaw  []PayloadRule `json:"default_raw,omitempty"`
@@ -164,7 +164,7 @@ type PayloadRuleSet struct {
 	Filter      []PayloadRule `json:"filter,omitempty"`
 }
 
-// IsEmpty 报告规则集是否没有任何规则。
+// IsEmpty reports whether the rule set has no rules at all.
 func (rs *PayloadRuleSet) IsEmpty() bool {
 	if rs == nil {
 		return true
@@ -175,7 +175,7 @@ func (rs *PayloadRuleSet) IsEmpty() bool {
 
 var currentPayloadRuleSet atomic.Value // stores *PayloadRuleSet
 
-// CurrentPayloadRules 返回当前生效的规则集（可能为 nil）。
+// CurrentPayloadRules returns the currently active rule set (may be nil).
 func CurrentPayloadRules() *PayloadRuleSet {
 	if v, ok := currentPayloadRuleSet.Load().(*PayloadRuleSet); ok {
 		return v
@@ -183,8 +183,8 @@ func CurrentPayloadRules() *PayloadRuleSet {
 	return nil
 }
 
-// SetPayloadRulesJSON 解析并热更规则集；传空串/空对象清空规则。
-// 解析或校验失败时保持现有规则不变并返回错误。
+// SetPayloadRulesJSON parses and hot-reloads the rule set; passing an empty string or empty object clears the rules.
+// On a parse or validation failure, the existing rules are kept unchanged and an error is returned.
 func SetPayloadRulesJSON(raw string) error {
 	rs, err := ParsePayloadRulesJSON(raw)
 	if err != nil {
@@ -194,7 +194,7 @@ func SetPayloadRulesJSON(raw string) error {
 	return nil
 }
 
-// ParsePayloadRulesJSON 解析规则 JSON 并做结构与保护字段校验。
+// ParsePayloadRulesJSON parses the rule JSON and validates its structure and protected fields.
 func ParsePayloadRulesJSON(raw string) (*PayloadRuleSet, error) {
 	raw = strings.TrimSpace(raw)
 	if raw == "" || raw == "{}" || raw == "null" {
@@ -204,7 +204,7 @@ func ParsePayloadRulesJSON(raw string) (*PayloadRuleSet, error) {
 	dec := json.NewDecoder(strings.NewReader(raw))
 	dec.DisallowUnknownFields()
 	if err := dec.Decode(&rs); err != nil {
-		return nil, fmt.Errorf("payload_rules JSON 解析失败: %w", err)
+		return nil, fmt.Errorf("payload_rules JSON parse failed: %w", err)
 	}
 	groups := []struct {
 		name  string
@@ -228,7 +228,7 @@ func ParsePayloadRulesJSON(raw string) (*PayloadRuleSet, error) {
 	return &rs, nil
 }
 
-// NormalizePayloadRulesJSON 校验并返回紧凑化的规则 JSON（供设置保存使用）。
+// NormalizePayloadRulesJSON validates and returns the compacted rule JSON (used when saving settings).
 func NormalizePayloadRulesJSON(raw string) (string, error) {
 	rs, err := ParsePayloadRulesJSON(raw)
 	if err != nil {
@@ -246,15 +246,15 @@ func NormalizePayloadRulesJSON(raw string) (string, error) {
 
 func validatePayloadRuleParams(rule *PayloadRule, kind string) error {
 	if len(rule.Params) == 0 {
-		return fmt.Errorf("params 不能为空")
+		return fmt.Errorf("params must not be empty")
 	}
 	checkPath := func(path string) error {
 		path = strings.TrimSpace(path)
 		if path == "" {
-			return fmt.Errorf("params 路径不能为空")
+			return fmt.Errorf("params path must not be empty")
 		}
 		if isProtectedPayloadPath(path) {
-			return fmt.Errorf("字段 %q 受保护，不允许改写（模型改写请使用模型映射功能）", path)
+			return fmt.Errorf("field %q is protected and cannot be rewritten (use model mapping to rewrite the model)", path)
 		}
 		return nil
 	}
@@ -262,10 +262,10 @@ func validatePayloadRuleParams(rule *PayloadRule, kind string) error {
 	case "filter":
 		var paths []string
 		if err := json.Unmarshal(rule.Params, &paths); err != nil {
-			return fmt.Errorf("filter 的 params 须为路径数组: %w", err)
+			return fmt.Errorf("filter params must be an array of paths: %w", err)
 		}
 		if len(paths) == 0 {
-			return fmt.Errorf("params 不能为空")
+			return fmt.Errorf("params must not be empty")
 		}
 		for _, p := range paths {
 			if err := checkPath(p); err != nil {
@@ -275,26 +275,26 @@ func validatePayloadRuleParams(rule *PayloadRule, kind string) error {
 	case "raw":
 		var params map[string]string
 		if err := json.Unmarshal(rule.Params, &params); err != nil {
-			return fmt.Errorf("raw 规则的 params 须为 路径→JSON字符串 映射: %w", err)
+			return fmt.Errorf("raw rule params must be a path→JSON string map: %w", err)
 		}
 		if len(params) == 0 {
-			return fmt.Errorf("params 不能为空")
+			return fmt.Errorf("params must not be empty")
 		}
 		for p, v := range params {
 			if err := checkPath(p); err != nil {
 				return err
 			}
 			if !json.Valid([]byte(v)) {
-				return fmt.Errorf("字段 %q 的值不是合法 JSON: %q", p, v)
+				return fmt.Errorf("value of field %q is not valid JSON: %q", p, v)
 			}
 		}
 	case "append":
 		var params map[string]string
 		if err := json.Unmarshal(rule.Params, &params); err != nil {
-			return fmt.Errorf("append 规则的 params 须为 路径→字符串 映射: %w", err)
+			return fmt.Errorf("append rule params must be a path→string map: %w", err)
 		}
 		if len(params) == 0 {
-			return fmt.Errorf("params 不能为空")
+			return fmt.Errorf("params must not be empty")
 		}
 		for p := range params {
 			if err := checkPath(p); err != nil {
@@ -304,10 +304,10 @@ func validatePayloadRuleParams(rule *PayloadRule, kind string) error {
 	default: // map
 		var params map[string]any
 		if err := json.Unmarshal(rule.Params, &params); err != nil {
-			return fmt.Errorf("params 须为 路径→值 映射: %w", err)
+			return fmt.Errorf("params must be a path→value map: %w", err)
 		}
 		if len(params) == 0 {
-			return fmt.Errorf("params 不能为空")
+			return fmt.Errorf("params must not be empty")
 		}
 		for p := range params {
 			if err := checkPath(p); err != nil {
@@ -318,7 +318,7 @@ func validatePayloadRuleParams(rule *PayloadRule, kind string) error {
 	return nil
 }
 
-// isProtectedPayloadPath 判断路径根段是否命中保护清单。
+// isProtectedPayloadPath reports whether the root segment of the path hits the protected list.
 func isProtectedPayloadPath(path string) bool {
 	root := path
 	if idx := strings.IndexAny(path, ".|#("); idx >= 0 {
@@ -328,7 +328,7 @@ func isProtectedPayloadPath(path string) bool {
 	return protected
 }
 
-// matchPayloadWildcard 大小写不敏感的 * 通配匹配。
+// matchPayloadWildcard is a case-insensitive * wildcard match.
 func matchPayloadWildcard(pattern, value string) bool {
 	pattern = strings.ToLower(strings.TrimSpace(pattern))
 	value = strings.ToLower(strings.TrimSpace(value))
@@ -360,7 +360,7 @@ func matchPayloadWildcard(pattern, value string) bool {
 	return last == "" || strings.HasSuffix(rest, last)
 }
 
-// anyWildcard 报告 value 是否命中 patterns 中任一通配（patterns 为空视为不设门，返回 true）。
+// anyWildcard reports whether value matches any wildcard in patterns (empty patterns means the gate is not set, and it returns true).
 func anyWildcard(patterns []string, value string) bool {
 	if len(patterns) == 0 {
 		return true
@@ -373,7 +373,7 @@ func anyWildcard(patterns []string, value string) bool {
 	return false
 }
 
-// anyWildcardMulti 报告 values 中是否存在某个命中 patterns 中任一通配（patterns 为空返回 true）。
+// anyWildcardMulti reports whether any of values matches any wildcard in patterns (returns true when patterns is empty).
 func anyWildcardMulti(patterns, values []string) bool {
 	if len(patterns) == 0 {
 		return true
@@ -386,7 +386,7 @@ func anyWildcardMulti(patterns, values []string) bool {
 	return false
 }
 
-// formatInt64IDs 把 ID 列表字符串化，供 id 门通配匹配。
+// formatInt64IDs stringifies the ID list, for id gate wildcard matching.
 func formatInt64IDs(ids []int64) []string {
 	out := make([]string, len(ids))
 	for i, id := range ids {
@@ -395,7 +395,7 @@ func formatInt64IDs(ids []int64) []string {
 	return out
 }
 
-// payloadRuleMatches 判断规则的全部匹配门是否满足。identity 为请求身份（可为 nil）。
+// payloadRuleMatches reports whether all match gates of the rule are satisfied. identity is the request identity (may be nil).
 func payloadRuleMatches(rule *PayloadRule, body []byte, model string, headers http.Header, identity *PayloadRuleIdentity) bool {
 	if !anyWildcard(rule.Models, model) {
 		return false
@@ -405,7 +405,7 @@ func payloadRuleMatches(rule *PayloadRule, body []byte, model string, headers ht
 			return false
 		}
 	}
-	// 身份门：任一门有配置但请求无身份 → fail-closed，不匹配。
+	// Identity gates: if any gate is configured but the request has no identity → fail-closed, no match.
 	if len(rule.APIKeyIDs) > 0 || len(rule.APIKeyNames) > 0 || len(rule.GroupIDs) > 0 || len(rule.GroupNames) > 0 {
 		if identity == nil {
 			return false
@@ -425,8 +425,8 @@ func payloadRuleMatches(rule *PayloadRule, body []byte, model string, headers ht
 			return false
 		}
 	}
-	// 账号门：匹配本次实际调度选中账号的组/套餐。账号身份未解析（identity 为 nil
-	// 或 AccountResolved=false）时同样 fail-closed，不匹配。
+	// Account gates: match the group/plan of the account actually selected this time. When the account identity is unresolved (identity is nil
+	// or AccountResolved=false), they likewise fail-closed and do not match.
 	if len(rule.AccountGroupIDs) > 0 || len(rule.AccountGroupNames) > 0 || len(rule.AccountPlans) > 0 {
 		if identity == nil || !identity.AccountResolved {
 			return false
@@ -468,7 +468,7 @@ func payloadRuleMatches(rule *PayloadRule, body []byte, model string, headers ht
 	return true
 }
 
-// payloadValueEquals 比较 gjson 结果与配置值（两侧都来自 JSON，类型天然对齐）。
+// payloadValueEquals compares the gjson result with the configured value (both sides come from JSON, so the types line up naturally).
 func payloadValueEquals(result gjson.Result, want any) bool {
 	if !result.Exists() {
 		return want == nil && result.Type == gjson.Null
@@ -476,9 +476,9 @@ func payloadValueEquals(result gjson.Result, want any) bool {
 	return reflect.DeepEqual(result.Value(), want)
 }
 
-// ApplyPayloadRulesToBody 按当前规则集改写请求体。model 为映射后的生效模型，
-// headers 为入站请求头，identity 为请求身份（可为 nil）。
-// 改写失败的单条动作跳过，不影响其余规则。
+// ApplyPayloadRulesToBody rewrites the request body with the current rule set. model is the effective model after mapping,
+// headers are the inbound request headers, and identity is the request identity (may be nil).
+// A single action that fails to rewrite is skipped and does not affect the other rules.
 func ApplyPayloadRulesToBody(body []byte, model string, headers http.Header, identity *PayloadRuleIdentity) []byte {
 	rs := CurrentPayloadRules()
 	if rs.IsEmpty() || len(body) == 0 || !gjson.ValidBytes(body) {
@@ -552,15 +552,15 @@ func ApplyPayloadRulesToBody(body []byte, model string, headers http.Header, ide
 				continue
 			}
 			existing := gjson.GetBytes(out, path)
-			// 只对缺失或字符串字段追加；非字符串字段跳过，避免破坏结构。
+			// Only append to a missing or string field; skip non-string fields to avoid breaking the structure.
 			if existing.Exists() && existing.Type != gjson.String {
 				continue
 			}
 			value := text
 			if prev := existing.String(); strings.TrimSpace(prev) != "" {
-				// 幂等保护：重试/续想等路径可能带着已改写的 body 重入规则引擎，
-				// 已作为完整追加块存在的文本不再重复拼接，否则请求体随重入次数
-				// 膨胀且改变提示词语义。
+				// Idempotency guard: retry/continue-thinking paths may re-enter the rule engine with an already rewritten body,
+				// text that already exists as a complete appended block is not concatenated again, otherwise the request body
+				// would grow with each re-entry and change the prompt's meaning.
 				if payloadAppendAlreadyApplied(prev, text) {
 					continue
 				}
@@ -593,9 +593,9 @@ func ApplyPayloadRulesToBody(body []byte, model string, headers http.Header, ide
 	return out
 }
 
-// payloadAppendAlreadyApplied 判断 text 是否已作为完整追加块存在于 prev 中：
-// prev 整体即 text，或 text 以 "\n\n" 分隔符对齐地出现在开头/结尾/中间。
-// 下游正文恰好自带同样完整块时跳过追加与追加后去重等价，不改变最终语义。
+// payloadAppendAlreadyApplied reports whether text already exists in prev as a complete appended block:
+// prev is exactly text, or text appears at the start, end or middle of prev, aligned on the "\n\n" separator.
+// When the downstream body already carries the same complete block, skipping the append is equivalent to appending and then deduplicating, so the final meaning does not change.
 func payloadAppendAlreadyApplied(prev, text string) bool {
 	return prev == text ||
 		strings.HasPrefix(prev, text+"\n\n") ||
@@ -603,9 +603,9 @@ func payloadAppendAlreadyApplied(prev, text string) bool {
 		strings.Contains(prev, "\n\n"+text+"\n\n")
 }
 
-// EffectiveRequestedServiceTier 返回请求体经当前规则改写后将真正发往上游的 service_tier，
-// 供用量日志按覆写后的值归因 requested/billing tier。输入须与 ExecuteRequest 喂给引擎的一致
-// （生图请求旁路规则，与 executor.go 保持一致）。无规则命中时返回原值。
+// EffectiveRequestedServiceTier returns the service_tier that will actually be sent upstream after the request body is rewritten by the current rules,
+// so the usage log attributes the requested/billing tier by the overridden value. The input must match what ExecuteRequest feeds the engine
+// (image generation requests bypass the rules, same as executor.go). When no rule matches, it returns the original value.
 func EffectiveRequestedServiceTier(body []byte, model string, headers http.Header, identity *PayloadRuleIdentity) string {
 	if responsesBodyRequestsImageGeneration(body) {
 		return extractServiceTier(body)

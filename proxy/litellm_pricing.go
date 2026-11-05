@@ -10,14 +10,14 @@ import (
 	"github.com/codex2api/database"
 )
 
-// LiteLLMPricingSyncURL 是 LiteLLM 维护的结构化价格目录。
+// LiteLLMPricingSyncURL is the structured price catalog maintained by LiteLLM.
 const LiteLLMPricingSyncURL = "https://raw.githubusercontent.com/BerriAI/litellm/main/model_prices_and_context_window.json"
 
 const pricingTokensPerMillion = 1_000_000
 
 type liteLLMPricingEntry map[string]json.RawMessage
 
-// convertLiteLLMPricing 只导入第一方供应商，拒绝 Azure/转售商的同名模型价格。
+// convertLiteLLMPricing imports only first-party providers and rejects same-named model prices from Azure and resellers.
 func convertLiteLLMPricing(raw map[string]json.RawMessage) map[string]database.ModelPricingOverride {
 	ids := make([]string, 0, len(raw))
 	for id := range raw {
@@ -45,7 +45,7 @@ func convertLiteLLMPricing(raw map[string]json.RawMessage) map[string]database.M
 	return out
 }
 
-// liteLLMFirstPartyModel 按供应商及模型命名空间同时校验身份。
+// liteLLMFirstPartyModel validates identity by both provider and model namespace.
 func liteLLMFirstPartyModel(id string, entry liteLLMPricingEntry) string {
 	var provider string
 	if json.Unmarshal(entry["litellm_provider"], &provider) != nil {
@@ -63,7 +63,7 @@ func liteLLMFirstPartyModel(id string, entry liteLLMPricingEntry) string {
 	return database.PricingManagementModelKey(id)
 }
 
-// liteLLMPriceToOverride 将每 token 美元价格换算为每百万 token，保留全部上下文档位。
+// liteLLMPriceToOverride converts the per-token USD price to per-million tokens and keeps all context tiers.
 func liteLLMPriceToOverride(model string, entry liteLLMPricingEntry) database.ModelPricingOverride {
 	price := database.ModelPricingOverride{
 		Input: entry.rate("input_cost_per_token"), CachedInput: entry.rate("cache_read_input_token_cost"), Output: entry.rate("output_cost_per_token"),
@@ -102,7 +102,7 @@ func liteLLMPriceToOverride(model string, entry liteLLMPricingEntry) database.Mo
 	return price
 }
 
-// number 区分缺失字段和类型错误，后者用 NaN 交给统一校验拒绝。
+// number distinguishes a missing field from a type error; the latter yields NaN so the unified validation rejects it.
 func (entry liteLLMPricingEntry) number(key string) float64 {
 	raw, ok := entry[key]
 	if !ok || string(raw) == "null" {
@@ -115,7 +115,7 @@ func (entry liteLLMPricingEntry) number(key string) float64 {
 	return value
 }
 
-// rate 把 LiteLLM 的每 token 价格转为项目统一的 USD / 1M tokens。
+// rate converts LiteLLM's per-token price to the project's unified USD / 1M tokens.
 func (entry liteLLMPricingEntry) rate(key string) float64 {
 	raw, exists := entry[key]
 	if !exists || string(raw) == "null" {

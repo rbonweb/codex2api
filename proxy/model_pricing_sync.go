@@ -11,35 +11,35 @@ import (
 	"github.com/codex2api/database"
 )
 
-// DefaultModelPricingSyncURL 是项目维护的定价 JSON（raw GitHub）。部署方可在设置页改成
-// 自己的镜像/私有列表。格式：{ "<model>": {input,cached_input,output,...}, ... }，
-// 见 database.ModelPricingOverride。
+// DefaultModelPricingSyncURL is the project-maintained pricing JSON (raw GitHub). Deployers can change it on the settings page to
+// their own mirror or private list. Format: { "<model>": {input,cached_input,output,...}, ... },
+// see database.ModelPricingOverride.
 const DefaultModelPricingSyncURL = "https://raw.githubusercontent.com/rbonweb/codex2api/main/pricing.json"
 
-// ModelsDevPricingSyncURL 是 models.dev 公开定价 API，格式为 provider→models→cost
-// （USD / 1M tokens，含 272K 长上下文分档），同步时自动识别并转换。
+// ModelsDevPricingSyncURL is the models.dev public pricing API. Its format is provider→models→cost
+// (USD / 1M tokens, including the 272K long-context tiers), and it is detected and converted automatically during sync.
 const ModelsDevPricingSyncURL = "https://models.dev/api.json"
 
-// modelPricingSyncURLForTest 允许测试替换默认 URL。生产代码不要赋值。
+// modelPricingSyncURLForTest allows tests to replace the default URL. Production code must not assign it.
 var modelPricingSyncURLForTest = ""
 
-// ModelPricingSyncResult 是一次定价同步的结果投影。
+// ModelPricingSyncResult is the result projection of one pricing sync.
 type ModelPricingSyncResult struct {
 	SourceURL string `json:"source_url"`
-	Fetched   int    `json:"fetched"` // 从 URL 解析到的模型数
-	Applied   int    `json:"applied"` // 实际写入的 synced 条目数
-	Skipped   int    `json:"skipped"` // 因已有 custom 覆盖而跳过的模型数
+	Fetched   int    `json:"fetched"` // number of models parsed from the URL
+	Applied   int    `json:"applied"` // number of synced entries actually written
+	Skipped   int    `json:"skipped"` // number of models skipped because an existing custom override applies
 }
 
-// SyncModelPricingFromURL 从 JSON URL 拉取定价并写入 synced 覆盖。
-// custom 覆盖优先级更高，同步不覆盖已有 custom 条目（只跳过、不清除）。
-// 成功后持久化到系统设置并刷新运行时覆盖表。
+// SyncModelPricingFromURL fetches pricing from a JSON URL and writes it as synced overrides.
+// Custom overrides take priority: sync does not overwrite existing custom entries (it only skips them, never clears them).
+// On success it persists to system settings and refreshes the runtime override table.
 func SyncModelPricingFromURL(ctx context.Context, db *database.DB, syncURL, proxyURL string) (*ModelPricingSyncResult, error) {
 	if db == nil {
-		return nil, fmt.Errorf("数据库不可用，无法同步模型定价")
+		return nil, fmt.Errorf("database unavailable, cannot sync model pricing")
 	}
-	// 字段即准：传入的 syncURL 就是设置页里那个 URL 字段的当前值。
-	// 非空 → 用它并存为来源；空 → 用内置默认并清空存储的来源（回退默认）。
+	// The field is authoritative: the syncURL passed in is the current value of the URL field on the settings page.
+	// Non-empty: use it and store it as the source. Empty: use the built-in default and clear the stored source (fall back to default).
 	fieldURL := strings.TrimSpace(syncURL)
 	fetchURL := fieldURL
 	if modelPricingSyncURLForTest != "" {
@@ -55,7 +55,7 @@ func SyncModelPricingFromURL(ctx context.Context, db *database.DB, syncURL, prox
 	}
 	result.Fetched = len(fetched)
 	if len(fetched) == 0 {
-		return result, fmt.Errorf("定价源未解析到任何模型")
+		return result, fmt.Errorf("pricing source did not resolve any models")
 	}
 
 	_, err = db.MutateModelPricingSettings(ctx, &fieldURL, func(current map[string]database.ModelPricingOverride) error {
@@ -64,7 +64,7 @@ func SyncModelPricingFromURL(ctx context.Context, db *database.DB, syncURL, prox
 			if key == "" || ov.IsEmpty() {
 				continue
 			}
-			// 已有 custom 覆盖优先，跳过不动。
+			// An existing custom override takes priority, so skip it without touching it.
 			if existing, ok := current[key]; ok && existing.Source == database.ModelPricingSourceCustom {
 				result.Skipped++
 				continue
@@ -91,8 +91,8 @@ func fetchModelPricingJSON(ctx context.Context, syncURL, proxyURL string) (map[s
 	req.Header.Set("Accept", "application/json")
 	req.Header.Set("User-Agent", subscriptionsBrowserUserAgent)
 
-	// 目标是 GitHub 域（默认定价 JSON 在 raw.githubusercontent.com）时套用专用代理；
-	// URL 可被部署方改成任意地址，故这里绝不附加 github_token。
+	// When the target is a GitHub domain (the default pricing JSON lives at raw.githubusercontent.com), apply the dedicated proxy;
+	// the URL can be changed by the deployer to any address, so github_token is never attached here.
 	client, closeClient := newVersionSyncClient(syncURL, GithubProxyOrDefault(syncURL, proxyURL), officialPricingTimeout)
 	defer closeClient()
 	resp, err := client.Do(req)
@@ -109,7 +109,7 @@ func fetchModelPricingJSON(ctx context.Context, syncURL, proxyURL string) (map[s
 		return nil, fmt.Errorf("read pricing response: %w", err)
 	}
 	if len(body) > referencePricingBodyLimit {
-		return nil, fmt.Errorf("定价 JSON 超过大小限制")
+		return nil, fmt.Errorf("pricing JSON exceeds the size limit")
 	}
 	return parseModelPricingPayload(body)
 }

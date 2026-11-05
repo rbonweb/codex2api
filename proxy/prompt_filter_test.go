@@ -23,7 +23,7 @@ func TestReviewPromptFilterVerdictCapturesModelAuditMetadata(t *testing.T) {
 			return
 		}
 		w.Header().Set("Content-Type", "application/json")
-		_, _ = w.Write([]byte(`{"model":"review-model","choices":[{"message":{"content":"{\"confidence\":0.86,\"reason\":\"攻击他人系统\"}"}}]}`))
+		_, _ = w.Write([]byte(`{"model":"review-model","choices":[{"message":{"content":"{\"confidence\":0.86,\"reason\":\"attacking another system\"}"}}]}`))
 	}))
 	defer reviewServer.Close()
 
@@ -44,14 +44,14 @@ func TestReviewPromptFilterVerdictCapturesModelAuditMetadata(t *testing.T) {
 			ConfidenceThreshold: 0.7,
 		},
 	}
-	got := (&Handler{}).reviewPromptFilterVerdict(context.Background(), "攻击他人系统", promptfilter.Verdict{Enabled: true, Action: promptfilter.ActionAllow}, cfg)
+	got := (&Handler{}).reviewPromptFilterVerdict(context.Background(), "attacking another system", promptfilter.Verdict{Enabled: true, Action: promptfilter.ActionAllow}, cfg)
 	if !got.Reviewed || !got.ReviewFlagged || got.Action != promptfilter.ActionBlock {
 		t.Fatalf("review decision = %+v", got)
 	}
 	if got.ReviewConfidence == nil || *got.ReviewConfidence != 0.86 || got.ReviewThreshold == nil || *got.ReviewThreshold != 0.7 {
 		t.Fatalf("review confidence metadata = %+v", got)
 	}
-	if got.ReviewReason != "攻击他人系统" || got.ReviewRequestMode != promptfilter.ReviewRequestModeChatCompletions || got.ReviewEndpoint != reviewServer.URL+"/v1/chat/completions" {
+	if got.ReviewReason != "attacking another system" || got.ReviewRequestMode != promptfilter.ReviewRequestModeChatCompletions || got.ReviewEndpoint != reviewServer.URL+"/v1/chat/completions" {
 		t.Fatalf("review request/response metadata = %+v", got)
 	}
 	if got.ReviewLatencyMS == nil || *got.ReviewLatencyMS < 0 {
@@ -382,7 +382,6 @@ func TestPromptFilterTextOpenAIUsesConfiguredLocalBlockMessage(t *testing.T) {
 		t.Fatalf("blocked=%v response=%s", blocked, recorder.Body.String())
 	}
 }
-
 
 func TestPromptFilterEmptyLocalBlockMessageKeepsDefault(t *testing.T) {
 	cfg := promptfilter.DefaultConfig()
