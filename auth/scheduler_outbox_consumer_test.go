@@ -125,7 +125,7 @@ func TestIsSchedulerOutboxTerminalError(t *testing.T) {
 	}{
 		{"nil error", context.Background(), nil, false},
 		{"consumer ctx canceled", canceled, context.Canceled, true},
-		// 子调用自带超时(如 ReloadProxyPool 5s)不能杀死消费者。
+		// A sub-call with its own timeout (such as ReloadProxyPool at 5s) must not kill the consumer.
 		{"sub-call deadline", context.Background(), context.DeadlineExceeded, false},
 		{"conn done is transient", context.Background(), sql.ErrConnDone, false},
 		{"database closed", context.Background(), errWrap("sql: database is closed"), true},
@@ -160,7 +160,7 @@ func TestSchedulerOutboxCursorHoleTracking(t *testing.T) {
 	if len(due) != 2 {
 		t.Fatalf("due holes = %v, want 2", due)
 	}
-	// 超过宽限期的空洞视为已回滚的事务,自动放弃。
+	// A gap older than the grace period is treated as a rolled-back transaction and is dropped automatically.
 	expired := cursor.dueHoleIDs(now.Add(schedulerOutboxHoleGrace + time.Minute))
 	if len(expired) != 0 || len(cursor.holes) != 0 {
 		t.Fatalf("expired holes should be dropped, got due=%v holes=%v", expired, cursor.holes)

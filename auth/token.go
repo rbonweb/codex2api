@@ -18,7 +18,7 @@ import (
 	"time"
 )
 
-// OpenAI OAuth 常量（与 CLIProxyAPI / sub2api 一致）
+// OpenAI OAuth constants (same as CLIProxyAPI / sub2api)
 const (
 	TokenURL   = "https://auth.openai.com/oauth/token"
 	SessionURL = "https://chatgpt.com/api/auth/session"
@@ -26,12 +26,12 @@ const (
 	MaxRetries = 3
 )
 
-// ResinRequestDecorator 由外部（main.go）注入，用于在 Resin 启用时改写请求 URL 和添加 Header。
-// 避免 auth → proxy 循环依赖。参数: (originalURL, accountIdentifier) → (newURL)
-// 调用方需在返回的 req 上设置 X-Resin-Account header。
+// ResinRequestDecorator is injected from outside (main.go) to rewrite the request URL and add headers when Resin is enabled.
+// Avoids a circular dependency (auth → proxy). Parameters: (originalURL, accountIdentifier) → (newURL)
+// The caller must set the X-Resin-Account header on the returned req.
 var ResinRequestDecorator func(targetURL, accountID string) string
 
-// TokenData 保存一次 RT 刷新获得的 token 信息
+// TokenData holds the token information obtained from one RT refresh
 type TokenData struct {
 	AccessToken  string `json:"access_token"`
 	RefreshToken string `json:"refresh_token"`
@@ -40,7 +40,7 @@ type TokenData struct {
 	ExpiresAt    time.Time
 }
 
-// AccountInfo 解析 id_token 获得的账号信息
+// AccountInfo is the account information parsed from id_token
 type AccountInfo struct {
 	Email                 string    `json:"email"`
 	ChatGPTAccountID      string    `json:"chatgpt_account_id"`
@@ -49,8 +49,8 @@ type AccountInfo struct {
 	SubscriptionExpiresAt time.Time `json:"-"`
 }
 
-// RefreshAccessToken 用 RT 换取 AT
-// resinAccountID 可选，Resin 启用时传入账号标识用于粘性代理
+// RefreshAccessToken exchanges an RT for an AT
+// resinAccountID is optional; when Resin is enabled, pass the account identifier for sticky proxying
 func RefreshAccessToken(ctx context.Context, refreshToken string, proxyURL string, resinAccountID ...string) (*TokenData, *AccountInfo, error) {
 	data, err := json.Marshal(map[string]string{
 		"grant_type":     "refresh_token",
@@ -59,10 +59,10 @@ func RefreshAccessToken(ctx context.Context, refreshToken string, proxyURL strin
 		"refresh_reason": codexOAuthRefreshReason(ctx),
 	})
 	if err != nil {
-		return nil, nil, fmt.Errorf("编码刷新请求失败: %w", err)
+		return nil, nil, fmt.Errorf("failed to encode refresh request: %w", err)
 	}
 
-	// Resin 反代模式：改写 URL
+	// Resin reverse-proxy mode: rewrite the URL
 	targetURL := TokenURL
 	accountID := ""
 	if len(resinAccountID) > 0 {
@@ -74,18 +74,18 @@ func RefreshAccessToken(ctx context.Context, refreshToken string, proxyURL strin
 
 	req, err := http.NewRequestWithContext(ctx, http.MethodPost, targetURL, bytes.NewReader(data))
 	if err != nil {
-		return nil, nil, fmt.Errorf("创建请求失败: %w", err)
+		return nil, nil, fmt.Errorf("failed to create request: %w", err)
 	}
 	req.Header.Set("Content-Type", "application/json")
 	req.Header.Set("Accept", "application/json")
 	applyCodexOAuthIdentity(req)
 
-	// Resin 反代：注入账号身份头
+	// Resin reverse proxy: inject the account identity header
 	if ResinRequestDecorator != nil && accountID != "" {
 		req.Header.Set("X-Resin-Account", accountID)
 	}
 
-	// Resin 反代模式下使用标准 HTTP client（不走代理，Resin 处理路由）
+	// In Resin reverse-proxy mode, use a standard HTTP client (no proxy; Resin handles routing)
 	var client *http.Client
 	if ResinRequestDecorator != nil && accountID != "" {
 		client = &http.Client{Timeout: 30 * time.Second}
@@ -96,15 +96,15 @@ func RefreshAccessToken(ctx context.Context, refreshToken string, proxyURL strin
 	if err != nil {
 		var opErr *net.OpError
 		if errors.As(err, &opErr) && opErr.Op == "dial" {
-			return nil, nil, fmt.Errorf("刷新连接失败: %w", err)
+			return nil, nil, fmt.Errorf("refresh connection failed: %w", err)
 		}
-		return nil, nil, &oauthRefreshUncertainError{fmt.Errorf("刷新请求结果未知: %w", err)}
+		return nil, nil, &oauthRefreshUncertainError{fmt.Errorf("refresh request result is unknown: %w", err)}
 	}
 	defer resp.Body.Close()
 
 	body, err := io.ReadAll(resp.Body)
 	if err != nil {
-		return nil, nil, &oauthRefreshUncertainError{fmt.Errorf("读取刷新响应失败: %w", err)}
+		return nil, nil, &oauthRefreshUncertainError{fmt.Errorf("failed to read refresh response: %w", err)}
 	}
 
 	if resp.StatusCode != http.StatusOK {
@@ -118,13 +118,13 @@ func RefreshAccessToken(ctx context.Context, refreshToken string, proxyURL strin
 		ExpiresIn    int64  `json:"expires_in"`
 	}
 	if err := json.Unmarshal(body, &tokenResp); err != nil {
-		return nil, nil, &oauthRefreshUncertainError{fmt.Errorf("解析刷新响应失败: %w", err)}
+		return nil, nil, &oauthRefreshUncertainError{fmt.Errorf("failed to parse refresh response: %w", err)}
 	}
 	tokenResp.AccessToken = strings.TrimSpace(tokenResp.AccessToken)
 	tokenResp.RefreshToken = strings.TrimSpace(tokenResp.RefreshToken)
 	tokenResp.IDToken = strings.TrimSpace(tokenResp.IDToken)
 	if tokenResp.AccessToken == "" {
-		return nil, nil, &oauthRefreshUncertainError{fmt.Errorf("刷新响应缺少 access_token")}
+		return nil, nil, &oauthRefreshUncertainError{fmt.Errorf("refresh response is missing access_token")}
 	}
 	if tokenResp.ExpiresIn <= 0 {
 		tokenResp.ExpiresIn = 3600
@@ -138,22 +138,22 @@ func RefreshAccessToken(ctx context.Context, refreshToken string, proxyURL strin
 		ExpiresAt:    time.Now().Add(time.Duration(tokenResp.ExpiresIn) * time.Second),
 	}
 
-	// 保留新 RT，如果返回空则保留旧的
+	// Keep the new RT; if it comes back empty, keep the old one
 	if strings.TrimSpace(td.RefreshToken) == "" {
 		td.RefreshToken = refreshToken
 	}
 
-	// 解析 id_token 获取账号信息
+	// Parse id_token to get the account information
 	info := parseIDToken(tokenResp.IDToken)
 
-	// 回退：如果 id_token 中缺少字段，尝试从 access_token 提取
+	// Fallback: if fields are missing from id_token, try to extract them from access_token
 	if tokenResp.AccessToken != "" && (info.PlanType == "" || info.SubscriptionExpiresAt.IsZero()) {
 		if atInfo := ParseAccessToken(tokenResp.AccessToken); atInfo != nil {
 			if info.PlanType == "" && atInfo.PlanType != "" {
-				log.Printf("[token] id_token 缺少 plan_type，从 access_token 回退获取: %s", atInfo.PlanType)
+				log.Printf("[token] id_token is missing plan_type, falling back to fetch it from access_token: %s", atInfo.PlanType)
 				info.PlanType = atInfo.PlanType
 			}
-			// 同时回退补全其他空字段
+			// Also fill in the other empty fields from the fallback
 			if info.Email == "" && atInfo.Email != "" {
 				info.Email = atInfo.Email
 			}
@@ -169,8 +169,8 @@ func RefreshAccessToken(ctx context.Context, refreshToken string, proxyURL strin
 	return td, info, nil
 }
 
-// RefreshWithRetry 带重试的 RT 刷新
-// resinAccountID 可选，Resin 启用时传入账号标识
+// RefreshWithRetry refreshes the RT with retries
+// resinAccountID is optional; when Resin is enabled, pass the account identifier
 func RefreshWithRetry(ctx context.Context, refreshToken string, proxyURL string, resinAccountID ...string) (*TokenData, *AccountInfo, error) {
 	var lastErr error
 	for attempt := 0; attempt < MaxRetries; attempt++ {
@@ -188,20 +188,20 @@ func RefreshWithRetry(ctx context.Context, refreshToken string, proxyURL string,
 			return td, info, nil
 		}
 
-		// 不可重试错误直接返回
+		// Non-retryable errors are returned immediately
 		if isNonRetryable(err) || isOAuthRefreshUncertain(err) {
 			return nil, nil, err
 		}
 		lastErr = err
 	}
-	return nil, nil, fmt.Errorf("刷新失败（重试 %d 次）: %w", MaxRetries, lastErr)
+	return nil, nil, fmt.Errorf("refresh failed after %d retries: %w", MaxRetries, lastErr)
 }
 
-// RefreshWithSessionToken 用 ChatGPT Web session_token 回退换取新的 AT。
+// RefreshWithSessionToken exchanges the ChatGPT Web session_token for a new AT as a fallback.
 func RefreshWithSessionToken(ctx context.Context, sessionToken string, proxyURL string, resinAccountID ...string) (*TokenData, *AccountInfo, error) {
 	sessionToken = strings.TrimSpace(sessionToken)
 	if sessionToken == "" {
-		return nil, nil, fmt.Errorf("session_token 为空")
+		return nil, nil, fmt.Errorf("session_token is empty")
 	}
 
 	targetURL := SessionURL
@@ -215,7 +215,7 @@ func RefreshWithSessionToken(ctx context.Context, sessionToken string, proxyURL 
 
 	req, err := http.NewRequestWithContext(ctx, http.MethodGet, targetURL, nil)
 	if err != nil {
-		return nil, nil, fmt.Errorf("创建 session 请求失败: %w", err)
+		return nil, nil, fmt.Errorf("failed to create session request: %w", err)
 	}
 	req.Header.Set("Accept", "application/json")
 	req.Header.Set("User-Agent", "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/131.0.0.0 Safari/537.36")
@@ -236,16 +236,16 @@ func RefreshWithSessionToken(ctx context.Context, sessionToken string, proxyURL 
 	}
 	resp, err := client.Do(req)
 	if err != nil {
-		return nil, nil, fmt.Errorf("session 刷新请求失败: %w", err)
+		return nil, nil, fmt.Errorf("session refresh request failed: %w", err)
 	}
 	defer resp.Body.Close()
 
 	body, err := io.ReadAll(resp.Body)
 	if err != nil {
-		return nil, nil, fmt.Errorf("读取 session 响应失败: %w", err)
+		return nil, nil, fmt.Errorf("failed to read session response: %w", err)
 	}
 	if resp.StatusCode != http.StatusOK {
-		return nil, nil, fmt.Errorf("session 刷新失败 (status %d): %s", resp.StatusCode, string(body))
+		return nil, nil, fmt.Errorf("session refresh failed (status %d): %s", resp.StatusCode, string(body))
 	}
 
 	var sessionResp struct {
@@ -256,11 +256,11 @@ func RefreshWithSessionToken(ctx context.Context, sessionToken string, proxyURL 
 		} `json:"user"`
 	}
 	if err := json.Unmarshal(body, &sessionResp); err != nil {
-		return nil, nil, fmt.Errorf("解析 session 响应失败: %w", err)
+		return nil, nil, fmt.Errorf("failed to parse session response: %w", err)
 	}
 	accessToken := strings.TrimSpace(sessionResp.AccessToken)
 	if accessToken == "" {
-		return nil, nil, fmt.Errorf("session 响应缺少 accessToken")
+		return nil, nil, fmt.Errorf("session response is missing accessToken")
 	}
 
 	expiresAt := parseSessionExpiresAt(sessionResp.Expires)
@@ -307,7 +307,7 @@ func RefreshWithSessionTokenRetry(ctx context.Context, sessionToken string, prox
 		}
 		lastErr = err
 	}
-	return nil, nil, fmt.Errorf("session 刷新失败（重试 %d 次）: %w", MaxRetries, lastErr)
+	return nil, nil, fmt.Errorf("session refresh failed after %d retries: %w", MaxRetries, lastErr)
 }
 
 func parseSessionExpiresAt(raw string) time.Time {
@@ -323,8 +323,8 @@ func parseSessionExpiresAt(raw string) time.Time {
 	return time.Time{}
 }
 
-// IsPermanentRefreshFailure 判断 RT/session 刷新是否已经不可恢复。
-// 这类错误再试也换不出 AT，账号应标未授权，不能停在「刷新中」。
+// IsPermanentRefreshFailure reports whether an RT or session refresh can no longer be recovered.
+// Retrying this kind of error still cannot yield an AT, so the account should be marked unauthorized and must not stay in "refreshing".
 func IsPermanentRefreshFailure(err error) bool {
 	return isNonRetryable(err)
 }
@@ -368,7 +368,7 @@ func newOAuthRefreshHTTPError(status int, body []byte, rt string) error {
 }
 
 func (e *oauthRefreshHTTPError) Error() string {
-	return fmt.Sprintf("刷新失败 (status %d): %s", e.status, e.body)
+	return fmt.Sprintf("refresh failed (status %d): %s", e.status, e.body)
 }
 func (e *oauthRefreshHTTPError) PermanentRefreshFailure() bool {
 	if e.code != "" {
@@ -385,7 +385,7 @@ func permanentOAuthRefreshCode(code string) bool {
 	return false
 }
 
-// isNonRetryable 判断是否不可重试的认证错误
+// isNonRetryable reports whether an auth error is not retryable
 func isNonRetryable(err error) bool {
 	if err == nil {
 		return false
@@ -407,7 +407,7 @@ func isNonRetryable(err error) bool {
 	return false
 }
 
-// parseIDToken 解析 JWT id_token 的 payload（不验签）
+// parseIDToken parses the payload of the JWT id_token (signature not verified)
 func parseIDToken(idToken string) *AccountInfo {
 	if idToken == "" {
 		return &AccountInfo{}
@@ -462,7 +462,7 @@ func parseIDToken(idToken string) *AccountInfo {
 	return info
 }
 
-// AccessTokenInfo AT JWT 解析结果
+// AccessTokenInfo is the result of parsing the AT JWT
 type AccessTokenInfo struct {
 	Email                 string
 	ChatGPTAccountID      string
@@ -481,8 +481,8 @@ func firstNonEmptyTrimmed(values ...string) string {
 	return ""
 }
 
-// ParseAccessToken 解析 Access Token 的 JWT payload（不验签）
-// AT 的 email 在 https://api.openai.com/profile 下，与 id_token 不同
+// ParseAccessToken parses the JWT payload of the Access Token (signature not verified)
+// The AT's email is under https://api.openai.com/profile, which differs from id_token
 func ParseAccessToken(accessToken string) *AccessTokenInfo {
 	if accessToken == "" {
 		return nil
@@ -546,7 +546,7 @@ func ParseAccessToken(accessToken string) *AccessTokenInfo {
 	return info
 }
 
-// authClientPool 认证请求的连接池（按 proxyURL 分组，带 TTL 清理）
+// authClientPool is the connection pool for auth requests (grouped by proxyURL, with TTL cleanup)
 var authClientPool sync.Map // map[string]*authPoolEntry
 
 type authPoolEntry struct {
@@ -563,7 +563,7 @@ const (
 	authClientPoolCleanupInterval = 60 * time.Second
 )
 
-// authClientPoolStop 用于停止清理协程（测试中可调用以避免 goroutine 泄漏）
+// authClientPoolStop stops the cleanup goroutine (tests can call it to avoid a goroutine leak)
 var authClientPoolStop = make(chan struct{})
 
 func init() {
@@ -593,7 +593,7 @@ func evictExpiredAuthClients() {
 	})
 }
 
-// buildHTTPClient 构建支持代理的 HTTP 客户端（连接池复用，带 TTL 清理）
+// buildHTTPClient builds a proxy-capable HTTP client (connection pool reuse, with TTL cleanup)
 func buildHTTPClient(proxyURL string) *http.Client {
 	client, _ := buildHTTPClientChecked(proxyURL, false)
 	return client
@@ -669,7 +669,7 @@ func ParseIDToken(idToken string) *AccountInfo {
 	return parseIDToken(idToken)
 }
 
-// HashAccountID 从 account_id 生成短哈希（用于日志）
+// HashAccountID generates a short hash from account_id (for logs)
 func HashAccountID(accountID string) string {
 	if accountID == "" {
 		return ""

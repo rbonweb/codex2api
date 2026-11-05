@@ -14,8 +14,8 @@ func mustLoc(t *testing.T, name string) *time.Location {
 	return loc
 }
 
-// 业务状态按业务时区自然日判定：到期前当天=今日到期，到期瞬间=已超时 1 天，
-// 之后每跨一个业务日 +1；夏令时切换日按日期分量计算不受 23/25 小时影响。
+// Business status is decided by calendar day in the business timezone: the same day before expiry = expiring today, the expiry instant = overdue 1 day,
+// each business day crossed after that adds 1; a daylight saving switch day is computed from date components, so 23- or 25-hour days do not affect it.
 func TestComputeSubscriptionBusinessStatus(t *testing.T) {
 	sh := mustLoc(t, "Asia/Shanghai")
 	ny := mustLoc(t, "America/New_York")
@@ -33,19 +33,19 @@ func TestComputeSubscriptionBusinessStatus(t *testing.T) {
 		wantRemain  int
 		wantOverdue int
 	}{
-		{"无到期时间", sh, time.Time{}, time.Time{}, at(sh, 2026, 9, 12, 10, 0), SubscriptionStatusUnknown, 0, 0},
-		{"当天晚些时候到期=今日到期", sh, at(sh, 2026, 9, 12, 23, 59), time.Time{}, at(sh, 2026, 9, 12, 8, 0), SubscriptionStatusExpiringToday, 0, 0},
-		{"次日凌晨到期=剩余 1 天", sh, at(sh, 2026, 9, 13, 0, 30), time.Time{}, at(sh, 2026, 9, 12, 23, 0), SubscriptionStatusActive, 1, 0},
-		{"UTC 时刻在业务日内但 UTC 日期已变=仍算今日", sh, at(sh, 2026, 9, 12, 23, 59), time.Time{}, at(sh, 2026, 9, 12, 10, 0).In(time.UTC), SubscriptionStatusExpiringToday, 0, 0},
-		{"到期瞬间=已超时 1 天", sh, at(sh, 2026, 9, 12, 12, 0), time.Time{}, at(sh, 2026, 9, 12, 12, 0), SubscriptionStatusExpired, 0, 1},
-		{"到期当天稍后仍=已超时 1 天", sh, at(sh, 2026, 9, 12, 12, 0), time.Time{}, at(sh, 2026, 9, 12, 20, 0), SubscriptionStatusExpired, 0, 1},
-		{"跨过一个业务日=已超时 1 天", sh, at(sh, 2026, 9, 12, 23, 59), time.Time{}, at(sh, 2026, 9, 13, 0, 1), SubscriptionStatusExpired, 0, 1},
-		{"跨过两个业务日=已超时 2 天", sh, at(sh, 2026, 9, 12, 12, 0), time.Time{}, at(sh, 2026, 9, 14, 0, 1), SubscriptionStatusExpired, 0, 2},
-		{"宽限期内", sh, at(sh, 2026, 9, 12, 12, 0), at(sh, 2026, 9, 20, 0, 0), at(sh, 2026, 9, 14, 0, 1), SubscriptionStatusGracePeriod, 0, 2},
-		{"宽限期结束后=已过期", sh, at(sh, 2026, 9, 12, 12, 0), at(sh, 2026, 9, 13, 0, 0), at(sh, 2026, 9, 14, 0, 1), SubscriptionStatusExpired, 0, 2},
-		// 2026-11-01 纽约夏令时结束（当天 25 小时）：10-31 12:00 → 11-02 12:00 实际 49 小时，仍是 2 天。
-		{"夏令时结束跨日=剩余 2 天", ny, at(ny, 2026, 11, 2, 12, 0), time.Time{}, at(ny, 2026, 10, 31, 12, 0), SubscriptionStatusActive, 2, 0},
-		{"夏令时结束后超时天数", ny, at(ny, 2026, 10, 31, 12, 0), time.Time{}, at(ny, 2026, 11, 2, 11, 0), SubscriptionStatusExpired, 0, 2},
+		{"no expiry time", sh, time.Time{}, time.Time{}, at(sh, 2026, 9, 12, 10, 0), SubscriptionStatusUnknown, 0, 0},
+		{"expires later the same day=expiring today", sh, at(sh, 2026, 9, 12, 23, 59), time.Time{}, at(sh, 2026, 9, 12, 8, 0), SubscriptionStatusExpiringToday, 0, 0},
+		{"expires early the next day=1 day remaining", sh, at(sh, 2026, 9, 13, 0, 30), time.Time{}, at(sh, 2026, 9, 12, 23, 0), SubscriptionStatusActive, 1, 0},
+		{"UTC time within the business day but UTC date already changed=still today", sh, at(sh, 2026, 9, 12, 23, 59), time.Time{}, at(sh, 2026, 9, 12, 10, 0).In(time.UTC), SubscriptionStatusExpiringToday, 0, 0},
+		{"expires at this instant=overdue 1 day", sh, at(sh, 2026, 9, 12, 12, 0), time.Time{}, at(sh, 2026, 9, 12, 12, 0), SubscriptionStatusExpired, 0, 1},
+		{"still the expiry day, later=overdue 1 day", sh, at(sh, 2026, 9, 12, 12, 0), time.Time{}, at(sh, 2026, 9, 12, 20, 0), SubscriptionStatusExpired, 0, 1},
+		{"crossed one business day=overdue 1 day", sh, at(sh, 2026, 9, 12, 23, 59), time.Time{}, at(sh, 2026, 9, 13, 0, 1), SubscriptionStatusExpired, 0, 1},
+		{"crossed two business days=overdue 2 days", sh, at(sh, 2026, 9, 12, 12, 0), time.Time{}, at(sh, 2026, 9, 14, 0, 1), SubscriptionStatusExpired, 0, 2},
+		{"within grace period", sh, at(sh, 2026, 9, 12, 12, 0), at(sh, 2026, 9, 20, 0, 0), at(sh, 2026, 9, 14, 0, 1), SubscriptionStatusGracePeriod, 0, 2},
+		{"after grace period ends=expired", sh, at(sh, 2026, 9, 12, 12, 0), at(sh, 2026, 9, 13, 0, 0), at(sh, 2026, 9, 14, 0, 1), SubscriptionStatusExpired, 0, 2},
+		// 2026-11-01 New York daylight saving time ends (that day has 25 hours): 10-31 12:00 → 11-02 12:00 is actually 49 hours, still 2 days.
+		{"DST end crossed a day boundary=2 days remaining", ny, at(ny, 2026, 11, 2, 12, 0), time.Time{}, at(ny, 2026, 10, 31, 12, 0), SubscriptionStatusActive, 2, 0},
+		{"overdue days after DST end", ny, at(ny, 2026, 10, 31, 12, 0), time.Time{}, at(ny, 2026, 11, 2, 11, 0), SubscriptionStatusExpired, 0, 2},
 	}
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
@@ -57,7 +57,7 @@ func TestComputeSubscriptionBusinessStatus(t *testing.T) {
 	}
 }
 
-// 套餐跟踪规则：付费一律跟踪；free 只在留有到期时间（真过期降级）时跟踪；api 不跟踪。
+// Plan tracking rules: paid plans are always tracked; free is tracked only when an expiry time is kept (a real expiry that dropped to free); api is not tracked.
 func TestBuildSubscriptionStatusView(t *testing.T) {
 	now := time.Date(2026, 9, 12, 10, 0, 0, 0, time.UTC)
 	past := now.Add(-48 * time.Hour)
@@ -87,19 +87,19 @@ func TestBuildSubscriptionStatusView(t *testing.T) {
 	if v.AutoRenew != SubscriptionAutoRenewEnabled || v.LastCheckedAt == "" || v.RenewalDetectedAt == "" || v.Timezone != "UTC" {
 		t.Fatalf("meta not carried: %+v", v)
 	}
-	// 待确认（陈旧值已清理）：无到期时间但同步状态 pending。
+	// Awaiting confirmation (stale value already cleared): no expiry time, but sync status is pending.
 	v = BuildSubscriptionStatusView("plus", time.Time{}, SubscriptionMeta{SyncState: SubscriptionSyncPending, Source: SubscriptionSourcePlanHeader, LastKnownStatus: SubscriptionStatusExpired}, now, time.UTC)
 	if v == nil || v.BusinessStatus != SubscriptionStatusUnknown || v.SyncState != SubscriptionSyncPending || v.LastKnownStatus != SubscriptionStatusExpired {
 		t.Fatalf("pending view: %+v", v)
 	}
-	// 提供方无订阅记录：自动续期归为不支持。
+	// Provider has no subscription record: auto-renewal is classified as unsupported.
 	v = BuildSubscriptionStatusView("k12", now.Add(24*time.Hour), SubscriptionMeta{SyncState: SubscriptionSyncUnsupported}, now, time.UTC)
 	if v == nil || v.AutoRenew != SubscriptionAutoRenewUnsupported {
 		t.Fatalf("unsupported view: %+v", v)
 	}
 }
 
-// 元数据 credentials 往返：八个键全量写入，空值写空串。
+// Metadata credentials round trip: all eight keys are written, and empty values are written as empty strings.
 func TestSubscriptionMetaCredentialsRoundTrip(t *testing.T) {
 	now := time.Date(2026, 9, 12, 10, 0, 0, 0, time.UTC)
 	meta := SubscriptionMeta{CheckedAt: now, SyncState: SubscriptionSyncFailed, Source: SubscriptionSourceJWT, Error: "boom", LastKnownStatus: SubscriptionStatusActive, WillRenew: "false"}
@@ -117,14 +117,14 @@ func TestSubscriptionMetaCredentialsRoundTrip(t *testing.T) {
 	if got != meta {
 		t.Fatalf("round trip mismatch:\n got %+v\nwant %+v", got, meta)
 	}
-	// unix 秒也能读回（兼容手工/第三方写入）。
+	// Unix seconds can also be read back (compatible with manual or third-party writes).
 	if ts := parseSubscriptionTime("1789000000"); ts.IsZero() {
 		t.Fatal("unix seconds should parse")
 	}
 }
 
-// 陈旧值清理不再静默：同步状态切 pending、来源 plan_header、记录续费检测时间与
-// 清理前的业务状态；宽限期内的已过去到期时间不算陈旧。
+// Clearing a stale value is no longer silent: sync status switches to pending, the source is plan_header, and it records the renewal detection time and
+// the business status from before the clearing; an expiry time that has passed inside the grace period is not stale.
 func TestClearStaleSubscriptionExpiresAt_RecordsPendingMeta(t *testing.T) {
 	store := NewStore(nil, nil, nil)
 	past := time.Now().Add(-72 * time.Hour)
@@ -154,7 +154,7 @@ func TestClearStaleSubscriptionExpiresAt_RecordsPendingMeta(t *testing.T) {
 		t.Fatalf("view after clear = %+v", view)
 	}
 
-	// 宽限期内：不清理。
+	// Inside the grace period: do not clear.
 	grace := &Account{DBID: 2, AccessToken: "at", Status: StatusReady, PlanType: "plus", SubscriptionExpiresAt: past}
 	grace.subscriptionMeta.GraceUntil = time.Now().Add(72 * time.Hour)
 	store.AddAccount(grace)
@@ -170,7 +170,7 @@ func TestClearStaleSubscriptionExpiresAt_RecordsPendingMeta(t *testing.T) {
 	}
 }
 
-// RT 刷新：令牌里更早的到期时间不得覆盖订阅提供方给的权威值；更晚的仍照写。
+// RT refresh: an earlier expiry time in the token must not overwrite the authoritative value from the subscription provider; a later one is still written.
 func TestCodexRefreshedCredentials_JWTDoesNotOverrideAuthoritativeExpiry(t *testing.T) {
 	now := time.Now()
 	authoritative := now.Add(40 * 24 * time.Hour)
@@ -193,7 +193,7 @@ func TestCodexRefreshedCredentials_JWTDoesNotOverrideAuthoritativeExpiry(t *test
 		t.Fatalf("source should flip to jwt when the token supplies a newer value, got %v", got)
 	}
 
-	// 无权威来源时行为不变：令牌值直接写入。
+	// Behavior is unchanged when there is no authoritative source: the token value is written directly.
 	legacy := &Account{DBID: 2, PlanType: "plus", SubscriptionExpiresAt: authoritative}
 	updates = codexRefreshedCredentials(legacy, td, older, "")
 	if got := updates["subscription_expires_at"]; got != older.SubscriptionExpiresAt.Format(time.RFC3339) {

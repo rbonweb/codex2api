@@ -1213,7 +1213,7 @@ func TestFastSchedulerFillFirstSticksUntilUnavailable(t *testing.T) {
 	scheduler := NewFastScheduler(4, "fill_first")
 	scheduler.Rebuild([]*Account{draining, standby})
 
-	// 连续取号应始终命中同一个账号，而不是在两个账号间轮询。
+	// Consecutive account picks should always hit the same account, not round-robin between two accounts.
 	for i := 0; i < 5; i++ {
 		acc := scheduler.Acquire()
 		if acc == nil {
@@ -1225,7 +1225,7 @@ func TestFastSchedulerFillFirstSticksUntilUnavailable(t *testing.T) {
 		scheduler.Release(acc)
 	}
 
-	// 账号进入冷却后，下一次取号应滑落到备用账号。
+	// After an account enters cooldown, the next pick should fall through to the backup account.
 	draining.mu.Lock()
 	draining.Status = StatusCooldown
 	draining.CooldownUtil = time.Now().Add(time.Minute)
@@ -1367,7 +1367,7 @@ func TestStoreNextExcludingRespectsAPIKeyAllowedPlans(t *testing.T) {
 		accounts: []*Account{plus, team, free},
 	}).withMaxConcurrency(1)
 	store.rebuildAccountIndex()
-	// Key 1 只允许 plus / team 套餐的账号。
+	// Key 1 only allows accounts on the plus / team plans.
 	store.SetAPIKeyAllowedPlans(1, []string{"Plus", "team"})
 
 	if !store.APIKeyAllowsAccount(1, plus) {
@@ -1380,12 +1380,12 @@ func TestStoreNextExcludingRespectsAPIKeyAllowedPlans(t *testing.T) {
 		t.Fatal("free account should be rejected by plus/team filter")
 	}
 
-	// 把 plus/team 排除后,唯一剩下的 free 账号不应被调度。
+	// After excluding plus/team, the only remaining free account should not be scheduled.
 	if got := store.NextExcluding(1, map[int64]bool{1: true, 2: true}); got != nil {
 		store.Release(got)
 		t.Fatalf("NextExcluding() picked dbID=%d, want nil (free plan excluded)", got.DBID)
 	}
-	// 不加套餐限制的 Key 2 仍可调度到 free 账号。
+	// Key 2, which has no plan restriction, can still schedule to a free account.
 	if !store.APIKeyAllowsAccount(2, free) {
 		t.Fatal("unrestricted key should allow free account")
 	}
@@ -1401,7 +1401,7 @@ func TestStoreAPIKeyPlanFilterMatchesProLiteDistinctly(t *testing.T) {
 		accounts: []*Account{prolite, pro},
 	}).withMaxConcurrency(1)
 	store.rebuildAccountIndex()
-	// 选择 "prolite" 只匹配 prolite 账号,不应命中 pro 账号(两者相互独立)。
+	// Selecting "prolite" only matches prolite accounts and should not hit pro accounts (the two are independent of each other).
 	store.SetAPIKeyAllowedPlans(1, []string{"prolite"})
 
 	if !store.APIKeyAllowsAccount(1, prolite) {

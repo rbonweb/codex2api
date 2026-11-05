@@ -23,7 +23,7 @@ func (s *Store) refreshCodexAccount(ctx context.Context, acc *Account, force boo
 	var lease *oauthRefreshLease
 	for retries := 0; ; retries++ {
 		if retries >= 4 {
-			return fmt.Errorf("Codex 凭据连续变更，请稍后重试")
+			return fmt.Errorf("Codex credentials changed repeatedly, please try again later")
 		}
 		acc.mu.RLock()
 		rt, at := strings.TrimSpace(acc.RefreshToken), acc.AccessToken
@@ -39,7 +39,7 @@ func (s *Store) refreshCodexAccount(ctx context.Context, acc *Account, force boo
 		changed, usable, err := s.reloadOAuthCredentialsAfterLock(ctx, acc, rt, at)
 		if err != nil {
 			lease.Release()
-			return fmt.Errorf("刷新前读取最新凭据失败: %w", err)
+			return fmt.Errorf("failed to read the latest credentials before refresh: %w", err)
 		}
 		if changed {
 			lease.Release()
@@ -59,7 +59,7 @@ func (s *Store) refreshCodexAccount(ctx context.Context, acc *Account, force boo
 	if !force && s.tokenCache != nil {
 		cached, err := s.tokenCache.GetAccessToken(ctx, dbID)
 		if err != nil && s.tokenCache.SharedAcrossInstances() {
-			return fmt.Errorf("读取 Token 缓存失败: %w", err)
+			return fmt.Errorf("failed to read token cache: %w", err)
 		}
 		if cached != "" {
 			// Do not invent an expiry for the same token; a stale cache must not
@@ -74,7 +74,7 @@ func (s *Store) refreshCodexAccount(ctx context.Context, acc *Account, force boo
 	}
 	proxyURL := s.ResolveProxyForAccount(acc)
 	if strings.TrimSpace(proxyURL) == "" && s.GetProxyPoolEnabled() {
-		return fmt.Errorf("账号 %d 代理池已启用但无可用代理，已拒绝直连刷新", dbID)
+		return fmt.Errorf("account %d has the proxy pool enabled but no usable proxy, refused direct refresh", dbID)
 	}
 	if err := ctx.Err(); err != nil {
 		return err
@@ -107,7 +107,7 @@ func (s *Store) refreshCodexAccount(ctx context.Context, acc *Account, force boo
 	if rt != "" {
 		td, info, err = RefreshWithRetry(ctx, rt, proxyURL, resinID)
 	} else {
-		err = fmt.Errorf("refresh_token 为空")
+		err = fmt.Errorf("refresh_token is empty")
 	}
 	warning := ""
 	if err != nil && st != "" && !isOAuthRefreshUncertain(err) {
@@ -115,9 +115,9 @@ func (s *Store) refreshCodexAccount(ctx context.Context, acc *Account, force boo
 		td, info, err = RefreshWithSessionTokenRetry(ctx, st, proxyURL, resinID)
 		if err == nil {
 			td.RefreshToken = rt
-			warning = "RT 刷新失败，已使用 session_token 临时续期；请更新 OAuth 授权"
+			warning = "RT refresh failed; the session_token was used to renew temporarily. Please update the OAuth authorization"
 		} else {
-			err = fmt.Errorf("RT 刷新失败: %v；session_token 回退失败: %w", rtErr, err)
+			err = fmt.Errorf("RT refresh failed: %v; session_token fallback failed: %w", rtErr, err)
 		}
 	}
 	if err != nil {
@@ -127,12 +127,12 @@ func (s *Store) refreshCodexAccount(ctx context.Context, acc *Account, force boo
 			message = database.ErrCodexRefreshUncertain.Error() + ": " + message
 		}
 		if IsPermanentRefreshFailure(err) {
-			message = "OAuth 授权已失效，请重新登录并导入最新凭据: " + message
+			message = "OAuth authorization has expired, please log in again and import the latest credentials: " + message
 		}
 		if attempt != nil {
 			failureCtx, cancel := context.WithTimeout(context.WithoutCancel(ctx), 3*time.Second)
 			if saveErr := s.db.FailCodexRefresh(failureCtx, attempt, message, uncertain); saveErr != nil {
-				log.Printf("[账号 %d] 保存刷新失败状态失败，保留刷新保护记录: %v", dbID, saveErr)
+				log.Printf("[account %d] failed to save the refresh failure state, keeping the refresh protection record: %v", dbID, saveErr)
 			}
 			cancel()
 		}
@@ -159,7 +159,7 @@ func (s *Store) refreshCodexAccount(ctx context.Context, acc *Account, force boo
 		if td.RefreshToken != "" && td.RefreshToken != rt {
 			rotated, lockErr := s.acquireOAuthRefreshLease(ctx, td.RefreshToken)
 			if lockErr != nil {
-				return fmt.Errorf("新 RT 尚未保存，刷新保护记录已保留: %w", lockErr)
+				return fmt.Errorf("new RT is not saved yet, the refresh protection record is kept: %w", lockErr)
 			}
 			defer rotated.Release()
 		}
@@ -182,14 +182,14 @@ func (s *Store) refreshCodexAccount(ctx context.Context, acc *Account, force boo
 			}
 		}
 		if err != nil {
-			message := "新 Token 保存失败，已停止重复消费旧 RT；请重新授权导入凭据"
+			message := "failed to save the new token; stopped reusing the old RT; please re-authorize and import the credentials"
 			s.MarkError(acc, message)
 			return fmt.Errorf("%s: %w", message, err)
 		}
 	} else if s.db != nil {
 		// Session-token-only accounts do not consume an OAuth RT.
 		if err := s.db.UpdateCredentials(ctx, dbID, updates); err != nil {
-			return fmt.Errorf("保存 session 凭据失败: %w", err)
+			return fmt.Errorf("failed to save session credentials: %w", err)
 		}
 		publishedIDs = []int64{dbID}
 	} else {
@@ -247,8 +247,8 @@ func codexRefreshedCredentials(acc *Account, td *TokenData, info *AccountInfo, w
 			updates["plan_type"] = plan
 		}
 		if !info.SubscriptionExpiresAt.IsZero() && !StaleSubscriptionExpiry(planSnapshot.PlanType, info.SubscriptionExpiresAt, now) {
-			// 令牌里的 chatgpt_subscription_active_until 续费后长期停留在旧值：
-			// 已有订阅提供方权威到期时间时，不让更早的令牌值把它打回去。
+			// After renewal, the chatgpt_subscription_active_until in the token stays at the old value for a long time:
+			// When the subscription provider already has an authoritative expiry time, do not let an earlier token value override it.
 			jwtOlderThanAuthoritative := subscriptionSource == SubscriptionSourceProviderAPI &&
 				!oldSubscription.IsZero() && info.SubscriptionExpiresAt.Before(oldSubscription)
 			if !jwtOlderThanAuthoritative {
@@ -291,10 +291,10 @@ func applyCodexCredentialValues(acc *Account, credentials map[string]any, genera
 		acc.SubscriptionExpiresAt = parseOAuthCredentialExpiry(fmt.Sprint(expiry))
 	}
 	if _, ok := credentials[SubscriptionSyncStateCredentialKey]; ok {
-		// 整行重载：以库中元数据为准。
+		// Reload the whole row: the metadata in the database is authoritative.
 		acc.subscriptionMeta = SubscriptionMetaFromCredentials(row.GetCredential)
 	} else if src, ok := credentials[SubscriptionSourceCredentialKey]; ok {
-		// 无库路径只带了来源一个键，别用空值覆盖其余元数据。
+		// The no-database path carries only the source key; do not overwrite the other metadata with empty values.
 		acc.subscriptionMeta.Source = strings.TrimSpace(fmt.Sprint(src))
 	}
 	acc.CredentialGeneration = generation
@@ -309,7 +309,7 @@ func (s *Store) publishCodexRefresh(ctx context.Context, acc *Account) error {
 	}
 	row, err := s.db.GetAccountByID(ctx, acc.DBID)
 	if err != nil {
-		return fmt.Errorf("新凭据已保存，重载失败: %w", err)
+		return fmt.Errorf("new credentials were saved, but the reload failed: %w", err)
 	}
 	if row.Status == "deleted" {
 		s.RemoveAccount(acc.DBID)
@@ -343,7 +343,7 @@ func (s *Store) finishCodexRefresh(ctx context.Context, acc *Account, warning st
 	acc.mu.Unlock()
 	if s.tokenCache != nil && time.Until(expiry) > 5*time.Minute {
 		if err := s.tokenCache.SetAccessToken(ctx, id, at, time.Until(expiry)-5*time.Minute); err != nil {
-			log.Printf("[账号 %d] 新凭据已保存，更新 Token 缓存失败: %v", id, err)
+			log.Printf("[account %d] new credentials were saved, but updating the token cache failed: %v", id, err)
 		}
 	}
 	s.fastSchedulerUpdate(acc)

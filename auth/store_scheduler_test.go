@@ -444,7 +444,7 @@ func TestConfirmResponsesAvailableSinceRespectsLatestRateLimit(t *testing.T) {
 }
 
 func TestNeedsUsageProbeRateLimitedAllowsResetCreditsRefresh(t *testing.T) {
-	// 429 冷却 + 重置次数从未探测过（stale）：应允许探针（wham-only）刷新「主动重置次数」。
+	// 429 cooldown + reset count never probed (stale): a probe (wham-only) should be allowed to refresh the "proactive reset count".
 	acc := &Account{
 		AccessToken:    "token",
 		Status:         StatusCooldown,
@@ -454,12 +454,12 @@ func TestNeedsUsageProbeRateLimitedAllowsResetCreditsRefresh(t *testing.T) {
 		t.Fatal("NeedsUsageProbe should return true when reset credits are stale, even during rate_limited cooldown")
 	}
 
-	// 该状态应被标记为 limited，以保证探针只走 wham、不回退 /responses。
+	// This state should be marked as limited, so the probe only uses wham and does not fall back to /responses.
 	if !acc.InLimitedState() {
 		t.Fatal("InLimitedState should be true for rate_limited cooldown")
 	}
 
-	// 重置次数刚探测过（fresh）：429 冷却期间不应再发探针（避免 /responses 加重限流）。
+	// The reset count was just probed (fresh): no probe should be sent during the 429 cooldown (to avoid /responses making the rate limiting worse).
 	acc.MarkResetCreditsProbed(time.Now())
 	if acc.NeedsUsageProbe(10 * time.Minute) {
 		t.Fatal("NeedsUsageProbe should return false during rate_limited cooldown once reset credits are fresh")
@@ -482,7 +482,7 @@ func TestNeedsUsageProbeAllowsReadyAccount(t *testing.T) {
 		AccessToken: "token",
 		Status:      StatusReady,
 	}
-	// UsagePercent7dValid = false，应该返回 true
+	// UsagePercent7dValid = false, should return true
 	if !acc.NeedsUsageProbe(10 * time.Minute) {
 		t.Fatal("NeedsUsageProbe should return true for ready account without valid usage data")
 	}
@@ -490,20 +490,20 @@ func TestNeedsUsageProbeAllowsReadyAccount(t *testing.T) {
 
 func TestNeedsUsageProbeRefreshesStaleResetCreditsDespiteFreshUsage(t *testing.T) {
 	now := time.Now()
-	// 核心修复：账号用量快照很新鲜（活跃账号被业务流量持续刷新），
-	// 但「主动重置次数」从未/很久没探测过，仍应触发 wham 探针刷新它。
+	// Core fix: the account usage snapshot is very fresh (active accounts are kept refreshed by business traffic),
+	// but the "proactive reset count" has never been probed, or not for a long time, so a wham probe should still refresh it.
 	acc := &Account{
 		AccessToken:         "token",
 		Status:              StatusReady,
 		UsagePercent7d:      30,
 		UsagePercent7dValid: true,
-		UsageUpdatedAt:      now, // 用量刚刷新
+		UsageUpdatedAt:      now, // usage just refreshed
 	}
 	if !acc.NeedsUsageProbe(10 * time.Minute) {
 		t.Fatal("NeedsUsageProbe should return true when reset credits are stale even if usage snapshot is fresh")
 	}
 
-	// 重置次数也刚探测过：用量与重置次数都新鲜，则无需探针。
+	// The reset count was also just probed: usage and reset count are both fresh, so no probe is needed.
 	acc.MarkResetCreditsProbed(now)
 	if acc.NeedsUsageProbe(10 * time.Minute) {
 		t.Fatal("NeedsUsageProbe should return false when both usage and reset credits are fresh")
@@ -511,7 +511,7 @@ func TestNeedsUsageProbeRefreshesStaleResetCreditsDespiteFreshUsage(t *testing.T
 }
 
 func TestNeedsUsageProbeDoesNotRequireMissing5hWhenAutoPauseEnabled(t *testing.T) {
-	// issue #382：上游可永久不返回 5h。auto-pause 5h 配置在无快照时不应强制探测。
+	// issue #382: upstream may never return 5h. The auto-pause 5h config must not force a probe when there is no snapshot.
 	acc := &Account{
 		AccessToken:          "token",
 		Status:               StatusReady,
@@ -521,7 +521,7 @@ func TestNeedsUsageProbeDoesNotRequireMissing5hWhenAutoPauseEnabled(t *testing.T
 		AutoPause5hThreshold: 0.95,
 	}
 	acc.recomputeEffectiveAutoPause(nil)
-	acc.MarkResetCreditsProbed(time.Now()) // 隔离 reset-credits 过期影响
+	acc.MarkResetCreditsProbed(time.Now()) // isolates reset-credits expiry effects
 
 	if acc.NeedsUsageProbe(10 * time.Minute) {
 		t.Fatal("NeedsUsageProbe() = true, want false when 5h auto-pause is enabled but 5h window is absent")
@@ -550,9 +550,9 @@ func TestNeedsUsageProbeRefreshesStale5hWhenAutoPauseEnabled(t *testing.T) {
 	}
 }
 
-// TestNeedsUsageProbeRefreshesStale5hAfterWindowReset 验证 Bug B 修复：
-// 5h 窗口的重置时间已过、但快照仍是重置前的高用量时，应触发一次 wham 刷新，
-// 让用量进度条跟随官方窗口重置而恢复，而不是一直停在旧值（如 100%）。
+// TestNeedsUsageProbeRefreshesStale5hAfterWindowReset verifies the Bug B fix:
+// when the 5h window's reset time has passed but the snapshot still shows the high usage from before the reset, a wham refresh should be triggered,
+// so the usage progress bar recovers by following the official window reset, instead of staying at the old value (such as 100%).
 func TestNeedsUsageProbeRefreshesStale5hAfterWindowReset(t *testing.T) {
 	now := time.Now()
 	acc := &Account{
@@ -560,20 +560,20 @@ func TestNeedsUsageProbeRefreshesStale5hAfterWindowReset(t *testing.T) {
 		Status:              StatusReady,
 		UsagePercent7d:      12,
 		UsagePercent7dValid: true,
-		UsageUpdatedAt:      now, // 7d 快照新鲜，隔离 7d 路径
-		// 5h：窗口重置时间已过，但快照仍是重置前采集的 100%
+		UsageUpdatedAt:      now, // 7d snapshot is fresh, isolating the 7d path
+		// 5h: the window reset time has passed, but the snapshot is still the 100% captured before the reset
 		UsagePercent5h:      100,
 		UsagePercent5hValid: true,
 		Reset5hAt:           now.Add(-1 * time.Minute),
 		UsageUpdatedAt5h:    now.Add(-3 * time.Hour),
 	}
-	acc.MarkResetCreditsProbed(now) // 隔离 reset-credits 过期影响，专测窗口重置路径
+	acc.MarkResetCreditsProbed(now) // isolates reset-credits expiry effects, testing only the window-reset path
 
 	if !acc.NeedsUsageProbe(10 * time.Minute) {
 		t.Fatal("NeedsUsageProbe() = false, want true: 5h window reset passed but snapshot is stale")
 	}
 
-	// 刷新后（快照刚更新、重置时间在未来）：不应再反复触发探针。
+	// After the refresh (snapshot just updated, reset time in the future): probes should not keep firing repeatedly.
 	acc.SetUsageSnapshot5hAt(8, now.Add(5*time.Hour), now)
 	if acc.NeedsUsageProbe(10 * time.Minute) {
 		t.Fatal("NeedsUsageProbe() = true, want false after 5h snapshot refreshed")
@@ -581,7 +581,7 @@ func TestNeedsUsageProbeRefreshesStale5hAfterWindowReset(t *testing.T) {
 }
 
 func TestPersistUsageSnapshotDoesNotRequireMissing5hAfter7dOnly(t *testing.T) {
-	// issue #382：7d-only 持久化后，缺失 5h 不再因 auto-pause 配置强制探测。
+	// issue #382: after 7d-only persistence, a missing 5h no longer forces a probe because of the auto-pause config.
 	store := NewStore(nil, nil, &database.SystemSettings{MaxConcurrency: 2, TestConcurrency: 1, TestModel: "gpt-5.4"})
 	acc := &Account{
 		DBID:                 1,
@@ -617,7 +617,7 @@ func TestPersistUsageSnapshot5hOnlyDoesNotRefreshStale7dSnapshot(t *testing.T) {
 	}
 
 	store.PersistUsageSnapshot5hOnly(acc)
-	acc.MarkResetCreditsProbed(time.Now()) // 隔离 reset-credits 过期影响，专测 7d 新鲜度不被 5h-only 持久化刷新
+	acc.MarkResetCreditsProbed(time.Now()) // isolates reset-credits expiry effects; tests that 7d freshness is not refreshed by 5h-only persistence
 
 	if !acc.NeedsUsageProbe(10 * time.Minute) {
 		t.Fatal("NeedsUsageProbe() = false, want true because 5h-only persistence must not refresh stale 7d freshness")
@@ -707,7 +707,7 @@ func TestRefreshSingleBypassesCachedAccessToken(t *testing.T) {
 	ctx := context.Background()
 	tokenCache := cache.NewMemory(1)
 	if err := tokenCache.SetAccessToken(ctx, 7, "cached-token", time.Hour); err != nil {
-		t.Fatalf("SetAccessToken 返回错误: %v", err)
+		t.Fatalf("SetAccessToken returned error: %v", err)
 	}
 
 	store := NewStore(nil, tokenCache, &database.SystemSettings{MaxConcurrency: 2, TestConcurrency: 1, TestModel: "gpt-5.4"})
@@ -722,7 +722,7 @@ func TestRefreshSingleBypassesCachedAccessToken(t *testing.T) {
 	if err == nil {
 		t.Fatal("RefreshSingle should force upstream refresh instead of using cached token")
 	}
-	if !strings.Contains(err.Error(), "refresh_token 为空") {
+	if !strings.Contains(err.Error(), "refresh_token is empty") {
 		t.Fatalf("RefreshSingle error = %v, want missing refresh_token", err)
 	}
 }

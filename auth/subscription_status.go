@@ -8,13 +8,13 @@ import (
 	"time"
 )
 
-// 订阅状态拆成两层：业务状态（active / expiring_today / expired ...）由到期时间
-// 按业务时区计算；同步状态（confirmed / pending / failed ...）描述最近一次查询
-// 的结果与数据新鲜度。两者分开保存，查询失败时仍能保留最后一次已知业务状态。
+// Subscription status is split into two layers: business status (active / expiring_today / expired ...) is derived from the expiry time
+// using the business timezone; sync status (confirmed / pending / failed ...) describes the result of the latest query
+// and data freshness. The two are stored separately, so the last known business status is kept when a query fails.
 //
-// 元数据落在账号 credentials 键值里，不需要建表迁移。
+// Metadata lives in the account credentials key-value entries, so no table migration is needed.
 
-// 订阅元数据 credentials 键。
+// Subscription metadata credentials keys.
 const (
 	SubscriptionCheckedAtCredentialKey         = "subscription_checked_at"
 	SubscriptionSyncStateCredentialKey         = "subscription_sync_state"
@@ -26,30 +26,30 @@ const (
 	SubscriptionGraceUntilCredentialKey        = "subscription_grace_until"
 )
 
-// 同步状态。
+// Sync status.
 const (
-	// SubscriptionSyncConfirmed 最近一次查询成功，业务状态已由订阅提供方确认。
+	// SubscriptionSyncConfirmed means the latest query succeeded and the business status has been confirmed by the subscription provider.
 	SubscriptionSyncConfirmed = "confirmed"
-	// SubscriptionSyncPending 已观测到续费迹象（付费套餐仍在用而旧到期时间已过去）
-	// 或用户已发起刷新，权威到期时间尚未拿到。
+	// SubscriptionSyncPending means a renewal was observed (a paid plan is still in use and the old expiry time has passed),
+	// or the user has started a refresh and the authoritative expiry time has not been received yet.
 	SubscriptionSyncPending = "pending"
-	// SubscriptionSyncFailed 最近一次查询失败，但仍有最后一次已知业务状态。
+	// SubscriptionSyncFailed means the latest query failed, but the last known business status is still available.
 	SubscriptionSyncFailed = "failed"
-	// SubscriptionSyncUnknown 从未成功查询过，或没有任何可用状态。
+	// SubscriptionSyncUnknown means no query has ever succeeded, or no usable status exists.
 	SubscriptionSyncUnknown = "unknown"
-	// SubscriptionSyncUnsupported 订阅提供方对该工作区没有订阅记录（k12/edu 等
-	// 教育/团队计划），只能依赖登录令牌里的到期时间。
+	// SubscriptionSyncUnsupported means the subscription provider has no subscription record for this workspace (k12/edu and similar
+	// education/team plans), so only the expiry time in the login token can be relied on.
 	SubscriptionSyncUnsupported = "unsupported"
 )
 
-// 到期时间来源。
+// Expiry time source.
 const (
 	SubscriptionSourceJWT         = "jwt"
 	SubscriptionSourcePlanHeader  = "plan_header"
 	SubscriptionSourceProviderAPI = "provider_api"
 )
 
-// 业务状态。
+// Business status.
 const (
 	SubscriptionStatusActive        = "active"
 	SubscriptionStatusExpiringToday = "expiring_today"
@@ -58,7 +58,7 @@ const (
 	SubscriptionStatusUnknown       = "unknown"
 )
 
-// 自动续期状态：四值语义，不用 false 同时表示关闭和不支持。
+// Auto-renewal status: four values, so that false does not mean both off and unsupported.
 const (
 	SubscriptionAutoRenewEnabled     = "enabled"
 	SubscriptionAutoRenewDisabled    = "disabled"
@@ -66,25 +66,25 @@ const (
 	SubscriptionAutoRenewUnknown     = "unknown"
 )
 
-// SubscriptionMeta 是订阅同步元数据（持久化在 credentials 里）。
+// SubscriptionMeta is the subscription sync metadata (persisted in credentials).
 type SubscriptionMeta struct {
-	// CheckedAt 最近一次订阅查询的时间（无论成败），也用于探针节流。
+	// CheckedAt is the time of the latest subscription query (success or failure), also used for probe throttling.
 	CheckedAt time.Time
 	SyncState string
 	Source    string
-	// Error 最近一次查询失败原因；成功时清空。
+	// Error is the reason the latest query failed; cleared on success.
 	Error string
-	// LastKnownStatus 最近一次确认过的业务状态，查询失败/陈旧值被清理后保留。
+	// LastKnownStatus is the business status confirmed most recently, kept after a failed query or after a stale value is cleared.
 	LastKnownStatus string
-	// RenewalDetectedAt 最近一次检测到有效期变化（续费）的时间，仅作事件信息。
+	// RenewalDetectedAt is when a validity change (renewal) was last detected; it is event information only.
 	RenewalDetectedAt time.Time
-	// WillRenew 自动续期状态：enabled / disabled / unsupported / unknown。
+	// WillRenew is the auto-renewal status: enabled / disabled / unsupported / unknown.
 	WillRenew string
-	// GraceUntil 宽限期结束时间（订阅提供方返回），零值表示无宽限期。
+	// GraceUntil is the end of the grace period (returned by the subscription provider); the zero value means there is no grace period.
 	GraceUntil time.Time
 }
 
-// SubscriptionMetaFromCredentials 从 credentials 读取元数据；get 为按键取值函数。
+// SubscriptionMetaFromCredentials reads the metadata from credentials; get is the function that reads a value by key.
 func SubscriptionMetaFromCredentials(get func(string) string) SubscriptionMeta {
 	if get == nil {
 		return SubscriptionMeta{}
@@ -101,7 +101,7 @@ func SubscriptionMetaFromCredentials(get func(string) string) SubscriptionMeta {
 	}
 }
 
-// CredentialUpdates 生成写库用的 credentials 更新（全量八个键，空值写空串以便清理）。
+// CredentialUpdates builds the credentials updates to write to the database (all eight keys; empty values are written as empty strings so they can be cleared).
 func (m SubscriptionMeta) CredentialUpdates() map[string]interface{} {
 	return map[string]interface{}{
 		SubscriptionCheckedAtCredentialKey:         formatSubscriptionTime(m.CheckedAt),
@@ -136,14 +136,14 @@ func formatSubscriptionTime(t time.Time) string {
 	return t.UTC().Format(time.RFC3339)
 }
 
-// SubscriptionStatusView 是下发给管理端/前端的订阅状态对象。
+// SubscriptionStatusView is the subscription status object sent to the admin panel and frontend.
 type SubscriptionStatusView struct {
 	BusinessStatus string `json:"business_status"`
 	Plan           string `json:"plan,omitempty"`
 	ExpiresAt      string `json:"expires_at,omitempty"`
-	// DaysRemaining 按业务时区自然日计的剩余天数（active 时有值；expiring_today 为 0）。
+	// DaysRemaining is the number of calendar days remaining in the business timezone (set when active; 0 for expiring_today).
 	DaysRemaining int `json:"days_remaining"`
-	// DaysOverdue 按业务时区自然日计的超时天数（expired / grace_period 时 ≥1）。
+	// DaysOverdue is the number of calendar days overdue in the business timezone (≥1 for expired / grace_period).
 	DaysOverdue       int    `json:"days_overdue"`
 	LastKnownStatus   string `json:"last_known_status,omitempty"`
 	AutoRenew         string `json:"auto_renew"`
@@ -156,9 +156,9 @@ type SubscriptionStatusView struct {
 	Timezone          string `json:"timezone"`
 }
 
-// SubscriptionPlanTracked 判断该套餐是否需要订阅状态跟踪：
-// 付费套餐一律跟踪；free 套餐仅在留有到期时间时跟踪（付费到期后降级为 free，
-// 这时到期时间就是"真过期"的证据，不能因为降级而丢掉过期展示）。
+// SubscriptionPlanTracked reports whether the plan needs subscription status tracking:
+// paid plans are always tracked; a free plan is tracked only when an expiry time is kept (a paid plan that expired and was downgraded to free,
+// the expiry time is then the evidence of a "real expiry", so the expired display must not be dropped just because of the downgrade).
 func SubscriptionPlanTracked(planType string, expiresAt time.Time) bool {
 	plan := strings.ToLower(strings.TrimSpace(planType))
 	switch plan {
@@ -170,7 +170,7 @@ func SubscriptionPlanTracked(planType string, expiresAt time.Time) bool {
 	return true
 }
 
-// businessDate 取业务时区下的自然日（当天零点）。
+// businessDate returns the calendar day in the business timezone (midnight of that day).
 func businessDate(t time.Time, loc *time.Location) time.Time {
 	if loc == nil {
 		loc = time.Local
@@ -179,16 +179,16 @@ func businessDate(t time.Time, loc *time.Location) time.Time {
 	return time.Date(y, m, d, 0, 0, 0, 0, loc)
 }
 
-// businessDayDiff 计算两个业务日之间相差的自然日数（later - earlier）。
-// 按日期分量相减而不是除以 24h，夏令时切换日不会少算/多算一天。
+// businessDayDiff computes the number of calendar days between two business days (later - earlier).
+// It subtracts the date components instead of dividing by 24h, so a daylight saving switch day is neither under-counted nor over-counted.
 func businessDayDiff(later, earlier time.Time) int {
 	l := time.Date(later.Year(), later.Month(), later.Day(), 0, 0, 0, 0, time.UTC)
 	e := time.Date(earlier.Year(), earlier.Month(), earlier.Day(), 0, 0, 0, 0, time.UTC)
 	return int(l.Sub(e).Hours() / 24)
 }
 
-// ComputeSubscriptionBusinessStatus 只算业务状态与天数，供 ClearStale 等内部路径
-// 记录 LastKnownStatus 时复用。
+// ComputeSubscriptionBusinessStatus only computes the business status and day counts, for internal paths such as ClearStale
+// to reuse when recording LastKnownStatus.
 func ComputeSubscriptionBusinessStatus(expiresAt time.Time, graceUntil time.Time, now time.Time, loc *time.Location) (status string, daysRemaining int, daysOverdue int) {
 	if expiresAt.IsZero() {
 		return SubscriptionStatusUnknown, 0, 0
@@ -215,7 +215,7 @@ func ComputeSubscriptionBusinessStatus(expiresAt time.Time, graceUntil time.Time
 	return SubscriptionStatusExpired, 0, overdue
 }
 
-// BuildSubscriptionStatusView 组装订阅状态对象；不需要跟踪的套餐返回 nil。
+// BuildSubscriptionStatusView assembles the subscription status object; plans that do not need tracking return nil.
 func BuildSubscriptionStatusView(planType string, expiresAt time.Time, meta SubscriptionMeta, now time.Time, loc *time.Location) *SubscriptionStatusView {
 	if !SubscriptionPlanTracked(planType, expiresAt) {
 		return nil
@@ -231,7 +231,7 @@ func BuildSubscriptionStatusView(planType string, expiresAt time.Time, meta Subs
 	}
 	source := meta.Source
 	if source == "" && !expiresAt.IsZero() {
-		// 历史数据：到期时间只可能来自登录令牌。
+		// Historical data: the expiry time can only have come from the login token.
 		source = SubscriptionSourceJWT
 	}
 	autoRenew := SubscriptionAutoRenewUnknown
@@ -265,7 +265,7 @@ func BuildSubscriptionStatusView(planType string, expiresAt time.Time, meta Subs
 	}
 }
 
-// SubscriptionMeta 返回账号当前的订阅元数据快照。
+// SubscriptionMeta returns a snapshot of the account's current subscription metadata.
 func (a *Account) SubscriptionMetaSnapshot() SubscriptionMeta {
 	if a == nil {
 		return SubscriptionMeta{}
@@ -275,7 +275,7 @@ func (a *Account) SubscriptionMetaSnapshot() SubscriptionMeta {
 	return a.subscriptionMeta
 }
 
-// SubscriptionStatusView 按当前时间与业务时区组装账号的订阅状态对象。
+// SubscriptionStatusView assembles the account's subscription status object from the current time and the business timezone.
 func (a *Account) SubscriptionStatusView(now time.Time) *SubscriptionStatusView {
 	if a == nil {
 		return nil
@@ -286,8 +286,8 @@ func (a *Account) SubscriptionStatusView(now time.Time) *SubscriptionStatusView 
 	return BuildSubscriptionStatusView(plan, expiresAt, meta, now, time.Local)
 }
 
-// UpdateSubscriptionMeta 原子修改账号订阅元数据并持久化（全量八键）。
-// mutate 在账号锁内执行，只能改 meta 本身。
+// UpdateSubscriptionMeta atomically changes the account's subscription metadata and persists it (all eight keys).
+// mutate runs under the account lock and may only change meta itself.
 func (s *Store) UpdateSubscriptionMeta(acc *Account, mutate func(m *SubscriptionMeta)) {
 	if s == nil || acc == nil || mutate == nil {
 		return
@@ -299,7 +299,7 @@ func (s *Store) UpdateSubscriptionMeta(acc *Account, mutate func(m *Subscription
 	s.persistSubscriptionMeta(acc.DBID, snapshot, nil)
 }
 
-// persistSubscriptionMeta 把元数据（可附带额外 credentials 键）写库；失败只记日志。
+// persistSubscriptionMeta writes the metadata (optionally with extra credentials keys) to the database; on failure it only logs.
 func (s *Store) persistSubscriptionMeta(dbID int64, meta SubscriptionMeta, extra map[string]interface{}) {
 	if s == nil || s.db == nil || dbID <= 0 {
 		return
@@ -311,11 +311,11 @@ func (s *Store) persistSubscriptionMeta(dbID int64, meta SubscriptionMeta, extra
 	ctx, cancel := context.WithTimeout(context.Background(), 2*time.Second)
 	defer cancel()
 	if err := s.db.UpdateCredentials(ctx, dbID, updates); err != nil {
-		log.Printf("[账号 %d] 持久化订阅同步元数据失败: %v", dbID, err)
+		log.Printf("[account %d] failed to persist subscription sync metadata: %v", dbID, err)
 	}
 }
 
-// GetSubscriptionExpiresAt 返回账号当前记录的订阅到期时间（零值表示未知）。
+// GetSubscriptionExpiresAt returns the subscription expiry time currently recorded for the account (the zero value means unknown).
 func (a *Account) GetSubscriptionExpiresAt() time.Time {
 	if a == nil {
 		return time.Time{}
@@ -325,7 +325,7 @@ func (a *Account) GetSubscriptionExpiresAt() time.Time {
 	return a.SubscriptionExpiresAt
 }
 
-// BeginSubscriptionSync 尝试占用异步订阅同步槽；已有在途同步时返回 false。
+// BeginSubscriptionSync tries to take the async subscription sync slot; it returns false when a sync is already in flight.
 func (a *Account) BeginSubscriptionSync() bool {
 	if a == nil {
 		return false
@@ -339,7 +339,7 @@ func (a *Account) BeginSubscriptionSync() bool {
 	return true
 }
 
-// EndSubscriptionSync 释放异步订阅同步槽。
+// EndSubscriptionSync releases the async subscription sync slot.
 func (a *Account) EndSubscriptionSync() {
 	if a == nil {
 		return

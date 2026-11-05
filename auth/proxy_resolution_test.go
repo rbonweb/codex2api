@@ -81,7 +81,7 @@ func TestResolveProxyForAccountSkipsBlankPoolEntries(t *testing.T) {
 	}
 }
 
-// 组代理优先级:账号代理 > 组代理 > 粘性代理池 > 全局(issue #479)。
+// Group proxy priority: account proxy > group proxy > sticky proxy pool > global (issue #479).
 func TestResolveProxyForAccountGroupProxyBeatsPoolAndGlobal(t *testing.T) {
 	store := &Store{
 		globalProxy:      "http://global-proxy:8080",
@@ -95,14 +95,14 @@ func TestResolveProxyForAccountGroupProxyBeatsPoolAndGlobal(t *testing.T) {
 		t.Fatalf("ResolveProxyForAccount() = %q, want group proxy %q", got, want)
 	}
 
-	// 账号自身代理仍然最高优先。
+	// The account's own proxy still has the highest priority.
 	got = store.ResolveProxyForAccount(&Account{DBID: 1, GroupIDs: []int64{5}, ProxyURL: "http://account-proxy:8080"})
 	if want := "http://account-proxy:8080"; got != want {
 		t.Fatalf("ResolveProxyForAccount() = %q, want account proxy %q", got, want)
 	}
 }
 
-// 组内多条代理按账号 ID 粘性:同账号稳定命中同一条,不随调用漂移。
+// Within a group, multiple proxies are sticky by account ID: the same account always hits the same one and does not drift between calls.
 func TestResolveProxyForAccountGroupProxySticky(t *testing.T) {
 	store := &Store{}
 	store.SetGroupProxyURLs(5, []string{
@@ -121,7 +121,7 @@ func TestResolveProxyForAccountGroupProxySticky(t *testing.T) {
 		}
 		seen[id] = first
 	}
-	// 粘性哈希应把不同账号分散到多条代理上,而不是全挤在一条。
+	// Sticky hashing should spread different accounts across multiple proxies, not pile them all onto one.
 	distinct := make(map[string]struct{})
 	for _, proxy := range seen {
 		distinct[proxy] = struct{}{}
@@ -131,19 +131,19 @@ func TestResolveProxyForAccountGroupProxySticky(t *testing.T) {
 	}
 }
 
-// 多组归属:按 GroupIDs 顺序取第一个配置了代理的组。
+// Multiple group membership: take the first group in GroupIDs order that has a proxy configured.
 func TestResolveProxyForAccountMultiGroupFirstConfiguredWins(t *testing.T) {
 	store := &Store{}
 	store.SetGroupProxyURLs(9, []string{"http://group9:8080"})
 
-	// 组 3 未配置代理,跳过后命中组 9。
+	// Group 3 has no proxy configured, so skip it and hit group 9.
 	got := store.ResolveProxyForAccount(&Account{DBID: 1, GroupIDs: []int64{3, 9}})
 	if want := "http://group9:8080"; got != want {
 		t.Fatalf("ResolveProxyForAccount() = %q, want %q", got, want)
 	}
 }
 
-// 热更新:改组代理即时生效,清空后回退到全局链。
+// Hot update: a group proxy change takes effect immediately; after clearing, fall back to the global chain.
 func TestSetGroupProxyURLsHotUpdate(t *testing.T) {
 	store := &Store{globalProxy: "http://global-proxy:8080"}
 	account := &Account{DBID: 1, GroupIDs: []int64{5}}
@@ -156,7 +156,7 @@ func TestSetGroupProxyURLsHotUpdate(t *testing.T) {
 	if got := store.ResolveProxyForAccount(account); got != "http://new:8080" {
 		t.Fatalf("after update proxy = %q, want new", got)
 	}
-	// 全空白列表等价于清除。
+	// An all-blank list is equivalent to clearing.
 	store.SetGroupProxyURLs(5, []string{" ", ""})
 	if got := store.ResolveProxyForAccount(account); got != "http://global-proxy:8080" {
 		t.Fatalf("after clear proxy = %q, want global fallback", got)
@@ -240,7 +240,7 @@ func TestNextReturnsNilWhenPoolEnabledAndNoUsableProxy(t *testing.T) {
 	}
 }
 
-// 粘性会话校验:组代理变更后,粘住旧代理的绑定要判失效触发重绑。
+// Sticky session check: after a group proxy changes, a binding stuck to the old proxy must be judged invalid so it gets rebound.
 func TestAffinityProxyStillValidTracksGroupProxy(t *testing.T) {
 	store := &Store{}
 	account := &Account{DBID: 42, AccessToken: "at", GroupIDs: []int64{5}}
@@ -260,9 +260,9 @@ func TestAffinityProxyStillValidTracksGroupProxy(t *testing.T) {
 	}
 }
 
-// UnusableManagedProxies 是导入侧的批量告警依据，语义必须和单条的
-// ResolveProxyForAccount fail-closed 判定完全一致：托管但不在启用集里的代理，
-// 绑定它的账号一律不可调度。
+// UnusableManagedProxies is the basis for batch import warnings, and its semantics must match the single-entry check exactly:
+// the fail-closed decision in ResolveProxyForAccount is identical: a managed proxy that is not in the enabled set,
+// and any account bound to it is always not schedulable.
 func TestUnusableManagedProxies(t *testing.T) {
 	const (
 		disabledURL = "http://disabled.example:8080"
@@ -276,14 +276,14 @@ func TestUnusableManagedProxies(t *testing.T) {
 		managedProxySet:  buildProxyPoolSet([]string{disabledURL, enabledURL}),
 	}
 
-	// 只挑出被托管却没启用的那条；启用的、以及压根不在代理表里的自定义代理都不算。
+	// Pick out only the one that is managed but not enabled; enabled ones, and custom proxies that are not in the proxy table at all, do not count.
 	got := store.UnusableManagedProxies([]string{enabledURL, " " + disabledURL + " ", customURL, "", disabledURL})
 	want := []string{disabledURL, disabledURL}
 	if !reflect.DeepEqual(got, want) {
 		t.Fatalf("UnusableManagedProxies = %v, want %v", got, want)
 	}
 
-	// 与单条判定对齐：这里报不可用的，ResolveProxyForAccount 就一定 fail-closed。
+	// Aligned with the single-entry check: whatever is reported unusable here, ResolveProxyForAccount is guaranteed to fail-closed.
 	for _, unusable := range got {
 		account := &Account{DBID: 1, ProxyURL: unusable}
 		if store.ResolveProxyForAccount(account) != "" || store.AccountHasUsableEgress(account) {
@@ -291,7 +291,7 @@ func TestUnusableManagedProxies(t *testing.T) {
 		}
 	}
 
-	// 代理池关闭时不存在 fail-closed，一条都不该报。
+	// With the proxy pool disabled there is no fail-closed, so nothing should be reported.
 	store.proxyPoolEnabled = false
 	if got := store.UnusableManagedProxies([]string{disabledURL}); len(got) != 0 {
 		t.Fatalf("UnusableManagedProxies while pool is off = %v, want empty", got)

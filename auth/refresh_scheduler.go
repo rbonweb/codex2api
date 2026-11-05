@@ -11,79 +11,79 @@ import (
 	"time"
 )
 
-// RefreshState 刷新任务状态
+// RefreshState is the state of a refresh task.
 type RefreshState int
 
 const (
-	RefreshStatePending   RefreshState = iota // 等待执行
-	RefreshStateRunning                       // 执行中
-	RefreshStateSuccess                       // 成功
-	RefreshStateFailed                        // 失败
-	RefreshStateRetrying                      // 重试中
+	RefreshStatePending  RefreshState = iota // waiting to run
+	RefreshStateRunning                      // running
+	RefreshStateSuccess                      // succeeded
+	RefreshStateFailed                       // failed
+	RefreshStateRetrying                     // retrying
 )
 
-// RefreshTask 刷新任务
+// RefreshTask is a refresh task.
 type RefreshTask struct {
 	Account     *Account
-	ScheduledAt time.Time      // 计划执行时间
-	Priority    int            // 优先级（数值越大优先级越高）
-	Attempts    int            // 已尝试次数
-	State       RefreshState   // 当前状态
-	LastError   error          // 上次错误
-	NextRetryAt time.Time      // 下次重试时间
-	mu          sync.RWMutex   // 任务级锁
-	heapIndex   int            // 在堆中的索引，用于 heap.Remove
+	ScheduledAt time.Time    // scheduled execution time
+	Priority    int          // priority (a larger value means higher priority)
+	Attempts    int          // number of attempts so far
+	State       RefreshState // current state
+	LastError   error        // last error
+	NextRetryAt time.Time    // next retry time
+	mu          sync.RWMutex // task-level lock
+	heapIndex   int          // index in the heap, used by heap.Remove
 }
 
-// RefreshMetrics 刷新指标（用于监控）
+// RefreshMetrics holds refresh metrics (for monitoring).
 type RefreshMetrics struct {
-	TotalTasks      atomic.Int64 // 总任务数
-	PendingTasks    atomic.Int64 // 等待任务数
-	RunningTasks    atomic.Int64 // 运行中任务数
-	SuccessCount    atomic.Int64 // 成功次数
-	FailedCount     atomic.Int64 // 失败次数
-	RetryCount      atomic.Int64 // 重试次数
-	AvgDurationMs   atomic.Int64 // 平均耗时（毫秒）
-	LastRefreshAt   atomic.Int64 // 上次刷新时间戳
+	TotalTasks    atomic.Int64 // total tasks
+	PendingTasks  atomic.Int64 // pending tasks
+	RunningTasks  atomic.Int64 // running tasks
+	SuccessCount  atomic.Int64 // success count
+	FailedCount   atomic.Int64 // failure count
+	RetryCount    atomic.Int64 // retry count
+	AvgDurationMs atomic.Int64 // average duration (ms)
+	LastRefreshAt atomic.Int64 // last refresh timestamp
 }
 
-// RefreshConfig 刷新调度器配置
+// RefreshConfig is the refresh scheduler configuration.
 type RefreshConfig struct {
-	MaxConcurrency     int           // 最大并发刷新数
-	MinInterval        time.Duration // 最小刷新间隔（避免刷新风暴）
-	PreExpireWindow    time.Duration // 提前刷新窗口（过期前多久开始刷新）
-	RetryBackoffBase   time.Duration // 重试退避基数
-	RetryMaxAttempts   int           // 最大重试次数
-	JitterPercent      float64       // 抖动百分比（0-1）
-	EnableBatchOptimize bool         // 启用批量优化
-	BatchSize          int           // 批量大小
+	MaxConcurrency      int           // maximum concurrent refreshes
+	MinInterval         time.Duration // minimum refresh interval (avoids refresh storms)
+	PreExpireWindow     time.Duration // early refresh window (how long before expiry refreshes start)
+	RetryBackoffBase    time.Duration // retry backoff base
+	RetryMaxAttempts    int           // maximum number of retries
+	JitterPercent       float64       // jitter percentage (0-1)
+	EnableBatchOptimize bool          // enable batch optimization
+	BatchSize           int           // batch size
 }
 
-// DefaultRefreshConfig 返回默认配置
+// DefaultRefreshConfig returns the default configuration.
 func DefaultRefreshConfig() RefreshConfig {
 	return RefreshConfig{
-		MaxConcurrency:     10,
-		MinInterval:        100 * time.Millisecond,
-		PreExpireWindow:    5 * time.Minute,
-		RetryBackoffBase:   1 * time.Second,
-		RetryMaxAttempts:   3,
-		JitterPercent:      0.1,
+		MaxConcurrency:      10,
+		MinInterval:         100 * time.Millisecond,
+		PreExpireWindow:     5 * time.Minute,
+		RetryBackoffBase:    1 * time.Second,
+		RetryMaxAttempts:    3,
+		JitterPercent:       0.1,
 		EnableBatchOptimize: true,
-		BatchSize:          5,
+		BatchSize:           5,
 	}
 }
 
-// taskPriorityQueue 任务优先级队列（小顶堆，ScheduledAt 越早优先级越高）
+// taskPriorityQueue is the task priority queue (a min-heap: the earlier the ScheduledAt, the higher the priority).
 type taskPriorityQueue []*RefreshTask
 
 func (pq taskPriorityQueue) Len() int { return len(pq) }
 
 func (pq taskPriorityQueue) Less(i, j int) bool {
-	// 优先级高的在前
+	// Higher priority first.
 	if pq[i].Priority != pq[j].Priority {
 		return pq[i].Priority > pq[j].Priority
 	}
-	// 优先级相同，按计划时间排序
+	// Same priority: order by scheduled time.
 	return pq[i].ScheduledAt.Before(pq[j].ScheduledAt)
 }
 
@@ -103,31 +103,31 @@ func (pq *taskPriorityQueue) Pop() interface{} {
 	old := *pq
 	n := len(old)
 	x := old[n-1]
-	old[n-1] = nil // 避免内存泄漏
+	old[n-1] = nil // avoid a memory leak
 	x.heapIndex = -1
 	*pq = old[0 : n-1]
 	return x
 }
 
-// RefreshScheduler 智能刷新调度器
+// RefreshScheduler is the smart refresh scheduler.
 type RefreshScheduler struct {
-	config     RefreshConfig
-	store      *Store
-	queue      chan *RefreshTask
-	semaphore  chan struct{}
-	pq         *taskPriorityQueue
-	pqMu       sync.Mutex
-	tasks      map[int64]*RefreshTask // dbID -> task
-	tasksMu    sync.RWMutex
-	ctx        context.Context
-	cancel     context.CancelFunc
-	wg         sync.WaitGroup
-	metrics    *RefreshMetrics
-	lastBatch  time.Time
-	batchMu    sync.Mutex
+	config    RefreshConfig
+	store     *Store
+	queue     chan *RefreshTask
+	semaphore chan struct{}
+	pq        *taskPriorityQueue
+	pqMu      sync.Mutex
+	tasks     map[int64]*RefreshTask // dbID -> task
+	tasksMu   sync.RWMutex
+	ctx       context.Context
+	cancel    context.CancelFunc
+	wg        sync.WaitGroup
+	metrics   *RefreshMetrics
+	lastBatch time.Time
+	batchMu   sync.Mutex
 }
 
-// NewRefreshScheduler 创建刷新调度器
+// NewRefreshScheduler creates a refresh scheduler.
 func NewRefreshScheduler(store *Store, config RefreshConfig) *RefreshScheduler {
 	if config.MaxConcurrency <= 0 {
 		config.MaxConcurrency = 10
@@ -154,7 +154,7 @@ func NewRefreshScheduler(store *Store, config RefreshConfig) *RefreshScheduler {
 	}
 }
 
-// Schedule 调度一个账号刷新
+// Schedule schedules a refresh for one account.
 func (s *RefreshScheduler) Schedule(account *Account) {
 	if account == nil {
 		return
@@ -163,10 +163,10 @@ func (s *RefreshScheduler) Schedule(account *Account) {
 	s.tasksMu.Lock()
 	defer s.tasksMu.Unlock()
 
-	// 检查是否已有待处理任务
+	// Check whether there is already a pending task.
 	if existing, ok := s.tasks[account.DBID]; ok {
 		existing.mu.Lock()
-		// 只有在非运行状态时才能重新调度
+		// A task can only be rescheduled when it is not running.
 		if existing.State != RefreshStateRunning {
 			existing.State = RefreshStatePending
 			existing.ScheduledAt = s.calculateOptimalTime(account)
@@ -174,7 +174,7 @@ func (s *RefreshScheduler) Schedule(account *Account) {
 			existing.Attempts = 0
 			existing.LastError = nil
 			existing.mu.Unlock()
-			// 任务已在堆中，pushToQueue 会使用 heap.Fix
+			// The task is already in the heap; pushToQueue will use heap.Fix.
 			s.pushToQueue(existing)
 		} else {
 			existing.mu.Unlock()
@@ -182,14 +182,14 @@ func (s *RefreshScheduler) Schedule(account *Account) {
 		return
 	}
 
-	// 创建新任务
+	// Create a new task.
 	task := &RefreshTask{
 		Account:     account,
 		ScheduledAt: s.calculateOptimalTime(account),
 		Priority:    s.calculatePriority(account),
 		State:       RefreshStatePending,
 		Attempts:    0,
-		heapIndex:   -1, // 未入堆，-1 避免与有效索引 0 冲突
+		heapIndex:   -1, // not in the heap; -1 avoids clashing with the valid index 0
 	}
 
 	s.tasks[account.DBID] = task
@@ -199,7 +199,7 @@ func (s *RefreshScheduler) Schedule(account *Account) {
 	s.pushToQueue(task)
 }
 
-// ScheduleImmediate 立即调度刷新（用于紧急刷新）
+// ScheduleImmediate schedules an immediate refresh (for urgent refreshes).
 func (s *RefreshScheduler) ScheduleImmediate(account *Account) {
 	if account == nil {
 		return
@@ -211,61 +211,61 @@ func (s *RefreshScheduler) ScheduleImmediate(account *Account) {
 	task := &RefreshTask{
 		Account:     account,
 		ScheduledAt: time.Now(),
-		Priority:    1000, // 最高优先级
+		Priority:    1000, // highest priority
 		State:       RefreshStatePending,
 		Attempts:    0,
 		heapIndex:   -1,
 	}
 
-	// 如果已有任务，从堆中移除旧任务
+	// If there is already a task, remove the old one from the heap.
 	if existing, ok := s.tasks[account.DBID]; ok {
 		existing.mu.Lock()
-		existing.State = RefreshStateSuccess // 标记为完成，避免重复执行
+		existing.State = RefreshStateSuccess // mark as done to avoid running it twice
 		existing.mu.Unlock()
 		s.removeFromQueue(existing)
 		s.metrics.PendingTasks.Add(-1)
 	} else {
-		// 新任务才增加 TotalTasks
+		// Only a new task increments TotalTasks.
 		s.metrics.TotalTasks.Add(1)
 		s.metrics.PendingTasks.Add(1)
 	}
 
 	s.tasks[account.DBID] = task
 
-	// 直接放入队列，不经过优先队列
+	// Put it directly on the queue, bypassing the priority queue.
 	select {
 	case s.queue <- task:
-		// ScheduleImmediate 直接入队，不在 pq 中，所以减少 PendingTasks
+		// ScheduleImmediate enqueues directly and is not in pq, so decrement PendingTasks.
 		s.metrics.PendingTasks.Add(-1)
 	default:
-		log.Printf("[RefreshScheduler] 队列已满，任务 %d 被丢弃", account.DBID)
+		log.Printf("[RefreshScheduler] queue full, task %d dropped", account.DBID)
 	}
 }
 
-// calculateOptimalTime 计算最佳刷新时间
+// calculateOptimalTime calculates the best refresh time.
 func (s *RefreshScheduler) calculateOptimalTime(account *Account) time.Time {
 	account.mu.RLock()
 	expiresAt := account.ExpiresAt
 	account.mu.RUnlock()
 
-	// 基于过期时间计算
+	// Based on the expiry time.
 	var targetTime time.Time
 	if expiresAt.IsZero() {
 		targetTime = time.Now().Add(30 * time.Second)
 	} else {
 		timeUntilExpire := time.Until(expiresAt)
 		if timeUntilExpire < s.config.PreExpireWindow {
-			// 即将过期，立即刷新
+			// About to expire; refresh immediately.
 			targetTime = time.Now().Add(s.randomJitter(100 * time.Millisecond))
 		} else {
-			// 在过期前 PreExpireWindow 刷新
+			// Refresh PreExpireWindow before expiry.
 			targetTime = expiresAt.Add(-s.config.PreExpireWindow)
-			// 添加抖动避免集中刷新
+			// Add jitter to avoid refreshing everything at once.
 			targetTime = targetTime.Add(s.randomJitter(s.config.MinInterval))
 		}
 	}
 
-	// 确保不小于当前时间
+	// Make sure it is not earlier than the current time.
 	if targetTime.Before(time.Now()) {
 		targetTime = time.Now().Add(s.randomJitter(100 * time.Millisecond))
 	}
@@ -273,7 +273,7 @@ func (s *RefreshScheduler) calculateOptimalTime(account *Account) time.Time {
 	return targetTime
 }
 
-// calculatePriority 计算任务优先级
+// calculatePriority calculates the task priority.
 func (s *RefreshScheduler) calculatePriority(account *Account) int {
 	account.mu.RLock()
 	expiresAt := account.ExpiresAt
@@ -282,7 +282,7 @@ func (s *RefreshScheduler) calculatePriority(account *Account) int {
 
 	priority := 0
 
-	// 基础优先级：健康层级
+	// Base priority: health tier.
 	switch tier {
 	case HealthTierHealthy:
 		priority += 30
@@ -292,12 +292,12 @@ func (s *RefreshScheduler) calculatePriority(account *Account) int {
 		priority += 10
 	}
 
-	// 紧急程度：基于剩余时间
+	// Urgency: based on the remaining time.
 	if !expiresAt.IsZero() {
 		timeUntilExpire := time.Until(expiresAt)
 		switch {
 		case timeUntilExpire < 30*time.Second:
-			priority += 100 // 非常紧急
+			priority += 100 // very urgent
 		case timeUntilExpire < 2*time.Minute:
 			priority += 50
 		case timeUntilExpire < 5*time.Minute:
@@ -308,7 +308,7 @@ func (s *RefreshScheduler) calculatePriority(account *Account) int {
 	return priority
 }
 
-// randomJitter 生成随机抖动
+// randomJitter generates random jitter.
 func (s *RefreshScheduler) randomJitter(base time.Duration) time.Duration {
 	if s.config.JitterPercent <= 0 {
 		return base
@@ -317,12 +317,12 @@ func (s *RefreshScheduler) randomJitter(base time.Duration) time.Duration {
 	return base + time.Duration(jitter)
 }
 
-// pushToQueue 推入优先队列
+// pushToQueue pushes onto the priority queue.
 func (s *RefreshScheduler) pushToQueue(task *RefreshTask) {
 	s.pqMu.Lock()
 	defer s.pqMu.Unlock()
 
-	// 如果任务已在堆中且索引有效，使用 heap.Fix 更新位置
+	// If the task is already in the heap and its index is valid, use heap.Fix to update its position.
 	task.mu.RLock()
 	idx := task.heapIndex
 	task.mu.RUnlock()
@@ -331,13 +331,13 @@ func (s *RefreshScheduler) pushToQueue(task *RefreshTask) {
 		heap.Fix(s.pq, idx)
 	} else {
 		task.mu.Lock()
-		task.heapIndex = -1 // 重置索引
+		task.heapIndex = -1 // reset the index
 		task.mu.Unlock()
 		heap.Push(s.pq, task)
 	}
 }
 
-// removeFromQueue 从优先队列移除任务
+// removeFromQueue removes a task from the priority queue.
 func (s *RefreshScheduler) removeFromQueue(task *RefreshTask) {
 	s.pqMu.Lock()
 	defer s.pqMu.Unlock()
@@ -351,7 +351,7 @@ func (s *RefreshScheduler) removeFromQueue(task *RefreshTask) {
 	}
 }
 
-// popFromQueue 从优先队列弹出
+// popFromQueue pops from the priority queue.
 func (s *RefreshScheduler) popFromQueue() *RefreshTask {
 	s.pqMu.Lock()
 	defer s.pqMu.Unlock()
@@ -362,34 +362,34 @@ func (s *RefreshScheduler) popFromQueue() *RefreshTask {
 	return heap.Pop(s.pq).(*RefreshTask)
 }
 
-// Start 启动调度器
+// Start starts the scheduler.
 func (s *RefreshScheduler) Start(ctx context.Context) {
-	// 使用传入的 ctx 派生内部上下文
+	// Derive the internal context from the ctx passed in.
 	s.ctx, s.cancel = context.WithCancel(ctx)
 
 	s.wg.Add(3)
 
-	// 调度循环：从优先队列到执行队列
+	// Scheduling loop: from the priority queue to the execution queue.
 	go s.scheduleLoop()
 
-	// 执行循环：处理执行队列
+	// Execution loop: processes the execution queue.
 	go s.executeLoop()
 
-	// 重试循环：处理失败重试
+	// Retry loop: handles retries of failed tasks.
 	go s.retryLoop()
 
-	log.Printf("[RefreshScheduler] 调度器已启动，最大并发: %d", s.config.MaxConcurrency)
+	log.Printf("[RefreshScheduler] scheduler started, max concurrency: %d", s.config.MaxConcurrency)
 }
 
-// Stop 停止调度器
+// Stop stops the scheduler.
 func (s *RefreshScheduler) Stop() {
 	s.cancel()
 	s.wg.Wait()
 	close(s.queue)
-	log.Printf("[RefreshScheduler] 调度器已停止")
+	log.Printf("[RefreshScheduler] scheduler stopped")
 }
 
-// scheduleLoop 调度循环：将到期的任务从优先队列移到执行队列
+// scheduleLoop is the scheduling loop: it moves due tasks from the priority queue to the execution queue.
 func (s *RefreshScheduler) scheduleLoop() {
 	defer s.wg.Done()
 
@@ -406,7 +406,7 @@ func (s *RefreshScheduler) scheduleLoop() {
 	}
 }
 
-// processScheduledTasks 处理计划任务
+// processScheduledTasks processes scheduled tasks.
 func (s *RefreshScheduler) processScheduledTasks() {
 	now := time.Now()
 
@@ -421,48 +421,48 @@ func (s *RefreshScheduler) processScheduledTasks() {
 		state := task.State
 		task.mu.RUnlock()
 
-		// 如果任务还未到执行时间，停止处理
+		// If the task's execution time has not arrived yet, stop processing.
 		if scheduledAt.After(now) {
 			break
 		}
 
-		// 如果任务状态不是 Pending，弹出并继续处理下一个
+		// If the task state is not Pending, pop it and continue with the next one.
 		if state != RefreshStatePending {
 			task = s.popFromQueue()
 			if task == nil {
 				break
 			}
-			// 继续循环处理下一个任务
+			// Continue the loop with the next task.
 			continue
 		}
 
-		// 弹出任务
+		// Pop the task.
 		task = s.popFromQueue()
 		if task == nil {
 			break
 		}
 
-		// 批量优化：检查是否应该批量执行
-		// 注意：此函数目前仅更新 lastBatch 时间，实际批量策略待实现
+		// Batch optimization: check whether this should run as a batch.
+		// Note: this function currently only updates the lastBatch time; the actual batching strategy is still to be implemented.
 		if s.config.EnableBatchOptimize && s.shouldBatch(task) {
 			s.batchMu.Lock()
 			s.lastBatch = time.Now()
 			s.batchMu.Unlock()
 		}
 
-		// 发送到执行队列
+		// Send to the execution queue.
 		select {
 		case s.queue <- task:
 			s.metrics.PendingTasks.Add(-1)
 		default:
-			// 队列满，重新推入优先队列
+			// Queue is full; push back onto the priority queue.
 			s.pushToQueue(task)
 			return
 		}
 	}
 }
 
-// peekQueue 查看队列头部（不移除）
+// peekQueue looks at the head of the queue (without removing it).
 func (s *RefreshScheduler) peekQueue() *RefreshTask {
 	s.pqMu.Lock()
 	defer s.pqMu.Unlock()
@@ -473,19 +473,19 @@ func (s *RefreshScheduler) peekQueue() *RefreshTask {
 	return (*s.pq)[0]
 }
 
-// shouldBatch 判断是否应该批量执行
+// shouldBatch reports whether this should run as a batch.
 func (s *RefreshScheduler) shouldBatch(task *RefreshTask) bool {
 	s.batchMu.Lock()
 	defer s.batchMu.Unlock()
 
-	// 距离上次批量执行时间过短，建议等待
+	// Too short since the last batch run; suggest waiting.
 	if time.Since(s.lastBatch) < s.config.MinInterval {
 		return true
 	}
 	return false
 }
 
-// executeLoop 执行循环
+// executeLoop is the execution loop.
 func (s *RefreshScheduler) executeLoop() {
 	defer s.wg.Done()
 
@@ -502,9 +502,9 @@ func (s *RefreshScheduler) executeLoop() {
 	}
 }
 
-// executeTask 执行任务
+// executeTask executes a task.
 func (s *RefreshScheduler) executeTask(task *RefreshTask) {
-	// 获取信号量
+	// Acquire the semaphore.
 	select {
 	case s.semaphore <- struct{}{}:
 	case <-s.ctx.Done():
@@ -523,7 +523,7 @@ func (s *RefreshScheduler) executeTask(task *RefreshTask) {
 		task.State = RefreshStateRunning
 		task.mu.Unlock()
 
-		// 执行刷新，带超时控制
+		// Run the refresh, with timeout control.
 		ctx, cancel := context.WithTimeout(s.ctx, 30*time.Second)
 		err := s.store.refreshAccount(ctx, task.Account)
 		cancel()
@@ -540,23 +540,23 @@ func (s *RefreshScheduler) executeTask(task *RefreshTask) {
 			task.Attempts++
 			s.metrics.FailedCount.Add(1)
 
-			// 判断是否可重试
+			// Decide whether it can be retried.
 			if task.Attempts < s.config.RetryMaxAttempts && !isNonRetryable(err) {
 				task.State = RefreshStateRetrying
 				task.NextRetryAt = s.calculateRetryTime(task.Attempts)
-				log.Printf("[RefreshScheduler] 账号 %d 刷新失败，将在 %v 后重试: %v",
+				log.Printf("[RefreshScheduler] account %d refresh failed, retrying in %v: %v",
 					task.Account.DBID, task.NextRetryAt.Sub(time.Now()), err)
 			} else {
-				log.Printf("[RefreshScheduler] 账号 %d 刷新最终失败: %v", task.Account.DBID, err)
+				log.Printf("[RefreshScheduler] account %d final refresh failure: %v", task.Account.DBID, err)
 			}
 		} else {
 			task.State = RefreshStateSuccess
 			s.metrics.SuccessCount.Add(1)
-			log.Printf("[RefreshScheduler] 账号 %d 刷新成功，耗时 %v", task.Account.DBID, duration)
+			log.Printf("[RefreshScheduler] account %d refreshed successfully, took %v", task.Account.DBID, duration)
 		}
 		task.mu.Unlock()
 
-		// 清理已完成的任务
+		// Clean up completed tasks.
 		if task.State == RefreshStateSuccess || (task.State == RefreshStateFailed && task.Attempts >= s.config.RetryMaxAttempts) {
 			s.tasksMu.Lock()
 			delete(s.tasks, task.Account.DBID)
@@ -565,9 +565,9 @@ func (s *RefreshScheduler) executeTask(task *RefreshTask) {
 	}()
 }
 
-// calculateRetryTime 计算重试时间
+// calculateRetryTime calculates the retry time.
 func (s *RefreshScheduler) calculateRetryTime(attempts int) time.Time {
-	// 指数退避：base * 2^attempts + jitter
+	// Exponential backoff: base * 2^attempts + jitter
 	backoff := s.config.RetryBackoffBase * time.Duration(math.Pow(2, float64(attempts-1)))
 	if backoff > 5*time.Minute {
 		backoff = 5 * time.Minute
@@ -575,20 +575,20 @@ func (s *RefreshScheduler) calculateRetryTime(attempts int) time.Time {
 	return time.Now().Add(backoff + s.randomJitter(backoff/10))
 }
 
-// updateAvgDuration 更新平均耗时
+// updateAvgDuration updates the average duration.
 func (s *RefreshScheduler) updateAvgDuration(d time.Duration) {
 	current := s.metrics.AvgDurationMs.Load()
 	newMs := d.Milliseconds()
 	if current == 0 {
 		s.metrics.AvgDurationMs.Store(newMs)
 	} else {
-		// 指数移动平均
+		// Exponential moving average.
 		avg := (current*9 + newMs) / 10
 		s.metrics.AvgDurationMs.Store(avg)
 	}
 }
 
-// retryLoop 重试循环
+// retryLoop is the retry loop.
 func (s *RefreshScheduler) retryLoop() {
 	defer s.wg.Done()
 
@@ -605,7 +605,7 @@ func (s *RefreshScheduler) retryLoop() {
 	}
 }
 
-// processRetries 处理重试
+// processRetries processes retries.
 func (s *RefreshScheduler) processRetries() {
 	now := time.Now()
 
@@ -627,13 +627,13 @@ func (s *RefreshScheduler) processRetries() {
 		task.mu.Unlock()
 
 		s.metrics.RetryCount.Add(1)
-		s.metrics.PendingTasks.Add(1) // 重试任务重新入队时增加 PendingTasks
+		s.metrics.PendingTasks.Add(1) // re-enqueued retry task: increment PendingTasks
 		s.pushToQueue(task)
-		log.Printf("[RefreshScheduler] 账号 %d 开始第 %d 次重试", task.Account.DBID, task.Attempts)
+		log.Printf("[RefreshScheduler] account %d starting retry %d", task.Account.DBID, task.Attempts)
 	}
 }
 
-// GetMetrics 获取当前指标
+// GetMetrics returns the current metrics.
 func (s *RefreshScheduler) GetMetrics() RefreshMetricsSnapshot {
 	return RefreshMetricsSnapshot{
 		TotalTasks:    s.metrics.TotalTasks.Load(),
@@ -648,7 +648,7 @@ func (s *RefreshScheduler) GetMetrics() RefreshMetricsSnapshot {
 	}
 }
 
-// RefreshMetricsSnapshot 刷新指标快照
+// RefreshMetricsSnapshot is a snapshot of the refresh metrics.
 type RefreshMetricsSnapshot struct {
 	TotalTasks    int64     `json:"total_tasks"`
 	PendingTasks  int64     `json:"pending_tasks"`
@@ -661,23 +661,23 @@ type RefreshMetricsSnapshot struct {
 	QueueSize     int       `json:"queue_size"`
 }
 
-// ScheduleBatch 批量调度刷新
+// ScheduleBatch schedules refreshes in batch.
 func (s *RefreshScheduler) ScheduleBatch(accounts []*Account) {
 	if len(accounts) == 0 {
 		return
 	}
 
-	// 添加抖动避免集中刷新
+	// Add jitter to avoid refreshing everything at once.
 	batchSize := s.config.BatchSize
 	if batchSize <= 0 {
 		batchSize = 5
 	}
 
 	for i, acc := range accounts {
-		// 分批添加延迟
+		// Add delays in batches.
 		batchDelay := time.Duration(i/batchSize) * s.config.MinInterval
 		if batchDelay > 0 {
-			account := acc // 创建局部变量副本，避免闭包捕获循环变量
+			account := acc // local copy, so the closure does not capture the loop variable
 			time.AfterFunc(batchDelay, func() {
 				s.Schedule(account)
 			})
@@ -686,10 +686,10 @@ func (s *RefreshScheduler) ScheduleBatch(accounts []*Account) {
 		}
 	}
 
-	log.Printf("[RefreshScheduler] 批量调度 %d 个账号刷新", len(accounts))
+	log.Printf("[RefreshScheduler] batch scheduled refreshes for %d accounts", len(accounts))
 }
 
-// CancelTask 取消指定账号的刷新任务
+// CancelTask cancels the refresh task for the given account.
 func (s *RefreshScheduler) CancelTask(dbID int64) bool {
 	s.tasksMu.Lock()
 	defer s.tasksMu.Unlock()
@@ -697,9 +697,9 @@ func (s *RefreshScheduler) CancelTask(dbID int64) bool {
 	if task, ok := s.tasks[dbID]; ok {
 		task.mu.Lock()
 		if task.State == RefreshStatePending || task.State == RefreshStateRetrying {
-			task.State = RefreshStateSuccess // 标记为完成，跳过执行
+			task.State = RefreshStateSuccess // mark as done, skip execution
 			task.mu.Unlock()
-			// 从堆中移除任务
+			// Remove the task from the heap.
 			s.removeFromQueue(task)
 			delete(s.tasks, dbID)
 			return true
@@ -709,14 +709,14 @@ func (s *RefreshScheduler) CancelTask(dbID int64) bool {
 	return false
 }
 
-// GetTaskStatus 获取任务状态
+// GetTaskStatus returns the task status.
 func (s *RefreshScheduler) GetTaskStatus(dbID int64) (RefreshState, int, error) {
 	s.tasksMu.RLock()
 	task, ok := s.tasks[dbID]
 	s.tasksMu.RUnlock()
 
 	if !ok {
-		return RefreshStateSuccess, 0, nil // 无任务表示已完成
+		return RefreshStateSuccess, 0, nil // no task means it is already done
 	}
 
 	task.mu.RLock()

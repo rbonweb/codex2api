@@ -15,59 +15,59 @@ import (
 	"github.com/codex2api/security"
 )
 
-// ProxyHealthStatus 代理健康状态
+// ProxyHealthStatus is the health status of a proxy
 type ProxyHealthStatus int
 
 const (
-	ProxyStatusHealthy ProxyHealthStatus = iota // 健康
-	ProxyStatusUnhealthy                          // 不健康
-	ProxyStatusIsolated                           // 已隔离
+	ProxyStatusHealthy   ProxyHealthStatus = iota // healthy
+	ProxyStatusUnhealthy                          // unhealthy
+	ProxyStatusIsolated                           // isolated
 )
 
-// ProxySelectionStrategy 代理选择策略
+// ProxySelectionStrategy is the proxy selection strategy
 type ProxySelectionStrategy int
 
 const (
-	StrategyRoundRobin ProxySelectionStrategy = iota // 轮询
-	StrategyWeighted                                 // 加权选择
-	StrategyLeastConnections                         // 最少连接
+	StrategyRoundRobin       ProxySelectionStrategy = iota // round robin
+	StrategyWeighted                                       // weighted selection
+	StrategyLeastConnections                               // fewest connections
 )
 
-// ProxyEntry 代理条目
+// ProxyEntry is a proxy entry
 type ProxyEntry struct {
-	URL            string
-	Healthy        bool
-	LastCheck      time.Time
-	Latency        time.Duration
-	SuccessRate    float64
-	Weight         int64
-	ActiveConns    atomic.Int64
-	TotalRequests  atomic.Int64
-	FailedRequests atomic.Int64
-	Status         ProxyHealthStatus
-	IsolatedAt     time.Time
+	URL                 string
+	Healthy             bool
+	LastCheck           time.Time
+	Latency             time.Duration
+	SuccessRate         float64
+	Weight              int64
+	ActiveConns         atomic.Int64
+	TotalRequests       atomic.Int64
+	FailedRequests      atomic.Int64
+	Status              ProxyHealthStatus
+	IsolatedAt          time.Time
 	ConsecutiveFailures int
 
 	mu sync.RWMutex
 }
 
-// ProxyStats 代理统计信息
+// ProxyStats is the proxy statistics
 type ProxyStats struct {
-	URL              string            `json:"url"`
-	Healthy          bool              `json:"healthy"`
-	LastCheck        time.Time         `json:"last_check"`
-	Latency          time.Duration     `json:"latency"`
-	LatencyMs        float64           `json:"latency_ms"`
-	SuccessRate      float64           `json:"success_rate"`
-	Weight           int64             `json:"weight"`
-	ActiveConns      int64             `json:"active_conns"`
-	TotalRequests    int64             `json:"total_requests"`
-	FailedRequests   int64             `json:"failed_requests"`
-	Status           string            `json:"status"`
-	ConsecutiveFailures int            `json:"consecutive_failures"`
+	URL                 string        `json:"url"`
+	Healthy             bool          `json:"healthy"`
+	LastCheck           time.Time     `json:"last_check"`
+	Latency             time.Duration `json:"latency"`
+	LatencyMs           float64       `json:"latency_ms"`
+	SuccessRate         float64       `json:"success_rate"`
+	Weight              int64         `json:"weight"`
+	ActiveConns         int64         `json:"active_conns"`
+	TotalRequests       int64         `json:"total_requests"`
+	FailedRequests      int64         `json:"failed_requests"`
+	Status              string        `json:"status"`
+	ConsecutiveFailures int           `json:"consecutive_failures"`
 }
 
-// HealthCheckResult 健康检查结果
+// HealthCheckResult is the result of a health check
 type HealthCheckResult struct {
 	URL       string
 	Healthy   bool
@@ -76,43 +76,43 @@ type HealthCheckResult struct {
 	Timestamp time.Time
 }
 
-// ProxyPool 代理池管理器
+// ProxyPool is the proxy pool manager
 type ProxyPool struct {
-	proxies   []*ProxyEntry
-	stats     map[string]*ProxyStats
-	healthy   []*ProxyEntry
+	proxies []*ProxyEntry
+	stats   map[string]*ProxyStats
+	healthy []*ProxyEntry
 
-	mu              sync.RWMutex
-	strategy        ProxySelectionStrategy
-	roundRobinIdx   atomic.Uint64
-	checkInterval   time.Duration
-	timeout         time.Duration
+	mu                 sync.RWMutex
+	strategy           ProxySelectionStrategy
+	roundRobinIdx      atomic.Uint64
+	checkInterval      time.Duration
+	timeout            time.Duration
 	isolationThreshold int
 	isolationDuration  time.Duration
 	healthCheckURL     string
 
-	// 运行时状态
-	stopCh chan struct{}
+	// Runtime state
+	stopCh   chan struct{}
 	stopOnce sync.Once
-	wg     sync.WaitGroup
+	wg       sync.WaitGroup
 
-	// 回调函数
+	// Callback functions
 	onHealthCheck func(result *HealthCheckResult)
 	onIsolation   func(entry *ProxyEntry)
 	onRecovery    func(entry *ProxyEntry)
 }
 
-// ProxyPoolConfig 代理池配置
+// ProxyPoolConfig is the proxy pool configuration
 type ProxyPoolConfig struct {
-	Strategy          ProxySelectionStrategy
-	CheckInterval     time.Duration
-	Timeout           time.Duration
-	IsolationThreshold int           // 连续失败次数阈值
-	IsolationDuration  time.Duration // 隔离持续时间
-	HealthCheckURL    string
+	Strategy           ProxySelectionStrategy
+	CheckInterval      time.Duration
+	Timeout            time.Duration
+	IsolationThreshold int           // consecutive failure count threshold
+	IsolationDuration  time.Duration // isolation duration
+	HealthCheckURL     string
 }
 
-// DefaultProxyPoolConfig 返回默认配置
+// DefaultProxyPoolConfig returns the default configuration
 func DefaultProxyPoolConfig() *ProxyPoolConfig {
 	return &ProxyPoolConfig{
 		Strategy:           StrategyRoundRobin,
@@ -124,27 +124,27 @@ func DefaultProxyPoolConfig() *ProxyPoolConfig {
 	}
 }
 
-// NewProxyPool 创建新的代理池
+// NewProxyPool creates a new proxy pool
 func NewProxyPool(config *ProxyPoolConfig) *ProxyPool {
 	if config == nil {
 		config = DefaultProxyPoolConfig()
 	}
 
 	return &ProxyPool{
-		proxies:           make([]*ProxyEntry, 0),
-		stats:             make(map[string]*ProxyStats),
-		healthy:           make([]*ProxyEntry, 0),
-		strategy:          config.Strategy,
-		checkInterval:     config.CheckInterval,
-		timeout:           config.Timeout,
+		proxies:            make([]*ProxyEntry, 0),
+		stats:              make(map[string]*ProxyStats),
+		healthy:            make([]*ProxyEntry, 0),
+		strategy:           config.Strategy,
+		checkInterval:      config.CheckInterval,
+		timeout:            config.Timeout,
 		isolationThreshold: config.IsolationThreshold,
 		isolationDuration:  config.IsolationDuration,
 		healthCheckURL:     config.HealthCheckURL,
-		stopCh:            make(chan struct{}),
+		stopCh:             make(chan struct{}),
 	}
 }
 
-// AddProxy 添加代理到池
+// AddProxy adds a proxy to the pool
 func (p *ProxyPool) AddProxy(url string, weight int64) {
 	if url == "" {
 		return
@@ -153,7 +153,7 @@ func (p *ProxyPool) AddProxy(url string, weight int64) {
 	p.mu.Lock()
 	defer p.mu.Unlock()
 
-	// 检查是否已存在
+	// Check whether it already exists
 	for _, entry := range p.proxies {
 		if entry.URL == url {
 			return
@@ -180,7 +180,7 @@ func (p *ProxyPool) AddProxy(url string, weight int64) {
 	p.rebuildHealthyList()
 }
 
-// RemoveProxy 从池中移除代理
+// RemoveProxy removes a proxy from the pool
 func (p *ProxyPool) RemoveProxy(url string) {
 	p.mu.Lock()
 	defer p.mu.Unlock()
@@ -195,7 +195,7 @@ func (p *ProxyPool) RemoveProxy(url string) {
 	}
 }
 
-// UpdateProxyWeight 更新代理权重
+// UpdateProxyWeight updates the proxy weight
 func (p *ProxyPool) UpdateProxyWeight(url string, weight int64) {
 	p.mu.Lock()
 	defer p.mu.Unlock()
@@ -211,7 +211,7 @@ func (p *ProxyPool) UpdateProxyWeight(url string, weight int64) {
 	}
 }
 
-// rebuildHealthyList 重建健康代理列表
+// rebuildHealthyList rebuilds the healthy proxy list
 func (p *ProxyPool) rebuildHealthyList() {
 	healthy := make([]*ProxyEntry, 0, len(p.proxies))
 	for _, entry := range p.proxies {
@@ -222,7 +222,7 @@ func (p *ProxyPool) rebuildHealthyList() {
 	p.healthy = healthy
 }
 
-// Select 选择一个代理
+// Select picks a proxy
 func (p *ProxyPool) Select() *ProxyEntry {
 	p.mu.RLock()
 	defer p.mu.RUnlock()
@@ -234,7 +234,7 @@ func (p *ProxyPool) Select() *ProxyEntry {
 	return p.selectByStrategy(p.strategy)
 }
 
-// SelectWithStrategy 使用指定策略选择代理（不修改全局策略）
+// SelectWithStrategy picks a proxy using the given strategy (does not change the global strategy)
 func (p *ProxyPool) SelectWithStrategy(strategy ProxySelectionStrategy) *ProxyEntry {
 	p.mu.RLock()
 	defer p.mu.RUnlock()
@@ -246,7 +246,7 @@ func (p *ProxyPool) SelectWithStrategy(strategy ProxySelectionStrategy) *ProxyEn
 	return p.selectByStrategy(strategy)
 }
 
-// selectByStrategy 根据策略选择代理
+// selectByStrategy picks a proxy according to the strategy
 func (p *ProxyPool) selectByStrategy(strategy ProxySelectionStrategy) *ProxyEntry {
 	switch strategy {
 	case StrategyWeighted:
@@ -258,7 +258,7 @@ func (p *ProxyPool) selectByStrategy(strategy ProxySelectionStrategy) *ProxyEntr
 	}
 }
 
-// selectRoundRobin 轮询选择
+// selectRoundRobin picks round robin
 func (p *ProxyPool) selectRoundRobin() *ProxyEntry {
 	if len(p.healthy) == 0 {
 		return nil
@@ -267,13 +267,13 @@ func (p *ProxyPool) selectRoundRobin() *ProxyEntry {
 	return p.healthy[idx]
 }
 
-// selectWeighted 加权随机选择
+// selectWeighted picks by weighted random selection
 func (p *ProxyPool) selectWeighted() *ProxyEntry {
 	if len(p.healthy) == 0 {
 		return nil
 	}
 
-	// 计算总权重
+	// Compute the total weight
 	var totalWeight int64
 	for _, entry := range p.healthy {
 		if entry.Weight <= 0 {
@@ -287,7 +287,7 @@ func (p *ProxyPool) selectWeighted() *ProxyEntry {
 		return p.healthy[0]
 	}
 
-	// 加权随机选择
+	// Weighted random selection
 	r := rand.Int63n(totalWeight)
 	var currentWeight int64
 	for _, entry := range p.healthy {
@@ -304,7 +304,7 @@ func (p *ProxyPool) selectWeighted() *ProxyEntry {
 	return p.healthy[len(p.healthy)-1]
 }
 
-// selectLeastConnections 最少连接选择
+// selectLeastConnections picks the proxy with the fewest connections
 func (p *ProxyPool) selectLeastConnections() *ProxyEntry {
 	if len(p.healthy) == 0 {
 		return nil
@@ -315,14 +315,14 @@ func (p *ProxyPool) selectLeastConnections() *ProxyEntry {
 
 	for _, entry := range p.healthy {
 		conns := entry.ActiveConns.Load()
-		// 考虑成功率作为调节因子，需要在锁外读取
+		// Take the success rate into account as an adjustment factor, which must be read outside the lock
 		entry.mu.RLock()
 		successRate := entry.SuccessRate
 		entry.mu.RUnlock()
 		if successRate <= 0 {
 			successRate = 0.1
 		}
-		// 调节后的连接数 = 实际连接数 / 成功率
+		// Adjusted connection count = actual connection count / success rate
 		adjustedConns := int64(float64(conns) / successRate)
 
 		if adjustedConns < minConns {
@@ -334,7 +334,7 @@ func (p *ProxyPool) selectLeastConnections() *ProxyEntry {
 	return best
 }
 
-// MarkSuccess 标记代理成功
+// MarkSuccess marks a proxy as successful
 func (p *ProxyPool) MarkSuccess(url string) {
 	p.mu.RLock()
 	entry, exists := p.findEntry(url)
@@ -348,14 +348,14 @@ func (p *ProxyPool) MarkSuccess(url string) {
 	entry.TotalRequests.Add(1)
 	entry.ConsecutiveFailures = 0
 
-	// 更新成功率（指数移动平均）
+	// Update the success rate (exponential moving average)
 	if entry.TotalRequests.Load() == 1 {
 		entry.SuccessRate = 1.0
 	} else {
 		entry.SuccessRate = entry.SuccessRate*0.9 + 0.1
 	}
 
-	// 如果之前被隔离，尝试恢复
+	// If it was isolated before, try to recover it
 	if entry.Status == ProxyStatusIsolated {
 		entry.Status = ProxyStatusHealthy
 		entry.IsolatedAt = time.Time{}
@@ -364,7 +364,7 @@ func (p *ProxyPool) MarkSuccess(url string) {
 		}
 	}
 
-	// 在锁内更新 stats
+	// Update stats under the lock
 	if stats, ok := p.stats[url]; ok {
 		stats.TotalRequests = entry.TotalRequests.Load()
 		stats.FailedRequests = entry.FailedRequests.Load()
@@ -378,7 +378,7 @@ func (p *ProxyPool) MarkSuccess(url string) {
 	p.rebuildHealthyListIfNeeded()
 }
 
-// MarkFailure 标记代理失败
+// MarkFailure marks a proxy as failed
 func (p *ProxyPool) MarkFailure(url string) {
 	p.mu.RLock()
 	entry, exists := p.findEntry(url)
@@ -393,14 +393,14 @@ func (p *ProxyPool) MarkFailure(url string) {
 	entry.FailedRequests.Add(1)
 	entry.ConsecutiveFailures++
 
-	// 更新成功率
+	// Update the success rate
 	if entry.TotalRequests.Load() == 1 {
 		entry.SuccessRate = 0.0
 	} else {
-		entry.SuccessRate = entry.SuccessRate*0.9
+		entry.SuccessRate = entry.SuccessRate * 0.9
 	}
 
-	// 检查是否需要隔离
+	// Check whether isolation is needed
 	if entry.Status != ProxyStatusIsolated && entry.ConsecutiveFailures >= p.isolationThreshold {
 		entry.Status = ProxyStatusIsolated
 		entry.IsolatedAt = time.Now()
@@ -410,7 +410,7 @@ func (p *ProxyPool) MarkFailure(url string) {
 		}
 	}
 
-	// 在锁内更新 stats
+	// Update stats under the lock
 	if stats, ok := p.stats[url]; ok {
 		stats.TotalRequests = entry.TotalRequests.Load()
 		stats.FailedRequests = entry.FailedRequests.Load()
@@ -424,7 +424,7 @@ func (p *ProxyPool) MarkFailure(url string) {
 	p.rebuildHealthyListIfNeeded()
 }
 
-// findEntry 查找代理条目
+// findEntry looks up a proxy entry
 func (p *ProxyPool) findEntry(url string) (*ProxyEntry, bool) {
 	for _, entry := range p.proxies {
 		if entry.URL == url {
@@ -434,14 +434,14 @@ func (p *ProxyPool) findEntry(url string) (*ProxyEntry, bool) {
 	return nil, false
 }
 
-// rebuildHealthyListIfNeeded 如果需要则重建健康列表
+// rebuildHealthyListIfNeeded rebuilds the healthy list if needed
 func (p *ProxyPool) rebuildHealthyListIfNeeded() {
 	p.mu.Lock()
 	defer p.mu.Unlock()
 	p.rebuildHealthyList()
 }
 
-// AcquireConnection 获取连接（增加活跃连接数）
+// AcquireConnection acquires a connection (increments the active connection count)
 func (p *ProxyPool) AcquireConnection(url string) bool {
 	p.mu.RLock()
 	entry, exists := p.findEntry(url)
@@ -459,7 +459,7 @@ func (p *ProxyPool) AcquireConnection(url string) bool {
 	return true
 }
 
-// ReleaseConnection 释放连接（减少活跃连接数）
+// ReleaseConnection releases a connection (decrements the active connection count)
 func (p *ProxyPool) ReleaseConnection(url string) {
 	p.mu.RLock()
 	entry, exists := p.findEntry(url)
@@ -469,13 +469,13 @@ func (p *ProxyPool) ReleaseConnection(url string) {
 		return
 	}
 
-	// 防止计数器减到负数
+	// Prevent the counter from going negative
 	if entry.ActiveConns.Load() > 0 {
 		entry.ActiveConns.Add(-1)
 	}
 }
 
-// HealthCheck 执行健康检查
+// HealthCheck runs a health check
 func (p *ProxyPool) HealthCheck(ctx context.Context) {
 	p.mu.RLock()
 	proxies := make([]*ProxyEntry, len(p.proxies))
@@ -499,21 +499,21 @@ func (p *ProxyPool) HealthCheck(ctx context.Context) {
 		close(results)
 	}()
 
-	// 处理结果
+	// Handle the result
 	for result := range results {
 		p.processHealthCheckResult(result)
 	}
 }
 
-// checkProxy 检查单个代理
+// checkProxy checks a single proxy
 func (p *ProxyPool) checkProxy(ctx context.Context, entry *ProxyEntry) *HealthCheckResult {
 	start := time.Now()
 
-	// 创建带超时的 context
+	// Create a context with a timeout
 	checkCtx, cancel := context.WithTimeout(ctx, p.timeout)
 	defer cancel()
 
-	// 构建请求
+	// Build the request
 	req, err := http.NewRequestWithContext(checkCtx, "HEAD", p.healthCheckURL, nil)
 	if err != nil {
 		return &HealthCheckResult{
@@ -525,18 +525,18 @@ func (p *ProxyPool) checkProxy(ctx context.Context, entry *ProxyEntry) *HealthCh
 		}
 	}
 
-	// 创建带代理的 transport
+	// Create a transport with the proxy
 	transport := &http.Transport{
 		DialContext: (&net.Dialer{
 			Timeout:   5 * time.Second,
 			KeepAlive: 30 * time.Second,
 		}).DialContext,
-		DisableKeepAlives: true, // 禁用 keep-alive 避免连接泄漏
+		DisableKeepAlives: true, // disable keep-alive to avoid connection leaks
 		MaxIdleConns:      0,
 		IdleConnTimeout:   0,
 	}
 
-	// 配置代理
+	// Configure the proxy
 	if err := ConfigureTransportProxy(transport, entry.URL, &net.Dialer{
 		Timeout:   5 * time.Second,
 		KeepAlive: 30 * time.Second,
@@ -572,7 +572,7 @@ func (p *ProxyPool) checkProxy(ctx context.Context, entry *ProxyEntry) *HealthCh
 		result.Error = err
 	} else {
 		resp.Body.Close()
-		// 只有 2xx 和 3xx 状态码认为健康
+		// Only 2xx and 3xx status codes are considered healthy
 		result.Healthy = resp.StatusCode >= 200 && resp.StatusCode < 400
 		if !result.Healthy {
 			result.Error = fmt.Errorf("HTTP %d", resp.StatusCode)
@@ -582,7 +582,7 @@ func (p *ProxyPool) checkProxy(ctx context.Context, entry *ProxyEntry) *HealthCh
 	return result
 }
 
-// processHealthCheckResult 处理健康检查结果
+// processHealthCheckResult handles the health check result
 func (p *ProxyPool) processHealthCheckResult(result *HealthCheckResult) {
 	p.mu.Lock()
 	entry, exists := p.findEntry(result.URL)
@@ -600,7 +600,7 @@ func (p *ProxyPool) processHealthCheckResult(result *HealthCheckResult) {
 		entry.Healthy = true
 		entry.ConsecutiveFailures = 0
 
-		// 如果被隔离且隔离时间已过，恢复
+		// If isolated and the isolation time has passed, recover
 		if entry.Status == ProxyStatusIsolated {
 			if time.Since(entry.IsolatedAt) >= p.isolationDuration {
 				entry.Status = ProxyStatusHealthy
@@ -615,7 +615,7 @@ func (p *ProxyPool) processHealthCheckResult(result *HealthCheckResult) {
 		entry.Status = ProxyStatusUnhealthy
 		entry.ConsecutiveFailures++
 
-		// 检查是否需要隔离
+		// Check whether isolation is needed
 		if entry.Status != ProxyStatusIsolated && entry.ConsecutiveFailures >= p.isolationThreshold {
 			entry.Status = ProxyStatusIsolated
 			entry.IsolatedAt = time.Now()
@@ -626,7 +626,7 @@ func (p *ProxyPool) processHealthCheckResult(result *HealthCheckResult) {
 	}
 	entry.mu.Unlock()
 
-	// 更新统计
+	// Update statistics
 	if stats, ok := p.stats[result.URL]; ok {
 		stats.LastCheck = result.Timestamp
 		stats.Latency = result.Latency
@@ -638,13 +638,13 @@ func (p *ProxyPool) processHealthCheckResult(result *HealthCheckResult) {
 
 	p.rebuildHealthyListIfNeeded()
 
-	// 回调
+	// Callback
 	if p.onHealthCheck != nil {
 		p.onHealthCheck(result)
 	}
 }
 
-// statusString 获取状态字符串
+// statusString returns the status string
 func (p *ProxyPool) statusString(status ProxyHealthStatus) string {
 	switch status {
 	case ProxyStatusHealthy:
@@ -658,9 +658,9 @@ func (p *ProxyPool) statusString(status ProxyHealthStatus) string {
 	}
 }
 
-// StartHealthCheck 启动定期健康检查
+// StartHealthCheck starts periodic health checks
 func (p *ProxyPool) StartHealthCheck() {
-	// 校验 checkInterval，避免非正值导致 panic
+	// Validate checkInterval to avoid a panic from a non-positive value
 	checkInterval := p.checkInterval
 	if checkInterval <= 0 {
 		checkInterval = 30 * time.Second
@@ -672,7 +672,7 @@ func (p *ProxyPool) StartHealthCheck() {
 		ticker := time.NewTicker(checkInterval)
 		defer ticker.Stop()
 
-		// 立即执行一次检查
+		// Run one check immediately
 		p.HealthCheck(context.Background())
 
 		for {
@@ -686,7 +686,7 @@ func (p *ProxyPool) StartHealthCheck() {
 	}()
 }
 
-// Stop 停止代理池
+// Stop stops the proxy pool
 func (p *ProxyPool) Stop() {
 	p.stopOnce.Do(func() {
 		close(p.stopCh)
@@ -694,14 +694,14 @@ func (p *ProxyPool) Stop() {
 	})
 }
 
-// GetStats 获取代理统计信息
+// GetStats returns the proxy statistics
 func (p *ProxyPool) GetStats() map[string]*ProxyStats {
 	p.mu.RLock()
 	defer p.mu.RUnlock()
 
 	result := make(map[string]*ProxyStats)
 	for url, stats := range p.stats {
-		// 复制统计信息
+		// Copy the statistics
 		entry, _ := p.findEntry(url)
 		if entry != nil {
 			result[url] = &ProxyStats{
@@ -725,7 +725,7 @@ func (p *ProxyPool) GetStats() map[string]*ProxyStats {
 	return result
 }
 
-// GetPoolStatus 获取代理池状态
+// GetPoolStatus returns the proxy pool status
 func (p *ProxyPool) GetPoolStatus() *ProxyPoolStatus {
 	p.mu.RLock()
 	defer p.mu.RUnlock()
@@ -755,7 +755,7 @@ func (p *ProxyPool) GetPoolStatus() *ProxyPoolStatus {
 	}
 }
 
-// ProxyPoolStatus 代理池状态
+// ProxyPoolStatus is the proxy pool status
 type ProxyPoolStatus struct {
 	Total         int           `json:"total"`
 	Healthy       int           `json:"healthy"`
@@ -766,36 +766,36 @@ type ProxyPoolStatus struct {
 	LastUpdated   time.Time     `json:"last_updated"`
 }
 
-// SetStrategy 设置选择策略
+// SetStrategy sets the selection strategy
 func (p *ProxyPool) SetStrategy(strategy ProxySelectionStrategy) {
 	p.mu.Lock()
 	defer p.mu.Unlock()
 	p.strategy = strategy
 }
 
-// GetStrategy 获取当前选择策略
+// GetStrategy returns the current selection strategy
 func (p *ProxyPool) GetStrategy() ProxySelectionStrategy {
 	p.mu.RLock()
 	defer p.mu.RUnlock()
 	return p.strategy
 }
 
-// SetOnHealthCheck 设置健康检查回调
+// SetOnHealthCheck sets the health check callback
 func (p *ProxyPool) SetOnHealthCheck(fn func(result *HealthCheckResult)) {
 	p.onHealthCheck = fn
 }
 
-// SetOnIsolation 设置隔离回调
+// SetOnIsolation sets the isolation callback
 func (p *ProxyPool) SetOnIsolation(fn func(entry *ProxyEntry)) {
 	p.onIsolation = fn
 }
 
-// SetOnRecovery 设置恢复回调
+// SetOnRecovery sets the recovery callback
 func (p *ProxyPool) SetOnRecovery(fn func(entry *ProxyEntry)) {
 	p.onRecovery = fn
 }
 
-// String 返回策略字符串表示
+// String returns the string form of the strategy
 func (s ProxySelectionStrategy) String() string {
 	switch s {
 	case StrategyRoundRobin:
@@ -809,7 +809,7 @@ func (s ProxySelectionStrategy) String() string {
 	}
 }
 
-// ParseStrategy 解析策略字符串
+// ParseStrategy parses a strategy string
 func ParseStrategy(s string) ProxySelectionStrategy {
 	switch s {
 	case "weighted":
@@ -821,7 +821,7 @@ func ParseStrategy(s string) ProxySelectionStrategy {
 	}
 }
 
-// LoadProxiesFromURLs 从 URL 列表加载代理
+// LoadProxiesFromURLs loads proxies from a list of URLs
 func (p *ProxyPool) LoadProxiesFromURLs(urls []string, defaultWeight int64) {
 	for _, url := range urls {
 		if url != "" {
@@ -830,7 +830,7 @@ func (p *ProxyPool) LoadProxiesFromURLs(urls []string, defaultWeight int64) {
 	}
 }
 
-// GetHealthyProxies 获取健康代理列表
+// GetHealthyProxies returns the list of healthy proxies
 func (p *ProxyPool) GetHealthyProxies() []string {
 	p.mu.RLock()
 	defer p.mu.RUnlock()
@@ -842,7 +842,7 @@ func (p *ProxyPool) GetHealthyProxies() []string {
 	return result
 }
 
-// GetAllProxies 获取所有代理 URL
+// GetAllProxies returns all proxy URLs
 func (p *ProxyPool) GetAllProxies() []string {
 	p.mu.RLock()
 	defer p.mu.RUnlock()
@@ -854,7 +854,7 @@ func (p *ProxyPool) GetAllProxies() []string {
 	return result
 }
 
-// IsHealthy 检查代理是否健康
+// IsHealthy checks whether the proxy is healthy
 func (p *ProxyPool) IsHealthy(url string) bool {
 	p.mu.RLock()
 	defer p.mu.RUnlock()
@@ -867,41 +867,41 @@ func (p *ProxyPool) IsHealthy(url string) bool {
 	return false
 }
 
-// Size 返回代理池大小
+// Size returns the size of the proxy pool
 func (p *ProxyPool) Size() int {
 	p.mu.RLock()
 	defer p.mu.RUnlock()
 	return len(p.proxies)
 }
 
-// HealthySize 返回健康代理数量
+// HealthySize returns the number of healthy proxies
 func (p *ProxyPool) HealthySize() int {
 	p.mu.RLock()
 	defer p.mu.RUnlock()
 	return len(p.healthy)
 }
 
-// IsEmpty 检查代理池是否为空
+// IsEmpty checks whether the proxy pool is empty
 func (p *ProxyPool) IsEmpty() bool {
 	return p.Size() == 0
 }
 
-// HasHealthyProxy 检查是否有健康代理
+// HasHealthyProxy checks whether there is a healthy proxy
 func (p *ProxyPool) HasHealthyProxy() bool {
 	return p.HealthySize() > 0
 }
 
-// ForceHealthCheck 强制立即执行健康检查
+// ForceHealthCheck forces a health check to run immediately
 func (p *ProxyPool) ForceHealthCheck(ctx context.Context) {
 	p.HealthCheck(ctx)
 }
 
-// RecoverIsolatedProxies 尝试恢复已过隔离期的代理
+// RecoverIsolatedProxies tries to recover proxies whose isolation period has passed
 func (p *ProxyPool) RecoverIsolatedProxies() {
 	p.mu.Lock()
 
 	now := time.Now()
-	// 收集需要恢复的代理
+	// Collect the proxies that need to be recovered
 	var recoveredEntries []*ProxyEntry
 	for _, entry := range p.proxies {
 		if entry.Status == ProxyStatusIsolated && !entry.IsolatedAt.IsZero() {
@@ -917,9 +917,9 @@ func (p *ProxyPool) RecoverIsolatedProxies() {
 	p.rebuildHealthyList()
 	p.mu.Unlock()
 
-	// 在锁外执行回调，避免死锁
+	// Run the callbacks outside the lock to avoid deadlock
 	for _, entry := range recoveredEntries {
-		log.Printf("[ProxyPool] 代理已恢复: %s", security.MaskURLCredentials(entry.URL))
+		log.Printf("[ProxyPool] proxy recovered: %s", security.MaskURLCredentials(entry.URL))
 		if p.onRecovery != nil {
 			p.onRecovery(entry)
 		}

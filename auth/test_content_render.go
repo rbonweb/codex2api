@@ -7,22 +7,22 @@ import (
 	"time"
 )
 
-// ==================== 测活内容渲染 (issue #320) ====================
+// ==================== Liveness probe content rendering (issue #320) ====================
 //
-// test_content 支持两层随机化，减少"一批账号都发同一句测活内容"的指纹特征：
-//  1. 多行 = 候选池：按行拆分（滤空行），每次探活随机抽一行。
-//     单行输入行为与旧版完全一致，向后兼容。
-//  2. 变量模板：抽中的行内的 {{...}} 占位符在发送前展开：
-//     {{time}}           当前时间 15:04:05
-//     {{date}}           当前日期 2006-01-02
+// test_content supports two layers of randomization, to reduce the fingerprint of "a batch of accounts all sending the same liveness probe content":
+//  1. Multiple lines = candidate pool: split by line (empty lines filtered out), and each probe randomly picks one line.
+//     Single-line input behaves exactly as before, so it is backward compatible.
+//  2. Variable templates: {{...}} placeholders in the picked line are expanded before sending:
+//     {{time}}           current time 15:04:05
+//     {{date}}           current date 2006-01-02
 //     {{datetime}}       2006-01-02 15:04:05
-//     {{timestamp}}      Unix 秒级时间戳
-//     {{rand}}           0-9999 随机整数
-//     {{rand:min-max}}   [min,max] 范围随机整数（min>max 时自动交换）
-//     未知变量原样保留（测活内容是自由文本，宽松处理不报错）。
+//     {{timestamp}}      Unix timestamp in seconds
+//     {{rand}}           random integer from 0-9999
+//     {{rand:min-max}}   random integer in the range [min,max] (swapped automatically when min>max)
+//     Unknown variables are kept as written (liveness probe content is free text, so they are handled leniently without an error).
 
-// RenderTestContent 把配置的测活内容渲染为本次探活实际发送的文本：
-// 按行随机抽取候选 + 展开变量。空输入回落 DefaultTestContent。
+// RenderTestContent renders the configured liveness probe content into the text actually sent for this probe:
+// it randomly picks a candidate line and expands variables. Empty input falls back to DefaultTestContent.
 func RenderTestContent(raw string) string {
 	line := pickTestContentLine(raw)
 	if line == "" {
@@ -31,7 +31,7 @@ func RenderTestContent(raw string) string {
 	return expandTestContentVariables(line)
 }
 
-// TestContentLines 返回按行拆分后的非空候选行（用于校验/预览）。
+// TestContentLines returns the non-empty candidate lines after splitting by line (for validation and preview).
 func TestContentLines(raw string) []string {
 	var lines []string
 	for _, line := range strings.Split(raw, "\n") {
@@ -77,7 +77,7 @@ func expandTestContentVariables(line string) string {
 		if value, ok := resolveTestContentVariable(token); ok {
 			b.WriteString(value)
 		} else {
-			// 未知变量原样保留，包括花括号
+			// Unknown variables are kept as written, including the braces
 			b.WriteString(line[start : start+2+end+2])
 		}
 		line = line[start+2+end+2:]
@@ -108,8 +108,8 @@ func resolveTestContentVariable(token string) (string, bool) {
 	return "", false
 }
 
-// randInRange 解析 "min-max" 并返回范围内随机整数。负数下界（如 "-5-5"）
-// 不支持——分隔歧义且测活场景无此需求，解析失败按未知变量原样保留。
+// randInRange parses "min-max" and returns a random integer in the range. Negative lower bounds (such as "-5-5")
+// are not supported: the separator is ambiguous and liveness probes never need them, so a parse failure keeps the token as an unknown variable.
 func randInRange(spec string) (string, bool) {
 	minStr, maxStr, ok := strings.Cut(strings.TrimSpace(spec), "-")
 	if !ok {

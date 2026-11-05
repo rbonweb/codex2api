@@ -4,9 +4,9 @@ import (
 	"testing"
 )
 
-// TestFastSchedulerBulkInsertDoesNotResortPerEntry 锁定"写入侧不再逐条整桶重排"。
-// 修复前每次 Update/insert 都会整桶排序 + 全量重建位置索引，号池上万时会把调度器
-// 独占锁占满，批量导入期间整个网关排队（表现为导入时服务卡死）。
+// TestFastSchedulerBulkInsertDoesNotResortPerEntry locks in that "the write side no longer re-sorts the whole bucket for each entry".
+// Before the fix, every Update/insert re-sorted the whole bucket and rebuilt the full position index, so with tens of thousands of accounts the scheduler
+// exclusive lock was saturated, and the whole gateway queued up during a bulk import (showing up as the service hanging during import).
 func TestFastSchedulerBulkInsertDoesNotResortPerEntry(t *testing.T) {
 	const seed = 300
 	const added = 200
@@ -24,22 +24,22 @@ func TestFastSchedulerBulkInsertDoesNotResortPerEntry(t *testing.T) {
 	}
 	writeResorts := scheduler.ResortCount() - before
 	if writeResorts != 0 {
-		t.Fatalf("批量写入触发了 %d 次整桶重排，期望 0（重排应推迟到取号前合并）", writeResorts)
+		t.Fatalf("bulk writes triggered %d whole-bucket re-sorts, expected 0 (re-sorting should be deferred and merged before account pick)", writeResorts)
 	}
 
-	// 取号时才补排，且一批写入只合并成一次。
+	// Re-sorting happens only when an account is picked, and a batch of writes is merged into a single re-sort.
 	if acc := scheduler.Acquire(); acc == nil {
-		t.Fatal("Acquire() 返回 nil，期望取到账号")
+		t.Fatal("Acquire() returned nil, expected an account")
 	} else {
 		scheduler.Release(acc)
 	}
 	if got := scheduler.ResortCount() - before; got != 1 {
-		t.Fatalf("取号后累计重排 %d 次，期望恰好 1 次", got)
+		t.Fatalf("total re-sorts after account pick: %d, expected exactly 1", got)
 	}
 }
 
-// TestFastSchedulerIncrementalOrderMatchesRebuild 保证惰性重排后的桶顺序与
-// 全量 Rebuild 完全一致——增量路径不能改变调度语义。
+// TestFastSchedulerIncrementalOrderMatchesRebuild ensures the bucket order after lazy re-sorting matches
+// a full Rebuild exactly: the incremental path must not change scheduling semantics.
 func TestFastSchedulerIncrementalOrderMatchesRebuild(t *testing.T) {
 	for _, mode := range []string{"round_robin", "remaining_quota", "fill_first", "dispatch_score"} {
 		t.Run(mode, func(t *testing.T) {
@@ -57,11 +57,11 @@ func TestFastSchedulerIncrementalOrderMatchesRebuild(t *testing.T) {
 				return accounts
 			}
 
-			// 参照组：一次性 Rebuild。
+			// Reference group: one-off Rebuild.
 			reference := NewFastScheduler(2, mode)
 			reference.Rebuild(build())
 
-			// 对照组：逐条 Update 后惰性重排。
+			// Comparison group: lazy re-sort after one Update per entry.
 			incremental := NewFastScheduler(2, mode)
 			for _, acc := range build() {
 				incremental.Update(acc)
@@ -78,11 +78,11 @@ func TestFastSchedulerIncrementalOrderMatchesRebuild(t *testing.T) {
 			incremental.mu.RUnlock()
 
 			if len(want) != len(got) {
-				t.Fatalf("桶长度 %d，期望 %d", len(got), len(want))
+				t.Fatalf("bucket length %d, expected %d", len(got), len(want))
 			}
 			for i := range want {
 				if want[i].dbID != got[i].dbID {
-					t.Fatalf("第 %d 位是 dbID=%d，期望 %d（增量路径与 Rebuild 顺序不一致）",
+					t.Fatalf("position %d is dbID=%d, expected %d (incremental path order differs from Rebuild)",
 						i, got[i].dbID, want[i].dbID)
 				}
 			}
@@ -90,8 +90,8 @@ func TestFastSchedulerIncrementalOrderMatchesRebuild(t *testing.T) {
 	}
 }
 
-// TestFastSchedulerRemoveKeepsPositionsConsistent 覆盖"末尾补洞"式删除：
-// 摘除中间条目后，剩余账号的位置索引必须仍然指向正确的桶下标。
+// TestFastSchedulerRemoveKeepsPositionsConsistent covers "fill the hole with the last entry" style removal:
+// after removing a middle entry, the position index of each remaining account must still point to the correct bucket index.
 func TestFastSchedulerRemoveKeepsPositionsConsistent(t *testing.T) {
 	const n = 20
 	scheduler := NewFastScheduler(2, "round_robin")
@@ -109,23 +109,23 @@ func TestFastSchedulerRemoveKeepsPositionsConsistent(t *testing.T) {
 	defer scheduler.mu.RUnlock()
 	entries := scheduler.buckets[HealthTierHealthy]
 	if len(entries) != n-4 {
-		t.Fatalf("删除 4 个后桶里剩 %d 个，期望 %d", len(entries), n-4)
+		t.Fatalf("%d entries left in the bucket after removing 4, expected %d", len(entries), n-4)
 	}
 	if len(scheduler.positions) != len(entries) {
-		t.Fatalf("positions 有 %d 项，桶里 %d 项，索引与桶不同步", len(scheduler.positions), len(entries))
+		t.Fatalf("positions has %d items, bucket has %d items, index and bucket are out of sync", len(scheduler.positions), len(entries))
 	}
 	for idx, entry := range entries {
 		pos, ok := scheduler.positions[entry.dbID]
 		if !ok {
-			t.Fatalf("dbID=%d 在桶里但没有位置索引", entry.dbID)
+			t.Fatalf("dbID=%d is in the bucket but has no position index", entry.dbID)
 		}
 		if pos.index != idx || pos.tier != HealthTierHealthy {
-			t.Fatalf("dbID=%d 位置索引是 %+v，期望 index=%d tier=%v", entry.dbID, pos, idx, HealthTierHealthy)
+			t.Fatalf("dbID=%d position index is %+v, expected index=%d tier=%v", entry.dbID, pos, idx, HealthTierHealthy)
 		}
 	}
 	for _, dbID := range []int64{5, 1, 20, 13} {
 		if _, ok := scheduler.positions[dbID]; ok {
-			t.Fatalf("dbID=%d 已被删除但位置索引还在", dbID)
+			t.Fatalf("dbID=%d was deleted but its position index is still there", dbID)
 		}
 	}
 }

@@ -5,12 +5,12 @@ import (
 	"time"
 )
 
-// AccountTimezoneCredentialKey 是账号绑定时区在 credentials 中的存储键。含义是"该账号对
-// 上游呈现的时区"，空 = 不绑定、下游客户端的时区原样透传。
+// AccountTimezoneCredentialKey is the storage key for the account's bound timezone in the credentials. It means "the timezone this account presents
+// to the upstream"; empty = not bound, and the downstream client's timezone passes through unchanged.
 const AccountTimezoneCredentialKey = "timezone"
 
-// NormalizeAccountTimezone 归一化账号绑定时区：空串、"Local" 与无法加载的 IANA 名字
-// 一律返回空（= 不绑定）。宁可静默回落也不要让一个坏值把整个账号的请求打断。
+// NormalizeAccountTimezone normalizes the account's bound timezone: an empty string, "Local", and IANA names that cannot be loaded
+// all return empty (= not bound). It is better to fall back silently than let one bad value break the whole account's requests.
 func NormalizeAccountTimezone(value string) string {
 	value = strings.TrimSpace(value)
 	if value == "" || strings.EqualFold(value, "Local") {
@@ -22,7 +22,7 @@ func NormalizeAccountTimezone(value string) string {
 	return value
 }
 
-// EffectiveCodexTimezone 返回 Codex 官方出站路径生效的绑定时区。
+// EffectiveCodexTimezone returns the bound timezone in effect on the official Codex outbound path.
 func (a *Account) EffectiveCodexTimezone() string {
 	if a == nil {
 		return ""
@@ -32,8 +32,8 @@ func (a *Account) EffectiveCodexTimezone() string {
 	return strings.TrimSpace(a.Timezone)
 }
 
-// ApplyAccountTimezone 把管理端改动的绑定时区同步到运行时账号，
-// 避免等到下一次全量重载才生效。
+// ApplyAccountTimezone syncs a bound timezone changed in the admin panel to the runtime account,
+// so it takes effect without waiting for the next full reload.
 func (s *Store) ApplyAccountTimezone(dbID int64, timezone string) bool {
 	acc := s.FindByID(dbID)
 	if acc == nil {

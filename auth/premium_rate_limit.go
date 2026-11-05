@@ -80,7 +80,7 @@ func IsPlusOrHigherPlan(plan string) bool {
 	}
 }
 
-// IsPremium5hPlan 判断当前账号是否属于 premium 5h 限流语义范围。
+// IsPremium5hPlan reports whether the current account falls within the premium 5h rate-limit semantics.
 func (a *Account) IsPremium5hPlan() bool {
 	a.mu.RLock()
 	defer a.mu.RUnlock()
@@ -94,8 +94,8 @@ func (a *Account) premium5hRateLimitedLocked(now time.Time) bool {
 	return a.rawPremium5hRateLimitedLocked(now)
 }
 
-// rawPremium5hRateLimitedLocked 是不考虑任何跳过开关的 premium 5h 限流判定。
-// 「用积分顶替限流」需要知道窗口本身有没有打满，不能用上面那个已被开关抹平的结果。
+// rawPremium5hRateLimitedLocked is the premium 5h rate-limit check that ignores any skip switch.
+// "Use credits to replace rate limiting" needs to know whether the window itself is full, so it cannot use the result above, which the switch has already flattened.
 func (a *Account) rawPremium5hRateLimitedLocked(now time.Time) bool {
 	if !isPremium5hPlan(a.PlanType) {
 		return false
@@ -109,14 +109,14 @@ func (a *Account) rawPremium5hRateLimitedLocked(now time.Time) bool {
 	return a.Reset5hAt.After(now)
 }
 
-// IsPremium5hRateLimited 判断账号当前是否处于 premium 5h 限流态。
+// IsPremium5hRateLimited reports whether the account is currently in the premium 5h rate-limited state.
 func (a *Account) IsPremium5hRateLimited() bool {
 	a.mu.RLock()
 	defer a.mu.RUnlock()
 	return a.premium5hRateLimitedLocked(time.Now())
 }
 
-// GetUsageSnapshot5h 返回当前 5h 用量快照。
+// GetUsageSnapshot5h returns the current 5h usage snapshot.
 func (a *Account) GetUsageSnapshot5h() (pct float64, resetAt time.Time, ok bool) {
 	a.mu.RLock()
 	defer a.mu.RUnlock()
@@ -126,7 +126,7 @@ func (a *Account) GetUsageSnapshot5h() (pct float64, resetAt time.Time, ok bool)
 	return a.UsagePercent5h, a.Reset5hAt, true
 }
 
-// PersistUsageSnapshot5hOnly 持久化仅包含 5h 数据的用量快照。
+// PersistUsageSnapshot5hOnly persists a usage snapshot that contains only 5h data.
 func (s *Store) PersistUsageSnapshot5hOnly(acc *Account) {
 	s.PublishUsageSnapshot5hOnly(acc, time.Now(), true)
 }
@@ -162,13 +162,13 @@ func (s *Store) PublishUsageSnapshot5hOnly(acc *Account, observedAt time.Time, p
 		return s.db.UpdateUsageSnapshot5h(ctx, acc.DBID, pct5h, reset5hAt, observedAt)
 	})
 	if err != nil {
-		log.Printf("[账号 %d] 持久化 5h 用量快照失败: %v", acc.DBID, err)
+		log.Printf("[account %d] failed to persist 5h usage snapshot: %v", acc.DBID, err)
 		return false
 	}
 	return true
 }
 
-// Persist5hWindowActivated 把「已为哪个 Reset5hAt 发过开窗请求」写入 credentials，重启后不重复打。
+// Persist5hWindowActivated writes "which Reset5hAt the window-open request has already been sent for" into credentials, so it is not sent again after a restart.
 func (s *Store) Persist5hWindowActivated(acc *Account) {
 	if acc == nil || s == nil || s.db == nil {
 		return
@@ -182,14 +182,14 @@ func (s *Store) Persist5hWindowActivated(acc *Account) {
 	if err := s.db.UpdateCredentials(ctx, acc.DBID, map[string]interface{}{
 		"codex_5h_window_activated_reset_at": resetAt.UTC().Format(time.RFC3339),
 	}); err != nil {
-		log.Printf("[账号 %d] 持久化 5h 开窗标记失败: %v", acc.DBID, err)
+		log.Printf("[account %d] failed to persist 5h window-open marker: %v", acc.DBID, err)
 	}
 }
 
-// ClearAbsentUsageSnapshot5h 在上游权威探测未返回 5h 窗口时清除本地 5h 快照。
-// 内存与 credentials 一并清掉（避免「内存无、库里有」重启后重新 hydrate）。
-// 若清理前处于 premium 5h 限流态，同步清除由此驱动的 cooldown。
-// 返回 true 表示清理前本地确实持有有效 5h 快照（或 premium 5h 限流态）。
+// ClearAbsentUsageSnapshot5h clears the local 5h snapshot when the upstream authoritative probe does not return a 5h window.
+// It clears both memory and credentials (to avoid "absent in memory, present in the DB" being re-hydrated after a restart).
+// If it was in the premium 5h rate-limited state before clearing, the cooldown it drove is cleared as well.
+// Returns true if the account locally held a valid 5h snapshot (or was in the premium 5h rate-limited state) before clearing.
 func (s *Store) ClearAbsentUsageSnapshot5h(acc *Account) bool {
 	if acc == nil {
 		return false
@@ -264,7 +264,7 @@ func (s *Store) ClearAbsentUsageSnapshot5hAt(acc *Account, observedAt time.Time)
 	if err := s.withUsageSnapshotWrite(acc, func() error {
 		return s.db.ClearUsageSnapshot5h(ctx, acc.DBID)
 	}); err != nil {
-		log.Printf("[账号 %d] 清除 5h 用量快照失败: %v", acc.DBID, err)
+		log.Printf("[account %d] failed to clear 5h usage snapshot: %v", acc.DBID, err)
 	}
 	if cleared5hCooldown {
 		s.persistAccountCooldownState(acc, true, false)
@@ -272,7 +272,7 @@ func (s *Store) ClearAbsentUsageSnapshot5hAt(acc *Account, observedAt time.Time)
 	return true
 }
 
-// MarkPremium5hRateLimited 将账号标记为 premium 5h 限流态，并按 resetAt 驱动恢复。
+// MarkPremium5hRateLimited marks the account as premium 5h rate-limited, and drives recovery by resetAt.
 func (s *Store) MarkPremium5hRateLimited(acc *Account, resetAt time.Time) {
 	_ = s.MarkPremium5hRateLimitedAt(acc, resetAt, time.Now())
 }
@@ -351,6 +351,6 @@ func (s *Store) markPremium5hRateLimited(acc *Account, resetAt, observedAt time.
 	if err := s.withUsageSnapshotWrite(acc, func() error {
 		return s.db.UpdateUsageSnapshot5h(ctx, acc.DBID, 100, resetAt, now)
 	}); err != nil {
-		log.Printf("[账号 %d] 持久化 premium 5h 限流快照失败: %v", acc.DBID, err)
+		log.Printf("[account %d] failed to persist premium 5h rate-limit snapshot: %v", acc.DBID, err)
 	}
 }

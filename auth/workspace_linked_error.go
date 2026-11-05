@@ -15,15 +15,15 @@ type workspaceLinkedMark struct {
 	triggerID int64
 }
 
-// MarkDeactivatedWorkspace 把触发账号标为 error，并把同一工作区
-// （原生 AccountID / chatgpt_account_id）下的其余 Codex 账号一并隔离。
-// ChatGPT Team / K12 被停用时，同空间座位会一起失效；只标触发号会让调度继续打兄弟号。
+// MarkDeactivatedWorkspace marks the triggering account as error, and in the same workspace
+// (native AccountID / chatgpt_account_id) it also isolates the other Codex accounts.
+// When a ChatGPT Team / K12 workspace is deactivated, its seats fail together; marking only the triggering account would let scheduling keep hitting its sibling accounts.
 //
-// 分组键是请求实际打到的工作区（EffectiveAccountID，含账号级 Chatgpt-Account-Id 覆盖）。
-// 兄弟号优先按原生 AccountID 匹配；Team/K12/edu 座位再按生效工作区匹配
-// （每人可能有独立 AccountID，但流量打到同一空间）。
-// 仅请求头覆盖到该空间的个人号不会整号打死。
-// 默认生效，无配置开关。
+// The grouping key is the workspace the request actually hit (EffectiveAccountID, including the account-level Chatgpt-Account-Id override).
+// Sibling accounts are matched first by native AccountID; Team/K12/edu seats are then matched by effective workspace
+// (each person may have a separate AccountID, but traffic goes to the same space).
+// A personal account only overridden to that space by a request header is not killed as a whole account.
+// It is on by default, with no config switch.
 func (s *Store) MarkDeactivatedWorkspace(trigger *Account, errorMsg string) {
 	if s == nil || trigger == nil {
 		return
@@ -40,11 +40,11 @@ func (s *Store) MarkDeactivatedWorkspace(trigger *Account, errorMsg string) {
 	for _, acc := range targets {
 		s.MarkError(acc, linkedMsg)
 	}
-	log.Printf("账号 %d 工作区已停用，联动标记 %d 个同空间账号", trigger.DBID, len(targets))
+	log.Printf("account %d workspace deactivated, linked-marking %d same-workspace accounts", trigger.DBID, len(targets))
 }
 
 func deactivatedWorkspaceLinkedMessage(triggerID int64) string {
-	return fmt.Sprintf("上游返回: deactivated_workspace（工作区联动，由账号 %d 触发）", triggerID)
+	return fmt.Sprintf("upstream returned: deactivated_workspace (workspace-linked, triggered by account %d)", triggerID)
 }
 
 func (s *Store) workspaceLinkedTargets(trigger *Account) []*Account {
@@ -75,7 +75,7 @@ func shouldLinkDeactivatedWorkspace(trigger, sibling *Account, workspaceID strin
 	if nativeWorkspaceID(sibling) == workspaceID {
 		return true
 	}
-	// Team/K12 座位的原生 AccountID 可能是个人座位，但 WHAM/流量打到同一工作区。
+	// The native AccountID of a Team/K12 seat may be a personal seat, but WHAM and traffic go to the same workspace.
 	return isWorkspaceSeatPlan(sibling) && strings.TrimSpace(sibling.EffectiveAccountID()) == workspaceID
 }
 
@@ -109,8 +109,8 @@ func siblingErrorStatus(acc *Account) bool {
 	return acc.Status == StatusError
 }
 
-// LinkedDeactivatedWorkspaceResult 供批量测试在打 WHAM 前短路：
-// 该账号已因同空间停用被标错，或所属工作区刚被停用。
+// LinkedDeactivatedWorkspaceResult lets batch tests short-circuit before hitting WHAM:
+// the account was already marked as error because its space was deactivated, or its workspace was just deactivated.
 func (s *Store) LinkedDeactivatedWorkspaceResult(acc *Account) (string, bool) {
 	if s == nil || acc == nil {
 		return "", false
@@ -150,7 +150,7 @@ func (s *Store) lookupDeactivatedWorkspace(ids ...string) (int64, bool) {
 	return 0, false
 }
 
-// markWorkspaceLinkedFired 以 workspaceID 为键做进程内去重：TTL 内同一工作区只允许一次 fan-out。
+// markWorkspaceLinkedFired deduplicates in-process, keyed by workspaceID: within the TTL, only one fan-out is allowed per workspace.
 func (s *Store) markWorkspaceLinkedFired(workspaceID string, triggerID int64) bool {
 	now := time.Now()
 	s.workspaceLinkedMu.Lock()

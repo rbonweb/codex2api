@@ -5,20 +5,20 @@ import (
 	"time"
 )
 
-// TestTransportFailureNeedsStreakBeforeTierDrop 验证孤立的传输层断流不再削账号
-// 并发,连续失败仍会降档(issue #491)。
+// TestTransportFailureNeedsStreakBeforeTierDrop verifies that an isolated transport-layer disconnect no longer cuts an account's
+// concurrency, while consecutive failures still lower the tier (issue #491).
 func TestTransportFailureNeedsStreakBeforeTierDrop(t *testing.T) {
 	s := &Store{}
 	acc := &Account{HealthTier: HealthTierHealthy}
 
-	// 阈值之前的每一次断流都不该把健康账号打下 Healthy。
+	// Every disconnect before the threshold must not drop a healthy account below Healthy.
 	for i := 1; i < transportFailureTierDropStreak; i++ {
 		s.ReportRequestFailure(acc, transportFailureKind, 10*time.Millisecond)
 		if acc.HealthTier != HealthTierHealthy {
 			t.Fatalf("isolated transport failure #%d dropped tier to %s", i, acc.HealthTier)
 		}
 	}
-	// 达到连击阈值:豁免失效,账号降档,调度随之把流量挪走。
+	// The consecutive-failure threshold is reached: the exemption no longer applies, the account drops a tier, and scheduling moves traffic away from it.
 	s.ReportRequestFailure(acc, transportFailureKind, 10*time.Millisecond)
 	if acc.HealthTier != HealthTierWarm {
 		t.Fatalf("streak of %d transport failures should drop to warm, got %s", transportFailureTierDropStreak, acc.HealthTier)
@@ -27,8 +27,8 @@ func TestTransportFailureNeedsStreakBeforeTierDrop(t *testing.T) {
 		t.Fatalf("failure attribution not recorded: kind=%q", acc.LastFailureKind)
 	}
 
-	// 成功清零连击,豁免重新生效(此处只断言豁免判据本身:该账号此刻的
-	// 成功率已被前面连续失败拉低,最终档位由分数决定,不适合再断言 tier)。
+	// A success resets the streak and the exemption applies again (this only asserts the exemption criterion itself: the account's current
+	// success rate was already pulled down by the earlier consecutive failures, and the final tier is decided by the score, so it is not suitable to assert the tier again).
 	s.ReportRequestSuccess(acc, 10*time.Millisecond)
 	if acc.FailureStreak != 0 {
 		t.Fatalf("success must reset failure streak, got %d", acc.FailureStreak)
@@ -39,8 +39,8 @@ func TestTransportFailureNeedsStreakBeforeTierDrop(t *testing.T) {
 	}
 }
 
-// TestNonTransportFailureStillDropsImmediately 验证豁免只针对传输层:
-// server/timeout 首次即降档,unauthorized 仍然封禁。
+// TestNonTransportFailureStillDropsImmediately verifies that the exemption applies only to the transport layer:
+// server/timeout drops a tier on the first failure, and unauthorized still bans.
 func TestNonTransportFailureStillDropsImmediately(t *testing.T) {
 	s := &Store{}
 	for _, kind := range []string{"server", "timeout"} {

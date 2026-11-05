@@ -57,7 +57,7 @@ func (s *Store) persistAccountCooldownState(acc *Account, force, clearError bool
 		}
 	}
 	if err != nil {
-		log.Printf("[账号 %d] 持久化用量冷却失败: %v", acc.DBID, err)
+		log.Printf("[account %d] failed to persist usage cooldown: %v", acc.DBID, err)
 		return
 	}
 	acc.mu.Lock()

@@ -166,7 +166,7 @@ func (s *Store) PersistUsageSnapshotSpark(acc *Account) {
 	ctx, cancel := context.WithTimeout(context.Background(), 2*time.Second)
 	defer cancel()
 	if err := s.db.UpdateUsageSnapshotSpark(ctx, acc.DBID, pct, resetAt, updatedAt); err != nil {
-		log.Printf("[账号 %d] 持久化 spark 用量快照失败: %v", acc.DBID, err)
+		log.Printf("[account %d] failed to persist spark usage snapshot: %v", acc.DBID, err)
 	}
 }
 
@@ -219,7 +219,7 @@ func (s *Store) ClearAbsentUsageSnapshotSparkAt(acc *Account, observedAt time.Ti
 	ctx, cancel := context.WithTimeout(context.Background(), 2*time.Second)
 	defer cancel()
 	if err := s.db.ClearUsageSnapshotSpark(ctx, acc.DBID); err != nil {
-		log.Printf("[账号 %d] 清除 spark 用量快照失败: %v", acc.DBID, err)
+		log.Printf("[account %d] failed to clear spark usage snapshot: %v", acc.DBID, err)
 	}
 	return true
 }

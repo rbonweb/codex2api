@@ -46,15 +46,15 @@ type oauthRefreshLease struct {
 	distributed bool
 	ctx         context.Context
 	cancel      context.CancelFunc
-	// criticalCtx 与 ctx 共享 lease hold 期限,但不随调用方取消/超时:
-	// RT 消费临界区(交换+CAS 落库)一旦开始,调用方(如管理端 10s 请求)中途
-	// 取消会让上游已轮换的新 RT 永久丢失,账号只能人工重导。
+	// criticalCtx shares the lease hold deadline with ctx, but is not cancelled or timed out with the caller:
+	// once the RT consumption critical section (exchange + CAS persist) starts, if the caller (for example an admin 10s request) is cancelled midway
+	// cancellation would permanently lose the new RT that upstream already rotated, and the account could only be re-imported by hand.
 	criticalCtx    context.Context
 	criticalCancel context.CancelFunc
 	released       atomic.Bool
 }
 
-// arm 同时创建等待用 ctx(随调用方取消)与临界区 ctx(仅受 hold 期限约束)。
+// arm creates both the wait ctx (cancelled with the caller) and the critical-section ctx (bounded only by the hold deadline).
 func (lease *oauthRefreshLease) arm(parent context.Context) {
 	lease.ctx, lease.cancel = context.WithTimeout(parent, oauthRefreshLeaseHold)
 	lease.criticalCtx, lease.criticalCancel = context.WithTimeout(context.WithoutCancel(parent), oauthRefreshLeaseHold)
@@ -67,11 +67,11 @@ func oauthRefreshTokenFingerprint(refreshToken string) string {
 
 func (s *Store) acquireOAuthRefreshLease(ctx context.Context, refreshToken string) (*oauthRefreshLease, error) {
 	if s == nil {
-		return nil, fmt.Errorf("账号存储未配置")
+		return nil, fmt.Errorf("account storage is not configured")
 	}
 	fingerprint := oauthRefreshTokenFingerprint(refreshToken)
 	if fingerprint == oauthRefreshTokenFingerprint("") {
-		return nil, fmt.Errorf("refresh_token 为空")
+		return nil, fmt.Errorf("refresh_token is empty")
 	}
 
 	local, err := s.acquireOAuthRefreshLocalLock(ctx, fingerprint)
@@ -107,9 +107,9 @@ func (s *Store) acquireOAuthRefreshLease(ctx context.Context, refreshToken strin
 			// single-process and their lease errors are not expected in normal use.
 			if s.tokenCache.SharedAcrossInstances() {
 				lease.Release()
-				return nil, fmt.Errorf("获取 OAuth 跨实例刷新 lease 失败: %w", err)
+				return nil, fmt.Errorf("failed to acquire OAuth cross-instance refresh lease: %w", err)
 			}
-			log.Printf("获取 OAuth 本地刷新 lease 失败，保留进程内锁: %v", err)
+			log.Printf("failed to acquire OAuth local refresh lease, keeping the in-process lock: %v", err)
 			lease.arm(ctx)
 			return lease, nil
 		}
@@ -120,7 +120,7 @@ func (s *Store) acquireOAuthRefreshLease(ctx context.Context, refreshToken strin
 		}
 		if time.Now().After(deadline) {
 			lease.Release()
-			return nil, fmt.Errorf("等待同一 OAuth 凭据的刷新任务超时")
+			return nil, fmt.Errorf("timed out waiting for the refresh task of the same OAuth credential")
 		}
 
 		timer := time.NewTimer(oauthRefreshLeasePoll)
@@ -169,8 +169,8 @@ func (lease *oauthRefreshLease) Context() context.Context {
 	return lease.ctx
 }
 
-// CriticalContext 返回 RT 消费临界区专用 ctx:不随调用方取消,仅受 lease hold
-// 期限与 Release 约束。持有 family lease 后进入交换/落库段时必须切换到它。
+// CriticalContext returns the ctx dedicated to the RT consumption critical section: it is not cancelled with the caller, and is bounded only by the lease hold
+// deadline and Release. After holding the family lease, the exchange/persist step must switch to this ctx.
 func (lease *oauthRefreshLease) CriticalContext() context.Context {
 	if lease == nil || lease.criticalCtx == nil {
 		return context.Background()
@@ -190,7 +190,7 @@ func (lease *oauthRefreshLease) Release() {
 			lease.fingerprint,
 			lease.owner,
 		); err != nil {
-			log.Printf("释放 OAuth 跨实例刷新 lease 失败: %v", err)
+			log.Printf("failed to release OAuth cross-instance refresh lease: %v", err)
 		}
 		cancel()
 	}
@@ -230,7 +230,7 @@ func (s *Store) reloadOAuthCredentialsAfterLock(
 		acc.mu.Lock()
 		if acc.CredentialGeneration > row.CredentialGeneration {
 			acc.mu.Unlock()
-			return false, false, fmt.Errorf("凭据版本在重载期间已变更")
+			return false, false, fmt.Errorf("credential version changed during reload")
 		}
 		acc.CredentialGeneration = row.CredentialGeneration
 		acc.mu.Unlock()
@@ -242,7 +242,7 @@ func (s *Store) reloadOAuthCredentialsAfterLock(
 	acc.mu.Lock()
 	if acc.CredentialGeneration > row.CredentialGeneration {
 		acc.mu.Unlock()
-		return false, false, fmt.Errorf("凭据版本在重载期间已变更")
+		return false, false, fmt.Errorf("credential version changed during reload")
 	}
 	acc.CredentialGeneration = row.CredentialGeneration
 	if refreshToken != "" {
@@ -285,10 +285,10 @@ func parseOAuthCredentialExpiry(value string) time.Time {
 	return time.Time{}
 }
 
-// finishReloadedOAuthRefresh 在复用他处已完成的刷新结果后发布账号状态。
-// 冷却判定基于当前内存状态而非调用方入口快照:等 lease 可达分钟级,期间其它
-// goroutine 可能已把账号置入/延长冷却(如上游 429),那份事实更新,不能被
-// 过期快照清零或回退。
+// finishReloadedOAuthRefresh publishes the account state after reusing a refresh result that was completed elsewhere.
+// The cooldown decision is based on the current in-memory state, not on the caller's entry snapshot: waiting for the lease can take minutes, and during that time other
+// goroutines may already have put the account into or extended cooldown (for example upstream 429); that newer fact must not be
+// reset to zero or rolled back by a stale snapshot.
 func (s *Store) finishReloadedOAuthRefresh(ctx context.Context, acc *Account) {
 	acc.mu.Lock()
 	now := time.Now()

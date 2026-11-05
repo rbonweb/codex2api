@@ -24,16 +24,16 @@ import (
 	"github.com/codex2api/security/promptfilter"
 )
 
-// AccountStatus 账号状态
+// AccountStatus account status
 type AccountStatus int
 
 const (
-	StatusReady    AccountStatus = iota // 可用
-	StatusCooldown                      // 冷却中（被限速）
-	StatusError                         // 不可用（RT 失效等）
+	StatusReady    AccountStatus = iota // available
+	StatusCooldown                      // cooling down (rate limited)
+	StatusError                         // unavailable (RT invalid, etc.)
 )
 
-// AccountHealthTier 账号健康层级（仅用于调度优先级，不直接暴露给外部 API）
+// AccountHealthTier is the account health tier (used only for scheduling priority, not exposed directly to external APIs)
 type AccountHealthTier string
 
 const (
@@ -45,8 +45,8 @@ const (
 
 const (
 	DefaultTestContent = "hi"
-	// DefaultTestModel 是连通性测试的出厂默认模型;须是当前上游仍在线、free/plus/pro
-	// 三档都可用的模型(gpt-5.4 已于 2026-09 下线)。
+	// DefaultTestModel is the factory default model for connectivity tests; it must still be online upstream and usable on free/plus/pro
+	// (a model that all three tiers can use; gpt-5.4 was retired in 2026-09).
 	DefaultTestModel    = "gpt-5.5"
 	MaxTestContentRunes = 8192
 )
@@ -61,7 +61,7 @@ func NormalizeTestContent(content string) string {
 	return content
 }
 
-// Account 运行时账号状态
+// Account is the runtime account state
 type Account struct {
 	daybreak                  database.DaybreakSnapshot
 	codexLiteSupport          map[string]bool
@@ -74,7 +74,7 @@ type Account struct {
 	usageSnapshotPersistMu sync.Mutex
 	modelCatalogMu         sync.Mutex
 	usageObservedAt        time.Time
-	DBID                   int64 // 数据库 ID
+	DBID                   int64 // database ID
 	RefreshToken           string
 	SessionToken           string
 	AccessToken            string
@@ -86,16 +86,16 @@ type Account struct {
 	CustomHeaders          map[string]string
 	UpstreamType           string
 	Models                 []string
-	// CodexFingerprintMode 见 codex_fingerprint_mode.go：Codex 官方出站请求的
-	// 设备指纹收敛档位（off / device / session / full），默认 off。
+	// CodexFingerprintMode is in codex_fingerprint_mode.go: the device fingerprint convergence level of official Codex outbound requests
+	// (off / device / session / full), default off.
 	CodexFingerprintMode string
-	// Timezone 是账号绑定的 IANA 时区（credentials.timezone）。Codex 官方出站路径据此
-	// 改写请求体 environment_context 里的时区与日期（见 proxy/codex_environment_context.go）；
-	// 空 = 不绑定、透传下游值。
+	// Timezone is the IANA timezone bound to the account (credentials.timezone). The official Codex outbound path uses it to
+	// rewrite the timezone and date in environment_context of the request body (see proxy/codex_environment_context.go);
+	// empty = not bound, the downstream value is passed through.
 	Timezone string
-	// Codex Agent Identity（auth_mode=agentIdentity）：不存 AT/RT，每次上游请求用
-	// agent_private_key(Ed25519, PKCS#8 base64) 动态签名。AgentTaskID 由 task 注册获得，
-	// 运行时缓存并落库(credentials.task_id)。
+	// Codex Agent Identity (auth_mode=agentIdentity): no AT/RT is stored; each upstream request uses
+	// agent_private_key (Ed25519, PKCS#8 base64) to sign dynamically. AgentTaskID is obtained from task registration,
+	// cached at runtime and persisted (credentials.task_id).
 	CodexAuthMode   string
 	AgentRuntimeID  string
 	AgentPrivateKey string
@@ -105,27 +105,27 @@ type Account struct {
 	CredentialFamilyID          string
 	Status                      AccountStatus
 	CooldownUtil                time.Time
-	CooldownReason              string // rate_limited / rate_limited_5h / responses_rate_limited / unauthorized / 空
+	CooldownReason              string // rate_limited / rate_limited_5h / responses_rate_limited / unauthorized / empty
 	usageCooldownPersistMu      sync.Mutex
 	usageCooldownPersistPending bool
 	ErrorMsg                    string
 
-	// 用量进度（从 Codex 响应头被动解析）
-	UsagePercent7d      float64 // 7d 窗口使用率 0-100+
+	// Usage progress (passively parsed from Codex response headers)
+	UsagePercent7d      float64 // 7d window usage rate 0-100+
 	UsagePercent7dValid bool
-	Reset7dAt           time.Time // 7d 窗口重置时间
-	// Window7dSeconds 是「长窗口」(即 7d 槽)的真实周期秒数：plus/pro 通常为 7d(604800)，
-	// team plan 实为 monthly(约 2592000)。0 = 未知(按 7d 默认处理)。智能配速的自然速率
-	// 需按真实周期计算，否则 team 的月窗被当成 7 天 → natural 速率偏大 → 过度限流。
+	Reset7dAt           time.Time // 7d window reset time
+	// Window7dSeconds is the real period in seconds of the "long window" (the 7d slot): plus/pro is usually 7d (604800),
+	// the team plan is actually monthly (about 2592000). 0 = unknown (treated as the 7d default). The natural rate of smart pacing
+	// must be computed from the real period, otherwise the team monthly window is treated as 7 days, the natural rate is too high, and it over-limits.
 	Window7dSeconds     int64
-	UsagePercent5h      float64 // 5h 窗口使用率 0-100+
+	UsagePercent5h      float64 // 5h window usage rate 0-100+
 	UsagePercent5hValid bool
-	Reset5hAt           time.Time // 5h 窗口重置时间
-	UsageUpdatedAt      time.Time // 7d 用量快照刷新时间
-	UsageUpdatedAt5h    time.Time // 5h 用量快照刷新时间
-	// usageFramePersisted* 记录 WS 逐帧观测最近一次落库的时间与百分比。
-	// 内存快照每帧都实时更新；落库只为重启恢复，大号池下按时间/变化幅度节流，
-	// 避免把每个上游响应都变成一次数据库写入。
+	Reset5hAt           time.Time // 5h window reset time
+	UsageUpdatedAt      time.Time // 7d usage snapshot refresh time
+	UsageUpdatedAt5h    time.Time // 5h usage snapshot refresh time
+	// usageFramePersisted* records the time and percentage of the most recent persisted WS per-frame observation.
+	// The in-memory snapshot is updated live on every frame; persisting is only for restart recovery, and on large account pools it is throttled by time and change size,
+	// so that every upstream response does not turn into a database write.
 	usageFramePersistedAt         time.Time
 	usageFramePersisted5h         float64
 	usageFramePersisted7d         float64
@@ -135,31 +135,31 @@ type Account struct {
 	usageFramePending             []usageFrameObservation
 	usageFrameObservationRunning  bool
 	usageFrameObservationOverflow bool
-	// usageFrameLastAt/Kind 记录最近一次被应用的 WS 配额帧，仅供管理端
-	// 验证帧摄入是否工作，不参与调度。
+	// usageFrameLastAt/Kind records the most recently applied WS quota frame, for the admin side only
+	// to verify that frame ingestion works; it does not take part in scheduling.
 	usageFrameLastAt   time.Time
 	usageFrameLastKind string
-	// activated5hResetAt 是已经为其发送过「开窗」最小 /responses 的那个 Reset5hAt。
-	// 每个观测到的 5h 窗口最多激活一次（issue #581）。
+	// activated5hResetAt is the Reset5hAt for which a minimal "window open" /responses request has already been sent.
+	// Each observed 5h window is activated at most once (issue #581).
 	activated5hResetAt time.Time
-	// Spark 是 Pro/Prolite 账号上独立于主 5h/7d 的用量窗口。
+	// Spark is a usage window on Pro/Prolite accounts, separate from the main 5h/7d windows.
 	UsagePercentSpark      float64
 	UsagePercentSparkValid bool
 	ResetSparkAt           time.Time
 	UsageUpdatedAtSpark    time.Time
 
-	// RateLimitResetCredits 是 OpenAI 官方账号剩余的「主动重置次数」，来自
-	// /backend-api/wham/usage 响应的 rate_limit_reset_credits.available_count。
-	// -1 表示尚未探测过（未知）；>=0 为已知次数。
+	// RateLimitResetCredits is the remaining active reset count of the OpenAI official account, taken from
+	// the rate_limit_reset_credits.available_count field of the /backend-api/wham/usage response.
+	// -1 means not probed yet (unknown); >=0 is the known count.
 	RateLimitResetCredits      int
 	RateLimitResetCreditsValid bool
-	// ApplicableResetCredits 是当下「可应用」的重置券张数，来自 wham/usage 的
-	// rate_limit_reset_credits.applicable_available_count。未触限时上游返回 0
-	// （券在有效期内但此刻不生效）。
+	// ApplicableResetCredits is the number of reset credits that are "applicable" right now, from the wham/usage
+	// rate_limit_reset_credits.applicable_available_count field. When not rate limited, upstream returns 0
+	// (the credits are still valid but do not apply at this moment).
 	ApplicableResetCredits      int
 	ApplicableResetCreditsValid bool
-	// Credits* 是 wham/usage 返回的 credits 积分余额快照（零额度成本）。
-	// Balance 原样保留上游字符串（单位未知，不做换算）；Valid 表示已探测过。
+	// Credits* is the credits balance snapshot returned by wham/usage (zero quota cost).
+	// Balance keeps the upstream string as is (unit unknown, no conversion); Valid means it has been probed.
 	CreditsBalance              string
 	CreditsBalanceKnown         bool
 	CreditsHasCredits           bool
@@ -169,26 +169,26 @@ type Account struct {
 	CreditsSpendControlValid    bool
 	CreditsRateLimitReachedType string
 	CreditsValid                bool
-	// creditsPersistedKey 是最近一次成功落库的积分快照指纹，用于跳过无变化的写库。
-	// 只比对业务字段，不含时间戳——否则每次探针都会写一次库。
-	// creditsPersistedFlagsKey 是同一快照去掉余额后的指纹：普通响应头路径只在
-	// 业务标志变化时落库，余额逐请求递减不能每次都写。
+	// creditsPersistedKey is the fingerprint of the most recently persisted credits snapshot, used to skip writes when nothing changed.
+	// It compares business fields only, without timestamps; otherwise every probe would write to the database.
+	// creditsPersistedFlagsKey is the fingerprint of the same snapshot with the balance removed: the normal response-header path only
+	// persists when a business flag changes; the balance decreases on every request, so it must not be written each time.
 	creditsPersistedKey      string
 	creditsPersistedFlagsKey string
 	creditsPersistMu         sync.Mutex
-	// resetCreditsProbedAt 记录最近一次成功 wham 用量探针的时间。
-	// 「主动重置次数」只能通过 wham 探针刷新（普通 /responses 流量不携带该字段），
-	// 因此用它独立判断重置次数是否过期，避免活跃账号因用量快照一直被流量刷新而长期不探针。
+	// resetCreditsProbedAt records the time of the most recent successful wham usage probe.
+	// The "active reset count" can only be refreshed through the wham probe (normal /responses traffic does not carry this field),
+	// so it is used on its own to decide whether the reset count has expired, so that active accounts whose usage snapshot keeps being refreshed by traffic are not left unprobed for long.
 	resetCreditsProbedAt time.Time
-	// subscriptionMeta 订阅同步元数据（最近查询时间/同步状态/来源/宽限期等），
-	// 持久化在 credentials；CheckedAt 兼作网页端 /subscriptions 探针节流。(issue #360)
+	// subscriptionMeta is subscription sync metadata (last query time / sync status / source / grace period, etc.),
+	// persisted in credentials; CheckedAt doubles as the throttle for the web /subscriptions probe. (issue #360)
 	subscriptionMeta SubscriptionMeta
-	// subscriptionSyncInFlight 标记异步权威订阅同步在途，避免同一账号并发发起。
+	// subscriptionSyncInFlight marks an asynchronous authoritative subscription sync as in flight, to avoid starting several for the same account at once.
 	subscriptionSyncInFlight bool
 
 	usageProbeInFlight          bool
 	recoveryProbeInFlight       bool
-	lastAuthVerifyAt            time.Time // WS 上游异常关闭后触发的鉴权验证探针节流时间戳
+	lastAuthVerifyAt            time.Time // throttle timestamp for the auth verification probe triggered after an abnormal WS upstream close
 	AutoPause5hThreshold        float64   // 0..1, 0 = disabled
 	AutoPause7dThreshold        float64   // 0..1, 0 = disabled
 	AutoPause5hDisabled         bool
@@ -197,8 +197,8 @@ type Account struct {
 	effectiveAutoPause7d        float64
 	autoPause5hGuardBandPercent float64 // percentage points, 0 = disabled
 	autoPause5hGuardConcurrency int     // 0 = disabled; otherwise guard-band concurrency cap
-	// 智能配速（issue #312）：按剩余配额/剩余时间把用量匀速摊到窗口重置，
-	// 燃烧过快时按可持续速率缩放并发。参数由 Store 全局设置快照而来。
+	// Smart pacing (issue #312): spreads usage evenly over the remaining quota / remaining time until the window resets,
+	// and scales concurrency down to a sustainable rate when burning too fast. Parameters come from the Store's global settings snapshot.
 	smartPacingEnabled        bool
 	smartPacingMinConcurrency int
 	smartPacingWindows5h      bool
@@ -207,11 +207,11 @@ type Account struct {
 	dispatchCountMu           sync.Mutex
 	dispatchWindowUsed        int64
 	dispatchWindowResetAt     time.Time
-	// SchedulerPriority 账号调度优先级（issue #358）：数值大者严格先调度，
-	// 同优先级内才按健康档位与调度分竞争。0 为默认；负值可把账号压为兜底渠道。
+	// SchedulerPriority is the account scheduling priority (issue #358): a higher value is always scheduled first,
+	// and only within the same priority do health tier and scheduling score compete. 0 is the default; negative values can push an account down to a fallback channel.
 	SchedulerPriority int64
 
-	// 调度健康信号
+	// scheduling health signals
 	HealthTier               AccountHealthTier
 	SchedulerScore           float64
 	DispatchScore            float64
@@ -222,13 +222,13 @@ type Account struct {
 	LatencyEWMA              float64
 	SuccessStreak            int
 	FailureStreak            int
-	// PermanentRefreshFailures 是连续不可恢复刷新失败(isNonRetryable)的次数,
-	// 仅内存态。刷新成功或人工清理(ClearCooldown)清零;达到
-	// permanentRefreshFailureTerminalLimit 后转 error 终态并退出恢复探测轮换。
+	// PermanentRefreshFailures is the number of consecutive unrecoverable refresh failures (isNonRetryable),
+	// memory-only. Reset to zero on a successful refresh or a manual clear (ClearCooldown); once it reaches
+	// permanentRefreshFailureTerminalLimit, the account moves to the error terminal state and leaves the recovery probe rotation.
 	PermanentRefreshFailures int
-	// LastFailureKind 记录最近一次失败的归因（与 ReportRequestFailure 的 kind
-	// 同义），仅内存态。用于把"传输层抖动"与"账号自身有问题"区分开，见
-	// recomputeSchedulerLocked 里对孤立断流的豁免。
+	// LastFailureKind records the attribution of the most recent failure (the same as kind in ReportRequestFailure),
+	// memory-only. It separates "transport-layer jitter" from "the account itself has a problem", see
+	// the exemption for isolated disconnects in recomputeSchedulerLocked.
 	LastFailureKind     string
 	LastSuccessAt       time.Time
 	LastFailureAt       time.Time
@@ -247,35 +247,35 @@ type Account struct {
 	transientRateLimitUntil time.Time
 	transientRateLimitTimer *time.Timer // at most one recovery timer per throttled account
 
-	// 滑动窗口成功率（最近 N 次请求）
-	RecentResults    [20]uint8 // 1=成功, 0=失败
-	RecentResultsIdx int       // 环形缓冲区写入位置
-	RecentResultsCnt int       // 已记录数量（最大 20）
+	// sliding window success rate (last N requests)
+	RecentResults    [20]uint8 // 1=success, 0=failure
+	RecentResultsIdx int       // write position in the ring buffer
+	RecentResultsCnt int       // number recorded (max 20)
 
-	// 高并发调度指标（原子操作，无需锁）。用 atomic.Int64 而非裸 int64:
-	// 32 位平台(arm/386)只有类型化原子保证 8 字节对齐,裸字段在结构体中段会 panic。
-	ActiveRequests atomic.Int64 // 当前正在执行的请求数
-	// OccupiedRequests 包含当前请求和成功结束后为原会话保留的缓冲槽。
-	// 调度准入读取它；管理端仍分别展示真实在途与含缓冲占用。
+	// High-concurrency scheduling metrics (atomic operations, no lock needed). atomic.Int64 is used instead of a bare int64:
+	// On 32-bit platforms (arm/386) only typed atomics guarantee 8-byte alignment; a bare field in the middle of the struct would panic.
+	ActiveRequests atomic.Int64 // number of requests currently executing
+	// OccupiedRequests includes the current request and the buffer slot kept for the original session after it finishes successfully.
+	// Scheduling admission reads it; the admin side still shows the real in-flight count and the occupancy including the buffer separately.
 	OccupiedRequests   atomic.Int64
-	TotalRequests      atomic.Int64 // 累计总请求数
-	LastUsedAt         atomic.Int64 // 最后使用时间（UnixNano）
-	Disabled           int32        // 原子标志，1 = 立即不可调度（401 时瞬间置位，无需等锁）
-	AddedAt            atomic.Int64 // 加入号池的时间（UnixNano），用于过期清理
-	Locked             int32        // 原子标志，1 = 锁定，自动清理跳过此账号
-	IntelligencePaused int32        // 独立的持久化降智检测暂停；不修改人工 enabled
-	DispatchPaused     int32        // 原子标志，1 = 禁用调度选择，不影响刷新/探针/清理
+	TotalRequests      atomic.Int64 // total requests so far
+	LastUsedAt         atomic.Int64 // last used time (UnixNano)
+	Disabled           int32        // atomic flag, 1 = not schedulable immediately (set instantly on 401, no lock needed)
+	AddedAt            atomic.Int64 // time added to the account pool (UnixNano), used for expiry cleanup
+	Locked             int32        // atomic flag, 1 = locked, automatic cleanup skips this account
+	IntelligencePaused int32        // separate, persisted pause of the intelligence check; does not change the manual enabled flag
+	DispatchPaused     int32        // atomic flag, 1 = disable scheduling selection; does not affect refresh/probe/cleanup
 
-	// per-account 调度配置（nil = 跟随默认）
+	// per-account scheduling config (nil = follow the default)
 	ScoreBiasOverride       *int64
 	BaseConcurrencyOverride *int64
-	CreditEnabled           bool // 信用账号标记
-	CreditSkipUsageWindow   bool // 跳过用量窗口惩罚和本地限流标记
-	// IgnoreUsageLimitStatusOverride 为 nil 时跟随全局设置；effective 值由 Store 解析。
+	CreditEnabled           bool // credit account flag
+	CreditSkipUsageWindow   bool // skip the usage window penalty and local rate-limit marking
+	// IgnoreUsageLimitStatusOverride follows the global setting when nil; the effective value is resolved by Store.
 	IgnoreUsageLimitStatusOverride *bool
 	ignoreUsageLimitStatus         bool
-	SkipWarmTier                   bool // 跳过 warm 层级降级
-	KeepConcurrencyOnDegrade       bool // warm/risky 不降并发,层级照算 (issue #772)
+	SkipWarmTier                   bool // skip the warm tier downgrade
+	KeepConcurrencyOnDegrade       bool // warm/risky do not lower concurrency; the tier is still computed (issue #772)
 	AllowedAPIKeyIDs               []int64
 	allowedAPIKeySet               map[int64]struct{}
 	Tags                           []string
@@ -296,7 +296,7 @@ type ModelCooldown struct {
 	BackoffLevel int
 }
 
-// AccountFilter 用于请求级调度约束，例如按模型限制账号套餐。
+// AccountFilter is used for per-request scheduling constraints, for example limiting account plans by model.
 type AccountFilter func(*Account) bool
 
 const (
@@ -304,9 +304,9 @@ const (
 	defaultUsageProbeMaxAge          = 10 * time.Minute
 	defaultUsageProbeConcurrency     = 16
 	defaultRecoveryProbeInterval     = 30 * time.Minute
-	// probeBoundaryLag 是「到点即探」定时器相对边界时刻的滞后量：稍晚于重置/冷却
-	// 结束再探，确保 NeedsUsageProbe 里 `!ResetAt.After(now)` 已成立，并给上游与
-	// 本地之间的时钟偏差留出余量，避免探早了仍拿到重置前的旧数据。
+	// probeBoundaryLag is the lag of the "probe on the dot" timer relative to the boundary moment: slightly later than the reset/cooldown
+	// end before probing, to ensure `!ResetAt.After(now)` in NeedsUsageProbe already holds, and to leave room for clock skew between upstream and local,
+	// so that probing too early does not still get old data from before the reset.
 	probeBoundaryLag                 = 2 * time.Second
 	premium5hUrgencyWindow           = 4 * time.Hour
 	premium5hUrgencyMaxBonus         = 25.0
@@ -322,7 +322,7 @@ const (
 	expiryUrgencyWarnBonus           = 25.0
 )
 
-// SchedulerBreakdown 调度评分拆解
+// SchedulerBreakdown is the breakdown of the scheduling score
 type SchedulerBreakdown struct {
 	UnauthorizedPenalty float64
 	RateLimitPenalty    float64
@@ -330,16 +330,16 @@ type SchedulerBreakdown struct {
 	ServerPenalty       float64
 	FailurePenalty      float64
 	SuccessBonus        float64
-	ProvenBonus         float64 // 经过验证的账号（TotalRequests > 10）加分
+	ProvenBonus         float64 // bonus for verified accounts (TotalRequests > 10)
 	UsagePenalty7d      float64
 	UsageUrgencyBonus5h float64
 	UsageUrgencyBonus7d float64
 	ExpiryUrgencyBonus  float64
 	LatencyPenalty      float64
-	SuccessRatePenalty  float64 // 滑动窗口成功率惩罚
+	SuccessRatePenalty  float64 // sliding window success rate penalty
 }
 
-// SchedulerDebugSnapshot 调度调试快照
+// SchedulerDebugSnapshot is the scheduling debug snapshot
 type SchedulerDebugSnapshot struct {
 	HealthTier               string
 	SchedulerScore           float64
@@ -389,12 +389,12 @@ type AccountListRuntimeSnapshot struct {
 	CooldownUntil           time.Time
 }
 
-// ID 返回数据库 ID
+// ID returns the database ID
 func (a *Account) ID() int64 {
 	return a.DBID
 }
 
-// Mu 返回读写锁（供外部包安全读取字段）
+// Mu returns the read-write lock (so external packages can read fields safely)
 func (a *Account) Mu() *sync.RWMutex {
 	return &a.mu
 }
@@ -404,14 +404,14 @@ func (a *Account) hasDispatchCredentialLocked() bool {
 		return false
 	}
 	if a.isCodexAgentIdentityLocked() {
-		// Agent Identity 无 AT：私钥即凭据，可直接调度（task_id 于请求前惰性注册）。
+		// Agent Identity has no AT: the private key is the credential, and it can be scheduled directly (task_id is registered lazily before the request).
 		return true
 	}
 	return strings.TrimSpace(a.AccessToken) != ""
 }
 
-// SupportsCodexModel 判断 Codex OAuth 账号能否服务指定模型。
-// Models 为空表示未配置白名单，放行全部模型；非空时按大小写不敏感精确匹配。
+// SupportsCodexModel reports whether a Codex OAuth account can serve the given model.
+// Models empty means no allowlist is configured and all models are allowed; when non-empty, it matches exactly and case-insensitively.
 func (a *Account) SupportsCodexModel(model string) bool {
 	if a == nil {
 		return false
@@ -433,7 +433,7 @@ func (a *Account) SupportsCodexModel(model string) bool {
 	return false
 }
 
-// CodexModels 返回 Codex OAuth 账号配置的支持模型白名单（空表示放行全部）。
+// CodexModels returns the supported model allowlist configured for the Codex OAuth account (empty means all are allowed).
 func (a *Account) CodexModels() []string {
 	if a == nil {
 		return []string{}
@@ -470,9 +470,9 @@ func (a *Account) GetCustomHeaders() map[string]string {
 	return cloneStringMap(a.CustomHeaders)
 }
 
-// EffectiveAccountID 返回实际用于上游路由的工作区 ID:自定义请求头覆盖了
-// Chatgpt-Account-Id 时以覆盖值为准(与 proxy/wsrelay 转发行为一致),
-// 额度探测等旁路请求必须用它,否则统计的是与流量不同的空间。
+// EffectiveAccountID returns the workspace ID actually used for upstream routing: when a custom request header overrides the
+// Chatgpt-Account-Id header, the overriding value wins (consistent with proxy/wsrelay forwarding behavior),
+// side requests such as quota probes must use it, otherwise they measure a different space from the traffic.
 func (a *Account) EffectiveAccountID() string {
 	if a == nil {
 		return ""
@@ -485,7 +485,7 @@ func (a *Account) EffectiveAccountID() string {
 	return strings.TrimSpace(a.AccountID)
 }
 
-// AccountIDOverridden 判断自定义请求头是否把流量导向了与 OAuth 身份不同的空间。
+// AccountIDOverridden reports whether a custom request header routes traffic to a workspace different from the OAuth identity.
 func (a *Account) AccountIDOverridden() bool {
 	if a == nil {
 		return false
@@ -663,7 +663,7 @@ func reflectOptionalInt64Field(src any, fieldName string) *int64 {
 	return nil
 }
 
-// fastRandN 轻量级随机数（用于调度公平性，无需加密安全）
+// fastRandN is a lightweight random number (used for scheduling fairness, no cryptographic security needed)
 func fastRandN(n int) int {
 	if n <= 0 {
 		return 0
@@ -697,11 +697,11 @@ func concurrencyLimitForTier(baseLimit int64, tier AccountHealthTier) int64 {
 	}
 }
 
-// KeepConcurrencyOnDegradeCredentialKey 是「降级不降并发」开关在凭据 JSON 中的键 (issue #772)。
+// KeepConcurrencyOnDegradeCredentialKey is the key of the "keep concurrency on degrade" switch in the credentials JSON (issue #772).
 const KeepConcurrencyOnDegradeCredentialKey = "keep_concurrency_on_degrade"
 
-// tierConcurrencyLimitLocked 按健康层级折算并发上限;账号开启
-// KeepConcurrencyOnDegrade 时 warm/risky 沿用基础并发,只有 banned 归零。
+// tierConcurrencyLimitLocked converts the concurrency limit by health tier; when the account enables
+// KeepConcurrencyOnDegrade, warm/risky keep the base concurrency, and only banned drops to zero.
 func (a *Account) tierConcurrencyLimitLocked(baseLimit int64, tier AccountHealthTier) int64 {
 	if a.KeepConcurrencyOnDegrade && (tier == HealthTierWarm || tier == HealthTierRisky) {
 		tier = HealthTierHealthy
@@ -711,7 +711,7 @@ func (a *Account) tierConcurrencyLimitLocked(baseLimit int64, tier AccountHealth
 
 func defaultScoreBiasForPlan(planType string) int64 {
 	switch NormalizePlanType(planType) {
-	// k12 是教育版 team 工作区，行为与 team 一致 (issue #282)
+	// k12 is the education team workspace, which behaves the same as team (issue #282)
 	case "pro", "plus", "team", "k12":
 		return 50
 	default:
@@ -758,7 +758,7 @@ func (a *Account) recordLatencyLocked(latency time.Duration) {
 	a.LatencyEWMA = a.LatencyEWMA*0.8 + latencyMs*0.2
 }
 
-// recordResultLocked 记录一次请求结果到滑动窗口（必须持有锁）
+// recordResultLocked records one request result in the sliding window (the lock must be held)
 func (a *Account) recordResultLocked(success bool) {
 	if success {
 		a.RecentResults[a.RecentResultsIdx] = 1
@@ -771,10 +771,10 @@ func (a *Account) recordResultLocked(success bool) {
 	}
 }
 
-// recentSuccessRateLocked 计算滑动窗口成功率 (0.0 ~ 1.0)
+// recentSuccessRateLocked computes the sliding window success rate (0.0 ~ 1.0)
 func (a *Account) recentSuccessRateLocked() float64 {
 	if a.RecentResultsCnt == 0 {
-		return 1.0 // 无数据时返回 100%
+		return 1.0 // returns 100% when there is no data
 	}
 	var sum int
 	for i := 0; i < a.RecentResultsCnt; i++ {
@@ -783,7 +783,7 @@ func (a *Account) recentSuccessRateLocked() float64 {
 	return float64(sum) / float64(a.RecentResultsCnt)
 }
 
-// linearDecay 线性衰减：返回 base × max(0, 1 - elapsed/window)
+// linearDecay is a linear decay: returns base × max(0, 1 - elapsed/window)
 func linearDecay(base float64, elapsed, window time.Duration) float64 {
 	if elapsed >= window || window <= 0 {
 		return 0
@@ -795,7 +795,7 @@ func (a *Account) schedulerBreakdownLocked(now time.Time) SchedulerBreakdown {
 	breakdown := SchedulerBreakdown{}
 	premium5hLimited := a.premium5hRateLimitedLocked(now)
 
-	// 线性衰减惩罚：随时间平滑更无突变
+	// linear decay penalty: smoother over time, with no sudden jumps
 	if !a.LastUnauthorizedAt.IsZero() {
 		elapsed := now.Sub(a.LastUnauthorizedAt)
 		breakdown.UnauthorizedPenalty = linearDecay(50, elapsed, 24*time.Hour)
@@ -818,13 +818,13 @@ func (a *Account) schedulerBreakdownLocked(now time.Time) SchedulerBreakdown {
 		breakdown.SuccessBonus = float64(clampInt(a.SuccessStreak*2, 0, 12))
 	}
 
-	// 经过验证的账号（累计请求 > 10 次）优先调度
+	// verified accounts (more than 10 cumulative requests) are scheduled first
 	if !premium5hLimited && a.TotalRequests.Load() > 10 {
 		breakdown.ProvenBonus = 20
 	}
 
-	// 滑动窗口成功率惩罚
-	if a.RecentResultsCnt >= 5 { // 至少 5 次请求才统计
+	// sliding window success rate penalty
+	if a.RecentResultsCnt >= 5 { // only counted with at least 5 requests
 		rate := a.recentSuccessRateLocked()
 		switch {
 		case rate < 0.5:
@@ -995,8 +995,8 @@ func (a *Account) effectiveScoreBiasLocked(now time.Time, tier AccountHealthTier
 	return defaultScoreBiasForPlan(a.PlanType)
 }
 
-// expiryUrgencyBonusLocked 在订阅快到期时给账号加分,促使调度器优先消耗它。
-// <= 3d 紧急(+60) / <= 7d 警告(+25) / 其它(0)。已过期/free/api 不加分。
+// expiryUrgencyBonusLocked adds a bonus to an account whose subscription is close to expiring, so the scheduler uses it first.
+// <= 3d urgent (+60) / <= 7d warning (+25) / other (0). Expired/free/api accounts get no bonus.
 func (a *Account) expiryUrgencyBonusLocked(now time.Time) float64 {
 	if a.SubscriptionExpiresAt.IsZero() {
 		return 0
@@ -1098,9 +1098,9 @@ func (a *Account) schedulerSnapshot(baseLimit int64) (AccountHealthTier, float64
 	return a.HealthTier, a.SchedulerScore, a.DispatchScore, a.DynamicConcurrencyLimit
 }
 
-// IsAvailable 检查账号是否可用
+// IsAvailable checks whether the account is available
 func (a *Account) IsAvailable() bool {
-	// 原子标志优先：401 时瞬间置位，无需等锁即可拦截并发请求
+	// atomic flag first: set instantly on 401, so concurrent requests can be blocked without waiting for a lock
 	if atomic.LoadInt32(&a.Disabled) != 0 {
 		return false
 	}
@@ -1132,7 +1132,7 @@ func (a *Account) isAvailableLocked(now time.Time) bool {
 	if a.quotaAutoPausedLocked(now) {
 		return false
 	}
-	// 冷却期过了自动恢复
+	// recovers automatically once the cooldown period has passed
 	if a.Status == StatusCooldown && !now.Before(a.CooldownUtil) {
 		return a.hasDispatchCredentialLocked()
 	}
@@ -1170,8 +1170,8 @@ func normalizeSmartPacingMinConcurrency(value int) int {
 	return value
 }
 
-// parseSmartPacingWindows 解析 "5h,7d" 形式，返回是否对 5h / 7d 窗口配速。
-// 空或非法一律回退为两个窗口都启用。
+// parseSmartPacingWindows parses the "5h,7d" form and returns whether to pace the 5h / 7d windows.
+// empty or invalid input always falls back to enabling both windows.
 func parseSmartPacingWindows(raw string) (bool, bool) {
 	raw = strings.ToLower(strings.TrimSpace(raw))
 	if raw == "" {
@@ -1192,8 +1192,8 @@ func parseSmartPacingWindows(raw string) (bool, bool) {
 	return w5h, w7d
 }
 
-// 长窗口(7d 槽)周期识别：free/team plan 的限流长窗口实为月窗(约 30 天 = 2592000s)，
-// 而非 plus/pro 的周窗(7 天 = 604800s)。用 28–31 天容差兼容服务端的轻微抖动。
+// Long window (7d slot) period detection: the long rate-limit window of free/team plans is actually a monthly window (about 30 days = 2592000s),
+// not the weekly window of plus/pro (7 days = 604800s). A 28–31 day tolerance absorbs slight server-side jitter.
 const (
 	monthlyWindowMinSeconds int64 = 28 * 24 * 60 * 60
 	monthlyWindowMaxSeconds int64 = 31 * 24 * 60 * 60
@@ -1203,13 +1203,13 @@ func isMonthlyWindowSeconds(sec int64) bool {
 	return sec >= monthlyWindowMinSeconds && sec <= monthlyWindowMaxSeconds
 }
 
-// IsMonthlyWindowSeconds 判断窗口周期是否属月窗(28–31 天，含 2592000 精确值)。
-// 导出供 proxy 层的 wham/header 窗口分类复用，保证判据单一真源。
+// IsMonthlyWindowSeconds reports whether the window period is a monthly window (28–31 days, including the exact value 2592000).
+// Exported so the proxy layer's wham/header window classification reuses it, keeping a single source of truth for the criterion.
 func IsMonthlyWindowSeconds(sec int64) bool {
 	return isMonthlyWindowSeconds(sec)
 }
 
-// normalizeSmartPacingWindows 归一化为规范字符串（用于持久化与展示）。
+// normalizeSmartPacingWindows normalizes to a canonical string (used for persistence and display).
 func normalizeSmartPacingWindows(raw string) string {
 	w5h, w7d := parseSmartPacingWindows(raw)
 	switch {
@@ -1222,14 +1222,14 @@ func normalizeSmartPacingWindows(raw string) string {
 	}
 }
 
-// smartPacingRatio 计算某窗口的"配速比" = 可持续速率 / 自然速率。
+// smartPacingRatio computes the window's "pacing ratio" = sustainable rate / natural rate.
 //
-//	可持续速率 = 剩余配额% / 剩余时间
-//	自然速率   = 100% / 窗口长度（把整窗配额均匀铺满整段窗口的速率）
-//	ratio      = 剩余配额% × 窗口长度 / (100 × 剩余时间)
+//	sustainable rate = remaining quota % / remaining time
+//	natural rate    = 100% / window length (the rate that spreads the whole window's quota evenly across the whole window)
+//	ratio      = remaining quota % × window length / (100 × remaining time)
 //
-// ratio >= 1 表示未超前燃烧（无需限速）；ratio < 1 表示烧太快，需按比例压并发。
-// ok=false 表示用量/重置信号无效或窗口已翻新，此时不介入。
+// ratio >= 1 means not burning ahead of pace (no rate limit needed); ratio < 1 means burning too fast, so concurrency must be scaled down proportionally.
+// ok=false means the usage/reset signal is invalid or the window has rolled over; do not intervene in this case.
 func smartPacingRatio(usage float64, valid bool, resetAt time.Time, window time.Duration, now time.Time) (float64, bool) {
 	if !valid || resetAt.IsZero() || window <= 0 {
 		return 0, false
@@ -1240,7 +1240,7 @@ func smartPacingRatio(usage float64, valid bool, resetAt time.Time, window time.
 	}
 	remainingPct := 100 - usage
 	if remainingPct <= 0 {
-		// 已耗尽，交给限流/自动暂停逻辑处理，配速不越权。
+		// Already exhausted; hand it to the rate limit / automatic pause logic, pacing does not override it.
 		return 0, false
 	}
 	sustainable := remainingPct / remainingTime.Seconds()
@@ -1251,8 +1251,8 @@ func smartPacingRatio(usage float64, valid bool, resetAt time.Time, window time.
 	return sustainable / natural, true
 }
 
-// window7dDurationLocked 返回长窗口(7d 槽)用于配速的周期时长：已知真实长度(team 月窗)时
-// 用真实值，否则回退到默认 7 天。调用方须持有 a.mu。
+// window7dDurationLocked returns the period length of the long window (7d slot) used for pacing: when the real length is known (team monthly window),
+// it uses the real value, otherwise it falls back to the default of 7 days. The caller must hold a.mu.
 func (a *Account) window7dDurationLocked() time.Duration {
 	if a.Window7dSeconds > 0 {
 		return time.Duration(a.Window7dSeconds) * time.Second
@@ -1294,7 +1294,7 @@ func (a *Account) quotaAutoPause5hGuardConcurrencyLimitLocked(limit int64, now t
 	if limit <= 1 || a.AutoPause5hDisabled || a.effectiveAutoPause5h <= 0 || !a.UsagePercent5hValid || a.autoPause5hGuardBandPercent <= 0 || a.autoPause5hGuardConcurrency <= 0 {
 		return limit
 	}
-	// 积分顶替时自动暂停不生效（见 quotaAutoPausedLocked），护栏带也随之让位。
+	// When credits cover the rate limit, the automatic pause does not apply (see quotaAutoPausedLocked), and the guardrail band yields as well.
 	if a.creditSkipsUsageWindowLocked() {
 		return limit
 	}
@@ -1312,10 +1312,10 @@ func (a *Account) quotaAutoPause5hGuardConcurrencyLimitLocked(limit int64, now t
 	return limit
 }
 
-// smartPacingConcurrencyLimitLocked 智能配速（issue #312）：当账号在某个用量窗口内
-// "燃烧过快"（已用比例超过按时间匀速的应用比例）时，按可持续速率与自然速率之比缩放
-// 并发上限，让剩余配额平滑用到窗口重置那一刻，而不是提前撞到 5h/7d 限流。
-// 只在有有效用量信号 + 重置时间时介入；5h/7d 两个窗口取更严格（更小）的比值。
+// smartPacingConcurrencyLimitLocked is smart pacing (issue #312): when the account, within a usage window,
+// is "burning too fast" (the used share exceeds the share that an even spread over time would allow), it scales by the ratio of sustainable rate to natural rate
+// the concurrency limit, so the remaining quota is used smoothly up to the moment the window resets, instead of hitting the 5h/7d rate limit early.
+// It only intervenes when there is a valid usage signal and a reset time; for the 5h/7d windows it takes the stricter (smaller) ratio.
 func (a *Account) smartPacingConcurrencyLimitLocked(limit int64, now time.Time) int64 {
 	if !a.smartPacingEnabled || limit <= 1 {
 		return limit
@@ -1335,7 +1335,7 @@ func (a *Account) smartPacingConcurrencyLimitLocked(limit int64, now time.Time) 
 		}
 	}
 	if a.smartPacingWindows7d {
-		// 用长窗口的真实周期(team 为月窗)算自然速率，避免月窗被当 7 天导致过度限流。
+		// Compute the natural rate from the long window's real period (a monthly window for team), so a monthly window is not treated as 7 days and cause over-limiting.
 		if r, ok := smartPacingRatio(a.UsagePercent7d, a.UsagePercent7dValid, a.Reset7dAt, a.window7dDurationLocked(), now); ok && r < ratio {
 			ratio = r
 		}
@@ -1374,9 +1374,9 @@ func (a *Account) quotaAutoPause5hGuardDispatchPenaltyLocked(now time.Time) floa
 }
 
 func (a *Account) quotaAutoPausedLocked(now time.Time) bool {
-	// 积分顶替限流开着且当下确有积分时，自动暂停让位：阈值最高只到 100%，照常按阈值
-	// 停调度的话，窗口永远走不到「打满后改扣积分」那一步，账号级开关形同虚设（issue #791）。
-	// 积分归零或工作区 hard-stop 后 creditSkipsUsageWindowLocked 转 false，阈值恢复生效。
+	// When the credits-cover-rate-limit switch is on and there are credits right now, the automatic pause yields: the threshold tops out at 100%, and the threshold still applies as usual, so
+	// if it kept stopping scheduling, the window would never reach the "once full, deduct credits" step, and the account-level switch would be meaningless (issue #791).
+	// After credits reach zero or the workspace hard-stops, creditSkipsUsageWindowLocked turns false and the threshold applies again.
 	if a.creditSkipsUsageWindowLocked() {
 		return false
 	}
@@ -1452,8 +1452,8 @@ func resolveGroupBaseConcurrency(groupIDs []int64, s *Store) int64 {
 	return best
 }
 
-// creditsBalanceValue 解析 wham/usage 返回的积分余额字符串（形如 "1000.0000000000"）。
-// 解析不出来按 0 处理——余额读不懂就当没有，不拿它去放行调度。
+// creditsBalanceValue parses the credits balance string returned by wham/usage (like "1000.0000000000").
+// If it cannot be parsed, it is treated as 0: an unreadable balance counts as none, and it is not used to let scheduling through.
 func creditsBalanceValue(raw string) float64 {
 	v, err := strconv.ParseFloat(strings.TrimSpace(raw), 64)
 	if err != nil {
@@ -1462,13 +1462,13 @@ func creditsBalanceValue(raw string) float64 {
 	return v
 }
 
-// isWorkspaceCreditHardStop 判断 rate_limit_reached_type 是否为 workspace 级别的强制停止信号。
-// 官方 Codex 客户端中：
+// isWorkspaceCreditHardStop reports whether rate_limit_reached_type is a workspace-level forced stop signal.
+// In the official Codex client:
 // - workspace_owner_credits_depleted
 // - workspace_member_credits_depleted
 // - workspace_owner_usage_limit_reached
 // - workspace_member_usage_limit_reached
-// 这些均属于工作区级配额耗尽或达到上限的权威 hard-stop，不能用积分顶替。
+// All of these are authoritative workspace-level hard stops for quota exhaustion or reaching the limit, and credits cannot cover them.
 func isWorkspaceCreditHardStop(kind string) bool {
 	switch strings.ToLower(strings.TrimSpace(kind)) {
 	case "workspace_owner_credits_depleted",
@@ -1481,17 +1481,17 @@ func isWorkspaceCreditHardStop(kind string) bool {
 	}
 }
 
-// creditsAvailableLocked 判断账号当前是否还有可花的积分（需持有 mu 读锁）。
+// creditsAvailableLocked reports whether the account currently has credits it can spend (requires holding the mu read lock).
 //
-// CreditsValid=false 表示 wham 探针还没跑过、余额未知，这里按「没有积分」处理：
-// 宁可白等一个用量窗口，也不要把请求送进注定 429 的账号。
+// CreditsValid=false means the wham probe has not run yet and the balance is unknown; here it is treated as "no credits":
+// it is better to wait out one usage window than to send requests to an account that is bound to get a 429.
 //
-// 判定顺序：
-// 1. 未探测或标记无效 -> false
-// 2. workspace hard-stop (spend_control.reached=true 或 rate_limit_reached_type 耗尽/超限) -> false
-// 3. 上游 overage_limit_reached (兼容旧上游) -> false
-// 4. unlimited=false 且余额已知为 0 -> false（刚花掉最后一分积分的那次响应）
-// 5. unlimited=true 或 has_credits=true -> true (官方 Codex 明确允许 has_credits=true 且 balance 隐藏)
+// Evaluation order:
+// 1. not probed, or marked invalid -> false
+// 2. workspace hard-stop (spend_control.reached=true or rate_limit_reached_type exhausted/exceeded) -> false
+// 3. upstream overage_limit_reached (kept for compatibility with older upstreams) -> false
+// 4. unlimited=false and the balance is known to be 0 -> false (the response that just spent the last credit)
+// 5. unlimited=true or has_credits=true -> true (the official Codex explicitly allows has_credits=true with the balance hidden)
 func (a *Account) creditsAvailableLocked() bool {
 	if !a.CreditsValid {
 		return false
@@ -1514,11 +1514,11 @@ func (a *Account) creditsAvailableLocked() bool {
 	return a.CreditsHasCredits
 }
 
-// creditSkipsUsageWindowLocked 判断是否用积分顶替用量窗口限流。
+// creditSkipsUsageWindowLocked reports whether credits cover the usage window rate limit.
 //
-// 两个开关只是「授权用积分顶」，真正放行还要求当下确实有积分可花：Codex 的行为是
-// 套餐额度用尽后转为消耗积分，积分归零就该恢复成真实限流，否则调度会一直把请求
-// 送给一个必然 429 的账号。
+// The two switches only "authorize covering with credits"; actually letting requests through also requires that there are credits to spend right now: Codex's behavior is
+// that once the plan quota is used up, it switches to consuming credits; when credits reach zero it should go back to a real rate limit, otherwise scheduling would keep sending requests
+// to an account that is certain to return 429.
 func (a *Account) creditSkipsUsageWindowLocked() bool {
 	if !(a.CreditEnabled && a.CreditSkipUsageWindow) {
 		return false
@@ -1526,11 +1526,11 @@ func (a *Account) creditSkipsUsageWindowLocked() bool {
 	return a.creditsAvailableLocked()
 }
 
-// UsingCredits 报告账号是否正在用积分顶替用量窗口限流。
+// UsingCredits reports whether the account is currently using credits to cover the usage window rate limit.
 //
-// 这是与 RuntimeStatus 并列的独立信号，不是一种状态值：账号此刻的状态仍是 active
-// （确实可调度），这个标记只是解释「为什么窗口打满了还可用」。前端据此在状态徽章
-// 旁边并列一个「使用积分」徽章。
+// This is an independent signal alongside RuntimeStatus, not a status value: the account's status at this moment is still active
+// (it really is schedulable). This flag only explains "why it is still available although the window is full". The frontend uses it to place
+// a "using credits" badge next to the status badge.
 func (a *Account) UsingCredits() bool {
 	if a == nil {
 		return false
@@ -1540,11 +1540,11 @@ func (a *Account) UsingCredits() bool {
 	return a.usingCreditsLocked(time.Now())
 }
 
-// usingCreditsLocked 判断账号是否正处于「用积分顶替限流」状态：用量窗口本身已打满
-// （没有积分的话此刻就是 rate_limited / usage_exhausted），但积分可用所以仍在调度中。
+// usingCreditsLocked reports whether the account is in the "credits cover rate limit" state: the usage window itself is full
+// (without credits it would now be rate_limited / usage_exhausted), but since credits are available it is still being scheduled.
 //
-// 上游驱动的 cooldown（真实 429）与 error 优先：真的被拒说明积分没顶住，
-// 此时状态已是限流/错误，不该再声称在用积分顶。
+// An upstream-driven cooldown (a real 429) and error take precedence: a real rejection means the credits did not cover it,
+// at that point the status is already rate limited / error, and it should not claim to be using credits.
 func (a *Account) usingCreditsLocked(now time.Time) bool {
 	if !(a.CreditEnabled && a.CreditSkipUsageWindow) || !a.creditsAvailableLocked() {
 		return false
@@ -1552,33 +1552,33 @@ func (a *Account) usingCreditsLocked(now time.Time) bool {
 	if a.Status == StatusError {
 		return false
 	}
-	// 上游驱动的 cooldown（真实 429）优先：真被拒说明积分没顶住。但本地用量窗口判罚
-	// 产生的 cooldown 不算——那正是积分要顶替的东西，一刀切会让徽章在最常见的场景
-	// （发现账号限流了才去开开关）永远不出现。
+	// An upstream-driven cooldown (a real 429) takes precedence: a real rejection means the credits did not cover it. But a penalty from the local usage window
+	// that produces a cooldown does not count, because that is exactly what credits are meant to cover; a blanket rule would make the badge never appear in the most common case
+	// (where the account is discovered to be rate limited and only then the switch is turned on).
 	if a.Status == StatusCooldown && now.Before(a.CooldownUtil) && !a.usageWindowCooldownLocked() {
 		return false
 	}
-	// 三条用量窗口限流路径都算：Free 7d 耗尽、premium 5h 打满、以及全套餐通用的
-	// 7d 打满（MarkUsage7dRateLimited 那条）。少算哪条，那条就会显示成普通 active。
+	// All three usage window rate-limit paths count: free 7d exhausted, premium 5h full, and the 7d full that applies to all plans
+	// (the MarkUsage7dRateLimited one). If any one were missed, that path would show as a plain active.
 	return a.rawUsageExhaustedLocked() ||
 		a.rawPremium5hRateLimitedLocked(now) ||
 		a.rawUsageWindow7dExhaustedLocked(now)
 }
 
-// rawUsageExhaustedLocked 是不考虑任何跳过开关的 Free 7d 用量耗尽判定。
+// rawUsageExhaustedLocked is the Free 7d usage exhaustion check that ignores any skip switches.
 func (a *Account) rawUsageExhaustedLocked() bool {
 	return a.UsagePercent7dValid && strings.EqualFold(a.PlanType, "free") && a.UsagePercent7d >= 100
 }
 
-// usageWindowCooldownLocked 判断当前 cooldown 是否由本地用量窗口判罚产生，而非上游 429。
+// usageWindowCooldownLocked reports whether the current cooldown was produced by a local usage window penalty rather than an upstream 429.
 //
-// 两者共用 "rate_limited" 这个 reason，光看 reason 分不开。可靠的区分点是判罚时长：
-// MarkUsage7dRateLimited 直接把 CooldownUtil 设成 Reset7dAt，而上游 429 的冷却时长
-// 来自 Retry-After / 限流决策，不会正好落在 7d 重置时刻上。留 2s 容差吸收计算抖动。
+// Both share the "rate_limited" reason, so the reason alone cannot tell them apart. The reliable distinguishing point is the penalty duration:
+// MarkUsage7dRateLimited sets CooldownUtil directly to Reset7dAt, while the cooldown duration of an upstream 429
+// comes from Retry-After / the rate-limit decision and does not land exactly on the 7d reset moment. A 2s tolerance absorbs computation jitter.
 //
-// premium 5h 判罚（rate_limited_5h）只由响应头 / WHAM 观测落下——/responses 真 429 的
-// 5h 冷却记的是 ResponsesRateLimitedCooldownReason——所以按 reason 即可认定为本地判罚。
-// 漏掉它时，Plus/Pro 先撞 5h 再开积分开关，就得干等到 5h 重置（issue #791）。
+// A premium 5h penalty (rate_limited_5h) is only set by response header / WHAM observation; a real 429 from /responses
+// records a 5h cooldown with ResponsesRateLimitedCooldownReason, so the reason alone identifies a local penalty.
+// If it is missed, Plus/Pro hit the 5h limit first and then turn on the credits switch, and they would have to wait for the 5h reset (issue #791).
 func (a *Account) usageWindowCooldownLocked() bool {
 	if a.Status != StatusCooldown {
 		return false
@@ -1597,7 +1597,7 @@ func (a *Account) usageWindowCooldownLocked() bool {
 	return drift > -2*time.Second && drift < 2*time.Second
 }
 
-// UsageWindowCooldown 报告当前 cooldown 是否由本地用量窗口判罚产生。
+// UsageWindowCooldown reports whether the current cooldown was produced by a local usage window penalty.
 func (a *Account) UsageWindowCooldown() bool {
 	if a == nil {
 		return false
@@ -1607,8 +1607,8 @@ func (a *Account) UsageWindowCooldown() bool {
 	return a.usageWindowCooldownLocked()
 }
 
-// rawUsageWindow7dExhaustedLocked 判断 7d 窗口是否打满到会被 MarkUsage7dRateLimited
-// 判罚的程度（与那里的条件对齐：重置时间已过就不再判罚）。
+// rawUsageWindow7dExhaustedLocked reports whether the 7d window is full enough to be penalized by MarkUsage7dRateLimited
+// (matching the condition there: once the reset time has passed, no penalty is applied).
 func (a *Account) rawUsageWindow7dExhaustedLocked(now time.Time) bool {
 	if !a.UsagePercent7dValid || a.UsagePercent7d < 100 {
 		return false
@@ -1742,7 +1742,7 @@ func (a *Account) GetIgnoreUsageLimitStatusOverride() *bool {
 	return &value
 }
 
-// SkipsUsageWindowLimits 判断账号是否应跳过 5h/7d 用量窗口触发的本地限流。
+// SkipsUsageWindowLimits reports whether the account should skip the local rate limits triggered by the 5h/7d usage windows.
 func (a *Account) SkipsUsageWindowLimits() bool {
 	if a == nil {
 		return false
@@ -1752,7 +1752,7 @@ func (a *Account) SkipsUsageWindowLimits() bool {
 	return a.skipsUsageWindowLimitsLocked()
 }
 
-// usageExhaustedLocked 判断 Free 账号 7d 用量是否已耗尽（需持有 mu 读锁）
+// usageExhaustedLocked reports whether the Free account's 7d usage is exhausted (requires holding the mu read lock)
 func (a *Account) usageExhaustedLocked() bool {
 	if a.skipsUsageWindowLimitsLocked() {
 		return false
@@ -1760,24 +1760,24 @@ func (a *Account) usageExhaustedLocked() bool {
 	return a.rawUsageExhaustedLocked()
 }
 
-// NeedsRefresh 检查 AT 是否需要刷新（过期前 5 分钟刷新）
+// NeedsRefresh checks whether the AT needs refreshing (refresh 5 minutes before expiry)
 func (a *Account) NeedsRefresh() bool {
 	a.mu.RLock()
 	defer a.mu.RUnlock()
 	return time.Until(a.ExpiresAt) < 5*time.Minute
 }
 
-// SetCooldown 设置冷却时间
+// SetCooldown sets the cooldown time
 func (a *Account) SetCooldown(duration time.Duration) {
 	a.SetCooldownUntil(time.Now().Add(duration), "")
 }
 
-// SetCooldownWithReason 设置冷却时间（带原因）
+// SetCooldownWithReason sets the cooldown time (with a reason)
 func (a *Account) SetCooldownWithReason(duration time.Duration, reason string) {
 	a.SetCooldownUntil(time.Now().Add(duration), reason)
 }
 
-// SetCooldownUntil 设置冷却结束时间（带原因）
+// SetCooldownUntil sets the cooldown end time (with a reason)
 func (a *Account) SetCooldownUntil(until time.Time, reason string) {
 	a.mu.Lock()
 	defer a.mu.Unlock()
@@ -1813,7 +1813,7 @@ func (a *Account) setCooldownUntilLocked(until time.Time, reason string) {
 	}
 }
 
-// GetCooldownReason 获取冷却原因
+// GetCooldownReason gets the cooldown reason
 func (a *Account) GetCooldownReason() string {
 	a.mu.RLock()
 	defer a.mu.RUnlock()
@@ -1826,14 +1826,14 @@ func (a *Account) GetCooldownSnapshot() (string, time.Time) {
 	return a.CooldownReason, a.CooldownUtil
 }
 
-// HasActiveCooldown 检查账号是否仍处于冷却期
+// HasActiveCooldown checks whether the account is still in the cooldown period
 func (a *Account) HasActiveCooldown() bool {
 	a.mu.RLock()
 	defer a.mu.RUnlock()
 	return a.Status == StatusCooldown && time.Now().Before(a.CooldownUtil)
 }
 
-// IsBanned 检查账号是否处于强隔离状态
+// IsBanned checks whether the account is in strong isolation
 func (a *Account) IsBanned() bool {
 	a.mu.RLock()
 	defer a.mu.RUnlock()
@@ -1862,7 +1862,7 @@ func (a *Account) ModelCatalogEligible() bool {
 	return a.hasDispatchCredentialLocked()
 }
 
-// RuntimeStatus 返回运行时状态字符串（供 admin API 使用）
+// RuntimeStatus returns the runtime status string (used by the admin API)
 func (a *Account) RuntimeStatus() string {
 	a.mu.RLock()
 	defer a.mu.RUnlock()
@@ -1875,24 +1875,24 @@ func (a *Account) runtimeStatusLocked(now time.Time) string {
 	if a.healthTierLocked() == HealthTierBanned {
 		return "unauthorized"
 	}
-	// 工作区停用等硬错误必须压过用量窗口限流。Team/K12 座位经常先处于
-	// 5h/7d 100%，再被 deactivated_workspace 联动标错；若限流徽章优先，
-	// 列表会继续显示「限流」，看起来像还会恢复。
+	// Hard errors such as a deactivated workspace must take precedence over the usage window rate limit. Team/K12 seats often are first at
+	// 5h/7d 100%, and only then are marked as errors by deactivated_workspace; if the rate limit badge took precedence,
+	// the list would keep showing "rate limited", which looks like it would recover.
 	if a.Status == StatusError {
 		return "error"
 	}
-	// 用积分顶替限流时，显示仍是限流：用量窗口客观上确实打满了，谎称 active 会让人
-	// 以为额度没用完。真正的差别由并列的 UsingCredits 标记表达——前端在限流徽章后面
-	// 挂一个积分徽章，而调度侧（IsAvailable / 冷却）走的是被抑制后的判定，账号照常参与调度。
+	// When credits cover the rate limit, the display still shows rate limited: the usage window really is full, and claiming active would make people
+	// think the quota is not used up. The real difference is expressed by the UsingCredits flag alongside it: the frontend puts a credits badge after the rate limit badge,
+	// while the scheduling side (IsAvailable / cooldown) uses the suppressed result, so the account still takes part in scheduling as usual.
 	if a.usingCreditsLocked(now) {
 		if a.rawUsageExhaustedLocked() {
 			return "usage_exhausted"
 		}
 		return "rate_limited"
 	}
-	// 后台状态必须与新请求调度语义一致。ignore_usage_limit_status 仅允许
-	// 已绑定且携带 turn-state 的活跃轮次续传，不会让新轮次绕过 WHAM 100%；
-	// 因此这里使用同一份 fresh-dispatch 判定，避免账号显示 active 却无法调度。
+	// The background status must match the scheduling semantics of new requests. ignore_usage_limit_status only allows
+	// continuation of an active turn that is bound and carries turn-state, and it does not let new turns bypass WHAM 100%;
+	// so this uses the same fresh-dispatch check, to avoid an account showing active but being unable to be scheduled.
 	if a.usageWindowBlocksFreshDispatchLocked(now) && a.rawUsageExhaustedLocked() {
 		return "usage_exhausted"
 	}
@@ -1913,7 +1913,7 @@ func (a *Account) runtimeStatusLocked(now time.Time) string {
 			if a.quotaAutoPausedLocked(now) {
 				return "quota_paused"
 			}
-			return "active" // 冷却过期，已恢复
+			return "active" // cooldown expired, recovered
 		}
 		if a.RefreshToken != "" {
 			return "refreshing"
@@ -1974,12 +1974,12 @@ func (a *Account) GetAccountListRuntimeSnapshot() AccountListRuntimeSnapshot {
 	}
 }
 
-// SetUsagePercent7d 更新 7d 用量百分比
+// SetUsagePercent7d updates the 7d usage percentage
 func (a *Account) SetUsagePercent7d(pct float64) {
 	a.SetUsageSnapshot(pct, time.Now())
 }
 
-// SetUsageSnapshot 更新用量快照及时间
+// SetUsageSnapshot updates the usage snapshot and its time
 func (a *Account) SetUsageSnapshot(pct float64, updatedAt time.Time) {
 	a.mu.Lock()
 	defer a.mu.Unlock()
@@ -1988,7 +1988,7 @@ func (a *Account) SetUsageSnapshot(pct float64, updatedAt time.Time) {
 	a.UsageUpdatedAt = updatedAt
 }
 
-// GetUsagePercent7d 获取 7d 用量百分比
+// GetUsagePercent7d gets the 7d usage percentage
 func (a *Account) GetUsagePercent7d() (float64, bool) {
 	a.mu.RLock()
 	defer a.mu.RUnlock()
@@ -2105,12 +2105,12 @@ func (s *Store) markUsage7dRateLimited(acc *Account, persist bool) bool {
 	return true
 }
 
-// SetUsageSnapshot5h 更新 5h 用量快照
+// SetUsageSnapshot5h updates the 5h usage snapshot
 func (a *Account) SetUsageSnapshot5h(pct float64, resetAt time.Time) {
 	a.SetUsageSnapshot5hAt(pct, resetAt, time.Now())
 }
 
-// SetUsageSnapshot5hAt 更新 5h 用量快照及刷新时间
+// SetUsageSnapshot5hAt updates the 5h usage snapshot and its refresh time
 func (a *Account) SetUsageSnapshot5hAt(pct float64, resetAt time.Time, updatedAt time.Time) {
 	a.mu.Lock()
 	defer a.mu.Unlock()
@@ -2176,7 +2176,7 @@ func (a *Account) TryApplyUsageObservation(observedAt time.Time, apply func()) b
 	return true
 }
 
-// GetUsagePercent5h 获取 5h 用量百分比
+// GetUsagePercent5h gets the 5h usage percentage
 func (a *Account) GetUsagePercent5h() (float64, bool) {
 	a.mu.RLock()
 	defer a.mu.RUnlock()
@@ -2329,7 +2329,7 @@ func (a *Account) GetAccountLiveUsageSnapshot() AccountLiveUsageSnapshot {
 	}
 }
 
-// Mark5hWindowActivated 记录已经为哪个 Reset5hAt 发送过开窗请求。
+// Mark5hWindowActivated records which Reset5hAt the window-open request has already been sent for.
 func (a *Account) Mark5hWindowActivated(resetAt time.Time) {
 	if a == nil || resetAt.IsZero() {
 		return
@@ -2339,7 +2339,7 @@ func (a *Account) Mark5hWindowActivated(resetAt time.Time) {
 	a.activated5hResetAt = resetAt
 }
 
-// GetActivated5hResetAt 返回最近一次 5h 开窗请求对应的 Reset5hAt。
+// GetActivated5hResetAt returns the Reset5hAt matching the most recent 5h window-open request.
 func (a *Account) GetActivated5hResetAt() time.Time {
 	if a == nil {
 		return time.Time{}
@@ -2349,8 +2349,8 @@ func (a *Account) GetActivated5hResetAt() time.Time {
 	return a.activated5hResetAt
 }
 
-// ShouldActivate5hWindow 判断账号是否需要发送一次真实最小 /responses 来启动下一轮 5h 窗口。
-// 只认上游观测到的 5h + reset 时间，不按套餐写死；每个 Reset5hAt 最多一次。
+// ShouldActivate5hWindow reports whether the account needs one real minimal /responses request to start the next 5h window.
+// It only trusts the 5h and reset times observed upstream, not hard-coded per plan; at most one per Reset5hAt.
 func (a *Account) ShouldActivate5hWindow(now time.Time) bool {
 	if a == nil {
 		return false
@@ -2391,7 +2391,7 @@ func (a *Account) ShouldActivate5hWindow(now time.Time) bool {
 	return true
 }
 
-// SetRateLimitResetCredits 记录账号剩余的「主动重置次数」。
+// SetRateLimitResetCredits records the account's remaining active reset count.
 func (a *Account) SetRateLimitResetCredits(count int) {
 	a.mu.Lock()
 	defer a.mu.Unlock()
@@ -2402,14 +2402,14 @@ func (a *Account) SetRateLimitResetCredits(count int) {
 	a.RateLimitResetCreditsValid = true
 }
 
-// GetRateLimitResetCredits 返回账号剩余的「主动重置次数」及其是否已探测过。
+// GetRateLimitResetCredits returns the account's remaining active reset count and whether it has been probed.
 func (a *Account) GetRateLimitResetCredits() (int, bool) {
 	a.mu.RLock()
 	defer a.mu.RUnlock()
 	return a.RateLimitResetCredits, a.RateLimitResetCreditsValid
 }
 
-// SetApplicableResetCredits 记录当下「可应用」的重置券张数（未触限时为 0）。
+// SetApplicableResetCredits records the number of "applicable" reset credits right now (0 when not rate limited).
 func (a *Account) SetApplicableResetCredits(count int) {
 	a.mu.Lock()
 	defer a.mu.Unlock()
@@ -2420,16 +2420,16 @@ func (a *Account) SetApplicableResetCredits(count int) {
 	a.ApplicableResetCreditsValid = true
 }
 
-// GetApplicableResetCredits 返回当下可应用的重置券张数及其是否已探测过。
+// GetApplicableResetCredits returns the number of applicable reset credits right now and whether it has been probed.
 func (a *Account) GetApplicableResetCredits() (int, bool) {
 	a.mu.RLock()
 	defer a.mu.RUnlock()
 	return a.ApplicableResetCredits, a.ApplicableResetCreditsValid
 }
 
-// SetCreditBalanceDetails 记录 wham/usage 返回的完整 credits 积分与配额状态。
-// wham 是权威全量快照：spend_control / rate_limit_reached_type 缺席即视为未触达，
-// 一并清掉旧值，否则工作区充值后 hard-stop 标记会一直粘着。
+// SetCreditBalanceDetails records the full credits balance and quota status returned by wham/usage.
+// wham is the authoritative full snapshot: when spend_control / rate_limit_reached_type is absent, it is treated as not reached,
+// and the old values are cleared too, otherwise the hard-stop flag would stick after the workspace is topped up.
 func (a *Account) SetCreditBalanceDetails(balance *string, hasCredits, unlimited, overageReached bool,
 	spendControlReached *bool, rateLimitReachedType string) {
 	a.mu.Lock()
@@ -2444,8 +2444,8 @@ func (a *Account) SetCreditBalanceDetails(balance *string, hasCredits, unlimited
 	a.CreditsValid = true
 }
 
-// setCreditBalanceLocked 写入余额；nil 或空串都表示上游隐藏了余额（Team 成员），
-// 记为「未知」而不是「0」，否则会被当成已耗尽。
+// setCreditBalanceLocked writes the balance; nil or an empty string both mean the upstream hid the balance (Team members),
+// and it is recorded as "unknown" rather than "0", otherwise it would be treated as exhausted.
 func (a *Account) setCreditBalanceLocked(balance *string) {
 	if balance != nil {
 		if trimmed := strings.TrimSpace(*balance); trimmed != "" {
@@ -2458,13 +2458,13 @@ func (a *Account) setCreditBalanceLocked(balance *string) {
 	a.CreditsBalanceKnown = false
 }
 
-// SetCreditBalance 记录 wham/usage 返回的 credits 积分余额快照（向后兼容接口）。
+// SetCreditBalance records the credits balance snapshot returned by wham/usage (backward-compatible interface).
 func (a *Account) SetCreditBalance(balance string, hasCredits, unlimited, overageReached bool) {
 	a.SetCreditBalanceDetails(&balance, hasCredits, unlimited, overageReached, nil, "")
 }
 
-// SetRateLimitReachedType 更新账号的 rate_limit_reached_type。
-// 这是逐响应字段：空串表示本次响应未触达，要清掉旧值。
+// SetRateLimitReachedType updates the account's rate_limit_reached_type.
+// This is a per-response field: an empty string means this response did not reach the limit, so the old value must be cleared.
 func (a *Account) SetRateLimitReachedType(kind string) {
 	a.mu.Lock()
 	defer a.mu.Unlock()
@@ -2483,8 +2483,8 @@ func (a *Account) GetRateLimitReachedType() string {
 	return a.CreditsRateLimitReachedType
 }
 
-// ApplySparseCreditsHeaders 应用普通 Codex 响应头携带的 sparse credits 观测信息。
-// 余额 / 超额头缺席时保留旧值；rate_limit_reached_type 缺席即「未触达」，必须覆盖。
+// ApplySparseCreditsHeaders applies the sparse credits observation carried in normal Codex response headers.
+// When the balance / overage headers are absent, the old values are kept; when rate_limit_reached_type is absent it means "not reached" and must overwrite.
 func (a *Account) ApplySparseCreditsHeaders(hasCredits, unlimited bool, balance *string, overageReached *bool, rateLimitReachedType string) {
 	if a == nil {
 		return
@@ -2503,15 +2503,15 @@ func (a *Account) ApplySparseCreditsHeaders(hasCredits, unlimited bool, balance 
 	a.CreditsRateLimitReachedType = strings.TrimSpace(rateLimitReachedType)
 }
 
-// GetCreditBalance 返回 credits 积分快照及其是否已探测过。
-// 快照的 Balance 为 nil 表示上游隐藏了余额，SpendControlReached 为 nil 表示未观测到。
+// GetCreditBalance returns the credits snapshot and whether it has been probed.
+// A nil Balance in the snapshot means the upstream hid the balance, and a nil SpendControlReached means it was not observed.
 func (a *Account) GetCreditBalance() (CreditBalanceSnapshot, bool) {
 	a.mu.RLock()
 	defer a.mu.RUnlock()
 	return a.creditSnapshotLocked(), a.CreditsValid
 }
 
-// creditSnapshotLocked 把内存字段投影成快照（需持有 mu），落库与对外展示共用。
+// creditSnapshotLocked projects the in-memory fields into a snapshot (requires holding mu); persistence and external display both use it.
 func (a *Account) creditSnapshotLocked() CreditBalanceSnapshot {
 	snap := CreditBalanceSnapshot{
 		HasCredits:           a.CreditsHasCredits,
@@ -2530,9 +2530,9 @@ func (a *Account) creditSnapshotLocked() CreditBalanceSnapshot {
 	return snap
 }
 
-// CreditBalanceSnapshot 是落库到 credentials["codex_credits"] 的积分快照。
-// 没有它的话重启后 CreditsValid 归零 → 账号被当成「没积分」→ 积分顶替限流失效、
-// 且会被「清理限流账号」误删，直到下一轮 wham 探针落地才恢复。
+// CreditBalanceSnapshot is the credits snapshot persisted to credentials["codex_credits"].
+// Without it, CreditsValid resets to zero after a restart, the account is treated as having no credits, and credits covering the rate limit stops working,
+// and it gets wrongly deleted by "clean up rate-limited accounts", until the next wham probe lands and restores it.
 type CreditBalanceSnapshot struct {
 	Balance              *string   `json:"balance"`
 	HasCredits           bool      `json:"has_credits"`
@@ -2543,7 +2543,7 @@ type CreditBalanceSnapshot struct {
 	UpdatedAt            time.Time `json:"updated_at"`
 }
 
-// creditBalanceKey 是快照的比对指纹（不含时间戳）。
+// creditBalanceKey is the comparison fingerprint of the snapshot (without timestamps).
 func creditBalanceKey(snap CreditBalanceSnapshot) string {
 	balStr := "<nil>"
 	if snap.Balance != nil {
@@ -2552,8 +2552,8 @@ func creditBalanceKey(snap CreditBalanceSnapshot) string {
 	return balStr + "|" + creditFlagsKey(snap)
 }
 
-// creditFlagsKey 是去掉余额的指纹。普通响应头路径只按它判断是否落库：
-// 余额每个请求都在递减，逐次写库会把行锁事务加到首字延迟上；余额本身由 wham 探针定期刷新。
+// creditFlagsKey is the fingerprint with the balance removed. The normal response-header path uses only it to decide whether to persist:
+// the balance decreases on every request, and writing it each time would add row-lock transactions to the time to first token; the balance itself is refreshed periodically by the wham probe.
 func creditFlagsKey(snap CreditBalanceSnapshot) string {
 	scStr := "<nil>"
 	if snap.SpendControlReached != nil {
@@ -2562,7 +2562,7 @@ func creditFlagsKey(snap CreditBalanceSnapshot) string {
 	return fmt.Sprintf("%t|%t|%t|%s|%s", snap.HasCredits, snap.Unlimited, snap.OverageLimitReached, scStr, snap.RateLimitReachedType)
 }
 
-// MarshalCreditBalanceSnapshot 序列化积分快照，供落库使用。
+// MarshalCreditBalanceSnapshot serializes the credits snapshot for persistence.
 func MarshalCreditBalanceSnapshot(snap CreditBalanceSnapshot) (string, error) {
 	raw, err := json.Marshal(snap)
 	if err != nil {
@@ -2571,9 +2571,9 @@ func MarshalCreditBalanceSnapshot(snap CreditBalanceSnapshot) (string, error) {
 	return string(raw), nil
 }
 
-// RestoreCreditBalanceFromJSON 用库里的积分快照回填账号（重启后恢复）。
-// 空串/解析失败/未探测过（全空且无任何有效标记）都视为无快照，返回 false，
-// 保持 CreditsValid=false 的「未知」语义，不会凭空造出一个可用余额。
+// RestoreCreditBalanceFromJSON backfills the account from the credits snapshot in the database (restored after a restart).
+// An empty string, a parse failure, or never probed (all empty with no valid markers) are all treated as no snapshot, and it returns false,
+// keeping the "unknown" meaning of CreditsValid=false, and it never invents a usable balance out of thin air.
 func (a *Account) RestoreCreditBalanceFromJSON(raw string) bool {
 	if a == nil {
 		return false
@@ -2586,7 +2586,7 @@ func (a *Account) RestoreCreditBalanceFromJSON(raw string) bool {
 	if err := json.Unmarshal([]byte(raw), &snap); err != nil {
 		return false
 	}
-	// 旧版快照余额是纯字符串，隐藏余额写成 ""，与 null 同义。
+	// In older snapshots the balance is a plain string; a hidden balance is written as "", which means the same as null.
 	if snap.Balance != nil && strings.TrimSpace(*snap.Balance) == "" {
 		snap.Balance = nil
 	}
@@ -2602,7 +2602,7 @@ func (a *Account) RestoreCreditBalanceFromJSON(raw string) bool {
 	a.CreditsSpendControlReached = snap.SpendControlReached != nil && *snap.SpendControlReached
 	a.CreditsRateLimitReachedType = strings.TrimSpace(snap.RateLimitReachedType)
 	a.CreditsValid = true
-	// 恢复值本来自库里，指纹一并对齐，避免启动后第一次探针又写一遍同样的内容。
+	// The restored values come from the database, so the fingerprints are aligned too, to avoid the first probe after startup writing the same content again.
 	restored := a.creditSnapshotLocked()
 	a.creditsPersistedKey = creditBalanceKey(restored)
 	a.creditsPersistedFlagsKey = creditFlagsKey(restored)
@@ -2610,8 +2610,8 @@ func (a *Account) RestoreCreditBalanceFromJSON(raw string) bool {
 	return true
 }
 
-// PersistCreditBalance 写入 wham 积分快照并落库（值无变化时跳过写库）。
-// store 为 nil（单测/无库场景）时只更新内存，行为与 SetCreditBalanceDetails 一致。
+// PersistCreditBalance writes the wham credits snapshot and persists it (skips the write when the values have not changed).
+// When store is nil (unit tests / no database), only memory is updated, and the behavior matches SetCreditBalanceDetails.
 func (s *Store) PersistCreditBalance(acc *Account, balance *string, hasCredits, unlimited, overageReached bool,
 	spendControlReached *bool, rateLimitReachedType string) {
 	if acc == nil {
@@ -2621,8 +2621,8 @@ func (s *Store) PersistCreditBalance(acc *Account, balance *string, hasCredits, 
 	s.persistCreditSnapshot(acc, false)
 }
 
-// PersistSparseCreditObservation 写入来自响应头的 sparse credits 观测；只有业务标志
-// 变化时才落库，余额变化留给 wham 探针刷新。
+// PersistSparseCreditObservation writes the sparse credits observation from response headers; only when the business flag
+// changes is it persisted; balance changes are left to the wham probe to refresh.
 func (s *Store) PersistSparseCreditObservation(acc *Account, hasCredits, unlimited bool, balance *string, overageReached *bool, rateLimitReachedType string) {
 	if acc == nil {
 		return
@@ -2631,8 +2631,8 @@ func (s *Store) PersistSparseCreditObservation(acc *Account, hasCredits, unlimit
 	s.persistCreditSnapshot(acc, true)
 }
 
-// PersistRateLimitReachedType 记录响应头里的 rate_limit_reached_type（含清空）并在
-// 已有积分快照时落库，避免重启后从库里恢复出一个早已解除的 hard-stop。
+// PersistRateLimitReachedType records rate_limit_reached_type from the response headers (including clearing it) and
+// persists it when a credits snapshot already exists, to avoid restoring an already-lifted hard-stop from the database after a restart.
 func (s *Store) PersistRateLimitReachedType(acc *Account, kind string) {
 	if acc == nil {
 		return
@@ -2647,8 +2647,8 @@ func (s *Store) PersistRateLimitReachedType(acc *Account, kind string) {
 	s.persistCreditSnapshot(acc, true)
 }
 
-// persistCreditSnapshot 把账号当前积分快照落库，指纹无变化时跳过。
-// flagsOnly=true 只比对去掉余额的指纹（普通响应头路径）。
+// persistCreditSnapshot persists the account's current credits snapshot, and skips it when the fingerprint has not changed.
+// flagsOnly=true compares only the fingerprint with the balance removed (the normal response-header path).
 func (s *Store) persistCreditSnapshot(acc *Account, flagsOnly bool) {
 	if s == nil || s.db == nil || acc == nil {
 		return
@@ -2679,27 +2679,27 @@ func (s *Store) persistCreditSnapshot(acc *Account, flagsOnly bool) {
 		err = s.db.UpdateCredentials(ctx, acc.DBID, map[string]interface{}{"codex_credits": raw})
 	}
 	if err != nil {
-		// 落库失败就清掉指纹，让下一次观测重试，而不是把「已持久化」错记下来。
+		// If persisting fails, clear the fingerprint so the next observation retries, instead of wrongly recording it as "persisted".
 		acc.mu.Lock()
 		acc.creditsPersistedKey = ""
 		acc.creditsPersistedFlagsKey = ""
 		acc.mu.Unlock()
-		log.Printf("[账号 %d] 持久化积分快照失败: %v", acc.DBID, err)
+		log.Printf("[account %d] failed to persist credits snapshot: %v", acc.DBID, err)
 	}
 }
 
-// MarkResetCreditsProbed 记录最近一次成功 wham 用量探针的时间。
-// 调用方应在 wham 探针成功（拿到 usage）后调用，无论本次响应是否带 reset_credits 字段，
-// 因为「能成功拉到 wham」本身就代表重置次数已是最新。
+// MarkResetCreditsProbed records the time of the most recent successful wham usage probe.
+// Callers should call it after the wham probe succeeds (usage obtained), whether or not this response carries the reset_credits field,
+// because "the wham fetch succeeded" by itself means the reset count is up to date.
 func (a *Account) MarkResetCreditsProbed(t time.Time) {
 	a.mu.Lock()
 	defer a.mu.Unlock()
 	a.resetCreditsProbedAt = t
 }
 
-// NeedsSubscriptionExpiryProbe 判断是否需要从网页端 /subscriptions 同步权威订阅
-// 到期时间：仅付费套餐、且到期时间未知或临近/已过（续费窗口附近才可能变化）时需要；
-// 距上次尝试不足 minInterval 时节流。(issue #360)
+// NeedsSubscriptionExpiryProbe reports whether the authoritative subscription expiry time needs to be synced from the web /subscriptions page
+// expiry time: needed only for paid plans whose expiry time is unknown or near or past (it can only change near the renewal window);
+// throttled when the last attempt was less than minInterval ago. (issue #360)
 func (a *Account) NeedsSubscriptionExpiryProbe(now time.Time, minInterval time.Duration) bool {
 	if a == nil {
 		return false
@@ -2719,8 +2719,8 @@ func (a *Account) NeedsSubscriptionExpiryProbe(now time.Time, minInterval time.D
 	return a.SubscriptionExpiresAt.Sub(now) <= expiryUrgencyWarnDays*24*time.Hour
 }
 
-// MarkSubscriptionExpiryProbed 记录订阅到期探针的尝试时间（无论成败），用于节流。
-// 只改内存；同步流程结束后会连同结果一起持久化。
+// MarkSubscriptionExpiryProbed records the attempt time of the subscription expiry probe (whether it succeeded or failed), for throttling.
+// It only changes memory; it is persisted together with the result when the sync finishes.
 func (a *Account) MarkSubscriptionExpiryProbed(t time.Time) {
 	if a == nil {
 		return
@@ -2730,7 +2730,7 @@ func (a *Account) MarkSubscriptionExpiryProbed(t time.Time) {
 	a.subscriptionMeta.CheckedAt = t
 }
 
-// ClearUsageCache 清除内存中的用量缓存，下次请求时从上游重新获取
+// ClearUsageCache clears the in-memory usage cache, so the next request fetches it from upstream again
 func (a *Account) ClearUsageCache() {
 	a.mu.Lock()
 	defer a.mu.Unlock()
@@ -2748,15 +2748,15 @@ func (a *Account) ClearUsageCache() {
 	a.UsageUpdatedAtSpark = time.Time{}
 }
 
-// SetReset7dAt 设置 7d 窗口重置时间
+// SetReset7dAt sets the 7d window reset time
 func (a *Account) SetReset7dAt(t time.Time) {
 	a.mu.Lock()
 	defer a.mu.Unlock()
 	a.Reset7dAt = t
 }
 
-// SetWindow7dSeconds 记录长窗口(7d 槽)的真实周期秒数。仅在拿到有效长度(>0)时写入，
-// 避免不知道长度的路径(载入/种子)用 0 覆盖已探测到的真实值。
+// SetWindow7dSeconds records the real period in seconds of the long window (7d slot). It is written only when a valid length (>0) is obtained,
+// so that paths that do not know the length (load/seed) do not overwrite an already-probed real value with 0.
 func (a *Account) SetWindow7dSeconds(sec int64) {
 	if sec <= 0 {
 		return
@@ -2766,15 +2766,15 @@ func (a *Account) SetWindow7dSeconds(sec int64) {
 	a.Window7dSeconds = sec
 }
 
-// GetWindow7dSeconds 返回长窗口(7d 槽)的真实周期秒数(0=未知)。
+// GetWindow7dSeconds returns the real period in seconds of the long window (7d slot) (0 = unknown).
 func (a *Account) GetWindow7dSeconds() int64 {
 	a.mu.RLock()
 	defer a.mu.RUnlock()
 	return a.Window7dSeconds
 }
 
-// Window7dKind 返回长窗口(7d 槽)的类型标签："monthly"(free/team 月窗)/"weekly"/""(未知)，
-// 供管理端把进度条标成「30天」而非误标「7天」(issue #324)。判据与 wham 分类的月窗容差一致。
+// Window7dKind returns the type label of the long window (7d slot): "monthly" (free/team monthly window) / "weekly" / "" (unknown),
+// so the admin side labels the progress bar "30 days" rather than wrongly "7 days" (issue #324). The criterion matches the monthly window tolerance of the wham classification.
 func (a *Account) Window7dKind() string {
 	a.mu.RLock()
 	defer a.mu.RUnlock()
@@ -2788,35 +2788,35 @@ func (a *Account) Window7dKind() string {
 	}
 }
 
-// GetReset5hAt 获取 5h 窗口重置时间
+// GetReset5hAt gets the 5h window reset time
 func (a *Account) GetReset5hAt() time.Time {
 	a.mu.RLock()
 	defer a.mu.RUnlock()
 	return a.Reset5hAt
 }
 
-// GetReset7dAt 获取 7d 窗口重置时间
+// GetReset7dAt gets the 7d window reset time
 func (a *Account) GetReset7dAt() time.Time {
 	a.mu.RLock()
 	defer a.mu.RUnlock()
 	return a.Reset7dAt
 }
 
-// GetUsageUpdatedAt 获取 7d 用量快照刷新时间
+// GetUsageUpdatedAt gets the 7d usage snapshot refresh time
 func (a *Account) GetUsageUpdatedAt() time.Time {
 	a.mu.RLock()
 	defer a.mu.RUnlock()
 	return a.UsageUpdatedAt
 }
 
-// GetUsageUpdatedAt5h 获取 5h 用量快照刷新时间
+// GetUsageUpdatedAt5h gets the 5h usage snapshot refresh time
 func (a *Account) GetUsageUpdatedAt5h() time.Time {
 	a.mu.RLock()
 	defer a.mu.RUnlock()
 	return a.UsageUpdatedAt5h
 }
 
-// GetPlanType 获取账号套餐类型
+// GetPlanType gets the account plan type
 func (a *Account) GetPlanType() string {
 	a.mu.RLock()
 	defer a.mu.RUnlock()
@@ -2843,16 +2843,16 @@ func (a *Account) GetCredentialGeneration() int64 {
 	return a.CredentialGeneration
 }
 
-// GroupIDSnapshot 返回账号当前所属组 ID 的副本。GroupIDs 写入受 a.mu 保护
-// （ApplyAccountGroups / ApplyAccountGroupMemberships），跨 goroutine 读取须走此快照。
+// GroupIDSnapshot returns a copy of the account's current group IDs. Writes to GroupIDs are guarded by a.mu
+// (ApplyAccountGroups / ApplyAccountGroupMemberships). Reads across goroutines must go through this snapshot.
 func (a *Account) GroupIDSnapshot() []int64 {
 	a.mu.RLock()
 	defer a.mu.RUnlock()
 	return cloneInt64Slice(a.GroupIDs)
 }
 
-// InAnyGroup 判断账号是否属于给定分组集合中的任意一个。用于调度热路径上的分组匹配:
-// 与 GroupIDSnapshot 不同,它不复制切片,避免每个候选账号一次分配。
+// InAnyGroup reports whether the account belongs to any group in the given set. It is used for group matching on the scheduling hot path:
+// Unlike GroupIDSnapshot, it does not copy the slice, which avoids one allocation per candidate account.
 func (a *Account) InAnyGroup(groups map[int64]struct{}) bool {
 	if a == nil || len(groups) == 0 {
 		return false
@@ -2884,28 +2884,28 @@ func (a *Account) applyRefreshedPlanTypeLocked(planType string, now time.Time) (
 	return plan, true
 }
 
-// GetHealthTier 获取当前健康层级
+// GetHealthTier returns the current health tier
 func (a *Account) GetHealthTier() string {
 	a.mu.RLock()
 	defer a.mu.RUnlock()
 	return string(a.HealthTier)
 }
 
-// GetSchedulerScore 获取当前调度分
+// GetSchedulerScore returns the current scheduling score
 func (a *Account) GetSchedulerScore() float64 {
 	a.mu.RLock()
 	defer a.mu.RUnlock()
 	return a.SchedulerScore
 }
 
-// GetDispatchScore 获取当前用于排序的调度分
+// GetDispatchScore returns the current scheduling score used for sorting
 func (a *Account) GetDispatchScore() float64 {
 	a.mu.RLock()
 	defer a.mu.RUnlock()
 	return a.DispatchScore
 }
 
-// GetScoreBiasOverride 获取账号级分数 override
+// GetScoreBiasOverride returns the account-level score override
 func (a *Account) GetScoreBiasOverride() (int64, bool) {
 	a.mu.RLock()
 	defer a.mu.RUnlock()
@@ -2915,14 +2915,14 @@ func (a *Account) GetScoreBiasOverride() (int64, bool) {
 	return *a.ScoreBiasOverride, true
 }
 
-// GetScoreBiasEffective 获取当前实际生效的 bonus
+// GetScoreBiasEffective returns the bonus currently in effect
 func (a *Account) GetScoreBiasEffective() int64 {
 	a.mu.RLock()
 	defer a.mu.RUnlock()
 	return a.ScoreBiasEffective
 }
 
-// GetBaseConcurrencyOverride 获取账号级并发 override
+// GetBaseConcurrencyOverride returns the account-level concurrency override
 func (a *Account) GetBaseConcurrencyOverride() (int64, bool) {
 	a.mu.RLock()
 	defer a.mu.RUnlock()
@@ -2932,7 +2932,7 @@ func (a *Account) GetBaseConcurrencyOverride() (int64, bool) {
 	return *a.BaseConcurrencyOverride, true
 }
 
-// GetBaseConcurrencyEffective 获取当前实际基础并发
+// GetBaseConcurrencyEffective returns the base concurrency currently in effect
 func (a *Account) GetBaseConcurrencyEffective() int64 {
 	a.mu.RLock()
 	defer a.mu.RUnlock()
@@ -2978,14 +2978,14 @@ func (a *Account) AllowsAPIKey(apiKeyID int64) bool {
 	return ok
 }
 
-// normalizeModelCooldownKey 归一化模型冷却键：去除首尾空白并转为小写。
-// 返回空串表示没有可用的模型标识，调用方据此跳过冷却写入与查询。
+// normalizeModelCooldownKey normalizes the model cooldown key: it trims surrounding whitespace and converts it to lower case.
+// An empty string means there is no usable model identifier, so callers use it to skip cooldown writes and lookups.
 func normalizeModelCooldownKey(model string) string {
 	return strings.ToLower(strings.TrimSpace(model))
 }
 
-// normalizeModelCooldownArgs 归一化冷却键与原因。key 为空或 resetAt 为零值时返回
-// ok=false，调用方保持既有「什么都不写」的语义。
+// normalizeModelCooldownArgs normalizes the cooldown key and reason. It returns
+// ok=false when the key is empty or resetAt is the zero value; callers keep the existing "write nothing" behavior.
 func normalizeModelCooldownArgs(model, reason string, resetAt time.Time) (string, string, bool) {
 	key := normalizeModelCooldownKey(model)
 	if key == "" || resetAt.IsZero() {
@@ -2998,7 +2998,7 @@ func normalizeModelCooldownArgs(model, reason string, resetAt time.Time) (string
 	return key, reason, true
 }
 
-// setModelCooldownUntilLocked 写入冷却并返回写入结果；调用方必须持有 a.mu 写锁。
+// setModelCooldownUntilLocked writes the cooldown and returns the write result; the caller must hold the a.mu write lock.
 func (a *Account) setModelCooldownUntilLocked(key, reason string, resetAt, now time.Time) ModelCooldown {
 	if a.ModelCooldowns == nil {
 		a.ModelCooldowns = make(map[string]ModelCooldown)
@@ -3022,10 +3022,10 @@ func (a *Account) setModelCooldownUntilLocked(key, reason string, resetAt, now t
 	return cooldown
 }
 
-// SetModelCooldownUntil 在账号内存中为指定模型写入「冷却直至 resetAt」并返回写入
-// 的条目（本方法仅更新内存 map，不负责持久化）；模型键为空或 resetAt 为零值时返回
-// 零值且不写入。wire、family 这类被多个公开档位共享的冷却键应改用
-// SetModelCooldownUntilAtLeast，避免更短的 deadline 把既有长冷却改短。
+// SetModelCooldownUntil writes a "cooldown until resetAt" entry for the given model in the account's in-memory state and returns the written
+// entry (this method only updates the in-memory map and does not persist anything). When the model key is empty or resetAt is the zero value, it returns
+// the zero value and writes nothing. Cooldown keys shared by several public tiers (such as wire and family) should use
+// SetModelCooldownUntilAtLeast, so a shorter deadline does not shorten an existing longer cooldown.
 func (a *Account) SetModelCooldownUntil(model, reason string, resetAt time.Time) ModelCooldown {
 	key, reason, ok := normalizeModelCooldownArgs(model, reason, resetAt)
 	if !ok {
@@ -3037,12 +3037,12 @@ func (a *Account) SetModelCooldownUntil(model, reason string, resetAt time.Time)
 	return a.setModelCooldownUntilLocked(key, reason, resetAt, time.Now())
 }
 
-// SetModelCooldownUntilAtLeast 与 SetModelCooldownUntil 相同，但保证不缩短仍然
-// 有效的既有冷却：该 model 现有 ResetAt 仍在生效且晚于传入 resetAt 时保留既有冷却，
-// 第二个返回值为 false 表示本次未写入。
+// SetModelCooldownUntilAtLeast is the same as SetModelCooldownUntil, but guarantees that it does not shorten a cooldown that is still
+// valid: if the model's existing ResetAt is still in effect and later than the passed resetAt, the existing cooldown is kept,
+// and a second return value of false means nothing was written this time.
 //
-// 「读现有 ResetAt → 比较 → 写入」在同一次 a.mu 写锁临界区内完成：否则两个并发
-// 写入都会读到同一个旧值，后落盘的短 deadline 会把先写入的长 deadline 覆盖掉。
+// The "read existing ResetAt, compare, write" sequence runs inside one a.mu write-lock critical section; otherwise two concurrent
+// writes would both read the same old value, and the shorter deadline saved last would overwrite the longer deadline written first.
 func (a *Account) SetModelCooldownUntilAtLeast(model, reason string, resetAt time.Time) (ModelCooldown, bool) {
 	key, reason, ok := normalizeModelCooldownArgs(model, reason, resetAt)
 	if !ok {
@@ -3091,8 +3091,8 @@ func (a *Account) IsModelRateLimited(model string) bool {
 	return ok && cooldown.ResetAt.After(time.Now())
 }
 
-// ModelCooldownRemaining 返回指定模型冷却距 ResetAt 的剩余时长；模型键为空、
-// 没有冷却条目或冷却已过期均返回 0。
+// ModelCooldownRemaining returns the remaining time until ResetAt for the given model's cooldown; when the model key is empty,
+// there is no cooldown entry, or the cooldown has expired, it returns 0.
 func (a *Account) ModelCooldownRemaining(model string) time.Duration {
 	key := normalizeModelCooldownKey(model)
 	if key == "" {
@@ -3111,12 +3111,12 @@ func (a *Account) ModelCooldownRemaining(model string) time.Duration {
 	return remaining
 }
 
-// ModelCooldownFor 返回账号上某个 model 当前仍在生效的冷却条目（含 ResetAt 与
-// Reason）；不存在或已过期时第二个返回值为 false。
+// ModelCooldownFor returns the model's cooldown entry on the account that is still in effect (including ResetAt and
+// Reason); if it does not exist or has expired, the second return value is false.
 //
-// 与 ModelCooldownRemaining 相比，它把 ResetAt 一起交出，调用方无需自己用
-// 「now + remaining」反推 deadline，因此可以在改写共享冷却键前拿到既有的精确
-// deadline（例如判断本次较短的冷却是否会把更长的共享冷却改短）。
+// Compared with ModelCooldownRemaining, it also returns ResetAt, so callers do not have to work
+// backward from "now + remaining" to the deadline, so they can get the exact existing
+// deadline before rewriting a shared cooldown key (for example, to check whether this shorter cooldown would shorten a longer shared one).
 func (a *Account) ModelCooldownFor(model string) (ModelCooldown, bool) {
 	key := normalizeModelCooldownKey(model)
 	if key == "" {
@@ -3211,14 +3211,14 @@ func (a *Account) GetModelCooldownPolicyOverride() (*string, *int, *bool) {
 	return mode, seconds, backoff
 }
 
-// GetDynamicConcurrencyLimit 获取当前动态并发上限
+// GetDynamicConcurrencyLimit returns the current dynamic concurrency limit
 func (a *Account) GetDynamicConcurrencyLimit() int64 {
 	a.mu.RLock()
 	defer a.mu.RUnlock()
 	return a.DynamicConcurrencyLimit
 }
 
-// GetSchedulerDebugSnapshot 获取调度调试快照
+// GetSchedulerDebugSnapshot returns a scheduler debug snapshot
 func (a *Account) GetSchedulerDebugSnapshot(baseLimit int64) SchedulerDebugSnapshot {
 	a.mu.Lock()
 	defer a.mu.Unlock()
@@ -3248,7 +3248,7 @@ func (a *Account) GetSchedulerDebugSnapshot(baseLimit int64) SchedulerDebugSnaps
 	}
 }
 
-// NeedsUsageProbe 判断是否需要主动探针刷新用量
+// NeedsUsageProbe reports whether an active usage probe is needed to refresh usage
 func (a *Account) NeedsUsageProbe(maxAge time.Duration) bool {
 	a.mu.RLock()
 	defer a.mu.RUnlock()
@@ -3258,22 +3258,22 @@ func (a *Account) NeedsUsageProbe(maxAge time.Duration) bool {
 		return false
 	}
 	if a.Status == StatusCooldown && a.CooldownReason == "unauthorized" && (a.CooldownUtil.IsZero() || now.Before(a.CooldownUtil)) {
-		return false // token 失效，wham 也会 401，探针无意义
+		return false // token is invalid and wham also returns 401, so the probe is pointless
 	}
-	// 「主动重置次数」只能由 wham 探针刷新（普通 /responses 流量不携带该字段），
-	// 因此用独立的 resetCreditsProbedAt 判断它是否过期。否则活跃账号的用量快照被
-	// 业务流量持续刷新，会让用量看起来一直"新鲜"，从而长期不触发 wham 探针、
-	// 重置次数迟迟探测不出来。
+	// The "active reset count" can only be refreshed by a wham probe (normal /responses traffic does not carry this field),
+	// so the separate resetCreditsProbedAt decides whether it is stale. Otherwise an active account's usage snapshot keeps being refreshed by business traffic,
+	// which makes usage look "fresh" all the time, so the wham probe is not triggered for a long time,
+	// and the reset count takes a long time to be detected.
 	resetCreditsStale := a.resetCreditsProbedAt.IsZero() || now.Sub(a.resetCreditsProbedAt) > maxAge
 
 	if a.premium5hRateLimitedLocked(now) {
-		// premium 5h 限流期间仍允许 wham 刷新重置次数；是否补 Responses
-		// 恢复探针由 ProbeUsageSnapshot 按权威判定与 fallback 设置决定。
+		// During a premium 5h rate limit, wham may still refresh the reset count; whether to add a Responses
+		// recovery probe is decided by ProbeUsageSnapshot based on the authoritative check and the fallback setting.
 		return resetCreditsStale
 	}
 	if a.Status == StatusCooldown && isUsageLimitCooldownReason(a.CooldownReason) && (a.CooldownUtil.IsZero() || now.Before(a.CooldownUtil)) {
-		// 429 冷却期间仍允许 wham 刷新重置次数；Responses 权威模式可在同一轮
-		// 补一次真实恢复探针，其他模式保持 wham-only。
+		// During a 429 cooldown, wham may still refresh the reset count; in Responses authoritative mode, one
+		// extra real recovery probe may be sent in the same round, while other modes stay wham-only.
 		return resetCreditsStale
 	}
 	if resetCreditsStale {
@@ -3282,31 +3282,31 @@ func (a *Account) NeedsUsageProbe(maxAge time.Duration) bool {
 	if !a.UsagePercent7dValid || a.UsageUpdatedAt.IsZero() || now.Sub(a.UsageUpdatedAt) > maxAge {
 		return true
 	}
-	// 5h / 7d 窗口重置时刻一到就立即探测一次（issue：倒计时归零后账号看似恢复"可用"，
-	// 但上游可能已被封禁）。判据：用量快照的采集时间早于重置时刻 => 展示的是重置前的
-	// 过期数据 => 需要一次 wham 探测确认真实状态，而不是盲目放行。探测成功后
-	// UsageUpdatedAt* 会晚于（旧）重置时刻，条件自然不再成立——每个重置边界只探一次，
-	// 不受 maxAge 延迟影响（比下面 maxAge 限速的兜底更及时）。
+	// Probe once as soon as the 5h / 7d window resets (issue: after the countdown reaches zero the account looks "available" again,
+	// but the upstream may already have banned it). Criterion: if the usage snapshot was collected before the reset time, it shows stale data from before the reset
+	// => a wham probe is needed to confirm the real status, rather than letting the account through blindly. After a successful probe
+	// UsageUpdatedAt* becomes later than the (old) reset time, so the condition no longer holds on its own: each reset boundary is probed only once
+	// and is not delayed by maxAge (it responds sooner than the maxAge rate-limit fallback below).
 	if a.UsagePercent5hValid && !a.Reset5hAt.IsZero() && !a.Reset5hAt.After(now) && a.UsageUpdatedAt5h.Before(a.Reset5hAt) {
 		return true
 	}
 	if a.UsagePercent7dValid && !a.Reset7dAt.IsZero() && !a.Reset7dAt.After(now) && a.UsageUpdatedAt.Before(a.Reset7dAt) {
 		return true
 	}
-	// 5h 是上游可选窗口：仅当本地仍持有有效 5h 快照时才按 maxAge 刷新。
-	// 上游已取消 5h（issue #382）时，缺失快照不应因 auto-pause 5h 配置而永久探测。
+	// The 5h window is optional upstream: it is refreshed by maxAge only while a valid local 5h snapshot is still held.
+	// When the upstream has removed 5h (issue #382), a missing snapshot should not be probed forever because of the auto-pause 5h setting.
 	if a.effectiveAutoPause5h > 0 && !a.AutoPause5hDisabled &&
 		a.UsagePercent5hValid && !a.UsageUpdatedAt5h.IsZero() {
 		if a.Reset5hAt.IsZero() || a.Reset5hAt.After(now) {
 			return now.Sub(a.UsageUpdatedAt5h) > maxAge
 		}
 	}
-	// 5h 用量窗口的重置时间已过、但快照仍停留在重置前采集的高用量（展示的是过期数据）→
-	// 触发一次 wham 刷新，让 5h 进度条与 premium 5h 限流冷却跟随官方窗口重置而恢复。
-	// （7d 窗口的过期数据已被上面的 7d 新鲜度检查覆盖；5h 检查此前仅在 Reset5hAt 未过期时生效，
-	// 重置后会一直停在旧值，这里补上。）
-	// now.Sub(UsageUpdatedAt5h) > maxAge 既能在窗口重置后尽快触发，也能在上游偶尔不返回该窗口时
-	// 限制探测频率，避免反复探针。
+	// The 5h usage window's reset time has passed, but the snapshot still shows the high usage collected before the reset (stale data) →
+	// trigger one wham refresh so the 5h progress bar and the premium 5h rate-limit cooldown recover along with the official window reset.
+	// (Stale 7d data is already covered by the 7d freshness check above; the 5h check previously applied only while Reset5hAt had not expired,
+	// so after a reset it stayed at the old value; this fills that gap.)
+	// now.Sub(UsageUpdatedAt5h) > maxAge both fires as soon as possible after the window resets, and when the upstream occasionally does not return that window,
+	// it limits the probe frequency to avoid repeated probes.
 	if a.UsagePercent5hValid && a.UsagePercent5h > 0 && !a.Reset5hAt.IsZero() &&
 		!a.Reset5hAt.After(now) && now.Sub(a.UsageUpdatedAt5h) > maxAge {
 		return true
@@ -3314,12 +3314,12 @@ func (a *Account) NeedsUsageProbe(maxAge time.Duration) bool {
 	return false
 }
 
-// nextProbeBoundary 返回该账号「到点即应触发 wham 探针」的最近未来时刻：
-//   - 5h / 7d 窗口重置：快照仍停在重置前采集的数据，窗口一翻新就该刷新进度条；
-//   - 限流冷却结束（非 unauthorized——那类探针会 401 无意义）：恢复可用的瞬间确认真实用量/状态。
+// nextProbeBoundary returns the nearest future moment at which this account should trigger a wham probe:
+//   - 5h / 7d window reset: the snapshot still holds data collected before the reset, so the progress bar should refresh as soon as the window rolls over;
+//   - rate-limit cooldown ends (not unauthorized, since those probes would return 401 and be pointless): confirm the real usage and status the moment the account is usable again.
 //
-// 只返回严格晚于 now 的时刻；这些时刻正是 NeedsUsageProbe 的重置/冷却判据会翻转为
-// true 的边界，因此 Store 在此刻精确探针一次即可命中，无需等巡检周期。
+// It returns only moments strictly later than now. These are exactly the boundaries where the reset/cooldown criteria of NeedsUsageProbe flip to
+// true, so the Store only needs to probe once at that moment to hit it, without waiting for the background check cycle.
 func (a *Account) nextProbeBoundary(now time.Time) (time.Time, bool) {
 	a.mu.RLock()
 	defer a.mu.RUnlock()
@@ -3350,10 +3350,10 @@ func (a *Account) nextProbeBoundary(now time.Time) (time.Time, bool) {
 	return next, true
 }
 
-// InLimitedState 报告账号是否处于用量限流/冷却状态（429 冷却或 premium 5h
-// 限流）。普通模式据此只走 wham；Responses 权威模式据此识别需要真实恢复
-// 探针的账号。
-// 注意：unauthorized 冷却不在此列——那类账号 NeedsUsageProbe 已直接跳过。
+// InLimitedState reports whether the account is in a usage rate-limit or cooldown state (429 cooldown or premium 5h
+// rate limit). In normal mode, only wham is used based on this; in Responses authoritative mode, it identifies accounts that need a real recovery
+// probe.
+// Note: unauthorized cooldowns are not included here, because NeedsUsageProbe already skips those accounts.
 func (a *Account) InLimitedState() bool {
 	a.mu.RLock()
 	defer a.mu.RUnlock()
@@ -3367,7 +3367,7 @@ func (a *Account) InLimitedState() bool {
 	return false
 }
 
-// TryBeginUsageProbe 尝试开始一次用量探针
+// TryBeginUsageProbe tries to start one usage probe
 func (a *Account) TryBeginUsageProbe() bool {
 	a.mu.Lock()
 	defer a.mu.Unlock()
@@ -3378,14 +3378,14 @@ func (a *Account) TryBeginUsageProbe() bool {
 	return true
 }
 
-// FinishUsageProbe 结束一次用量探针
+// FinishUsageProbe ends one usage probe
 func (a *Account) FinishUsageProbe() {
 	a.mu.Lock()
 	defer a.mu.Unlock()
 	a.usageProbeInFlight = false
 }
 
-// NeedsRecoveryProbe 判断是否需要对被封禁账号做低频恢复探测
+// NeedsRecoveryProbe reports whether a low-frequency recovery probe is needed for a banned account
 func (a *Account) NeedsRecoveryProbe(minInterval time.Duration) bool {
 	a.mu.RLock()
 	defer a.mu.RUnlock()
@@ -3397,10 +3397,10 @@ func (a *Account) NeedsRecoveryProbe(minInterval time.Duration) bool {
 		return false
 	}
 	if a.PermanentRefreshFailures >= permanentRefreshFailureTerminalLimit {
-		// RT 已连续判死并转 error 终态,探测的前置刷新用的还是同一个死 RT,
-		// 不可能成功。终态时健康层已降出 banned,这里是兜底:其它路径(如
-		// 请求侧 401)可能把账号重新压回 banned 层,计数不清零就不该再探测。
-		// 刷新成功或 ClearCooldown 清零后自动恢复资格。
+		// The RT has been judged dead consecutively and moved to the error terminal state, and the probe's pre-refresh still uses the same dead RT,
+		// so it cannot succeed. In the terminal state the health tier has already been moved out of banned; this is a fallback: other paths (such as
+		// a 401 on the request side) may push the account back into the banned tier, so if the count is not cleared it must not be probed again.
+		// Eligibility is restored automatically after a successful refresh or after ClearCooldown clears the count.
 		return false
 	}
 	if a.Status == StatusCooldown && time.Now().Before(a.CooldownUtil) {
@@ -3412,7 +3412,7 @@ func (a *Account) NeedsRecoveryProbe(minInterval time.Duration) bool {
 	return true
 }
 
-// TryBeginRecoveryProbe 尝试开始一次恢复探测
+// TryBeginRecoveryProbe tries to start one recovery probe
 func (a *Account) TryBeginRecoveryProbe() bool {
 	a.mu.Lock()
 	defer a.mu.Unlock()
@@ -3424,14 +3424,14 @@ func (a *Account) TryBeginRecoveryProbe() bool {
 	return true
 }
 
-// FinishRecoveryProbe 结束一次恢复探测
+// FinishRecoveryProbe ends one recovery probe
 func (a *Account) FinishRecoveryProbe() {
 	a.mu.Lock()
 	defer a.mu.Unlock()
 	a.recoveryProbeInFlight = false
 }
 
-// GetActiveRequests 获取当前并发数
+// GetActiveRequests returns the current concurrency
 func (a *Account) GetActiveRequests() int64 {
 	return a.ActiveRequests.Load()
 }
@@ -3442,12 +3442,12 @@ func (a *Account) GetOccupiedRequests() int64 {
 	return accountOccupiedRequests(a)
 }
 
-// GetTotalRequests 获取累计请求数
+// GetTotalRequests returns the cumulative request count
 func (a *Account) GetTotalRequests() int64 {
 	return a.TotalRequests.Load()
 }
 
-// GetLastUsedAt 获取最后使用时间
+// GetLastUsedAt returns the last-used time
 func (a *Account) GetLastUsedAt() time.Time {
 	nano := a.LastUsedAt.Load()
 	if nano == 0 {
@@ -3456,25 +3456,25 @@ func (a *Account) GetLastUsedAt() time.Time {
 	return time.Unix(0, nano)
 }
 
-// Store 多账号管理器（数据库 + Token 缓存）
+// Store manages multiple accounts (database + token cache)
 type Store struct {
 	proxyAuditLabels                   map[string]ProxyAuditLabel
 	mu                                 sync.RWMutex
 	accountMutationMu                  sync.Mutex // serializes account-set and scheduler mutations without nesting their locks
 	accounts                           []*Account
-	accountsByID                       map[int64]*Account // DBID -> Account 索引，与 accounts 同步维护，供 O(1) 查找
+	accountsByID                       map[int64]*Account // DBID -> Account index, kept in sync with accounts for O(1) lookup
 	accountSnapshot                    atomic.Pointer[accountListSnapshot]
 	globalProxy                        string
-	maxConcurrency                     atomic.Int64 // 每账号最大并发数
-	testConcurrency                    atomic.Int64 // 批量测试并发数
-	testModel                          atomic.Value // 测试连接使用的模型（string）
-	testContent                        atomic.Value // 测试连接使用的输入内容（string）
+	maxConcurrency                     atomic.Int64 // maximum concurrency per account
+	testConcurrency                    atomic.Int64 // concurrency for batch tests
+	testModel                          atomic.Value // model used by test connection (string)
+	testContent                        atomic.Value // input content used by test connection (string)
 	db                                 *database.DB
 	tokenCache                         cache.TokenCache
 	oauthRefreshLocksMu                sync.Mutex
 	oauthRefreshLocks                  map[string]*oauthRefreshLocalLock
-	workspaceLinkedMu                  sync.Mutex                     // 工作区联动熔断进程内去重
-	workspaceLinkedRecent              map[string]workspaceLinkedMark // workspaceID → 去重窗口
+	workspaceLinkedMu                  sync.Mutex                     // in-process deduplication for the workspace-linked circuit breaker
+	workspaceLinkedRecent              map[string]workspaceLinkedMark // workspaceID → deduplication window
 	apiKeyGroupsMu                     sync.RWMutex
 	apiKeyAllowedGroups                map[int64][]int64
 	apiKeyAllowedGroupSets             map[int64]map[int64]struct{}
@@ -3500,20 +3500,20 @@ type Store struct {
 	lazyMode                           atomic.Bool
 	codexOAuthKeepalive                atomic.Bool
 	autoCleanupBatch                   atomic.Bool
-	maxRetries                         atomic.Int64 // 请求失败最大重试次数（换号重试）
-	maxRateLimitRetries                atomic.Int64 // 429 最大换号重试次数
-	backgroundRefreshInterval          atomic.Int64 // 后台刷新/探针巡检间隔（ns）
-	usageProbeMaxAge                   atomic.Int64 // 用量探针快照最大缓存时长（ns）
-	usageProbeConcurrency              atomic.Int64 // 用量探针并行度
+	maxRetries                         atomic.Int64 // maximum retries after a failed request (retry with another account)
+	maxRateLimitRetries                atomic.Int64 // maximum account-switch retries on 429
+	backgroundRefreshInterval          atomic.Int64 // background refresh / probe check interval (ns)
+	usageProbeMaxAge                   atomic.Int64 // maximum cache duration of a usage probe snapshot (ns)
+	usageProbeConcurrency              atomic.Int64 // usage probe parallelism
 	usageProbeResponsesFallbackEnabled atomic.Bool
-	recoveryProbeInterval              atomic.Int64 // 恢复探测最小间隔（ns）
+	recoveryProbeInterval              atomic.Int64 // minimum interval between recovery probes (ns)
 	backgroundRefreshWakeCh            chan struct{}
-	// 到点即探：限流冷却 / 5h·7d 窗口重置的倒计时归零那一刻，精确唤醒一次 wham 探针，
-	// 让用量进度条随官方窗口翻新立即刷新，而不是干等下一个巡检周期。
-	// boundaryProbeWakeCh 由 wakeBoundaryProbe 非阻塞写入（任何锁下都安全），
-	// 后台 goroutine 收到后全量扫描各账号最近边界并重排单个定时器。
-	// armedBoundaryAt 记录当前已武装的最近边界（UnixNano，0=未武装），
-	// 供 wakeBoundaryProbe 判断「新边界是否更早、值不值得打扰」。
+	// Probe on time: the moment a rate-limit cooldown or a 5h / 7d window reset countdown reaches zero, wake one wham probe exactly,
+	// so the usage progress bar refreshes immediately when the official window rolls over, instead of waiting for the next check cycle.
+	// boundaryProbeWakeCh is written to non-blockingly by wakeBoundaryProbe (safe under any lock),
+	// and the background goroutine, on receiving it, scans every account's nearest boundary and re-arms a single timer.
+	// armedBoundaryAt records the nearest boundary currently armed (UnixNano; 0 = not armed),
+	// so wakeBoundaryProbe can decide whether a new boundary is earlier and worth interrupting for.
 	boundaryProbeWakeCh chan struct{}
 	armedBoundaryAt     atomic.Int64
 	lazyRefreshInFlight sync.Map
@@ -3524,17 +3524,17 @@ type Store struct {
 	backgroundCancel    context.CancelFunc
 	wg                  sync.WaitGroup
 
-	// 代理池
+	// Proxy pool
 	proxyPoolReloadMu    sync.Mutex
 	proxyPoolLoader      func(context.Context) ([]*database.ProxyRow, error)
 	proxyInventoryLoader func(context.Context) ([]*database.ProxyRow, error)
-	proxyPool            []string // 已启用且测试未失败的代理 URL 列表
+	proxyPool            []string // list of proxy URLs that are enabled and have not failed testing
 	proxyPoolSet         map[string]struct{}
-	managedProxySet      map[string]struct{} // proxies 表中的全部 URL（含禁用/测挂）
-	proxyPoolEnabled     bool                // 代理池是否开启
-	proxyRoundRobin      atomic.Uint64       // 轮询计数器
+	managedProxySet      map[string]struct{} // all URLs in the proxies table (including disabled or failed-test ones)
+	proxyPoolEnabled     bool                // whether the proxy pool is enabled
+	proxyRoundRobin      atomic.Uint64       // round-robin counter
 
-	// Fast scheduler POC（默认关闭，通过环境变量启用）
+	// Fast scheduler POC (off by default, enabled through an environment variable)
 	fastScheduler            atomic.Pointer[FastScheduler]
 	fastSchedulerEnabled     atomic.Bool
 	routingSchedulersMu      sync.RWMutex
@@ -3551,57 +3551,57 @@ type Store struct {
 	dispatchReconcileDone    chan struct{}
 	dispatchReconciledAt     atomic.Int64
 
-	// Codex 上游 WebSocket 相关（默认全部关闭，不影响现有 HTTP 路径）
-	codexForceWebsocket atomic.Bool // 强制 Codex 上游走 WebSocket（复用连接池）
-	// codexRequestCompression HTTP /responses 请求体 zstd 压缩，默认开启（对齐真实客户端）。
-	// 与上面几项 WS 设置正交：WS 走 permessage-deflate，本项只作用于 HTTP 路径。
+	// Codex upstream WebSocket settings (all off by default, without affecting the existing HTTP path)
+	codexForceWebsocket atomic.Bool // force the Codex upstream to use WebSocket (reuses the connection pool)
+	// codexRequestCompression zstd-compresses the HTTP /responses request body, on by default (to match real clients).
+	// It is independent of the WS settings above: WS uses permessage-deflate, while this setting applies only to the HTTP path.
 	codexRequestCompression         atomic.Bool
-	codexWSKeepaliveEnabled         atomic.Bool  // 启用上游 WS 空闲连接保活（仅 Ping）
-	codexWSKeepaliveIntervalSec     atomic.Int64 // WS 保活 Ping 间隔（秒），默认 60
-	codexWSHideUpstreamErrors       atomic.Bool  // 隐藏上游 WS 原始错误，默认开启
-	codexWSSilentRetryEnabled       atomic.Bool  // 首包前上游 WS 错误静默换号重试，默认开启
-	codexWSSilentMaxRetries         atomic.Int64 // WS 静默换号最大重试次数，默认 2
-	codexWSSizeRouterEnabled        atomic.Bool  // 1009 自学习体积路由，默认开启
-	codexWSBusyMaxWaitSec           atomic.Int64 // busy session 等待上限（秒），默认 30（issue #413）
-	codexWSBusyOverflowEnabled      atomic.Bool  // busy session 溢出到同账号兄弟连接，默认关闭
-	codexWSBusyPatienceSec          atomic.Int64 // 触发溢出前的短等待（秒），默认 2
-	codexWSStatelessSlots           atomic.Int64 // 每账号空白上游 WS 槽位预算，默认 8
+	codexWSKeepaliveEnabled         atomic.Bool  // enable keepalive for idle upstream WS connections (Ping only)
+	codexWSKeepaliveIntervalSec     atomic.Int64 // WS keepalive Ping interval (seconds), default 60
+	codexWSHideUpstreamErrors       atomic.Bool  // hide raw upstream WS errors, on by default
+	codexWSSilentRetryEnabled       atomic.Bool  // silently retry on another account for upstream WS errors before the first packet, on by default
+	codexWSSilentMaxRetries         atomic.Int64 // maximum silent account-switch retries for WS, default 2
+	codexWSSizeRouterEnabled        atomic.Bool  // self-learning size routing for 1009, on by default
+	codexWSBusyMaxWaitSec           atomic.Int64 // maximum wait for a busy session (seconds), default 30 (issue #413)
+	codexWSBusyOverflowEnabled      atomic.Bool  // let a busy session overflow to a sibling connection of the same account, off by default
+	codexWSBusyPatienceSec          atomic.Int64 // short wait before overflow is triggered (seconds), default 2
+	codexWSStatelessSlots           atomic.Int64 // per-account slot budget for blank upstream WS connections, default 8
 	codexWSDownstreamKeepaliveSlots atomic.Int64
-	overflowAutoCompactEnabled      atomic.Bool // 上下文超窗自动摘要重试（实验性，默认关闭，issue #415）
-	compactViaResponsesEnabled      atomic.Bool // /v1/responses/compact 改写为 /responses body-signal 压缩，默认关闭
-	firstTokenExcludesWsAcquire     atomic.Bool // 落库 first_token_ms 扣除 WS 取连耗时，默认关闭
+	overflowAutoCompactEnabled      atomic.Bool // automatic summary retry when the context overflows the window (experimental, off by default, issue #415)
+	compactViaResponsesEnabled      atomic.Bool // rewrite /v1/responses/compact as /responses body-signal compaction, off by default
+	firstTokenExcludesWsAcquire     atomic.Bool // when saving first_token_ms, subtract the WS connection acquisition time, off by default
 
-	// 前置元数据 SSE 事件立即透传下游（旧版兼容，默认关闭，issue #425）
+	// Pass preflight metadata SSE events straight through to the downstream client (legacy compatibility, off by default, issue #425)
 	codexPreflightSSEPassthroughEnabled atomic.Bool
 
-	// Codex 思考截断自动续想（默认关闭，不影响现有路径）
-	codexContinueThinkingEnabled atomic.Bool  // 检测到上游截断思考时自动续想并折叠成单响应
-	codexContinueMaxRounds       atomic.Int64 // 单次请求最大续想轮数（含首轮），默认 8
-	codexCLIVersionSyncEnabled   atomic.Bool  // 后台定时同步 Codex CLI 模拟版本，默认 true
-	codexCLIVersionSyncInterval  atomic.Int64 // 定时同步间隔（小时），默认 12
-	ignoreUsageLimitStatus       atomic.Bool  // 用量窗口只记录，不作为账号不可用证据
+	// Automatic continue-thinking when Codex thinking is truncated (off by default, does not affect the existing path)
+	codexContinueThinkingEnabled atomic.Bool  // when upstream truncated thinking is detected, continue thinking automatically and fold the result into a single response
+	codexContinueMaxRounds       atomic.Int64 // maximum continue-thinking rounds per request (including the first round), default 8
+	codexCLIVersionSyncEnabled   atomic.Bool  // periodically sync the simulated Codex CLI version in the background, default true
+	codexCLIVersionSyncInterval  atomic.Int64 // periodic sync interval (hours), default 12
+	ignoreUsageLimitStatus       atomic.Bool  // usage windows are only recorded and are not treated as evidence that the account is unavailable
 
-	// 重试间隔与传输错误重试策略（issue #331）
-	retryIntervalMS       atomic.Int64 // 重试间隔毫秒，0 = 立即重试（旧行为）
-	transportRetryPolicy  atomic.Value // 传输错误重试策略: rotate / sticky
-	continuousRetryPolicy atomic.Value // database.ContinuousRetryPolicy（默认关闭）
-	githubToken           atomic.Value // GitHub API token，仅发给 api.github.com（issue #522）
-	githubProxyURL        atomic.Value // GitHub 域名专用出站代理，空回落全局/环境代理（issue #522）
+	// Retry interval and transport-error retry policy (issue #331)
+	retryIntervalMS       atomic.Int64 // retry interval in milliseconds; 0 = retry immediately (old behavior)
+	transportRetryPolicy  atomic.Value // transport-error retry policy: rotate / sticky
+	continuousRetryPolicy atomic.Value // database.ContinuousRetryPolicy (off by default)
+	githubToken           atomic.Value // GitHub API token, sent only to api.github.com (issue #522)
+	githubProxyURL        atomic.Value // outbound proxy used only for GitHub domains; when empty, falls back to the global or environment proxy (issue #522)
 
-	// 新导入/新建 Codex 账号默认盖上的指纹收敛档位: off / device / session / full
+	// Fingerprint convergence tier applied by default to newly imported or created Codex accounts: off / device / session / full
 	codexFingerprintDefaultMode atomic.Value
 
-	// 智能刷新调度器
+	// Smart refresh scheduler
 	refreshScheduler atomic.Pointer[RefreshSchedulerIntegration]
 
-	allowRemoteMigration     atomic.Bool  // 是否允许远程迁移拉取账号
-	modelMapping             atomic.Value // 模型映射 JSON 字符串
-	codexModelMapping        atomic.Value // Codex 模型映射 JSON 字符串
-	payloadRules             atomic.Value // Payload 请求体重写规则 JSON 字符串
-	reasoningEffortModels    atomic.Value // 带思考强度的模型别名 JSON 数组
+	allowRemoteMigration     atomic.Bool  // whether pulling accounts through remote migration is allowed
+	modelMapping             atomic.Value // model mapping JSON string
+	codexModelMapping        atomic.Value // Codex model mapping JSON string
+	payloadRules             atomic.Value // payload request-body rewrite rules JSON string
+	reasoningEffortModels    atomic.Value // JSON array of model aliases that carry a reasoning effort
 	schedulerMode            atomic.Value // string: "round_robin" / "remaining_quota" / "fill_first" / "reset_5h_first"
 	affinityMode             atomic.Value // string: "bounded" / "off" / "strict"
-	affinitySpreadEnabled    atomic.Bool  // 新亲和键按 HRW 哈希散列选号(issue #484)
+	affinitySpreadEnabled    atomic.Bool  // new affinity keys pick accounts by spreading them with HRW hashing (issue #484)
 	modelCooldownSettings    atomic.Value // database.ModelCooldownSettings
 	promptFilterConfig       atomic.Value // promptFilterConfigState
 	sessionMu                sync.RWMutex
@@ -3615,25 +3615,25 @@ type Store struct {
 	globalAutoPause7dThreshold    float64  // protected by mu
 	autoPause5hGuardBandPercent   float64  // protected by mu, percentage points
 	autoPause5hGuardConcurrency   int      // protected by mu, 0 = disabled
-	smartPacingEnabled            bool     // protected by mu; issue #312 智能配速总开关
-	smartPacingMinConcurrency     int      // protected by mu, 配速并发下限
+	smartPacingEnabled            bool     // protected by mu; issue #312 master switch for smart pacing
+	smartPacingMinConcurrency     int      // protected by mu, lower bound of pacing concurrency
 	smartPacingWindows            string   // protected by mu, "5h,7d" / "5h" / "7d"
 	groupAutoPauseThresholds      sync.Map // int64 -> [2]float64 {5h, 7d}
 	groupBaseConcurrencyOverrides sync.Map // int64 -> int64; missing means inherit global
-	groupNames                    sync.Map // int64 -> string; 组 ID→名，供 payload 规则按组名匹配
-	groupProxyURLs                sync.Map // int64 -> []string; 组级代理列表(issue #479),missing = 未设置
+	groupNames                    sync.Map // int64 -> string; group ID to name, used by payload rules to match by group name
+	groupProxyURLs                sync.Map // int64 -> []string; group-level proxy list (issue #479), missing = not set
 }
 
-// sessionAffinity 记录某个 sessionKey 当前粘附到哪个账号/代理。
+// sessionAffinity records which account/proxy a given sessionKey is currently bound to.
 //
-// lastUsedAt 用于 bounded affinity 的逃逸条件(issue #584):
-//   - 绑定空闲超过 sessionAffinityIdleEscape 后解绑,下次走完整挑号。活跃会话
-//     永不因此换号——上游 prompt cache 按账号生效,中途轮换等于整段上下文按
-//     未命中价重新计费;空闲超阈值后上游缓存本来已经过期,此时轮换才零代价。
-//   - 上层在选号时还会检查"绑定账号当前是否还健康",非 healthy 直接换号
+// lastUsedAt is used for the escape condition of bounded affinity (issue #584):
+//   - a binding idle for longer than sessionAffinityIdleEscape is unbound, and the next request goes through full account selection. Active sessions
+//     never switch accounts because of this: the upstream prompt cache works per account, and rotating mid-way would bill the whole context at
+//     the cache-miss price again; once the idle time exceeds the threshold, the upstream cache has already expired anyway, so rotating then costs nothing.
+//   - the upper layer also checks during selection whether the bound account is still healthy, and switches account directly if it is not healthy
 //
-// boundAt / requestCount 仅作观测记录,不再参与逃逸判定。strict 模式不读逃逸
-// 字段(行为退化为旧实现);off 模式根本不进入这条路径。
+// boundAt / requestCount are kept only for observation and no longer take part in the escape check. Strict mode does not read the escape
+// fields (the behavior falls back to the old implementation); off mode never enters this path at all.
 type sessionAffinity struct {
 	accountID    int64
 	proxyURL     string
@@ -3664,18 +3664,18 @@ const defaultSessionAffinityTTL = time.Hour
 
 const maxSessionSlotBuffer = 60 * time.Second
 
-// maxSessionBindings 会话粘性表的软上限。超限时在 bind 路径全量清一轮过期项。
+// maxSessionBindings is the soft limit of the session stickiness table. When it is exceeded, the bind path does one full sweep of expired entries.
 const maxSessionBindings = 65536
 
-// Bounded affinity 空闲逃逸默认阈值。上游 prompt cache 空闲约 5-10 分钟即被清理,
-// 取 10 分钟保证轮换只发生在缓存已死的边界上。
+// Default idle escape threshold for bounded affinity. The upstream prompt cache is cleared after roughly 5-10 minutes idle,
+// so 10 minutes ensures that rotation only happens at a boundary where the cache is already dead.
 const defaultAffinityIdleEscape = 10 * time.Minute
 
-// Affinity 模式常量。affinity_mode 系统设置使用以下值。
+// Affinity mode constants. The affinity_mode system setting uses the following values.
 const (
-	AffinityModeBounded = "bounded" // 默认。粘性但有逃逸条件
-	AffinityModeOff     = "off"     // 关闭粘性。每次都按调度策略重新挑号
-	AffinityModeStrict  = "strict"  // 旧行为。粘到底,直到 TTL 过期或账号失败
+	AffinityModeBounded = "bounded" // default. Sticky, with escape conditions
+	AffinityModeOff     = "off"     // stickiness disabled. Every request selects an account again according to the scheduling policy
+	AffinityModeStrict  = "strict"  // legacy behavior. Sticks to the bound account until the TTL expires or the account fails
 )
 
 const (
@@ -3700,8 +3700,8 @@ func sessionAffinityTTL() time.Duration {
 	return defaultSessionAffinityTTL
 }
 
-// sessionAffinityIdleEscape 返回 bounded 模式的空闲逃逸阈值,可用
-// CODEX_SESSION_AFFINITY_IDLE_ESCAPE 覆盖(Duration 或纯秒数)。
+// sessionAffinityIdleEscape returns the idle escape threshold for bounded mode; it can be
+// overridden with CODEX_SESSION_AFFINITY_IDLE_ESCAPE (a Duration or plain seconds).
 func sessionAffinityIdleEscape() time.Duration {
 	raw := strings.TrimSpace(os.Getenv("CODEX_SESSION_AFFINITY_IDLE_ESCAPE"))
 	if raw == "" {
@@ -3748,8 +3748,8 @@ func cooldownTTL(resetAt time.Time) (time.Duration, bool) {
 }
 
 func (s *Store) setCachedAccountCooldown(accountID int64, reason string, resetAt time.Time) {
-	// 所有冷却设置（429 / premium 5h / usage_limit）都经此漏斗——在这里挂「到点即探」唤醒：
-	// 冷却倒计时归零那一刻精确探针一次，刷新用量进度条。unauthorized 除外（探针必 401，无意义）。
+	// All cooldown settings (429 / premium 5h / usage_limit) go through this funnel; attach the "probe on time" wake-up here:
+	// exactly one probe at the moment the cooldown countdown reaches zero, to refresh the usage progress bar. unauthorized is excluded (the probe would always return 401, so it is pointless).
 	if normalizeCooldownReason(reason) != "unauthorized" {
 		s.WakeBoundaryProbe(resetAt)
 	}
@@ -3773,18 +3773,18 @@ func (s *Store) cacheAccountCooldownRecord(accountID int64, record runtimeCooldo
 	if merger, ok := s.tokenCache.(cache.RuntimeCooldownMerger); ok {
 		merged, err := merger.MergeRuntimeCooldown(ctx, accountCooldownCacheNamespace, accountCooldownRuntimeKey(accountID), record)
 		if err != nil {
-			log.Printf("[账号 %d] 合并账号冷却缓存失败: %v", accountID, err)
+			log.Printf("[account %d] failed to merge account cooldown cache: %v", accountID, err)
 			return record
 		}
 		return merged
 	}
 	payload, err := json.Marshal(record)
 	if err != nil {
-		log.Printf("[账号 %d] 序列化账号冷却缓存失败: %v", accountID, err)
+		log.Printf("[account %d] failed to serialize account cooldown cache: %v", accountID, err)
 		return record
 	}
 	if err := s.tokenCache.SetRuntime(ctx, accountCooldownCacheNamespace, accountCooldownRuntimeKey(accountID), payload, ttl); err != nil {
-		log.Printf("[账号 %d] 写入账号冷却缓存失败: %v", accountID, err)
+		log.Printf("[account %d] failed to write account cooldown cache: %v", accountID, err)
 	}
 	return record
 }
@@ -3797,7 +3797,7 @@ func (s *Store) getCachedAccountCooldown(accountID int64) (runtimeCooldownRecord
 	defer cancel()
 	payload, ok, err := s.tokenCache.GetRuntime(ctx, accountCooldownCacheNamespace, accountCooldownRuntimeKey(accountID))
 	if err != nil {
-		log.Printf("[账号 %d] 读取账号冷却缓存失败: %v", accountID, err)
+		log.Printf("[account %d] failed to read account cooldown cache: %v", accountID, err)
 		return runtimeCooldownRecord{}, false
 	}
 	if !ok || len(payload) == 0 {
@@ -3805,7 +3805,7 @@ func (s *Store) getCachedAccountCooldown(accountID int64) (runtimeCooldownRecord
 	}
 	var record runtimeCooldownRecord
 	if err := json.Unmarshal(payload, &record); err != nil {
-		log.Printf("[账号 %d] 解析账号冷却缓存失败: %v", accountID, err)
+		log.Printf("[account %d] failed to parse account cooldown cache: %v", accountID, err)
 		s.deleteCachedAccountCooldown(accountID)
 		return runtimeCooldownRecord{}, false
 	}
@@ -3824,16 +3824,16 @@ func (s *Store) deleteCachedAccountCooldown(accountID int64) {
 	ctx, cancel := cooldownRuntimeContext()
 	defer cancel()
 	if err := s.tokenCache.DeleteRuntime(ctx, accountCooldownCacheNamespace, accountCooldownRuntimeKey(accountID)); err != nil {
-		log.Printf("[账号 %d] 删除账号冷却缓存失败: %v", accountID, err)
+		log.Printf("[account %d] failed to delete account cooldown cache: %v", accountID, err)
 	}
 }
 
-// ForgetCachedAccountCooldown 清除账号在跨实例冷却缓存里的记录。
+// ForgetCachedAccountCooldown clears the account's record in the cross-instance cooldown cache.
 //
-// 管理端在数据库层直接清掉 error / unauthorized 状态（重新导入、重新授权、
-// 合并凭证）并重载运行时账号时必须一并调用：调度器每次挑号都会回读该缓存
-// 并把冷却重新盖回内存账号，只清库不清缓存会让刚复活的账号继续被挡到
-// 缓存 TTL（unauthorized 可达 24h）到期。
+// The admin side clears error / unauthorized state directly at the database layer (re-import, re-authorization,
+// merging credentials) and reloads the runtime account; it must be called at the same time. Every time the scheduler picks an account it reads this cache back
+// and reapplies the cooldown to the in-memory account. Clearing only the database and not the cache would keep a just-revived account blocked
+// until the cache TTL expires (unauthorized can last up to 24h).
 func (s *Store) ForgetCachedAccountCooldown(accountID int64) {
 	s.deleteCachedAccountCooldown(accountID)
 }
@@ -3931,13 +3931,13 @@ func (s *Store) setCachedModelCooldown(accountID int64, cooldown ModelCooldown) 
 		BackoffLevel: cooldown.BackoffLevel,
 	})
 	if err != nil {
-		log.Printf("[账号 %d] 序列化模型冷却缓存失败 model=%s: %v", accountID, key, err)
+		log.Printf("[account %d] failed to serialize model cooldown cache model=%s: %v", accountID, key, err)
 		return
 	}
 	ctx, cancel := cooldownRuntimeContext()
 	defer cancel()
 	if err := s.tokenCache.SetRuntime(ctx, modelCooldownCacheNamespace, modelCooldownRuntimeKey(accountID, key), payload, ttl); err != nil {
-		log.Printf("[账号 %d] 写入模型冷却缓存失败 model=%s: %v", accountID, key, err)
+		log.Printf("[account %d] failed to write model cooldown cache model=%s: %v", accountID, key, err)
 	}
 }
 
@@ -3961,7 +3961,7 @@ func (s *Store) getCachedModelCooldownContext(parent context.Context, accountID 
 	payload, ok, err := s.tokenCache.GetRuntime(ctx, modelCooldownCacheNamespace, modelCooldownRuntimeKey(accountID, key))
 	if err != nil {
 		if parent.Err() == nil {
-			log.Printf("[账号 %d] 读取模型冷却缓存失败 model=%s: %v", accountID, key, err)
+			log.Printf("[account %d] failed to read model cooldown cache model=%s: %v", accountID, key, err)
 		}
 		return runtimeCooldownRecord{}, false
 	}
@@ -3970,7 +3970,7 @@ func (s *Store) getCachedModelCooldownContext(parent context.Context, accountID 
 	}
 	var record runtimeCooldownRecord
 	if err := json.Unmarshal(payload, &record); err != nil {
-		log.Printf("[账号 %d] 解析模型冷却缓存失败 model=%s: %v", accountID, key, err)
+		log.Printf("[account %d] failed to parse model cooldown cache model=%s: %v", accountID, key, err)
 		s.deleteCachedModelCooldownContext(parent, accountID, key)
 		return runtimeCooldownRecord{}, false
 	}
@@ -3999,7 +3999,7 @@ func (s *Store) deleteCachedModelCooldownContext(parent context.Context, account
 	defer cancel()
 	if err := s.tokenCache.DeleteRuntime(ctx, modelCooldownCacheNamespace, modelCooldownRuntimeKey(accountID, key)); err != nil {
 		if parent.Err() == nil {
-			log.Printf("[账号 %d] 删除模型冷却缓存失败 model=%s: %v", accountID, key, err)
+			log.Printf("[account %d] failed to delete model cooldown cache model=%s: %v", accountID, key, err)
 		}
 	}
 }
@@ -4108,7 +4108,7 @@ func truthyEnv(v string) bool {
 	}
 }
 
-// NewStore 创建账号管理器
+// NewStore creates the account manager
 func NewStore(db *database.DB, tc cache.TokenCache, settings *database.SystemSettings) *Store {
 	if settings == nil {
 		settings = &database.SystemSettings{
@@ -4188,7 +4188,7 @@ func NewStore(db *database.DB, tc cache.TokenCache, settings *database.SystemSet
 	s.codexOAuthKeepalive.Store(settings.CodexOAuthKeepaliveEnabled)
 	retries := int64(settings.MaxRetries)
 	if retries <= 0 {
-		retries = 2 // 默认重试 2 次
+		retries = 2 // default: retry 2 times
 	}
 	s.maxRetries.Store(retries)
 	rateLimitRetries := int64(settings.MaxRateLimitRetries)
@@ -4219,7 +4219,7 @@ func NewStore(db *database.DB, tc cache.TokenCache, settings *database.SystemSet
 		// persisted value can never prevent Store initialization.
 		s.SetPromptFilterConfig(promptFilterCfg)
 	}
-	// 新调度引擎环境变量优先；未配置时兼容旧 fast_scheduler_enabled。
+	// The new scheduling engine environment variable takes priority; when it is not set, the old fast_scheduler_enabled is still honored.
 	legacyFastEnabled := fastSchedulerEnabledFromEnv() || settings.FastSchedulerEnabled
 	engineSetting := strings.TrimSpace(os.Getenv("CODEX_SCHEDULER_ENGINE"))
 	if engineSetting == "" {
@@ -4233,10 +4233,10 @@ func NewStore(db *database.DB, tc cache.TokenCache, settings *database.SystemSet
 		scheduler := NewFastScheduler(int64(settings.MaxConcurrency), s.GetSchedulerMode())
 		s.configureFastScheduler(scheduler)
 		s.fastScheduler.Store(scheduler)
-		log.Printf("调度引擎已启用: engine=%s", engine)
+		log.Printf("scheduling engine enabled: engine=%s", engine)
 	}
 
-	// Codex 上游 WebSocket 相关设置（默认关闭，不影响现有路径）
+	// Codex upstream WebSocket settings (off by default, do not affect the existing path)
 	s.codexForceWebsocket.Store(settings.CodexForceWebsocket)
 	s.codexRequestCompression.Store(settings.CodexRequestCompression)
 	s.codexWSKeepaliveEnabled.Store(settings.CodexWSKeepaliveEnabled)
@@ -4289,10 +4289,10 @@ func NewStore(db *database.DB, tc cache.TokenCache, settings *database.SystemSet
 	s.smartPacingMinConcurrency = normalizeSmartPacingMinConcurrency(settings.SmartPacingMinConcurrency)
 	s.smartPacingWindows = normalizeSmartPacingWindows(settings.SmartPacingWindows)
 
-	// 加载代理池（含全部托管 URL，供禁用后 fail-closed 识别）
+	// Load the proxy pool (including all managed URLs, so fail-closed can recognize them after they are disabled)
 	if s.proxyPoolLoader != nil {
 		if err := s.ReloadProxyPool(); err != nil {
-			log.Printf("代理池加载失败: %v", err)
+			log.Printf("failed to load proxy pool: %v", err)
 		}
 	}
 
@@ -4410,7 +4410,7 @@ func (s *Store) FastSchedulerEnabled() bool {
 	return s.fastSchedulerEnabled.Load()
 }
 
-// normalizeWSKeepaliveInterval 把 WS 保活间隔(秒)归一,非正值 → 默认 60。
+// normalizeWSKeepaliveInterval normalizes the WS keepalive interval (seconds); a non-positive value → default 60.
 func normalizeWSKeepaliveInterval(sec int) int64 {
 	if sec <= 0 {
 		return 60
@@ -4418,7 +4418,7 @@ func normalizeWSKeepaliveInterval(sec int) int64 {
 	return int64(sec)
 }
 
-// normalizeWSSilentMaxRetries 把 WS 静默重试次数限制在 0-10。
+// normalizeWSSilentMaxRetries limits the WS silent retry count to 0-10.
 func normalizeWSSilentMaxRetries(retries int) int64 {
 	if retries < 0 {
 		return 0
@@ -4429,7 +4429,7 @@ func normalizeWSSilentMaxRetries(retries int) int64 {
 	return int64(retries)
 }
 
-// SetCodexForceWebsocket 设置"强制 Codex 上游走 WebSocket"开关（运行时热更新）。
+// SetCodexForceWebsocket sets the "force Codex upstream to use WebSocket" switch (hot-updated at runtime).
 func (s *Store) SetCodexForceWebsocket(enabled bool) {
 	if s == nil {
 		return
@@ -4437,7 +4437,7 @@ func (s *Store) SetCodexForceWebsocket(enabled bool) {
 	s.codexForceWebsocket.Store(enabled)
 }
 
-// CodexForceWebsocket 返回是否强制 Codex 上游走 WebSocket。
+// CodexForceWebsocket returns whether the Codex upstream is forced to use WebSocket.
 func (s *Store) CodexForceWebsocket() bool {
 	if s == nil {
 		return false
@@ -4445,7 +4445,7 @@ func (s *Store) CodexForceWebsocket() bool {
 	return s.codexForceWebsocket.Load()
 }
 
-// SetCodexRequestCompression 设置 HTTP 请求体 zstd 压缩开关（运行时热更新）。
+// SetCodexRequestCompression sets the HTTP request body zstd compression switch (hot-updated at runtime).
 func (s *Store) SetCodexRequestCompression(enabled bool) {
 	if s == nil {
 		return
@@ -4453,8 +4453,8 @@ func (s *Store) SetCodexRequestCompression(enabled bool) {
 	s.codexRequestCompression.Store(enabled)
 }
 
-// CodexRequestCompression 返回是否对 HTTP /responses 请求体做 zstd 压缩。
-// nil store 回落到 true：该项默认开启，取不到配置时应保持与真实客户端一致的行为。
+// CodexRequestCompression returns whether the HTTP /responses request body is zstd-compressed.
+// A nil store falls back to true: this option is on by default, and when the setting cannot be read it should keep the same behavior as real clients.
 func (s *Store) CodexRequestCompression() bool {
 	if s == nil {
 		return true
@@ -4462,7 +4462,7 @@ func (s *Store) CodexRequestCompression() bool {
 	return s.codexRequestCompression.Load()
 }
 
-// SetCodexWSKeepaliveEnabled 设置上游 WS 空闲连接保活开关（运行时热更新）。
+// SetCodexWSKeepaliveEnabled sets the upstream WS idle connection keepalive switch (hot-updated at runtime).
 func (s *Store) SetCodexWSKeepaliveEnabled(enabled bool) {
 	if s == nil {
 		return
@@ -4470,7 +4470,7 @@ func (s *Store) SetCodexWSKeepaliveEnabled(enabled bool) {
 	s.codexWSKeepaliveEnabled.Store(enabled)
 }
 
-// CodexWSKeepaliveEnabled 返回是否启用上游 WS 连接保活。
+// CodexWSKeepaliveEnabled returns whether upstream WS connection keepalive is enabled.
 func (s *Store) CodexWSKeepaliveEnabled() bool {
 	if s == nil {
 		return false
@@ -4478,7 +4478,7 @@ func (s *Store) CodexWSKeepaliveEnabled() bool {
 	return s.codexWSKeepaliveEnabled.Load()
 }
 
-// SetCodexWSKeepaliveIntervalSec 设置 WS 保活 Ping 间隔（秒）。
+// SetCodexWSKeepaliveIntervalSec sets the WS keepalive Ping interval (seconds).
 func (s *Store) SetCodexWSKeepaliveIntervalSec(sec int) {
 	if s == nil {
 		return
@@ -4486,7 +4486,7 @@ func (s *Store) SetCodexWSKeepaliveIntervalSec(sec int) {
 	s.codexWSKeepaliveIntervalSec.Store(normalizeWSKeepaliveInterval(sec))
 }
 
-// CodexWSKeepaliveIntervalSec 返回 WS 保活 Ping 间隔（秒），最小 60。
+// CodexWSKeepaliveIntervalSec returns the WS keepalive Ping interval (seconds), minimum 60.
 func (s *Store) CodexWSKeepaliveIntervalSec() int {
 	if s == nil {
 		return 60
@@ -4498,7 +4498,7 @@ func (s *Store) CodexWSKeepaliveIntervalSec() int {
 	return int(v)
 }
 
-// SetCodexWSHideUpstreamErrors 设置是否向客户端隐藏上游 WS 原始错误。
+// SetCodexWSHideUpstreamErrors sets whether raw upstream WS errors are hidden from the client.
 func (s *Store) SetCodexWSHideUpstreamErrors(enabled bool) {
 	if s == nil {
 		return
@@ -4506,7 +4506,7 @@ func (s *Store) SetCodexWSHideUpstreamErrors(enabled bool) {
 	s.codexWSHideUpstreamErrors.Store(enabled)
 }
 
-// CodexWSHideUpstreamErrors 返回是否向客户端隐藏上游 WS 原始错误。
+// CodexWSHideUpstreamErrors returns whether raw upstream WS errors are hidden from the client.
 func (s *Store) CodexWSHideUpstreamErrors() bool {
 	if s == nil {
 		return true
@@ -4514,7 +4514,7 @@ func (s *Store) CodexWSHideUpstreamErrors() bool {
 	return s.codexWSHideUpstreamErrors.Load()
 }
 
-// SetCodexWSSilentRetryEnabled 设置首包前 WS 上游错误是否静默换号重试。
+// SetCodexWSSilentRetryEnabled sets whether upstream WS errors before the first packet are silently retried on another account.
 func (s *Store) SetCodexWSSilentRetryEnabled(enabled bool) {
 	if s == nil {
 		return
@@ -4522,7 +4522,7 @@ func (s *Store) SetCodexWSSilentRetryEnabled(enabled bool) {
 	s.codexWSSilentRetryEnabled.Store(enabled)
 }
 
-// CodexWSSilentRetryEnabled 返回首包前 WS 上游错误是否静默换号重试。
+// CodexWSSilentRetryEnabled returns whether upstream WS errors before the first packet are silently retried on another account.
 func (s *Store) CodexWSSilentRetryEnabled() bool {
 	if s == nil {
 		return true
@@ -4530,7 +4530,7 @@ func (s *Store) CodexWSSilentRetryEnabled() bool {
 	return s.codexWSSilentRetryEnabled.Load()
 }
 
-// SetCodexWSSizeRouterEnabled 设置是否启用 1009 自学习体积路由。
+// SetCodexWSSizeRouterEnabled sets whether 1009 self-learning size routing is enabled.
 func (s *Store) SetCodexWSSizeRouterEnabled(enabled bool) {
 	if s == nil {
 		return
@@ -4538,7 +4538,7 @@ func (s *Store) SetCodexWSSizeRouterEnabled(enabled bool) {
 	s.codexWSSizeRouterEnabled.Store(enabled)
 }
 
-// CodexWSSizeRouterEnabled 返回是否启用 1009 自学习体积路由。
+// CodexWSSizeRouterEnabled returns whether 1009 self-learning size routing is enabled.
 func (s *Store) CodexWSSizeRouterEnabled() bool {
 	if s == nil {
 		return true
@@ -4546,7 +4546,7 @@ func (s *Store) CodexWSSizeRouterEnabled() bool {
 	return s.codexWSSizeRouterEnabled.Load()
 }
 
-// SetCodexWSSilentMaxRetries 设置 WS 静默换号最大重试次数。
+// SetCodexWSSilentMaxRetries sets the maximum number of silent account-switch retries for WS.
 func (s *Store) SetCodexWSSilentMaxRetries(retries int) {
 	if s == nil {
 		return
@@ -4554,7 +4554,7 @@ func (s *Store) SetCodexWSSilentMaxRetries(retries int) {
 	s.codexWSSilentMaxRetries.Store(normalizeWSSilentMaxRetries(retries))
 }
 
-// CodexWSSilentMaxRetries 返回 WS 静默换号最大重试次数。
+// CodexWSSilentMaxRetries returns the maximum number of silent account-switch retries for WS.
 func (s *Store) CodexWSSilentMaxRetries() int {
 	if s == nil {
 		return 2
@@ -4562,7 +4562,7 @@ func (s *Store) CodexWSSilentMaxRetries() int {
 	return int(s.codexWSSilentMaxRetries.Load())
 }
 
-// SetCodexWSBusyAcquireMaxWaitSec 设置 busy session 等待上限（秒）。
+// SetCodexWSBusyAcquireMaxWaitSec sets the maximum wait for a busy session (seconds).
 func (s *Store) SetCodexWSBusyAcquireMaxWaitSec(seconds int) {
 	if s == nil {
 		return
@@ -4570,7 +4570,7 @@ func (s *Store) SetCodexWSBusyAcquireMaxWaitSec(seconds int) {
 	s.codexWSBusyMaxWaitSec.Store(int64(database.NormalizeCodexWSBusyAcquireMaxWaitSec(seconds)))
 }
 
-// CodexWSBusyAcquireMaxWaitSec 返回 busy session 等待上限（秒）。
+// CodexWSBusyAcquireMaxWaitSec returns the maximum wait for a busy session (seconds).
 func (s *Store) CodexWSBusyAcquireMaxWaitSec() int {
 	if s == nil {
 		return 30
@@ -4578,7 +4578,7 @@ func (s *Store) CodexWSBusyAcquireMaxWaitSec() int {
 	return int(s.codexWSBusyMaxWaitSec.Load())
 }
 
-// SetCodexWSBusyOverflowEnabled 设置是否允许 busy session 溢出到同账号兄弟连接。
+// SetCodexWSBusyOverflowEnabled sets whether a busy session may overflow to a sibling connection of the same account.
 func (s *Store) SetCodexWSBusyOverflowEnabled(enabled bool) {
 	if s == nil {
 		return
@@ -4586,7 +4586,7 @@ func (s *Store) SetCodexWSBusyOverflowEnabled(enabled bool) {
 	s.codexWSBusyOverflowEnabled.Store(enabled)
 }
 
-// CodexWSBusyOverflowEnabled 返回是否允许 busy session 溢出到同账号兄弟连接。
+// CodexWSBusyOverflowEnabled returns whether a busy session may overflow to a sibling connection of the same account.
 func (s *Store) CodexWSBusyOverflowEnabled() bool {
 	if s == nil {
 		return false
@@ -4594,7 +4594,7 @@ func (s *Store) CodexWSBusyOverflowEnabled() bool {
 	return s.codexWSBusyOverflowEnabled.Load()
 }
 
-// SetOverflowAutoCompactEnabled 设置是否开启上下文超窗自动摘要重试（实验性）。
+// SetOverflowAutoCompactEnabled sets whether automatic summary retry on context overflow is enabled (experimental).
 func (s *Store) SetOverflowAutoCompactEnabled(enabled bool) {
 	if s == nil {
 		return
@@ -4602,7 +4602,7 @@ func (s *Store) SetOverflowAutoCompactEnabled(enabled bool) {
 	s.overflowAutoCompactEnabled.Store(enabled)
 }
 
-// OverflowAutoCompactEnabled 返回是否开启上下文超窗自动摘要重试（实验性）。
+// OverflowAutoCompactEnabled returns whether automatic summary retry on context overflow is enabled (experimental).
 func (s *Store) OverflowAutoCompactEnabled() bool {
 	if s == nil {
 		return false
@@ -4610,7 +4610,7 @@ func (s *Store) OverflowAutoCompactEnabled() bool {
 	return s.overflowAutoCompactEnabled.Load()
 }
 
-// SetCompactViaResponsesEnabled 设置是否把 /v1/responses/compact 改写为 /responses body-signal 压缩。
+// SetCompactViaResponsesEnabled sets whether /v1/responses/compact is rewritten as /responses body-signal compaction.
 func (s *Store) SetCompactViaResponsesEnabled(enabled bool) {
 	if s == nil {
 		return
@@ -4618,7 +4618,7 @@ func (s *Store) SetCompactViaResponsesEnabled(enabled bool) {
 	s.compactViaResponsesEnabled.Store(enabled)
 }
 
-// CompactViaResponsesEnabled 返回是否把 /v1/responses/compact 改写为 /responses body-signal 压缩。
+// CompactViaResponsesEnabled returns whether /v1/responses/compact is rewritten as /responses body-signal compaction.
 func (s *Store) CompactViaResponsesEnabled() bool {
 	if s == nil {
 		return false
@@ -4626,7 +4626,7 @@ func (s *Store) CompactViaResponsesEnabled() bool {
 	return s.compactViaResponsesEnabled.Load()
 }
 
-// SetCodexPreflightSSEPassthroughEnabled 设置是否将前置元数据 SSE 事件立即透传下游（旧版兼容）。
+// SetCodexPreflightSSEPassthroughEnabled sets whether preflight metadata SSE events are passed straight through to the downstream client (legacy compatibility).
 func (s *Store) SetCodexPreflightSSEPassthroughEnabled(enabled bool) {
 	if s == nil {
 		return
@@ -4634,7 +4634,7 @@ func (s *Store) SetCodexPreflightSSEPassthroughEnabled(enabled bool) {
 	s.codexPreflightSSEPassthroughEnabled.Store(enabled)
 }
 
-// CodexPreflightSSEPassthroughEnabled 返回是否将前置元数据 SSE 事件立即透传下游（旧版兼容）。
+// CodexPreflightSSEPassthroughEnabled returns whether preflight metadata SSE events are passed straight through to the downstream client (legacy compatibility).
 func (s *Store) CodexPreflightSSEPassthroughEnabled() bool {
 	if s == nil {
 		return false
@@ -4642,7 +4642,7 @@ func (s *Store) CodexPreflightSSEPassthroughEnabled() bool {
 	return s.codexPreflightSSEPassthroughEnabled.Load()
 }
 
-// SetFirstTokenExcludesWsAcquire 设置落库 first_token_ms 是否扣除 WS 取连耗时。
+// SetFirstTokenExcludesWsAcquire sets whether the saved first_token_ms subtracts the WS connection acquisition time.
 func (s *Store) SetFirstTokenExcludesWsAcquire(enabled bool) {
 	if s == nil {
 		return
@@ -4650,7 +4650,7 @@ func (s *Store) SetFirstTokenExcludesWsAcquire(enabled bool) {
 	s.firstTokenExcludesWsAcquire.Store(enabled)
 }
 
-// FirstTokenExcludesWsAcquire 返回落库 first_token_ms 是否扣除 WS 取连耗时。
+// FirstTokenExcludesWsAcquire returns whether the saved first_token_ms subtracts the WS connection acquisition time.
 func (s *Store) FirstTokenExcludesWsAcquire() bool {
 	if s == nil {
 		return false
@@ -4658,7 +4658,7 @@ func (s *Store) FirstTokenExcludesWsAcquire() bool {
 	return s.firstTokenExcludesWsAcquire.Load()
 }
 
-// SetCodexWSBusyPatienceSec 设置触发溢出前的短等待（秒）。
+// SetCodexWSBusyPatienceSec sets the short wait before overflow is triggered (seconds).
 func (s *Store) SetCodexWSBusyPatienceSec(seconds int) {
 	if s == nil {
 		return
@@ -4666,7 +4666,7 @@ func (s *Store) SetCodexWSBusyPatienceSec(seconds int) {
 	s.codexWSBusyPatienceSec.Store(int64(database.NormalizeCodexWSBusyPatienceSec(seconds)))
 }
 
-// CodexWSBusyPatienceSec 返回触发溢出前的短等待（秒）。
+// CodexWSBusyPatienceSec returns the short wait before overflow is triggered (seconds).
 func (s *Store) CodexWSBusyPatienceSec() int {
 	if s == nil {
 		return 2
@@ -4674,7 +4674,7 @@ func (s *Store) CodexWSBusyPatienceSec() int {
 	return int(s.codexWSBusyPatienceSec.Load())
 }
 
-// SetGithubToken 设置 GitHub API token（仅发给 api.github.com）。
+// SetGithubToken sets the GitHub API token (sent only to api.github.com).
 func (s *Store) SetGithubToken(token string) {
 	if s == nil {
 		return
@@ -4682,7 +4682,7 @@ func (s *Store) SetGithubToken(token string) {
 	s.githubToken.Store(strings.TrimSpace(token))
 }
 
-// GithubToken 返回配置的 GitHub API token，空表示未配置。
+// GithubToken returns the configured GitHub API token; empty means not configured.
 func (s *Store) GithubToken() string {
 	if s == nil {
 		return ""
@@ -4693,7 +4693,7 @@ func (s *Store) GithubToken() string {
 	return ""
 }
 
-// SetGithubProxyURL 设置 GitHub 域名专用出站代理。
+// SetGithubProxyURL sets the outbound proxy used only for GitHub domains.
 func (s *Store) SetGithubProxyURL(proxyURL string) {
 	if s == nil {
 		return
@@ -4701,7 +4701,7 @@ func (s *Store) SetGithubProxyURL(proxyURL string) {
 	s.githubProxyURL.Store(strings.TrimSpace(proxyURL))
 }
 
-// GithubProxyURL 返回 GitHub 域名专用出站代理，空表示回落全局/环境代理。
+// GithubProxyURL returns the outbound proxy used only for GitHub domains; empty means falling back to the global or environment proxy.
 func (s *Store) GithubProxyURL() string {
 	if s == nil {
 		return ""
@@ -4712,7 +4712,7 @@ func (s *Store) GithubProxyURL() string {
 	return ""
 }
 
-// SetCodexWSStatelessSlots 设置每个账号的空白上游 WS 连接槽位预算。
+// SetCodexWSStatelessSlots sets the per-account slot budget for blank upstream WS connections.
 func (s *Store) SetCodexWSStatelessSlots(slots int) {
 	if s == nil {
 		return
@@ -4720,7 +4720,7 @@ func (s *Store) SetCodexWSStatelessSlots(slots int) {
 	s.codexWSStatelessSlots.Store(int64(database.NormalizeCodexWSStatelessSlots(slots)))
 }
 
-// CodexWSStatelessSlots 返回每个账号的空白上游 WS 连接槽位预算。
+// CodexWSStatelessSlots returns the per-account slot budget for blank upstream WS connections.
 func (s *Store) CodexWSStatelessSlots() int {
 	if s == nil {
 		return 8
@@ -4728,7 +4728,7 @@ func (s *Store) CodexWSStatelessSlots() int {
 	return int(s.codexWSStatelessSlots.Load())
 }
 
-// SetCodexContinueThinkingEnabled 设置是否在上游截断思考时自动续想。
+// SetCodexContinueThinkingEnabled sets whether thinking is automatically continued when upstream thinking is truncated.
 func (s *Store) SetCodexContinueThinkingEnabled(enabled bool) {
 	if s == nil {
 		return
@@ -4736,7 +4736,7 @@ func (s *Store) SetCodexContinueThinkingEnabled(enabled bool) {
 	s.codexContinueThinkingEnabled.Store(enabled)
 }
 
-// CodexContinueThinkingEnabled 返回是否在上游截断思考时自动续想。
+// CodexContinueThinkingEnabled returns whether thinking is automatically continued when upstream thinking is truncated.
 func (s *Store) CodexContinueThinkingEnabled() bool {
 	if s == nil {
 		return false
@@ -4744,7 +4744,7 @@ func (s *Store) CodexContinueThinkingEnabled() bool {
 	return s.codexContinueThinkingEnabled.Load()
 }
 
-// SetCodexContinueMaxRounds 设置单次请求最大续想轮数（含首轮）。
+// SetCodexContinueMaxRounds sets the maximum continue-thinking rounds per request (including the first round).
 func (s *Store) SetCodexContinueMaxRounds(rounds int) {
 	if s == nil {
 		return
@@ -4752,7 +4752,7 @@ func (s *Store) SetCodexContinueMaxRounds(rounds int) {
 	s.codexContinueMaxRounds.Store(int64(database.NormalizeCodexContinueMaxRounds(rounds)))
 }
 
-// CodexContinueMaxRounds 返回单次请求最大续想轮数（含首轮）。
+// CodexContinueMaxRounds returns the maximum continue-thinking rounds per request (including the first round).
 func (s *Store) CodexContinueMaxRounds() int {
 	if s == nil {
 		return 8
@@ -4760,7 +4760,7 @@ func (s *Store) CodexContinueMaxRounds() int {
 	return int(s.codexContinueMaxRounds.Load())
 }
 
-// SetCodexCLIVersionSyncEnabled 设置是否后台定时同步 Codex CLI 模拟版本。
+// SetCodexCLIVersionSyncEnabled sets whether the simulated Codex CLI version is periodically synced in the background.
 func (s *Store) SetCodexCLIVersionSyncEnabled(enabled bool) {
 	if s == nil {
 		return
@@ -4768,7 +4768,7 @@ func (s *Store) SetCodexCLIVersionSyncEnabled(enabled bool) {
 	s.codexCLIVersionSyncEnabled.Store(enabled)
 }
 
-// CodexCLIVersionSyncEnabled 返回是否后台定时同步 Codex CLI 模拟版本。
+// CodexCLIVersionSyncEnabled returns whether the simulated Codex CLI version is periodically synced in the background.
 func (s *Store) CodexCLIVersionSyncEnabled() bool {
 	if s == nil {
 		return true
@@ -4776,7 +4776,7 @@ func (s *Store) CodexCLIVersionSyncEnabled() bool {
 	return s.codexCLIVersionSyncEnabled.Load()
 }
 
-// SetCodexCLIVersionSyncIntervalHours 设置定时同步间隔（小时，钳到 1-720）。
+// SetCodexCLIVersionSyncIntervalHours sets the periodic sync interval (hours, clamped to 1-720).
 func (s *Store) SetCodexCLIVersionSyncIntervalHours(hours int) {
 	if s == nil {
 		return
@@ -4784,7 +4784,7 @@ func (s *Store) SetCodexCLIVersionSyncIntervalHours(hours int) {
 	s.codexCLIVersionSyncInterval.Store(int64(database.NormalizeCodexCLIVersionSyncIntervalHours(hours)))
 }
 
-// CodexCLIVersionSyncIntervalHours 返回定时同步间隔（小时）。
+// CodexCLIVersionSyncIntervalHours returns the periodic sync interval (hours).
 func (s *Store) CodexCLIVersionSyncIntervalHours() int {
 	if s == nil {
 		return 12
@@ -4792,21 +4792,21 @@ func (s *Store) CodexCLIVersionSyncIntervalHours() int {
 	return int(s.codexCLIVersionSyncInterval.Load())
 }
 
-// GetProxyURL 获取全局代理地址
+// GetProxyURL returns the global proxy address
 func (s *Store) GetProxyURL() string {
 	s.mu.RLock()
 	defer s.mu.RUnlock()
 	return s.globalProxy
 }
 
-// SetProxyURL 更新全局代理地址
+// SetProxyURL updates the global proxy address
 func (s *Store) SetProxyURL(url string) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	s.globalProxy = url
 }
 
-// NextProxy 轮询获取下一个代理 URL
+// NextProxy returns the next proxy URL in round-robin order
 func (s *Store) NextProxy() string {
 	s.mu.RLock()
 	enabled := s.proxyPoolEnabled
@@ -4814,7 +4814,7 @@ func (s *Store) NextProxy() string {
 	s.mu.RUnlock()
 
 	if !enabled || len(pool) == 0 {
-		return s.GetProxyURL() // fallback 全局单代理
+		return s.GetProxyURL() // fallback to the single global proxy
 	}
 	idx := s.proxyRoundRobin.Add(1)
 	return pool[idx%uint64(len(pool))]
@@ -4841,10 +4841,10 @@ func (s *Store) resolveProxyForAccountSnapshot(acc *Account) (string, bool) {
 	var accountID int64
 	var accountProxy string
 	var groupIDs []int64
-	// Resin 承担 Codex 出站时,代理池 fail-closed 对 Codex 账号不再成立:出口 IP 由
-	// Resin 提供,池空或绑定的托管代理已禁用都不会让它脏 IP 直连。选出的代理照常返回
-	// (Resin 模式下执行器只拿它做审计),只有 usable 判定放行。中继型账号不经 Resin,
-	// 仍按原规则(issue #679)。
+	// When Resin carries Codex outbound traffic, fail-closed for the proxy pool no longer applies to Codex accounts: the egress IP is provided by
+	// Resin, so neither an empty pool nor a disabled bound managed proxy can make it connect directly with a dirty IP. The selected proxy is still returned as usual
+	// (in Resin mode the executor uses it only for auditing), and only the usable check lets it through. Relay accounts do not go through Resin,
+	// so they still follow the original rule (issue #679).
 	resinCarriesEgress := false
 	if acc != nil {
 		acc.mu.RLock()
@@ -4903,9 +4903,9 @@ func (s *Store) resolveProxyForAccountSnapshot(acc *Account) (string, bool) {
 	return proxyURL, proxyURL != "" || !s.proxyPoolEnabled || resinCarriesEgress
 }
 
-// resolveGroupProxyForAccount 返回账号按组继承的代理(issue #479):按 GroupIDs
-// 顺序取第一个配置了代理的组,组内按账号 ID 粘性选一条——free 号池最怕账号↔
-// 出口 IP 漂移互相牵连,粘性保证同账号稳定走同一条代理。未命中返回空串。
+// resolveGroupProxyForAccount returns the proxy an account inherits from its group (issue #479): following GroupIDs
+// order, taking the first group that has a proxy configured. Within the group, one proxy is picked sticky by account ID, because the free account pool is most at risk when accounts
+// and egress IPs drift and affect each other, so stickiness keeps each account on the same proxy. If nothing matches, it returns an empty string.
 func (s *Store) resolveGroupProxyForAccount(acc *Account) string {
 	if s == nil || acc == nil {
 		return ""
@@ -5041,21 +5041,21 @@ func (s *Store) withUsableEgressFilter(filter AccountFilter) AccountFilter {
 	}
 }
 
-// GetProxyPoolEnabled 获取代理池开关状态
+// GetProxyPoolEnabled returns whether the proxy pool is enabled
 func (s *Store) GetProxyPoolEnabled() bool {
 	s.mu.RLock()
 	defer s.mu.RUnlock()
 	return s.proxyPoolEnabled
 }
 
-// SetProxyPoolEnabled 设置代理池开关
+// SetProxyPoolEnabled sets the proxy pool switch
 func (s *Store) SetProxyPoolEnabled(enabled bool) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	s.proxyPoolEnabled = enabled
 }
 
-// ReloadProxyPool 从数据库重新加载代理池
+// ReloadProxyPool reloads the proxy pool from the database
 func (s *Store) ReloadProxyPool() error {
 	s.proxyPoolReloadMu.Lock()
 	defer s.proxyPoolReloadMu.Unlock()
@@ -5096,7 +5096,7 @@ func (s *Store) ReloadProxyPool() error {
 		}
 	}
 	s.mu.Unlock()
-	log.Printf("代理池已重新加载: %d 个活跃代理", len(enabledURLs))
+	log.Printf("proxy pool reloaded: %d active proxies", len(enabledURLs))
 	return nil
 }
 
@@ -5165,68 +5165,68 @@ func (s *Store) RemoveProxyURLs(proxyURLs []string) {
 	s.sessionMu.Unlock()
 }
 
-// GetAutoCleanUnauthorized 获取是否自动清理 401 账号
+// GetAutoCleanUnauthorized returns whether 401 accounts are cleaned up automatically
 func (s *Store) GetAutoCleanUnauthorized() bool {
 	return s.autoCleanUnauthorized.Load()
 }
 
-// SetAutoCleanUnauthorized 设置是否自动清理 401 账号
+// SetAutoCleanUnauthorized sets whether 401 accounts are cleaned up automatically
 func (s *Store) SetAutoCleanUnauthorized(enabled bool) {
 	s.autoCleanUnauthorized.Store(enabled)
 }
 
-// GetAutoCleanRateLimited 获取是否自动清理 429 账号
+// GetAutoCleanRateLimited returns whether 429 accounts are cleaned up automatically
 func (s *Store) GetAutoCleanRateLimited() bool {
 	return s.autoCleanRateLimited.Load()
 }
 
-// SetAutoCleanRateLimited 设置是否自动清理 429 账号
+// SetAutoCleanRateLimited sets whether 429 accounts are cleaned up automatically
 func (s *Store) SetAutoCleanRateLimited(enabled bool) {
 	s.autoCleanRateLimited.Store(enabled)
 }
 
-// GetAutoCleanFullUsage 获取是否自动清理用量满的账号
+// GetAutoCleanFullUsage returns whether accounts with full usage are cleaned up automatically
 func (s *Store) GetAutoCleanFullUsage() bool {
 	return s.autoCleanFullUsage.Load()
 }
 
-// SetAutoCleanFullUsage 设置是否自动清理用量满的账号
+// SetAutoCleanFullUsage sets whether accounts with full usage are cleaned up automatically
 func (s *Store) SetAutoCleanFullUsage(enabled bool) {
 	s.autoCleanFullUsage.Store(enabled)
 }
 
-// GetAutoCleanError 获取是否自动清理 error 账号
+// GetAutoCleanError returns whether error accounts are cleaned up automatically
 func (s *Store) GetAutoCleanError() bool {
 	return s.autoCleanError.Load()
 }
 
-// SetAutoCleanError 设置是否自动清理 error 账号
+// SetAutoCleanError sets whether error accounts are cleaned up automatically
 func (s *Store) SetAutoCleanError(enabled bool) {
 	s.autoCleanError.Store(enabled)
 }
 
-// GetAutoCleanExpired 获取是否自动清理过期账号
+// GetAutoCleanExpired returns whether expired accounts are cleaned up automatically
 func (s *Store) GetAutoCleanExpired() bool {
 	return s.autoCleanExpired.Load()
 }
 
-// SetAutoCleanExpired 设置是否自动清理过期账号
+// SetAutoCleanExpired sets whether expired accounts are cleaned up automatically
 func (s *Store) SetAutoCleanExpired(enabled bool) {
 	s.autoCleanExpired.Store(enabled)
 }
 
-// GetLazyMode 获取是否启用惰性模式。
+// GetLazyMode returns whether lazy mode is enabled.
 func (s *Store) GetLazyMode() bool {
 	return s.lazyMode.Load()
 }
 
-// SetLazyMode 设置惰性模式。启用后不主动刷新/探测账号，只在调度命中时刷新 AT。
+// SetLazyMode sets lazy mode. When enabled, accounts are not refreshed or probed proactively; the AT is refreshed only when scheduling picks the account.
 func (s *Store) SetLazyMode(enabled bool) {
 	s.lazyMode.Store(enabled)
 	s.rebuildFastScheduler()
 }
 
-// SetBackgroundRefreshInterval 设置后台刷新/探针巡检间隔。
+// SetBackgroundRefreshInterval sets the background refresh / probe check interval.
 func (s *Store) SetBackgroundRefreshInterval(d time.Duration) {
 	if d <= 0 {
 		d = defaultBackgroundRefreshInterval
@@ -5238,7 +5238,7 @@ func (s *Store) SetBackgroundRefreshInterval(d time.Duration) {
 	}
 }
 
-// GetBackgroundRefreshInterval 获取后台刷新/探针巡检间隔。
+// GetBackgroundRefreshInterval returns the background refresh / probe check interval.
 func (s *Store) GetBackgroundRefreshInterval() time.Duration {
 	d := time.Duration(s.backgroundRefreshInterval.Load())
 	if d <= 0 {
@@ -5247,7 +5247,7 @@ func (s *Store) GetBackgroundRefreshInterval() time.Duration {
 	return d
 }
 
-// SetUsageProbeMaxAge 设置用量探针最大缓存时长。
+// SetUsageProbeMaxAge sets the maximum cache duration of usage probes.
 func (s *Store) SetUsageProbeMaxAge(d time.Duration) {
 	if d <= 0 {
 		d = defaultUsageProbeMaxAge
@@ -5255,7 +5255,7 @@ func (s *Store) SetUsageProbeMaxAge(d time.Duration) {
 	s.usageProbeMaxAge.Store(int64(d))
 }
 
-// GetUsageProbeMaxAge 获取用量探针最大缓存时长。
+// GetUsageProbeMaxAge returns the maximum cache duration of usage probes.
 func (s *Store) GetUsageProbeMaxAge() time.Duration {
 	d := time.Duration(s.usageProbeMaxAge.Load())
 	if d <= 0 {
@@ -5264,7 +5264,7 @@ func (s *Store) GetUsageProbeMaxAge() time.Duration {
 	return d
 }
 
-// SetUsageProbeConcurrency 设置用量探针并行度。
+// SetUsageProbeConcurrency sets the usage probe parallelism.
 func (s *Store) SetUsageProbeConcurrency(n int) {
 	if n <= 0 {
 		n = defaultUsageProbeConcurrency
@@ -5275,7 +5275,7 @@ func (s *Store) SetUsageProbeConcurrency(n int) {
 	s.usageProbeConcurrency.Store(int64(n))
 }
 
-// GetUsageProbeConcurrency 获取用量探针并行度。
+// GetUsageProbeConcurrency returns the usage probe parallelism.
 func (s *Store) GetUsageProbeConcurrency() int {
 	n := int(s.usageProbeConcurrency.Load())
 	if n <= 0 {
@@ -5284,12 +5284,12 @@ func (s *Store) GetUsageProbeConcurrency() int {
 	return n
 }
 
-// SetUsageProbeResponsesFallbackEnabled 设置 wham 失败后是否允许发送真实 /responses 探针。
+// SetUsageProbeResponsesFallbackEnabled sets whether a real /responses probe may be sent after a wham failure.
 func (s *Store) SetUsageProbeResponsesFallbackEnabled(enabled bool) {
 	s.usageProbeResponsesFallbackEnabled.Store(enabled)
 }
 
-// UsageProbeResponsesFallbackEnabled 获取 wham 失败后是否允许发送真实 /responses 探针。
+// UsageProbeResponsesFallbackEnabled returns whether a real /responses probe may be sent after a wham failure.
 func (s *Store) UsageProbeResponsesFallbackEnabled() bool {
 	if s == nil {
 		return true
@@ -5305,7 +5305,7 @@ func (s *Store) UsageProbeRunning() bool {
 	return s.usageProbeBatch.Load()
 }
 
-// SetRecoveryProbeInterval 设置恢复探测最小间隔。
+// SetRecoveryProbeInterval sets the minimum interval between recovery probes.
 func (s *Store) SetRecoveryProbeInterval(d time.Duration) {
 	if d <= 0 {
 		d = defaultRecoveryProbeInterval
@@ -5313,7 +5313,7 @@ func (s *Store) SetRecoveryProbeInterval(d time.Duration) {
 	s.recoveryProbeInterval.Store(int64(d))
 }
 
-// GetRecoveryProbeInterval 获取恢复探测最小间隔。
+// GetRecoveryProbeInterval returns the minimum interval between recovery probes.
 func (s *Store) GetRecoveryProbeInterval() time.Duration {
 	d := time.Duration(s.recoveryProbeInterval.Load())
 	if d <= 0 {
@@ -5338,12 +5338,12 @@ func (s *Store) AutoCleanupRunning() bool {
 	return s.autoCleanupBatch.Load()
 }
 
-// CleanExpiredNow 立即执行一次过期清理，返回清理数量
+// CleanExpiredNow runs one expired-account cleanup immediately and returns the number cleaned up
 func (s *Store) CleanExpiredNow() int {
 	return s.CleanExpiredAccounts(context.Background(), 30*time.Minute)
 }
 
-// Init 初始化：从数据库加载账号
+// Init initializes the store: it loads accounts from the database
 func (s *Store) Init(ctx context.Context) error {
 	// Capture the durable change-log position before the full snapshot. Events
 	// committed while loadFromDB is running are replayed after publication.
@@ -5352,37 +5352,37 @@ func (s *Store) Init(ctx context.Context) error {
 		var err error
 		outboxWatermark, err = s.db.SchedulerOutboxHighWatermark(ctx)
 		if err != nil {
-			return fmt.Errorf("读取调度 outbox 水位失败: %w", err)
+			return fmt.Errorf("failed to read scheduler outbox watermark: %w", err)
 		}
 	}
-	// 1. 从数据库加载账号到内存
+	// 1. Load accounts from the database into memory
 	if err := s.loadFromDB(ctx); err != nil {
 		return err
 	}
 	if err := s.LoadPromptFilterNewAPIBindings(ctx); err != nil {
-		return fmt.Errorf("加载 NewAPI 平台绑定失败: %w", err)
+		return fmt.Errorf("failed to load NewAPI platform bindings: %w", err)
 	}
 	s.startSchedulerOutboxConsumer(outboxWatermark)
 
 	if len(s.accounts) == 0 {
-		log.Println("⚠ 数据库中暂无账号，请通过管理后台添加")
+		log.Println("⚠ no accounts in the database yet, add them through the admin panel")
 		return nil
 	}
 
 	s.rebuildFastScheduler()
 
-	// 2. 统计可用账号，RT 账号的刷新交给 StartBackgroundRefresh 处理
+	// 2. Count the available accounts; refresh for RT accounts is handled by StartBackgroundRefresh
 	available := 0
 	for _, acc := range s.accounts {
 		if acc.IsAvailable() {
 			available++
 		}
 	}
-	log.Printf("账号初始化完成: %d/%d 可用", available, len(s.accounts))
+	log.Printf("account initialization complete: %d/%d available", available, len(s.accounts))
 	return nil
 }
 
-// loadFromDB 从数据库加载账号
+// loadFromDB loads accounts from the database
 func (s *Store) loadFromDB(ctx context.Context) error {
 	var pauseErr error
 	ctx, pauseErr = s.withIntelligencePauses(ctx)
@@ -5391,7 +5391,7 @@ func (s *Store) loadFromDB(ctx context.Context) error {
 	}
 	rows, err := s.db.ListActive(ctx)
 	if err != nil {
-		return fmt.Errorf("从数据库加载账号失败: %w", err)
+		return fmt.Errorf("failed to load accounts from the database: %w", err)
 	}
 	modelCooldowns := make(map[int64][]*database.AccountModelCooldownRow)
 	if cooldownRows, err := s.db.ListActiveModelCooldowns(ctx); err == nil {
@@ -5399,10 +5399,10 @@ func (s *Store) loadFromDB(ctx context.Context) error {
 			modelCooldowns[row.AccountID] = append(modelCooldowns[row.AccountID], row)
 		}
 	} else {
-		log.Printf("加载模型冷却状态失败: %v", err)
+		log.Printf("failed to load model cooldown state: %v", err)
 	}
 	if err := s.db.ClearExpiredModelCooldowns(ctx); err != nil {
-		log.Printf("清理过期模型冷却状态失败: %v", err)
+		log.Printf("failed to clean up expired model cooldown state: %v", err)
 	}
 
 	for _, row := range rows {
@@ -5415,7 +5415,7 @@ func (s *Store) loadFromDB(ctx context.Context) error {
 
 	s.rebuildAccountIndex()
 	s.publishAccountSnapshot(s.accounts)
-	log.Printf("从数据库加载了 %d 个账号", len(s.accounts))
+	log.Printf("loaded %d accounts from the database", len(s.accounts))
 	if groups, err := s.db.ListAccountGroups(ctx); err == nil {
 		for _, g := range groups {
 			if g.AutoPause5hThreshold > 0 || g.AutoPause7dThreshold > 0 {
@@ -5431,10 +5431,10 @@ func (s *Store) loadFromDB(ctx context.Context) error {
 	if memberships, err := s.db.ListAccountGroupMemberships(ctx); err == nil {
 		s.ApplyAccountGroupMemberships(memberships)
 	} else {
-		log.Printf("加载账号分组失败: %v", err)
+		log.Printf("failed to load account groups: %v", err)
 	}
 	if err := s.LoadAPIKeyAllowedGroups(ctx); err != nil {
-		log.Printf("加载 API Key 分组限制失败: %v", err)
+		log.Printf("failed to load API Key group restrictions: %v", err)
 	}
 	return nil
 }
@@ -5449,25 +5449,25 @@ func isRemovedProviderUpstreamType(upstreamType string) bool {
 	return false
 }
 
-// buildAccountFromRow 将数据库账号行转换为运行时账号；凭据缺失或不可用时返回 nil。
+// buildAccountFromRow converts a database account row into a runtime account; returns nil when credentials are missing or unusable.
 func (s *Store) buildAccountFromRow(ctx context.Context, row *database.AccountRow, modelCooldowns map[int64][]*database.AccountModelCooldownRow) *Account {
 	rt := row.GetCredential("refresh_token")
 	st := row.GetCredential("session_token")
 	at := row.GetCredential("access_token")
 	upstreamType := row.GetCredential("upstream_type")
 	if isRemovedProviderUpstreamType(upstreamType) {
-		log.Printf("[账号 %d] 上游类型 %q 已不再支持（仅支持 ChatGPT/Codex 账号），跳过", row.ID, strings.ToLower(strings.TrimSpace(upstreamType)))
+		log.Printf("[account %d] upstream type %q is no longer supported (only ChatGPT/Codex accounts are supported), skipping", row.ID, strings.ToLower(strings.TrimSpace(upstreamType)))
 		return nil
 	}
 	models := normalizeModelList(row.GetCredentialStringSlice("models"))
 	codexFingerprintMode := NormalizeCodexFingerprintMode(row.GetCredential(CodexFingerprintModeCredentialKey))
 	accountTimezone := NormalizeAccountTimezone(row.GetCredential(AccountTimezoneCredentialKey))
-	// Agent Identity：无 AT/RT，凭 agent_private_key 动态签名，不能被下面的空凭据 guard 拒绝。
+	// Agent Identity: no AT/RT; it signs dynamically with agent_private_key, so the empty-credential guard below must not reject it.
 	isAgentIdentityAccount := strings.EqualFold(strings.TrimSpace(row.GetCredential("auth_mode")), CodexAuthModeAgentIdentity) &&
 		strings.TrimSpace(row.GetCredential("agent_runtime_id")) != "" &&
 		strings.TrimSpace(row.GetCredential("agent_private_key")) != ""
 	if rt == "" && st == "" && at == "" && !isAgentIdentityAccount {
-		log.Printf("[账号 %d] 缺少 refresh_token、session_token 和 access_token，跳过", row.ID)
+		log.Printf("[account %d] missing refresh_token, session_token and access_token, skipping", row.ID)
 		return nil
 	}
 
@@ -5526,7 +5526,7 @@ func (s *Store) buildAccountFromRow(ctx context.Context, row *database.AccountRo
 		account.ErrorMsg = row.ErrorMessage
 		account.HealthTier = HealthTierRisky
 	}
-	// Agent Identity：填充签名凭据与身份信息（无 AT/RT，健康档直接置为 healthy）
+	// Agent Identity: fills in signing credentials and identity info (no AT/RT, health tier is set directly to healthy)
 	if isAgentIdentityAccount {
 		account.CodexAuthMode = CodexAuthModeAgentIdentity
 		account.AgentRuntimeID = strings.TrimSpace(row.GetCredential("agent_runtime_id"))
@@ -5543,7 +5543,7 @@ func (s *Store) buildAccountFromRow(ctx context.Context, row *database.AccountRo
 		}
 	}
 
-	// 尝试从 credentials 恢复已有的 AT
+	// try to restore the existing AT from credentials
 	if at != "" {
 		account.AccessToken = at
 		account.AccountID = row.GetCredential("account_id")
@@ -5556,7 +5556,7 @@ func (s *Store) buildAccountFromRow(ctx context.Context, row *database.AccountRo
 			if parsed, err := time.Parse(time.RFC3339, expiresAt); err == nil {
 				account.ExpiresAt = parsed
 			} else {
-				log.Printf("[账号 %d] 解析 expires_at 失败: %v", row.ID, err)
+				log.Printf("[account %d] failed to parse expires_at: %v", row.ID, err)
 			}
 		}
 	}
@@ -5571,7 +5571,7 @@ func (s *Store) buildAccountFromRow(ctx context.Context, row *database.AccountRo
 			account.SetCooldownUntil(row.CooldownUntil.Time, row.CooldownReason)
 		} else if row.CooldownReason != "" {
 			if err := s.db.ClearCooldown(ctx, row.ID); err != nil {
-				log.Printf("[账号 %d] 清理过期冷却状态失败: %v", row.ID, err)
+				log.Printf("[account %d] failed to clean up expired cooldown state: %v", row.ID, err)
 			}
 		}
 	}
@@ -5582,21 +5582,21 @@ func (s *Store) buildAccountFromRow(ctx context.Context, row *database.AccountRo
 				if parsedTime, err := time.Parse(time.RFC3339, usageUpdatedAt); err == nil {
 					updatedAt = parsedTime
 				} else {
-					log.Printf("[账号 %d] 解析 codex_usage_updated_at 失败: %v", row.ID, err)
+					log.Printf("[account %d] failed to parse codex_usage_updated_at: %v", row.ID, err)
 				}
 			}
 			account.SetUsageSnapshot(parsed, updatedAt)
-			// 恢复 7d 重置时间
+			// restore the 7d reset time
 			if resetAt := row.GetCredential("codex_7d_reset_at"); resetAt != "" {
 				if t, err := time.Parse(time.RFC3339, resetAt); err == nil {
 					account.SetReset7dAt(t)
 				}
 			}
 		} else {
-			log.Printf("[账号 %d] 解析 codex_7d_used_percent 失败: %v", row.ID, err)
+			log.Printf("[account %d] failed to parse codex_7d_used_percent: %v", row.ID, err)
 		}
 	}
-	// 恢复 5h 用量快照
+	// restore the 5h usage snapshot
 	if usagePct5h := row.GetCredential("codex_5h_used_percent"); usagePct5h != "" {
 		if parsed, err := strconv.ParseFloat(usagePct5h, 64); err == nil {
 			resetAt := time.Time{}
@@ -5610,7 +5610,7 @@ func (s *Store) buildAccountFromRow(ctx context.Context, row *database.AccountRo
 				if parsedTime, err := time.Parse(time.RFC3339, usageUpdatedAt5h); err == nil {
 					updatedAt = parsedTime
 				} else {
-					log.Printf("[账号 %d] 解析 codex_5h_usage_updated_at 失败: %v", row.ID, err)
+					log.Printf("[account %d] failed to parse codex_5h_usage_updated_at: %v", row.ID, err)
 				}
 			}
 			account.SetUsageSnapshot5hAt(parsed, resetAt, updatedAt)
@@ -5620,7 +5620,7 @@ func (s *Store) buildAccountFromRow(ctx context.Context, row *database.AccountRo
 		if t, err := time.Parse(time.RFC3339, activatedResetAt); err == nil {
 			account.Mark5hWindowActivated(t)
 		} else {
-			log.Printf("[账号 %d] 解析 codex_5h_window_activated_reset_at 失败: %v", row.ID, err)
+			log.Printf("[account %d] failed to parse codex_5h_window_activated_reset_at: %v", row.ID, err)
 		}
 	}
 	if usagePctSpark := row.GetCredential("codex_spark_used_percent"); usagePctSpark != "" {
@@ -5636,14 +5636,14 @@ func (s *Store) buildAccountFromRow(ctx context.Context, row *database.AccountRo
 				if parsedTime, err := time.Parse(time.RFC3339, usageUpdatedAtSpark); err == nil {
 					updatedAt = parsedTime
 				} else {
-					log.Printf("[账号 %d] 解析 codex_spark_usage_updated_at 失败: %v", row.ID, err)
+					log.Printf("[account %d] failed to parse codex_spark_usage_updated_at: %v", row.ID, err)
 				}
 			}
 			account.SetUsageSnapshotSparkAt(parsed, resetAt, updatedAt)
 		}
 	}
-	// 恢复积分余额快照：积分只有 wham 探针能刷，不恢复的话重启后账号会被判成
-	// 「没积分」——积分顶替限流失效，还会被「清理限流账号」当成真限流删掉。
+	// restore the credit balance snapshot: only the wham probe can refresh credits, so without this restore an account would be judged
+	// "out of credits". Credits standing in for a rate limit stop working, and "clean up rate-limited accounts" deletes such an account as a real rate limit.
 	account.RestoreCreditBalanceFromJSON(row.GetCredential("codex_credits"))
 	if threshold, ok := row.GetCredentialFloat64("auto_pause_5h_threshold"); ok {
 		account.AutoPause5hThreshold = normalizeQuotaAutoPauseThreshold(threshold)
@@ -5675,8 +5675,8 @@ func (s *Store) buildAccountFromRow(ctx context.Context, row *database.AccountRo
 	return account
 }
 
-// BuildTransientAccountByID 从数据库构建一个临时账号（包含回收站中的已删除账号），
-// 不加入运行时池、不参与调度，用于回收站的连通性测试。
+// BuildTransientAccountByID builds a temporary account from the database (including soft-deleted accounts in the recycle bin),
+// not added to the runtime pool and not scheduled; used for connectivity tests in the recycle bin.
 func (s *Store) BuildTransientAccountByID(ctx context.Context, dbID int64) (*Account, error) {
 	row, err := s.db.GetAccountByIDIncludingDeleted(ctx, dbID)
 	if err != nil {
@@ -5684,12 +5684,12 @@ func (s *Store) BuildTransientAccountByID(ctx context.Context, dbID int64) (*Acc
 	}
 	account := s.buildAccountFromRow(ctx, row, nil)
 	if account == nil {
-		return nil, fmt.Errorf("账号 %d 缺少可用凭据", dbID)
+		return nil, fmt.Errorf("account %d is missing usable credentials", dbID)
 	}
 	return account, nil
 }
 
-// LoadAccountByID 从数据库加载单个账号并加入运行时池（用于回收站恢复等场景）。
+// LoadAccountByID loads a single account from the database and adds it to the runtime pool (used for recycle bin restore and similar cases).
 func (s *Store) LoadAccountByID(ctx context.Context, dbID int64) error {
 	if s.FindByID(dbID) != nil {
 		return nil
@@ -5700,13 +5700,13 @@ func (s *Store) LoadAccountByID(ctx context.Context, dbID int64) error {
 	}
 	account := s.buildAccountFromRow(ctx, row, nil)
 	if account == nil {
-		return fmt.Errorf("账号 %d 缺少可用凭据", dbID)
+		return fmt.Errorf("account %d is missing usable credentials", dbID)
 	}
 	// Full startup applies group memberships after loading all accounts.
 	// Single-account reloads need the same state before entering the runtime pool.
 	groupIDs, err := s.db.GetAccountGroupIDs(ctx, dbID)
 	if err != nil {
-		return fmt.Errorf("加载账号 %d 分组失败: %w", dbID, err)
+		return fmt.Errorf("failed to load groups for account %d: %w", dbID, err)
 	}
 	account.mu.Lock()
 	account.GroupIDs = cloneInt64Slice(groupIDs)
@@ -5898,10 +5898,10 @@ func (s *Store) TriggerDispatchStateReconcileAsync() <-chan struct{} {
 		defer cancel()
 		if changed, err := s.reconcileDispatchState(ctx); err != nil {
 			if !errors.Is(err, context.Canceled) {
-				log.Printf("异步调度状态重建失败: %v", err)
+				log.Printf("async scheduling state rebuild failed: %v", err)
 			}
 		} else if changed {
-			log.Printf("异步调度状态重建完成")
+			log.Printf("async scheduling state rebuild completed")
 		}
 	}) {
 		s.finishDispatchStateReconcile(done)
@@ -5909,7 +5909,7 @@ func (s *Store) TriggerDispatchStateReconcileAsync() <-chan struct{} {
 	return done
 }
 
-// StartBackgroundRefresh 启动后台定期刷新
+// StartBackgroundRefresh starts periodic background refresh
 func (s *Store) StartBackgroundRefresh() {
 	backgroundCtx := s.backgroundCtx
 	if backgroundCtx == nil {
@@ -5922,9 +5922,9 @@ func (s *Store) StartBackgroundRefresh() {
 		autoCleanupTicker := time.NewTicker(30 * time.Second)
 		fullUsageCleanupTicker := time.NewTicker(5 * time.Minute)
 		expiredCleanupTicker := time.NewTicker(15 * time.Minute)
-		// 添加定时重建 FastScheduler 以优化性能
+		// add a timed rebuild of FastScheduler to improve performance
 		rebuildSchedulerTicker := time.NewTicker(10 * time.Minute)
-		// 到点即探定时器：始终武装到「最近的限流冷却/窗口重置边界」，倒计时归零即探针刷新。
+		// probe-on-deadline timer: always armed to the nearest rate-limit cooldown or window reset boundary; when the countdown reaches zero, the probe refreshes immediately.
 		boundaryProbeTimer := time.NewTimer(time.Hour)
 		if !boundaryProbeTimer.Stop() {
 			<-boundaryProbeTimer.C
@@ -5946,7 +5946,7 @@ func (s *Store) StartBackgroundRefresh() {
 			refreshTimer.Reset(s.GetBackgroundRefreshInterval())
 		}
 
-		// 启动时先武装一次；此后每次巡检/唤醒/到点后都会重排，保证始终盯住最近边界。
+		// armed once at startup; after that it is re-armed on every inspection, wake-up and deadline so it always tracks the nearest boundary.
 		s.armNextBoundaryProbe(boundaryProbeTimer)
 
 		for {
@@ -5963,15 +5963,15 @@ func (s *Store) StartBackgroundRefresh() {
 					s.TriggerRecoveryProbeAsync()
 				}
 				refreshTimer.Reset(s.GetBackgroundRefreshInterval())
-				// 巡检可能刷新了各账号的重置时间，顺带重排「到点即探」定时器，
-				// 兜底那些两次唤醒之间未显式 WakeBoundaryProbe 的边界变化。
+				// the background check may have refreshed each account's reset time, so also re-arm the probe-on-deadline timer,
+				// as a fallback for boundary changes that were not explicitly signalled with WakeBoundaryProbe between two wake-ups.
 				s.armNextBoundaryProbe(boundaryProbeTimer)
 			case <-boundaryProbeTimer.C:
-				// 某账号的限流冷却/窗口重置刚归零：立即探针刷新真实用量，再武装下一个边界。
+				// an account's rate-limit cooldown or window reset just reached zero: probe immediately to refresh real usage, then arm the next boundary.
 				s.TriggerUsageProbeAsync()
 				s.armNextBoundaryProbe(boundaryProbeTimer)
 			case <-s.boundaryProbeWakeCh:
-				// 有更早的新边界出现（如刚吃到 429 冷却），重排到该时刻。
+				// an earlier new boundary appeared (e.g. a 429 cooldown was just hit); re-arm to that time.
 				s.armNextBoundaryProbe(boundaryProbeTimer)
 			case <-s.backgroundRefreshWakeCh:
 				resetRefreshTimer()
@@ -5984,14 +5984,14 @@ func (s *Store) StartBackgroundRefresh() {
 					})
 				}
 			case <-expiredCleanupTicker.C:
-				// 每 15 分钟清理加入超过 30 分钟的账号（需开启开关）
+				// every 15 minutes, clean up accounts that were added more than 30 minutes ago (requires the switch to be enabled)
 				if s.GetAutoCleanExpired() {
 					s.startDBBackgroundTask(func(ctx context.Context) {
 						s.CleanExpiredAccounts(ctx, 30*time.Minute)
 					})
 				}
 			case <-rebuildSchedulerTicker.C:
-				// 定期重建调度器以优化内存和性能
+				// periodically rebuild the scheduler to optimize memory and performance
 				if s.FastSchedulerEnabled() {
 					s.rebuildFastScheduler()
 				}
@@ -6004,7 +6004,7 @@ func (s *Store) StartBackgroundRefresh() {
 	}()
 }
 
-// Stop 停止后台刷新
+// Stop stops background refresh
 func (s *Store) Stop() {
 	s.stopOnce.Do(func() {
 		if hub := s.availability.Load(); hub != nil {
@@ -6043,15 +6043,15 @@ func (s *Store) startDBBackgroundTask(task func(context.Context)) bool {
 	return true
 }
 
-// CleanByRuntimeStatus 按运行时状态清理账号（用于自动清理流程）
-// premium 5h 限流账号会被跳过，因为它们会在 5h 内自然恢复，无需删除。
-// 手动一键清理请改用 CleanRateLimitedManual——它会清掉所有限流账号。
+// CleanByRuntimeStatus cleans up accounts by runtime status (used by the automatic cleanup flow)
+// premium 5h rate-limited accounts are skipped, because they recover naturally within 5h and do not need to be deleted.
+// For a manual one-click cleanup, use CleanRateLimitedManual instead; it removes all rate-limited accounts.
 func (s *Store) CleanByRuntimeStatus(ctx context.Context, targetStatus string) int {
 	return s.cleanByRuntimeStatusMatch(ctx, targetStatus, nil)
 }
 
-// CollectCleanTargets 收集按运行时状态可清理的账号，不执行删除。
-// 管理端流式清理先拿这份名单再逐个 SoftDeleteForClean，才能推进度。
+// CollectCleanTargets collects accounts that can be cleaned up by runtime status, without deleting them.
+// The admin streaming cleanup takes this list first and then calls SoftDeleteForClean on each account, so that progress can be reported.
 func (s *Store) CollectCleanTargets(targetStatus string, match func(*Account) bool) []*Account {
 	accounts := s.accountSnapshotAccounts()
 	targets := make([]*Account, 0)
@@ -6063,7 +6063,7 @@ func (s *Store) CollectCleanTargets(targetStatus string, match func(*Account) bo
 		if status != targetStatus && !(targetStatus == "rate_limited" && status == ResponsesRateLimitedCooldownReason) {
 			continue
 		}
-		// 正在用积分顶替限流的账号显示为限流，但实际仍在正常调度——清理会误删好账号。
+		// accounts using credits to stand in for a rate limit show as rate-limited but are still scheduled normally; cleaning them up would wrongly delete good accounts.
 		if acc.UsingCredits() {
 			continue
 		}
@@ -6081,7 +6081,7 @@ func (s *Store) CollectCleanTargets(targetStatus string, match func(*Account) bo
 	return targets
 }
 
-// CollectRateLimitedManualTargets 收集手动一键清理限流时要删的账号。
+// CollectRateLimitedManualTargets collects the accounts to delete for a manual one-click cleanup of rate-limited accounts.
 func (s *Store) CollectRateLimitedManualTargets() []*Account {
 	accounts := s.accountSnapshotAccounts()
 	targets := make([]*Account, 0)
@@ -6104,7 +6104,7 @@ func (s *Store) CollectRateLimitedManualTargets() []*Account {
 	return targets
 }
 
-// SoftDeleteForClean 把单个账号移出号池并记清理事件。db 为空时只更新内存。
+// SoftDeleteForClean removes a single account from the account pool and records a cleanup event. When db is empty, only the in-memory state is updated.
 func (s *Store) SoftDeleteForClean(ctx context.Context, acc *Account, eventReason string) error {
 	if acc == nil {
 		return nil
@@ -6117,18 +6117,18 @@ func (s *Store) SoftDeleteForClean(ctx context.Context, acc *Account, eventReaso
 	s.RemoveAccount(acc.DBID)
 	if s.db != nil {
 		if err := s.db.InsertAccountEvent(ctx, acc.DBID, "deleted", eventReason); err != nil {
-			log.Printf("[账号 %d] 记录清理事件失败: %v", acc.DBID, err)
+			log.Printf("[account %d] failed to record cleanup event: %v", acc.DBID, err)
 		}
 	}
 	return nil
 }
 
-// cleanByRuntimeStatusMatch 按运行时状态清理账号，match 非 nil 时仅清理命中的账号。
+// cleanByRuntimeStatusMatch cleans up accounts by runtime status; when match is non-nil, only matching accounts are cleaned up.
 func (s *Store) cleanByRuntimeStatusMatch(ctx context.Context, targetStatus string, match func(*Account) bool) int {
 	cleaned := 0
 	for _, acc := range s.CollectCleanTargets(targetStatus, match) {
 		if err := s.SoftDeleteForClean(ctx, acc, "auto_clean"); err != nil {
-			log.Printf("[账号 %d] 清理 %s 状态失败: %v", acc.DBID, targetStatus, err)
+			log.Printf("[account %d] failed to clean up %s status: %v", acc.DBID, targetStatus, err)
 			continue
 		}
 		cleaned++
@@ -6136,16 +6136,16 @@ func (s *Store) cleanByRuntimeStatusMatch(ctx context.Context, targetStatus stri
 	return cleaned
 }
 
-// CleanRateLimitedManual 清理所有"限流"含义下的账号（用于手动一键清理）。
-// 与 CleanByRuntimeStatus("rate_limited") 的区别：
-//   - 涵盖 RuntimeStatus 的全部限流相关值，包括 Responses 权威 429
-//   - 不跳过 premium 5h 限流：手动触发即代表用户明确意图删除
-//   - 锁定账号依然跳过（与所有清理流程一致）
+// CleanRateLimitedManual cleans up all accounts that count as "rate-limited" (used for the manual one-click cleanup).
+// Difference from CleanByRuntimeStatus("rate_limited"):
+//   - covers all rate-limit-related RuntimeStatus values, including the authoritative 429 from Responses
+//   - does not skip premium 5h rate-limited accounts: a manual trigger means the user clearly intends to delete them
+//   - locked accounts are still skipped (consistent with all cleanup flows)
 func (s *Store) CleanRateLimitedManual(ctx context.Context) int {
 	cleaned := 0
 	for _, acc := range s.CollectRateLimitedManualTargets() {
 		if err := s.SoftDeleteForClean(ctx, acc, "manual_clean"); err != nil {
-			log.Printf("[账号 %d] 手动清理限流账号失败: %v", acc.DBID, err)
+			log.Printf("[account %d] manual cleanup of rate-limited accounts failed: %v", acc.DBID, err)
 			continue
 		}
 		cleaned++
@@ -6153,15 +6153,15 @@ func (s *Store) CleanRateLimitedManual(ctx context.Context) int {
 	return cleaned
 }
 
-// ==================== 最少连接调度 ====================
+// ==================== least-connections scheduling ====================
 
-// Next 获取下一个可用账号（健康优先 + 低负载择优 + warm 公平调度）
+// Next gets the next available account (healthy first, pick low load, fair scheduling for warm accounts)
 func (s *Store) Next() *Account {
 	return s.NextExcluding(0, nil)
 }
 
-// NextExcluding 获取下一个可用账号，排除指定的账号 ID 集合
-// 用于重试时避免再次选到已失败（如 401）的账号
+// NextExcluding gets the next available account, excluding the given set of account IDs.
+// Used during retries to avoid selecting an account that already failed (e.g. with 401) again.
 func (s *Store) NextExcluding(apiKeyID int64, exclude map[int64]bool) *Account {
 	return s.NextExcludingWithFilter(apiKeyID, exclude, nil)
 }
@@ -6292,14 +6292,14 @@ func atomicSubtractFloorZero(counter *atomic.Int64, delta int64) {
 	}
 }
 
-// NextExcludingWithFilter 获取下一个可用账号，并应用请求级账号过滤器。
+// NextExcludingWithFilter gets the next available account and applies the request-level account filter.
 func (s *Store) NextExcludingWithFilter(apiKeyID int64, exclude map[int64]bool, filter AccountFilter) *Account {
 	return s.NextExcludingWithDispatch(apiKeyID, exclude, filter, DispatchPolicyStandard)
 }
 
-// indexedMissFallbackInterval 限速索引 miss 后的全量扫描兜底:全局至多每
-// 500ms 放行一次,既兜住时间性恢复(冷却到期不产生事件),又不会让 miss
-// 风暴退化回每请求 O(号池) 扫描。
+// indexedMissFallbackInterval rate-limits the full-scan fallback after an index miss: globally, at most one scan is let through every
+// 500ms, which covers time-based recovery (cooldown expiry produces no event) without letting a burst of misses
+// degrade back to an O(pool size) scan on every request.
 const indexedMissFallbackInterval = 500 * time.Millisecond
 
 func (s *Store) tryIndexedMissFallback() bool {
@@ -6311,7 +6311,7 @@ func (s *Store) tryIndexedMissFallback() bool {
 	return s.indexedMissFallbackNS.CompareAndSwap(last, now)
 }
 
-// NextExcludingWithDispatch 按用量策略选号。spark 请求忽略账号级 5h/7d。
+// NextExcludingWithDispatch selects an account by usage policy. spark requests ignore account-level 5h/7d limits.
 func (s *Store) NextExcludingWithDispatch(apiKeyID int64, exclude map[int64]bool, filter AccountFilter, policy DispatchPolicy) *Account {
 	started := time.Now()
 	filter = s.withUsableEgressFilter(filter)
@@ -6337,8 +6337,8 @@ func (s *Store) NextExcludingWithDispatch(apiKeyID int64, exclude map[int64]bool
 			s.recordSchedulerSelection(started, true, false, true, 0)
 			return acc
 		}
-		// 索引未命中时偶发放行一次全量扫描兜底:冷却/限流纯靠时间到期恢复的
-		// 账号不产生任何事件,索引不会自动回插,全靠这里限速捡回并修复索引。
+		// an occasional full-scan fallback is let through when the index misses: cooldowns and rate limits that recover purely by time expiry
+		// produce no events, so the index never re-inserts them on its own; this rate-limited fallback is what picks them up and repairs the index.
 		if s.SchedulerEngine() == "indexed" && !lazyMode && !s.tryIndexedMissFallback() {
 			s.recordSchedulerSelection(started, true, false, false, 0)
 			return nil
@@ -6386,7 +6386,7 @@ func (s *Store) NextExcludingWithDispatch(apiKeyID int64, exclude map[int64]bool
 				continue
 			}
 
-			// 账号调度优先级严格先于健康档位与调度分（issue #358）
+			// account scheduling priority strictly precedes health tier and scheduling score (issue #358)
 			schedulerPriority := acc.schedulerPriority()
 			priority := tierPriority(tier)
 			var reset5h time.Time
@@ -6425,7 +6425,7 @@ func (s *Store) NextExcludingWithDispatch(apiKeyID int64, exclude map[int64]bool
 				s.recordSchedulerShadow(shadowIndexedHit, true)
 			}
 			if s.SchedulerEngine() == "indexed" {
-				// 慢路径兜底命中说明索引漏号(纯时间恢复),回插修复索引。
+				// slow-path fallback hit means the index missed an account (time-based recovery only); re-insert it to repair the index.
 				s.fastSchedulerUpdate(best)
 			}
 			return best
@@ -6455,8 +6455,8 @@ func (s *Store) accountLazySelectable(acc *Account) bool {
 }
 
 func (a *Account) lazySelectableLocked(now time.Time) bool {
-	// 与 isAvailableLocked 同一处硬门禁：lazy 模式是选号入口的另一条腿，漏掉它会让
-	// 被阻断账号在 lazy 部署下照常入选（含 401 窄恢复豁免路径）。
+	// same hard gate as isAvailableLocked: lazy mode is the other leg of the account selection entry point; omitting it would let
+	// blocked accounts be selected under lazy deployments as usual (including the narrow 401 recovery exemption path).
 	if a.Status == StatusError {
 		return false
 	}
@@ -6511,7 +6511,7 @@ func (s *Store) triggerLazyRefreshAsync(acc *Account) {
 		ctx, cancel := context.WithTimeout(parent, 30*time.Second)
 		defer cancel()
 		if err := s.refreshAccount(ctx, acc); err != nil {
-			log.Printf("[账号 %d] lazy mode 预热刷新失败: %v", dbID, err)
+			log.Printf("[account %d] lazy mode warm-up refresh failed: %v", dbID, err)
 		}
 	}) {
 		s.lazyRefreshInFlight.Delete(dbID)
@@ -6582,7 +6582,7 @@ func (s *Store) nextExcludingWithFilterLazy(apiKeyID int64, exclude map[int64]bo
 				continue
 			}
 
-			// 账号调度优先级严格先于健康档位与调度分（issue #358）
+			// account scheduling priority strictly precedes health tier and scheduling score (issue #358)
 			schedulerPriority := acc.schedulerPriority()
 			priority := tierPriority(tier)
 			var reset5h time.Time
@@ -6620,7 +6620,7 @@ func (s *Store) nextExcludingWithFilterLazy(apiKeyID int64, exclude map[int64]bo
 	return nil
 }
 
-// BindSessionAffinity 记录会话与账号/代理的亲和关系。
+// BindSessionAffinity records the affinity between a session and an account/proxy.
 func (s *Store) BindSessionAffinity(key string, account *Account, proxyURL string) {
 	s.bindSessionAffinity(key, account, proxyURL)
 }
@@ -6662,9 +6662,9 @@ func (s *Store) bindSessionAffinity(key string, account *Account, proxyURL strin
 	if s.sessionBindings == nil {
 		s.sessionBindings = make(map[string]sessionAffinity)
 	}
-	// 有界保护：过期绑定只在同 key 再次命中时才被动删除，对话结束后的绑定
-	// 永远不会再被查询、会静默泄漏。粘性键按内容种子派生（每段对话一个）后
-	// 键数量随对话数增长，超限时全量清一轮过期项。
+	// bounded protection: an expired binding is only removed lazily when the same key is hit again, so bindings left behind after a conversation ends
+	// are never queried again and would leak silently. Sticky keys are derived from content seeds (one per conversation).
+	// the number of keys grows with the number of conversations; when the limit is exceeded, one full pass clears the expired entries.
 	if len(s.sessionBindings) >= maxSessionBindings {
 		for k, b := range s.sessionBindings {
 			if !b.expiresAt.After(now) {
@@ -6672,8 +6672,8 @@ func (s *Store) bindSessionAffinity(key string, account *Account, proxyURL strin
 			}
 		}
 	}
-	// 同账号的连续 Bind 视为复用,沿用 boundAt 与 requestCount 保持观测连续性;
-	// 换账号时则按新绑定从 0 开始计。lastUsedAt 恒取当前时间(正在被使用)。
+	// consecutive Binds on the same account are treated as reuse: boundAt and requestCount are kept to preserve observation continuity;
+	// when switching accounts, counting starts from 0 with the new binding. lastUsedAt is always the current time (it is being used).
 	if existing, ok := s.sessionBindings[key]; ok && existing.accountID == account.DBID {
 		binding.boundAt = existing.boundAt
 		binding.requestCount = existing.requestCount
@@ -6688,14 +6688,14 @@ func (s *Store) bindSessionAffinity(key string, account *Account, proxyURL strin
 			AccountID: binding.accountID,
 			ProxyURL:  binding.proxyURL,
 		}, ttl); err != nil {
-			log.Printf("写入缓存会话粘性失败: account=%d err=%v", binding.accountID, err)
+			log.Printf("failed to write cached session stickiness: account=%d err=%v", binding.accountID, err)
 		}
 	}
 }
 
-// SessionAffinityAccountID 返回该亲和键当前绑定的账号 ID（含跨进程缓存里的绑定）。
-// 续链请求用它判断"绑定账号是不是已经被本次请求排除掉了"——是的话再等它空出来
-// 没有意义，调用方可以直接降级换号，省掉一轮 30s 空等。
+// SessionAffinityAccountID returns the account ID currently bound to this affinity key (including bindings in the cross-process cache).
+// Continuation requests use it to check whether "the bound account has already been excluded by this request"; if so, waiting for it to free up
+// is pointless, and the caller can fall back to another account directly, saving a 30s wait.
 func (s *Store) SessionAffinityAccountID(key string) (int64, bool) {
 	if s == nil {
 		return 0, false
@@ -6736,33 +6736,33 @@ func (s *Store) UnbindSessionAffinity(key string, accountID int64) {
 		ctx, cancel := context.WithTimeout(context.Background(), 500*time.Millisecond)
 		defer cancel()
 		if err := s.tokenCache.DeleteSessionAffinity(ctx, key, accountID); err != nil {
-			log.Printf("删除缓存会话粘性失败: account=%d err=%v", accountID, err)
+			log.Printf("failed to delete cached session stickiness: account=%d err=%v", accountID, err)
 		}
 	}
 }
 
-// NextForSession 优先复用已绑定的账号和代理，失败时回退到普通选号。
+// NextForSession prefers reusing the bound account and proxy, falling back to normal selection on failure.
 func (s *Store) NextForSession(key string, apiKeyID int64, exclude map[int64]bool) (*Account, string) {
 	return s.NextForSessionWithFilter(key, apiKeyID, exclude, nil)
 }
 
-// NextForSessionWithFilter 优先复用已绑定的账号和代理，并应用请求级账号过滤器。
+// NextForSessionWithFilter prefers reusing the bound account and proxy, and applies the request-level account filter.
 //
-// affinity_mode 决定粘性强度:
-//   - off:     永不读绑定,每次都走完整挑号策略
-//   - bounded (默认): 绑定有效但被以下任一条件解除
-//   - 绑定账号当前已不属于 healthy 桶 (warm/risky/banned)
-//   - 绑定空闲超过 sessionAffinityIdleEscape (默认 10min,上游缓存已过期)
-//   - strict:  完全沿用旧行为,只在 TTL 过期或显式 Unbind 时换号
+// affinity_mode sets the stickiness strength:
+//   - off:     never reads bindings; always goes through the full selection policy
+//   - bounded (default): the binding is valid, but is released by any of the following conditions
+//   - the bound account is no longer in the healthy bucket (warm/risky/banned)
+//   - the binding has been idle longer than sessionAffinityIdleEscape (default 10min, upstream cache has expired)
+//   - strict:  keeps the old behavior entirely; only switches accounts on TTL expiry or an explicit Unbind
 //
-// 解除发生时绕过 binding 走完整挑号策略(NextExcludingWithFilter),后续 BindSessionAffinity
-// 会重新建立绑定。
+// When released, the binding is bypassed and the full selection policy runs (NextExcludingWithFilter); the next BindSessionAffinity
+// re-establishes the binding.
 func (s *Store) NextForSessionWithFilter(key string, apiKeyID int64, exclude map[int64]bool, filter AccountFilter) (*Account, string) {
 	account, proxyURL, _ := s.nextForSessionWithFilter(key, apiKeyID, exclude, filter, false, SelectionOptions{Policy: DispatchPolicyStandard})
 	return account, proxyURL
 }
 
-// NextForSessionWithDispatch 优先复用绑定账号，并按用量策略选号。
+// NextForSessionWithDispatch prefers reusing the bound account and selects by usage policy.
 func (s *Store) NextForSessionWithDispatch(key string, apiKeyID int64, exclude map[int64]bool, filter AccountFilter, policy DispatchPolicy) (*Account, string) {
 	account, proxyURL, _ := s.nextForSessionWithFilter(key, apiKeyID, exclude, filter, false, SelectionOptions{Policy: policy})
 	return account, proxyURL
@@ -6790,16 +6790,16 @@ func (s *Store) NextForContinuationWithDispatch(key string, apiKeyID int64, excl
 	return account, proxyURL
 }
 
-// nextForSessionWithFilter 是会话选号的统一实现。preserveBinding=true(续链请求)时
-// 语义收紧为"只认绑定账号"：
-//   - 忽略 affinity_mode=off 与 bounded 的全部逃逸条件（空闲/健康档位）——
-//     续链 id 只在创建它的账号上有效，换号必然 previous_response_not_found，
-//     所以这里刻意覆盖运营者的粘性配置；
-//   - 绑定账号当前取不到（超并发/冷却/被本次请求排除）时返回 nil 而不是回退到
-//     别的账号。调用方据此决定是等它空出来，还是剥离续链 id 降级换号。
+// nextForSessionWithFilter is the unified implementation of session selection. When preserveBinding=true (continuation requests),
+// its semantics are tightened to "only trust the bound account":
+//   - ignores all escape conditions of affinity_mode=off and bounded (idle / health tier) —
+//     a continuation id is only valid on the account that created it; switching accounts always causes previous_response_not_found,
+//     so this deliberately overrides the operator's stickiness configuration;
+//   - when the bound account is currently unavailable (over concurrency / cooling down / excluded by this request), returns nil instead of falling back
+//     to another account. The caller decides whether to wait for it to free up, or strip the continuation id and downgrade to another account.
 //
-// 绑定本身不存在时仍走完整挑号，与普通请求一致；TTL 过期只影响普通请求，
-// preserveBinding=true 的续链请求仍保留原账号。
+// If the binding itself does not exist, full selection still runs, as for a normal request; TTL expiry only affects normal requests,
+// continuation requests with preserveBinding=true still keep the original account.
 func (s *Store) nextForSessionWithFilter(key string, apiKeyID int64, exclude map[int64]bool, filter AccountFilter, preserveBinding bool, opts SelectionOptions) (*Account, string, SessionAffinityGuard) {
 	if s == nil {
 		return nil, "", SessionAffinityGuard{}
@@ -6831,8 +6831,8 @@ func (s *Store) nextForSessionWithFilter(key string, apiKeyID int64, exclude map
 	}
 	if ok {
 		expired := !binding.expiresAt.After(now)
-		// bounded 模式下追加逃逸条件检查:账号不健康,或绑定已空闲到上游
-		// prompt cache 必然过期。活跃会话不轮换(issue #584)。
+		// bounded mode adds an extra escape check: the account is unhealthy, or the binding has been idle until the upstream
+		// prompt cache has certainly expired. Active sessions are not rotated (issue #584).
 		escape := false
 		if mode == AffinityModeBounded && !preserveBinding {
 			if !s.affinityAccountStillHealthy(binding.accountID) {
@@ -6847,7 +6847,7 @@ func (s *Store) nextForSessionWithFilter(key string, apiKeyID int64, exclude map
 		} else {
 			acc, capacityFull := s.takeByIDModeWithCapacity(binding.accountID, apiKeyID, exclude, filter, preserveBinding, key, policy)
 			if acc != nil {
-				// 命中粘性,记一次复用并刷新空闲时钟
+				// stickiness hit: record one reuse and refresh the idle clock
 				s.sessionMu.Lock()
 				if current, exists := s.sessionBindings[key]; exists && current.accountID == binding.accountID {
 					current.requestCount++
@@ -6865,7 +6865,7 @@ func (s *Store) nextForSessionWithFilter(key string, apiKeyID int64, exclude map
 				if fallback == nil {
 					return nil, "", SessionAffinityGuard{}
 				}
-				log.Printf("会话粘性容量溢出: 绑定账号=%d 并发满,本请求借用账号=%d(该请求预期上游缓存未命中)", binding.accountID, fallback.DBID)
+				log.Printf("session stickiness capacity overflow: bound account=%d is at full concurrency, this request borrows account=%d (upstream cache miss expected for this request)", binding.accountID, fallback.DBID)
 				return fallback, "", SessionAffinityGuard{preserveAccountID: binding.accountID}
 			}
 		}
@@ -6878,9 +6878,9 @@ func (s *Store) nextForSessionWithFilter(key string, apiKeyID int64, exclude map
 			s.UnbindSessionAffinity(key, binding.accountID)
 			return s.nextAccountForFreshAffinityWithDispatch(key, apiKeyID, exclude, filter, opts), "", SessionAffinityGuard{}
 		}
-		// 跨进程缓存的 binding 也按 bounded 逻辑校验账号健康。
+		// the cross-process cached binding is also validated for account health using the bounded logic.
 		if mode == AffinityModeBounded && !preserveBinding && !s.affinityAccountStillHealthy(binding.accountID) {
-			// 不复用,落到完整挑号
+			// not reused; fall through to full selection
 		} else {
 			acc, capacityFull := s.takeByIDModeWithCapacity(binding.accountID, apiKeyID, exclude, filter, preserveBinding, key, policy)
 			if acc != nil {
@@ -6900,7 +6900,7 @@ func (s *Store) nextForSessionWithFilter(key string, apiKeyID int64, exclude map
 				if fallback == nil {
 					return nil, "", SessionAffinityGuard{}
 				}
-				log.Printf("会话粘性容量溢出: 绑定账号=%d 并发满,本请求借用账号=%d(该请求预期上游缓存未命中)", binding.accountID, fallback.DBID)
+				log.Printf("session stickiness capacity overflow: bound account=%d is at full concurrency, this request borrows account=%d (upstream cache miss expected for this request)", binding.accountID, fallback.DBID)
 				return fallback, "", SessionAffinityGuard{preserveAccountID: binding.accountID}
 			}
 		}
@@ -6909,21 +6909,21 @@ func (s *Store) nextForSessionWithFilter(key string, apiKeyID int64, exclude map
 	return s.nextAccountForFreshAffinityWithDispatch(key, apiKeyID, exclude, filter, opts), "", SessionAffinityGuard{}
 }
 
-// nextAccountForFreshAffinity 为"新亲和键首次绑定"选号(issue #484)。
+// nextAccountForFreshAffinity selects an account for the first binding of a "new affinity key" (issue #484).
 //
-// 关闭散列开关时沿用调度器"最高分优先"语义——但那正是聚集根因:新键到来时
-// 号池大多空闲,dispatchScore 的细微差异让每个新键都独立选中同一个第一名。
-// 开启后改为 rendezvous(HRW)哈希:在最高调度优先级+健康档位的候选层内,对
-// 每个账号计算 hash(亲和键, 账号ID) 取最大——同一亲和键在号池不变时恒命中
-// 同一账号(幂等一一绑定),不同键均匀摊开,首选不可用时确定性顺延到哈希序
-// 下一名,账号增删只迁移受影响的键。层间仍严格尊重运营者设置的调度优先级
-// 与健康档位,层内才忽略分数差异。
+// With the hashing switch off, selection follows the scheduler's "highest score first" semantics, but that is exactly the root cause of clustering: when new keys arrive,
+// the pool is mostly idle, and tiny differences in dispatchScore make every new key independently pick the same top account.
+// When enabled, rendezvous (HRW) hashing is used instead: within the candidate tier of highest scheduling priority plus health tier, for
+// each account compute hash(affinity key, account ID) and take the maximum; the same key always lands on the same account while the pool is unchanged
+// on the same account (idempotent one-to-one binding), different keys spread evenly, and when the first choice is unavailable it deterministically falls to the next in hash order
+// one, and adding or removing accounts only moves the affected keys. Across tiers, the operator's scheduling priority
+// and health tier are still strictly respected; only within a tier are score differences ignored.
 func (s *Store) nextAccountForFreshAffinity(key string, apiKeyID int64, exclude map[int64]bool, filter AccountFilter) *Account {
 	return s.nextAccountForFreshAffinityWithDispatch(key, apiKeyID, exclude, filter, SelectionOptions{Policy: DispatchPolicyStandard})
 }
 
-// nextAccountForFreshAffinityWithDispatch 是 nextAccountForFreshAffinity 的带
-// DispatchPolicy 变体：按散列开关回退到 HRW / 调度器 / round-robin 重扫。
+// nextAccountForFreshAffinityWithDispatch is the variant of nextAccountForFreshAffinity with a
+// DispatchPolicy: depending on the hashing switch, it falls back to HRW / scheduler / round-robin re-scan.
 func (s *Store) nextAccountForFreshAffinityWithDispatch(key string, apiKeyID int64, exclude map[int64]bool, filter AccountFilter, opts SelectionOptions) *Account {
 	if s == nil {
 		return nil
@@ -6948,8 +6948,8 @@ func (s *Store) nextAccountForFreshAffinityWithDispatch(key string, apiKeyID int
 			if acc != nil {
 				return acc
 			}
-			// 亲和起点不可用时退化为普通选号(含冷却重试与慢路兜底),
-			// 而不是直接放弃让请求掉进 30 秒等待。
+			// when the affinity starting point is unavailable, degrade to normal selection (including cooldown retry and the slow-path fallback),
+			// instead of giving up and letting the request sit in the 30-second wait.
 			return s.NextExcludingWithDispatch(apiKeyID, exclude, filter, policy)
 		}
 	}
@@ -6999,7 +6999,7 @@ func (s *Store) nextAccountForFreshAffinityWithDispatch(key string, apiKeyID int
 		return nil
 	}
 
-	// 只保留最高的 (调度优先级, 健康档位) 层。
+	// keep only the highest (scheduling priority, health tier) layer.
 	bestSchedPrio, bestTier := candidates[0].schedulerPriority, candidates[0].tierPriority
 	for _, c := range candidates[1:] {
 		if c.schedulerPriority > bestSchedPrio ||
@@ -7023,7 +7023,7 @@ func (s *Store) nextAccountForFreshAffinityWithDispatch(key string, apiKeyID int
 			return c.acc
 		}
 	}
-	// 整层都拿不下(并发/冷却)时回退到常规调度,宁可暂时聚集也不拒绝请求。
+	// when the whole tier cannot take it (concurrency / cooldown), fall back to regular scheduling; better to cluster temporarily than to reject the request.
 	return s.NextExcludingWithDispatch(apiKeyID, exclude, filter, policy)
 }
 
@@ -7083,7 +7083,7 @@ func (s *Store) affinityProxyStillValid(accountID int64, proxyURL string) bool {
 		}
 		return proxyURL == accountProxy
 	}
-	// 组代理变更(改列表/移组/删组)时,粘住旧代理的会话在此判失效并重绑。
+	// when the group proxy changes (list edited / group moved / group deleted), sessions stuck to the old proxy are invalidated here and rebound.
 	if groupProxy := s.resolveGroupProxyForAccount(account); groupProxy != "" {
 		return proxyURL == groupProxy
 	}
@@ -7106,8 +7106,8 @@ func buildProxyPoolSet(urls []string) map[string]struct{} {
 	return set
 }
 
-// affinityAccountStillHealthy 检查一个粘性绑定的账号是否仍处于 healthy 桶。
-// 若已掉到 warm/risky/banned 或不可调度,则 bounded 模式会逃逸并重新挑号。
+// affinityAccountStillHealthy checks whether the account of a sticky binding is still in the healthy bucket.
+// If it has dropped to warm/risky/banned or is not schedulable, bounded mode escapes and selects again.
 func (s *Store) affinityAccountStillHealthy(accountID int64) bool {
 	if s == nil || accountID == 0 {
 		return false
@@ -7138,7 +7138,7 @@ func (s *Store) getCachedSessionAffinity(key string) (sessionAffinity, bool) {
 	defer cancel()
 	binding, ok, err := s.tokenCache.GetSessionAffinity(ctx, key)
 	if err != nil {
-		log.Printf("读取缓存会话粘性失败: %v", err)
+		log.Printf("failed to read cached session stickiness: %v", err)
 		return sessionAffinity{}, false
 	}
 	if !ok || binding.AccountID == 0 {
@@ -7260,7 +7260,7 @@ func (s *Store) takeByIDModeWithCapacity(id int64, apiKeyID int64, exclude map[i
 	return target, false
 }
 
-// WaitForAvailable 等待可用账号（带超时的请求排队）
+// WaitForAvailable waits for an available account (request queuing with timeout)
 func (s *Store) WaitForAvailable(ctx context.Context, timeout time.Duration, apiKeyID int64) *Account {
 	acc, _ := s.WaitForSessionAvailable(ctx, "", timeout, apiKeyID, nil)
 	return acc
@@ -7504,9 +7504,9 @@ func (s *Store) WaitForSessionAvailableWithFilter(ctx context.Context, key strin
 	return account, proxyURL
 }
 
-// WaitForSessionAvailableWithDispatch 按指定 DispatchPolicy 排队等待满足过滤条件
-// 的会话账号，只返回账号与代理地址；需要保留容量溢出借用判定时改用
-// WaitForSessionAvailableWithDispatchGuard。
+// WaitForSessionAvailableWithDispatch queues and waits, under the given DispatchPolicy, for a session account that satisfies the filter,
+// returning only the account and proxy address; when the capacity-overflow borrowing check must be kept, use
+// WaitForSessionAvailableWithDispatchGuard instead.
 func (s *Store) WaitForSessionAvailableWithDispatch(ctx context.Context, key string, timeout time.Duration, apiKeyID int64, exclude map[int64]bool, filter AccountFilter, policy DispatchPolicy) (*Account, string) {
 	account, proxyURL, _, _ := s.waitForSessionAvailableWithFilter(ctx, key, timeout, apiKeyID, exclude, filter, false, SelectionOptions{Policy: policy})
 	return account, proxyURL
@@ -7526,9 +7526,9 @@ func (s *Store) WaitForContinuationAvailableWithFilter(ctx context.Context, key 
 	return account, proxyURL
 }
 
-// WaitForContinuationAvailableWithDispatch 按指定 DispatchPolicy 排队等待续链亲和键
-// 绑定的账号可用（preserveBinding=true）：存在绑定时锁定该账号不顺延其他账号，无绑定时
-// 沿用底层 Fresh 选号语义。
+// WaitForContinuationAvailableWithDispatch queues and waits, under the given DispatchPolicy, for the account bound to a continuation affinity key
+// to be available (preserveBinding=true): if a binding exists, that account is locked and no other account is substituted; without a binding,
+// the underlying Fresh selection semantics are used.
 func (s *Store) WaitForContinuationAvailableWithDispatch(ctx context.Context, key string, timeout time.Duration, apiKeyID int64, exclude map[int64]bool, filter AccountFilter, policy DispatchPolicy) (*Account, string) {
 	account, proxyURL, _, _ := s.waitForSessionAvailableWithFilter(ctx, key, timeout, apiKeyID, exclude, filter, true, SelectionOptions{Policy: policy})
 	return account, proxyURL
@@ -7540,10 +7540,10 @@ func (s *Store) WaitForDispatchAvailable(ctx context.Context, key string, timeou
 	return s.waitForSessionAvailableWithFilter(ctx, key, timeout, apiKeyID, exclude, filter, preserveBinding, SelectionOptions{Policy: policy}, heartbeat...)
 }
 
-// waitForSessionAvailableWithFilter 是各会话等待入口的共同底层实现：按 opts 在超时
-// 窗口内反复尝试选号并挂到可用性 hub 上等待唤醒，preserveBinding 为 true 时若存在绑定
-// 则锁定该账号不顺延其他账号（无绑定时走 Fresh 选号），heartbeat 非空时在等待期间按回调
-// 返回的间隔写出心跳。队列准入被拒（如队列已满）时把错误原样上抛，供协议处理器区分过载与无候选。
+// waitForSessionAvailableWithFilter is the shared underlying implementation of all session wait entry points: within the timeout per opts,
+// it repeatedly tries selection and parks on the availability hub to wait for a wake-up; when preserveBinding is true and a binding exists,
+// that account is locked and no other account is substituted (without a binding, Fresh selection is used); when heartbeat is non-nil, heartbeats are written at the interval
+// returned by the callback while waiting. When queue admission is rejected (e.g. the queue is full), the error is passed up unchanged so the protocol handler can tell overload from no candidates.
 func (s *Store) waitForSessionAvailableWithFilter(ctx context.Context, key string, timeout time.Duration, apiKeyID int64, exclude map[int64]bool, filter AccountFilter, preserveBinding bool, opts SelectionOptions, heartbeat ...SchedulerWaitHeartbeat) (*Account, string, SessionAffinityGuard, error) {
 	if ctx == nil {
 		ctx = context.Background()
@@ -7908,7 +7908,7 @@ func (s *Store) Release(acc *Account) {
 	}
 }
 
-// SetMaxConcurrency 动态更新每账号并发上限
+// SetMaxConcurrency dynamically updates the per-account concurrency limit
 func (s *Store) SetMaxConcurrency(n int) {
 	s.maxConcurrency.Store(int64(n))
 	// Update existing scheduler's base limit in-place before full rebuild.
@@ -7919,12 +7919,12 @@ func (s *Store) SetMaxConcurrency(n int) {
 	s.rebuildFastScheduler()
 }
 
-// GetMaxConcurrency 获取当前每账号并发上限
+// GetMaxConcurrency gets the current per-account concurrency limit
 func (s *Store) GetMaxConcurrency() int {
 	return int(s.maxConcurrency.Load())
 }
 
-// SetMaxRetries 动态更新最大重试次数
+// SetMaxRetries dynamically updates the maximum number of retries
 func (s *Store) SetMaxRetries(n int) {
 	if n < 0 {
 		n = 0
@@ -7932,7 +7932,7 @@ func (s *Store) SetMaxRetries(n int) {
 	s.maxRetries.Store(int64(n))
 }
 
-// GetMaxRetries 获取当前最大重试次数
+// GetMaxRetries gets the current maximum number of retries
 func (s *Store) GetMaxRetries() int {
 	return int(s.maxRetries.Load())
 }
@@ -7948,7 +7948,7 @@ func (s *Store) GetMaxRateLimitRetries() int {
 	return int(s.maxRateLimitRetries.Load())
 }
 
-// normalizeRetryIntervalMS 把重试间隔限制在 0-30000ms(0 = 立即重试)。
+// normalizeRetryIntervalMS clamps the retry interval to 0-30000ms (0 = retry immediately).
 func normalizeRetryIntervalMS(ms int) int {
 	if ms < 0 {
 		return 0
@@ -7959,7 +7959,7 @@ func normalizeRetryIntervalMS(ms int) int {
 	return ms
 }
 
-// SetRetryIntervalMS 动态更新重试间隔（毫秒）。
+// SetRetryIntervalMS dynamically updates the retry interval (milliseconds).
 func (s *Store) SetRetryIntervalMS(ms int) {
 	if s == nil {
 		return
@@ -7967,7 +7967,7 @@ func (s *Store) SetRetryIntervalMS(ms int) {
 	s.retryIntervalMS.Store(int64(normalizeRetryIntervalMS(ms)))
 }
 
-// GetRetryIntervalMS 获取当前重试间隔（毫秒），0 = 立即重试。
+// GetRetryIntervalMS gets the current retry interval (milliseconds); 0 = retry immediately.
 func (s *Store) GetRetryIntervalMS() int {
 	if s == nil {
 		return 0
@@ -7975,7 +7975,7 @@ func (s *Store) GetRetryIntervalMS() int {
 	return int(s.retryIntervalMS.Load())
 }
 
-// SetTransportRetryPolicy 动态更新传输错误重试策略（rotate / sticky）。
+// SetTransportRetryPolicy dynamically updates the transport error retry policy (rotate / sticky).
 func (s *Store) SetTransportRetryPolicy(policy string) {
 	if s == nil {
 		return
@@ -7983,7 +7983,7 @@ func (s *Store) SetTransportRetryPolicy(policy string) {
 	s.transportRetryPolicy.Store(database.NormalizeTransportRetryPolicy(policy))
 }
 
-// GetTransportRetryPolicy 获取传输错误重试策略，缺省 rotate（换号，旧行为）。
+// GetTransportRetryPolicy gets the transport error retry policy; defaults to rotate (switch accounts, the old behavior).
 func (s *Store) GetTransportRetryPolicy() string {
 	if s == nil {
 		return "rotate"
@@ -7994,7 +7994,7 @@ func (s *Store) GetTransportRetryPolicy() string {
 	return "rotate"
 }
 
-// SetContinuousRetryPolicy 热更新上游错误持续重试策略。
+// SetContinuousRetryPolicy hot-updates the continuous retry policy for upstream errors.
 func (s *Store) SetContinuousRetryPolicy(policy database.ContinuousRetryPolicy) {
 	if s == nil {
 		return
@@ -8002,7 +8002,7 @@ func (s *Store) SetContinuousRetryPolicy(policy database.ContinuousRetryPolicy) 
 	s.continuousRetryPolicy.Store(database.NormalizeContinuousRetryPolicy(policy))
 }
 
-// GetContinuousRetryPolicy 返回当前上游错误持续重试策略的值快照。
+// GetContinuousRetryPolicy returns a value snapshot of the current continuous retry policy for upstream errors.
 func (s *Store) GetContinuousRetryPolicy() database.ContinuousRetryPolicy {
 	if s == nil {
 		return database.DefaultContinuousRetryPolicy()
@@ -8013,7 +8013,7 @@ func (s *Store) GetContinuousRetryPolicy() database.ContinuousRetryPolicy {
 	return database.DefaultContinuousRetryPolicy()
 }
 
-// SetCodexFingerprintDefaultMode 动态更新新导入账号的默认指纹收敛档位。
+// SetCodexFingerprintDefaultMode dynamically updates the default fingerprint convergence mode for newly imported accounts.
 func (s *Store) SetCodexFingerprintDefaultMode(mode string) {
 	if s == nil {
 		return
@@ -8021,7 +8021,7 @@ func (s *Store) SetCodexFingerprintDefaultMode(mode string) {
 	s.codexFingerprintDefaultMode.Store(NormalizeCodexFingerprintMode(mode))
 }
 
-// GetCodexFingerprintDefaultMode 获取新导入账号的默认指纹收敛档位，缺省 off。
+// GetCodexFingerprintDefaultMode gets the default fingerprint convergence mode for newly imported accounts; defaults to off.
 func (s *Store) GetCodexFingerprintDefaultMode() string {
 	if s == nil {
 		return CodexFingerprintModeOff
@@ -8032,22 +8032,22 @@ func (s *Store) GetCodexFingerprintDefaultMode() string {
 	return CodexFingerprintModeOff
 }
 
-// GetAllowRemoteMigration 获取是否允许远程迁移
+// GetAllowRemoteMigration gets whether remote migration is allowed
 func (s *Store) GetAllowRemoteMigration() bool {
 	return s.allowRemoteMigration.Load()
 }
 
-// SetAllowRemoteMigration 设置是否允许远程迁移
+// SetAllowRemoteMigration sets whether remote migration is allowed
 func (s *Store) SetAllowRemoteMigration(enabled bool) {
 	s.allowRemoteMigration.Store(enabled)
 }
 
-// SetTestModel 动态更新测试连接模型
+// SetTestModel dynamically updates the model used for test connections
 func (s *Store) SetTestModel(m string) {
 	s.testModel.Store(m)
 }
 
-// GetTestModel 获取当前测试连接模型
+// GetTestModel gets the current model used for test connections
 func (s *Store) GetTestModel() string {
 	if v, ok := s.testModel.Load().(string); ok && v != "" {
 		return v
@@ -8068,37 +8068,37 @@ func (s *Store) GetTestContent() string {
 	return DefaultTestContent
 }
 
-// SetTestConcurrency 动态更新批量测试并发数
+// SetTestConcurrency dynamically updates the batch test concurrency
 func (s *Store) SetTestConcurrency(n int) {
 	s.testConcurrency.Store(int64(n))
 }
 
-// GetTestConcurrency 获取当前批量测试并发数
+// GetTestConcurrency gets the current batch test concurrency
 func (s *Store) GetTestConcurrency() int {
 	return int(s.testConcurrency.Load())
 }
 
-// GetBackgroundRefreshIntervalMinutes 获取后台巡检间隔（分钟）。
+// GetBackgroundRefreshIntervalMinutes gets the background check interval (minutes).
 func (s *Store) GetBackgroundRefreshIntervalMinutes() int {
 	return int(s.GetBackgroundRefreshInterval() / time.Minute)
 }
 
-// GetUsageProbeMaxAgeMinutes 获取用量探针最大缓存时长（分钟）。
+// GetUsageProbeMaxAgeMinutes gets the maximum cache age of the usage probe (minutes).
 func (s *Store) GetUsageProbeMaxAgeMinutes() int {
 	return int(s.GetUsageProbeMaxAge() / time.Minute)
 }
 
-// GetRecoveryProbeIntervalMinutes 获取恢复探测最小间隔（分钟）。
+// GetRecoveryProbeIntervalMinutes gets the minimum interval of the recovery probe (minutes).
 func (s *Store) GetRecoveryProbeIntervalMinutes() int {
 	return int(s.GetRecoveryProbeInterval() / time.Minute)
 }
 
-// SetModelMapping 动态更新模型映射 JSON
+// SetModelMapping dynamically updates the model mapping JSON
 func (s *Store) SetModelMapping(mapping string) {
 	s.modelMapping.Store(mapping)
 }
 
-// GetModelMapping 获取当前模型映射 JSON
+// GetModelMapping gets the current model mapping JSON
 func (s *Store) GetModelMapping() string {
 	if v, ok := s.modelMapping.Load().(string); ok && v != "" {
 		return v
@@ -8106,12 +8106,12 @@ func (s *Store) GetModelMapping() string {
 	return "{}"
 }
 
-// SetCodexModelMapping 动态更新 Codex 模型映射 JSON
+// SetCodexModelMapping dynamically updates the Codex model mapping JSON
 func (s *Store) SetCodexModelMapping(mapping string) {
 	s.codexModelMapping.Store(mapping)
 }
 
-// GetCodexModelMapping 获取当前 Codex 模型映射 JSON
+// GetCodexModelMapping gets the current Codex model mapping JSON
 func (s *Store) GetCodexModelMapping() string {
 	if v, ok := s.codexModelMapping.Load().(string); ok && v != "" {
 		return v
@@ -8119,12 +8119,12 @@ func (s *Store) GetCodexModelMapping() string {
 	return "{}"
 }
 
-// SetPayloadRules 动态更新 Payload 请求体重写规则 JSON
+// SetPayloadRules dynamically updates the payload request-body rewrite rules JSON
 func (s *Store) SetPayloadRules(rules string) {
 	s.payloadRules.Store(rules)
 }
 
-// GetPayloadRules 获取当前 Payload 请求体重写规则 JSON
+// GetPayloadRules gets the current payload request-body rewrite rules JSON
 func (s *Store) GetPayloadRules() string {
 	if v, ok := s.payloadRules.Load().(string); ok && v != "" {
 		return v
@@ -8132,12 +8132,12 @@ func (s *Store) GetPayloadRules() string {
 	return "{}"
 }
 
-// SetReasoningEffortModels 动态更新带思考强度的模型别名 JSON 数组。
+// SetReasoningEffortModels dynamically updates the JSON array of model aliases with reasoning effort.
 func (s *Store) SetReasoningEffortModels(value string) {
 	s.reasoningEffortModels.Store(value)
 }
 
-// GetReasoningEffortModels 获取当前带思考强度的模型别名 JSON 数组。
+// GetReasoningEffortModels gets the current JSON array of model aliases with reasoning effort.
 func (s *Store) GetReasoningEffortModels() string {
 	if v, ok := s.reasoningEffortModels.Load().(string); ok && v != "" {
 		return v
@@ -8145,7 +8145,7 @@ func (s *Store) GetReasoningEffortModels() string {
 	return "[]"
 }
 
-// GetSchedulerMode 获取当前调度模式
+// GetSchedulerMode gets the current scheduling mode
 func (s *Store) GetSchedulerMode() string {
 	if v, ok := s.schedulerMode.Load().(string); ok && v != "" {
 		return v
@@ -8153,7 +8153,7 @@ func (s *Store) GetSchedulerMode() string {
 	return "round_robin"
 }
 
-// SetSchedulerMode 设置调度模式并传播到 FastScheduler
+// SetSchedulerMode sets the scheduling mode and propagates it to FastScheduler
 func (s *Store) SetSchedulerMode(mode string) {
 	switch mode {
 	case "round_robin", "remaining_quota", "fill_first", SchedulerModeReset5hFirst:
@@ -8168,7 +8168,7 @@ func (s *Store) SetSchedulerMode(mode string) {
 	s.invalidateRoutingSchedulers()
 }
 
-// GetAffinityMode 获取当前 session affinity 模式 (bounded / off / strict)
+// GetAffinityMode gets the current session affinity mode (bounded / off / strict)
 func (s *Store) GetAffinityMode() string {
 	if v, ok := s.affinityMode.Load().(string); ok && v != "" {
 		return v
@@ -8176,7 +8176,7 @@ func (s *Store) GetAffinityMode() string {
 	return AffinityModeBounded
 }
 
-// SetAffinityMode 设置 session affinity 模式
+// SetAffinityMode sets the session affinity mode
 func (s *Store) SetAffinityMode(mode string) {
 	switch mode {
 	case AffinityModeBounded, AffinityModeOff, AffinityModeStrict:
@@ -8187,7 +8187,7 @@ func (s *Store) SetAffinityMode(mode string) {
 	s.affinityMode.Store(mode)
 }
 
-// GetSessionAffinitySpread 报告新亲和键是否按 HRW 哈希散列选号(issue #484)。
+// GetSessionAffinitySpread reports whether new affinity keys are spread by HRW hashing when selecting accounts (issue #484).
 func (s *Store) GetSessionAffinitySpread() bool {
 	if s == nil {
 		return false
@@ -8195,7 +8195,7 @@ func (s *Store) GetSessionAffinitySpread() bool {
 	return s.affinitySpreadEnabled.Load()
 }
 
-// SetSessionAffinitySpread 热更新散列绑定开关。
+// SetSessionAffinitySpread hot-updates the hashed binding switch.
 func (s *Store) SetSessionAffinitySpread(enabled bool) {
 	if s == nil {
 		return
@@ -8444,7 +8444,7 @@ func (s *Store) DeleteGroupAutoPauseThresholds(groupID int64) {
 	s.groupAutoPauseThresholds.Delete(groupID)
 }
 
-// SetGroupName 记录/更新组 ID→名映射（组创建或改名时调用）。
+// SetGroupName records/updates the group ID-to-name mapping (called when a group is created or renamed).
 func (s *Store) SetGroupName(groupID int64, name string) {
 	if s == nil || groupID <= 0 {
 		return
@@ -8452,7 +8452,7 @@ func (s *Store) SetGroupName(groupID int64, name string) {
 	s.groupNames.Store(groupID, strings.TrimSpace(name))
 }
 
-// DeleteGroupName 移除组 ID→名映射（组删除时调用）。
+// DeleteGroupName removes the group ID-to-name mapping (called when a group is deleted).
 func (s *Store) DeleteGroupName(groupID int64) {
 	if s == nil {
 		return
@@ -8460,7 +8460,7 @@ func (s *Store) DeleteGroupName(groupID int64) {
 	s.groupNames.Delete(groupID)
 }
 
-// ResolveGroupNames 把组 ID 列表解析为组名列表；缺失（未加载/已删除）的项跳过。
+// ResolveGroupNames resolves a list of group IDs into a list of group names; missing items (not loaded / deleted) are skipped.
 func (s *Store) ResolveGroupNames(groupIDs []int64) []string {
 	if s == nil || len(groupIDs) == 0 {
 		return nil
@@ -8507,9 +8507,9 @@ func (s *Store) DeleteGroupBaseConcurrencyOverride(groupID int64) {
 	s.SetGroupBaseConcurrencyOverride(groupID, nil)
 }
 
-// SetGroupProxyURLs 热更新组级代理列表;空列表(或全为空串)清除该组设置。
-// 改动即时生效:代理解析按请求进行,存量粘性会话由 affinityProxyStillValid
-// 在下次复用时判失效并重绑(issue #479)。
+// SetGroupProxyURLs hot-updates the group-level proxy list; an empty list (or all-empty strings) clears the setting for the group.
+// Changes take effect immediately: proxy resolution happens per request, and existing sticky sessions are
+// invalidated by affinityProxyStillValid and rebound the next time they are reused (issue #479).
 func (s *Store) SetGroupProxyURLs(groupID int64, urls []string) {
 	if s == nil || groupID <= 0 {
 		return
@@ -8586,15 +8586,15 @@ func (s *Store) recomputeAllEffectiveAutoPause() {
 	}
 }
 
-// AddAccount 热加载新账号到内存池（前端添加后即刻生效）
+// AddAccount hot-loads a new account into the in-memory pool (takes effect immediately after adding in the frontend)
 func (s *Store) AddAccount(acc *Account) {
 	s.AddAccounts([]*Account{acc})
 }
 
-// AddAccounts 批量把账号加入内存池。全局写锁只取一次，DBID 索引增量插入，
-// 调度器桶也只在最后合并处理一次——批量导入几千个账号时，逐条 AddAccount
-// 会让每一条都付出 O(号池大小) 的索引重建 + 整桶重排，把这把所有请求都要用
-// 的全局锁占满，表现为导入期间整个网关卡住。
+// AddAccounts adds accounts to the in-memory pool in bulk. The global write lock is taken only once, and DBID index entries are inserted incrementally,
+// and scheduler buckets are also processed only once at the final merge. When importing thousands of accounts, calling AddAccount one by one
+// would make each call pay an O(pool size) index rebuild plus a full bucket re-sort, saturating the global lock that every request needs,
+// which shows up as the whole gateway hanging during the import.
 func (s *Store) AddAccounts(accounts []*Account) {
 	if s == nil || len(accounts) == 0 {
 		return
@@ -8611,7 +8611,7 @@ func (s *Store) AddAccounts(accounts []*Account) {
 		if acc == nil {
 			continue
 		}
-		// 记录加入时间（用于过期清理）
+		// record the time it was added (used for expiry cleanup)
 		if acc.AddedAt.Load() == 0 {
 			acc.AddedAt.Store(now)
 		}
@@ -8645,7 +8645,7 @@ func (s *Store) AddAccounts(accounts []*Account) {
 	s.notifySchedulerAvailability()
 }
 
-// RemoveAccount 从内存池移除账号
+// RemoveAccount removes an account from the in-memory pool
 func (s *Store) RemoveAccount(dbID int64) {
 	s.accountMutationMu.Lock()
 	defer s.accountMutationMu.Unlock()
@@ -8668,21 +8668,21 @@ func (s *Store) RemoveAccount(dbID int64) {
 
 	s.fastSchedulerRemove(dbID)
 	s.invalidateRoutingSchedulers()
-	// 清理 RefreshScheduler 中可能残留的任务
+	// clean up any leftover tasks in the RefreshScheduler
 	if scheduler := s.GetRefreshScheduler(); scheduler != nil {
 		scheduler.CancelTask(dbID)
 	}
 }
 
-// FindByID 通过数据库 ID 查找运行时账号
+// FindByID finds a runtime account by its database ID
 func (s *Store) FindByID(dbID int64) *Account {
 	s.mu.RLock()
 	defer s.mu.RUnlock()
 	return s.lookupByIDLocked(dbID)
 }
 
-// lookupByIDLocked 通过索引 O(1) 查找账号；索引缺失时回退到线性扫描。
-// 调用方必须持有 s.mu(读或写锁)。
+// lookupByIDLocked looks up an account in O(1) via the index; when the index is missing, falls back to a linear scan.
+// The caller must hold s.mu (read or write lock).
 func (s *Store) lookupByIDLocked(dbID int64) *Account {
 	if s.accountsByID != nil {
 		return s.accountsByID[dbID]
@@ -8695,8 +8695,8 @@ func (s *Store) lookupByIDLocked(dbID int64) *Account {
 	return nil
 }
 
-// rebuildAccountIndex 根据当前 s.accounts 重建 DBID 索引。
-// 调用方必须持有 s.mu 写锁；在任何修改 s.accounts 的地方调用以保持同步。
+// rebuildAccountIndex rebuilds the DBID index from the current s.accounts.
+// The caller must hold the s.mu write lock; call it wherever s.accounts is modified to keep them in sync.
 func (s *Store) rebuildAccountIndex() {
 	idx := make(map[int64]*Account, len(s.accounts))
 	for _, acc := range s.accounts {
@@ -8707,7 +8707,7 @@ func (s *Store) rebuildAccountIndex() {
 	s.accountsByID = idx
 }
 
-// ApplyAccountSchedulerOverrides 更新运行时账号的调度 override 并立即重算。
+// ApplyAccountSchedulerOverrides updates the runtime account's scheduler overrides and recomputes immediately.
 func (s *Store) ApplyAccountSchedulerOverrides(dbID int64, scoreBiasOverride, baseConcurrencyOverride *int64, skipWarmTier *bool) bool {
 	acc := s.FindByID(dbID)
 	if acc == nil {
@@ -8812,7 +8812,7 @@ func (s *Store) ApplyAccountQuotaAutoPauseConfig(dbID int64, threshold5h, thresh
 	return true
 }
 
-// ApplyAccountKeepConcurrencyOnDegrade 切换账号「降级不降并发」并立即重算上限。
+// ApplyAccountKeepConcurrencyOnDegrade toggles the account's "keep concurrency on degrade" setting and recomputes the limit immediately.
 func (s *Store) ApplyAccountKeepConcurrencyOnDegrade(dbID int64, enabled bool) bool {
 	acc := s.FindByID(dbID)
 	if acc == nil {
@@ -8868,12 +8868,12 @@ func (s *Store) ApplyAccountGroups(dbID int64, groupIDs []int64) bool {
 	return true
 }
 
-// UpdateAccountCredit 更新账号信用设置
-// 传入 nil 表示不修改该字段。
+// UpdateAccountCredit updates the account credit settings
+// Passing nil means the field is not modified.
 func (s *Store) UpdateAccountCredit(dbID int64, creditEnabled, creditSkipUsageWindow *bool) error {
 	acc := s.FindByID(dbID)
 	if acc == nil {
-		return fmt.Errorf("账号 %d 不存在", dbID)
+		return fmt.Errorf("account %d does not exist", dbID)
 	}
 	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
 	defer cancel()
@@ -8933,8 +8933,8 @@ func (s *Store) SetAPIKeyAllowedGroups(apiKeyID int64, groupIDs []int64) {
 	s.rebuildFastScheduler()
 }
 
-// SetAPIKeyNoAffinityGroups 设置未携带下游亲和头时可使用的分流组。
-// 这些组会加入 API Key 的账号授权并集；具体请求仍由 proxy 层按亲和头是否存在精确选池。
+// SetAPIKeyNoAffinityGroups sets the groups that can be used when no downstream affinity header is carried.
+// These groups are added to the union of the API Key's account authorizations; the proxy layer still selects the exact pool per request based on whether an affinity header is present.
 func (s *Store) SetAPIKeyNoAffinityGroups(apiKeyID int64, groupIDs []int64) {
 	if apiKeyID <= 0 {
 		return
@@ -8962,9 +8962,9 @@ func (s *Store) SetAPIKeyNoAffinityGroups(apiKeyID int64, groupIDs []int64) {
 	s.rebuildFastScheduler()
 }
 
-// SetAPIKeyAllowedPlans 设置某 API Key 的账号套餐白名单。plans 归一(小写、去空白、去重)
-// 后落入内存集合;为空表示不限套餐。仅当集合真正变化时才重建调度器,以免鉴权热路径
-// 每次请求都触发重建。
+// SetAPIKeyAllowedPlans sets an API Key's account plan allowlist. plans are normalized (lower-cased, trimmed, deduplicated)
+// and then stored in the in-memory set; an empty value means no plan restriction. The scheduler is rebuilt only when the set actually changes, so the auth hot path
+// does not trigger a rebuild on every request.
 func (s *Store) SetAPIKeyAllowedPlans(apiKeyID int64, plans []string) {
 	if apiKeyID <= 0 {
 		return
@@ -9001,8 +9001,8 @@ func (s *Store) GetAPIKeyAllowedGroups(apiKeyID int64) []int64 {
 	return cloneInt64Slice(s.apiKeyAllowedGroups[apiKeyID])
 }
 
-// SetAPIKeyUpstreamChannel 设置某 API Key 的上游渠道限定（codex，空=不限）。
-// 仅在取值真正变化时重建调度器。
+// SetAPIKeyUpstreamChannel sets an API Key's upstream channel restriction (codex; empty = unrestricted).
+// The scheduler is rebuilt only when the value actually changes.
 func (s *Store) SetAPIKeyUpstreamChannel(apiKeyID int64, channel string) {
 	if apiKeyID <= 0 {
 		return
@@ -9028,7 +9028,7 @@ func (s *Store) SetAPIKeyUpstreamChannel(apiKeyID int64, channel string) {
 	s.rebuildFastScheduler()
 }
 
-// APIKeyUpstreamChannel 返回某 API Key 的上游渠道限定（空=不限）。
+// APIKeyUpstreamChannel returns an API Key's upstream channel restriction (empty = unrestricted).
 func (s *Store) APIKeyUpstreamChannel(apiKeyID int64) string {
 	if s == nil || apiKeyID <= 0 {
 		return ""
@@ -9079,8 +9079,8 @@ func (s *Store) LoadAPIKeyAllowedGroups(ctx context.Context) error {
 	return nil
 }
 
-// APIKeyAllowsAccount 判断某 API Key 是否允许调度到该账号。分组白名单与套餐白名单
-// 各自非空时都必须命中(AND 语义);任一为空表示该维度不限。
+// APIKeyAllowsAccount reports whether an API Key is allowed to be scheduled onto the account. The group allowlist and the plan allowlist
+// must each match when non-empty (AND semantics); an empty one means that dimension is unrestricted.
 func (s *Store) APIKeyAllowsAccount(apiKeyID int64, acc *Account) bool {
 	if s == nil || apiKeyID <= 0 || acc == nil {
 		return true
@@ -9172,14 +9172,14 @@ func stringSliceEqual(a, b []string) bool {
 	return true
 }
 
-// lowerTrimPlan 归一单个套餐名用于匹配:小写去空白。刻意不折叠 prolite/promax→pro,
-// 使 API Key 的套餐过滤与账号列表(Accounts 页)按原始 plan_type 精确匹配的语义一致。
+// lowerTrimPlan normalizes a single plan name for matching: lower-cased and trimmed. It deliberately does not fold prolite/promax into pro,
+// so that API Key plan filtering stays consistent with the account list (Accounts page), which matches the raw plan_type exactly.
 func lowerTrimPlan(plan string) string {
 	return strings.ToLower(strings.TrimSpace(plan))
 }
 
-// normalizeAllowedPlans 归一账号套餐白名单:小写去空白、去重并排序,保证
-// SetAPIKeyAllowedPlans 的变化检测稳定。匹配时账号侧同样走 lowerTrimPlan。
+// normalizeAllowedPlans normalizes the account plan allowlist: lower-cased, trimmed, deduplicated and sorted, to keep
+// the change detection in SetAPIKeyAllowedPlans stable. Matching also goes through lowerTrimPlan on the account side.
 func normalizeAllowedPlans(plans []string) []string {
 	out := make([]string, 0, len(plans))
 	seen := make(map[string]struct{}, len(plans))
@@ -9205,12 +9205,12 @@ func (s *Store) accountAllowedForAPIKey(acc *Account, apiKeyID int64) bool {
 	return acc.AllowsAPIKey(apiKeyID) && s.APIKeyAllowsAccount(apiKeyID, acc)
 }
 
-// NormalizeAccountModels 归一化账号支持模型列表（去重、去空白、按字典序排序）。
+// NormalizeAccountModels normalizes the account's supported model list (deduplicated, trimmed, sorted lexicographically).
 func NormalizeAccountModels(values []string) []string {
 	return normalizeModelList(values)
 }
 
-// ApplyAccountModels 更新运行时账号的支持模型白名单（空列表 = 清空白名单，放行全部模型）。
+// ApplyAccountModels updates the runtime account's supported-model allowlist (an empty list = clear the allowlist, allow all models).
 func (s *Store) ApplyAccountModels(dbID int64, models []string) bool {
 	acc := s.FindByID(dbID)
 	if acc == nil {
@@ -9264,8 +9264,8 @@ func (s *Store) ApplyAccountCustomHeaders(dbID int64, headers map[string]string)
 	return true
 }
 
-// ApplyAccountCodexFingerprintMode 把管理端改动的指纹收敛档位同步到运行时账号，
-// 避免等到下一次全量重载才生效。
+// ApplyAccountCodexFingerprintMode syncs the fingerprint convergence mode changed in the admin panel to the runtime account,
+// so it takes effect without waiting for the next full reload.
 func (s *Store) ApplyAccountCodexFingerprintMode(dbID int64, mode string) bool {
 	acc := s.FindByID(dbID)
 	if acc == nil {
@@ -9303,7 +9303,7 @@ func normalizeAccountErrorMessage(errorMsg string, fallback string) string {
 	return errorMsg
 }
 
-// MarkCooldown 标记账号进入冷却，并持久化到数据库
+// MarkCooldown puts an account into cooldown and persists it to the database
 func (s *Store) MarkCooldown(acc *Account, duration time.Duration, reason string) {
 	s.markCooldown(acc, duration, reason, "", false)
 }
@@ -9329,13 +9329,13 @@ func (s *Store) MarkResponsesRateLimited(acc *Account, duration time.Duration) {
 	}
 }
 
-// MarkCooldownWithError 标记账号进入冷却，并同时记录本次上游错误详情。
+// MarkCooldownWithError puts an account into cooldown and also records the details of this upstream error.
 func (s *Store) MarkCooldownWithError(acc *Account, duration time.Duration, reason string, errorMsg string) {
 	s.markCooldown(acc, duration, reason, errorMsg, false)
 }
 
-// MarkCooldownWithErrorExactDuration 标记账号进入指定时长的冷却，并记录上游错误详情。
-// 与 MarkCooldownWithError 不同，该方法不会应用 unauthorized 的自适应 6/24 小时策略。
+// MarkCooldownWithErrorExactDuration puts an account into a cooldown of the specified duration and records the upstream error details.
+// Unlike MarkCooldownWithError, this method does not apply the adaptive 6/24-hour policy for unauthorized.
 func (s *Store) MarkCooldownWithErrorExactDuration(acc *Account, duration time.Duration, reason string, errorMsg string) {
 	s.markCooldown(acc, duration, reason, errorMsg, true)
 }
@@ -9397,7 +9397,7 @@ func (s *Store) markCooldownUntil(acc *Account, until time.Time, reason string, 
 	s.persistAccountCooldownState(acc, true, false)
 }
 
-// markCooldown 根据 exactDuration 选择自适应或精确时长并应用账号冷却。
+// markCooldown picks adaptive or exact duration based on exactDuration and applies the account cooldown.
 func (s *Store) markCooldown(acc *Account, duration time.Duration, reason string, errorMsg string, exactDuration bool) {
 	if acc == nil {
 		return
@@ -9454,15 +9454,15 @@ func (s *Store) MarkModelCooldown(acc *Account, model string, duration time.Dura
 	return s.MarkModelCooldownWithBackoff(acc, model, duration, reason, true)
 }
 
-// modelCooldownStreakTTL 是模型冷却退避的连击有效期，取值远大于 30 分钟的冷却上限。
+// modelCooldownStreakTTL is the validity period of a model cooldown backoff streak, with a value well above the 30-minute cooldown cap.
 //
-// 退避档位原先只在「冷却还没到期时又失败」才升级，可低流量部署两次失败的间隔通常
-// 比冷却本身还长：冷却早已过期，档位于是永远停在第一级，退避形同虚设。改按最近一次
-// 失败的时间判定——TTL 内再失败就继续升级，成功（ClearModelCooldown 会删掉表项）
-// 或超过 TTL 才回到第一级。
+// The backoff tier used to escalate only when a failure happened while the cooldown had not yet expired; in low-traffic deployments, the gap between two failures is usually
+// longer than the cooldown itself: the cooldown has already expired, so the tier stayed at the first level forever and the backoff was ineffective. It is now judged by the time of the most recent
+// failure: a failure within the TTL keeps escalating, and a success (ClearModelCooldown deletes the entry)
+// or exceeding the TTL returns it to the first level.
 const modelCooldownStreakTTL = time.Hour
 
-// modelCooldownStreakActive 报告该模型的失败连击是否仍在有效期内。
+// modelCooldownStreakActive reports whether the model's failure streak is still within its validity period.
 func modelCooldownStreakActive(current ModelCooldown, now time.Time) bool {
 	if current.ResetAt.After(now) {
 		return true
@@ -9470,8 +9470,8 @@ func modelCooldownStreakActive(current ModelCooldown, now time.Time) bool {
 	if current.UpdatedAt.IsZero() {
 		return false
 	}
-	// 时钟回拨时 elapsed 为负，按「刚刚失败过」处理：宁可多退避一档，
-	// 也不要因为系统时间跳动把上游再撞一遍。
+	// when the clock is set back, elapsed is negative and is treated as "just failed": better to back off one more tier,
+	// than to hit upstream again because the system clock jumped.
 	return now.Sub(current.UpdatedAt) < modelCooldownStreakTTL
 }
 
@@ -9510,15 +9510,15 @@ func (s *Store) MarkModelCooldownWithBackoff(acc *Account, model string, duratio
 			duration = 30 * time.Minute
 		}
 	default:
-		// 连击已断：回到第一级，别让旧档位无限期挂在账号上。
+		// the streak is broken: return to the first level, so an old tier does not stay on the account indefinitely.
 		level = 0
 	}
 	resetAt := now.Add(duration)
 	if reason == "" {
 		reason = "rate_limited"
 	}
-	// 已有更长且仍在生效的冷却（如 credits_required 的 30 分钟）不得被后续更短的
-	// 通用限流冷却覆盖缩短，否则账号会在几秒后被重新选中并再次撞上同一错误。
+	// an existing longer cooldown that is still in effect (e.g. credits_required's 30 minutes) must not be shortened
+	// by a later, shorter generic rate-limit cooldown, otherwise the account would be selected again within seconds and hit the same error again.
 	if current.ResetAt.After(now) && current.ResetAt.After(resetAt) {
 		resetAt = current.ResetAt
 		if current.Reason != "" {
@@ -9552,14 +9552,14 @@ func (s *Store) MarkModelCooldownWithBackoff(acc *Account, model string, duratio
 		ctx, cancel := context.WithTimeout(context.Background(), 2*time.Second)
 		defer cancel()
 		if err := s.db.SetModelCooldown(ctx, acc.DBID, key, reason, resetAt); err != nil {
-			log.Printf("[账号 %d] 持久化模型冷却失败 model=%s: %v", acc.DBID, key, err)
+			log.Printf("[account %d] failed to persist model cooldown model=%s: %v", acc.DBID, key, err)
 		}
 	}
 	return cooldown
 }
 
-// MarkModelCooldownUntil 按显式重置时间设置模型冷却（不做 30 分钟上限钳制），
-// 用于上游明确告知恢复窗口的场景（如免费额度耗尽的滚动 24h 窗口）。
+// MarkModelCooldownUntil sets the model cooldown to an explicit reset time (no 30-minute cap clamp),
+// used when the upstream explicitly states the recovery window (e.g. the rolling 24h window of exhausted free quota).
 func (s *Store) MarkModelCooldownUntil(acc *Account, model, reason string, resetAt time.Time) ModelCooldown {
 	if acc == nil || resetAt.IsZero() || !resetAt.After(time.Now()) {
 		return ModelCooldown{}
@@ -9572,14 +9572,14 @@ func (s *Store) MarkModelCooldownUntil(acc *Account, model, reason string, reset
 	return cooldown
 }
 
-// MarkModelCooldownUntilAtLeast 与 MarkModelCooldownUntil 相同，但不会缩短仍然
-// 有效的既有冷却：该 model 现有 ResetAt 晚于传入 resetAt 时保留既有冷却并直接返回，
-// 不写内存、不刷健康度、不落库。
+// MarkModelCooldownUntilAtLeast is the same as MarkModelCooldownUntil, but does not shorten an existing cooldown that is still
+// in effect: if the model's current ResetAt is later than the passed resetAt, the existing cooldown is kept and it returns directly,
+// without writing memory, refreshing health, or persisting.
 //
-// 用于多个公开档位共享同一上游 backing（wire 模型）或同一配额家族
-// 的冷却键：这类键会被同账号上的多个事件写入，若按最后写入者胜出，一个 5s 的裸
-// RESOURCE_EXHAUSTED 就能把同账号刚写入的 290s 共享冷却改短，短 deadline 之后兄弟
-// 档位又能选中刚被限流的凭据。比较与写入在 Account 侧同一次写锁内完成。
+// Used for cooldown keys shared by several public tiers that share the same upstream backing (wire model) or the same quota family.
+// These keys are written by several events on the same account; if the last writer wins, a bare 5s
+// RESOURCE_EXHAUSTED could shorten the 290s shared cooldown just written on the same account, and after the short deadline a sibling
+// tier could pick a credential that was just rate-limited. The comparison and the write happen under one write lock on the Account side.
 func (s *Store) MarkModelCooldownUntilAtLeast(acc *Account, model, reason string, resetAt time.Time) ModelCooldown {
 	if acc == nil || resetAt.IsZero() || !resetAt.After(time.Now()) {
 		return ModelCooldown{}
@@ -9592,8 +9592,8 @@ func (s *Store) MarkModelCooldownUntilAtLeast(acc *Account, model, reason string
 	return cooldown
 }
 
-// afterModelCooldownMarked 在冷却写入后统一刷新健康度、调度快照、跨实例冷却缓存
-// 与持久化。
+// afterModelCooldownMarked, after a cooldown is written, uniformly refreshes health, the scheduling snapshot, the cross-instance cooldown cache
+// and persistence.
 func (s *Store) afterModelCooldownMarked(acc *Account, cooldown ModelCooldown) {
 	acc.mu.Lock()
 	now := time.Now()
@@ -9611,7 +9611,7 @@ func (s *Store) afterModelCooldownMarked(acc *Account, cooldown ModelCooldown) {
 		ctx, cancel := context.WithTimeout(context.Background(), 2*time.Second)
 		defer cancel()
 		if err := s.db.SetModelCooldown(ctx, acc.DBID, cooldown.Model, cooldown.Reason, cooldown.ResetAt); err != nil {
-			log.Printf("[账号 %d] 持久化模型冷却失败 model=%s: %v", acc.DBID, cooldown.Model, err)
+			log.Printf("[account %d] failed to persist model cooldown model=%s: %v", acc.DBID, cooldown.Model, err)
 		}
 	}
 }
@@ -9635,7 +9635,7 @@ func (s *Store) ClearModelCooldown(acc *Account, model string) {
 	ctx, cancel := context.WithTimeout(context.Background(), 2*time.Second)
 	defer cancel()
 	if err := s.db.ClearModelCooldown(ctx, acc.DBID, key); err != nil {
-		log.Printf("[账号 %d] 清理模型冷却失败 model=%s: %v", acc.DBID, key, err)
+		log.Printf("[account %d] failed to clear model cooldown model=%s: %v", acc.DBID, key, err)
 	}
 }
 
@@ -9652,7 +9652,7 @@ func (s *Store) ClearAllModelCooldowns(acc *Account) int {
 		ctx, cancel := context.WithTimeout(context.Background(), 2*time.Second)
 		defer cancel()
 		if err := s.db.ClearAllModelCooldowns(ctx, acc.DBID); err != nil {
-			log.Printf("[账号 %d] 清理全部模型冷却失败: %v", acc.DBID, err)
+			log.Printf("[account %d] failed to clear all model cooldowns: %v", acc.DBID, err)
 		}
 	}
 	return len(models)
@@ -9692,7 +9692,7 @@ func (s *Store) MarkModelUnsupported(acc *Account, model string, duration time.D
 		ctx, cancel := context.WithTimeout(context.Background(), 2*time.Second)
 		defer cancel()
 		if err := s.db.SetModelCooldown(ctx, acc.DBID, cooldown.Model, cooldown.Reason, cooldown.ResetAt); err != nil {
-			log.Printf("[账号 %d] 持久化模型冷却失败 model=%s: %v", acc.DBID, cooldown.Model, err)
+			log.Printf("[account %d] failed to persist model cooldown model=%s: %v", acc.DBID, cooldown.Model, err)
 		}
 	}
 	return cooldown
@@ -9818,15 +9818,15 @@ func (s *Store) ApplyAccountModelCooldownPolicyOverride(dbID int64, mode *string
 	return true
 }
 
-// MarkError 标记账号为错误状态，并持久化到数据库。
-// permanentRefreshFailureTerminalLimit 是同一账号连续不可恢复刷新失败的上限。
-// 上限内走 unauthorized 自适应冷却,给并发轮换换出新 RT、用户重新授权这类场景
-// 留自愈窗口;连续到限说明 RT 确已死透,转 error 终态并退出恢复探测轮换——
-// 否则死号会被恢复探测每个冷却周期捞起来重试一次,永无终态。
+// MarkError marks the account as being in an error state and persists it to the database.
+// permanentRefreshFailureTerminalLimit is the cap on consecutive unrecoverable refresh failures for the same account.
+// Below the cap, the unauthorized adaptive cooldown applies, leaving a self-healing window for cases such as a concurrent rotation swapping in a new RT or the user re-authorizing;
+// reaching the cap consecutively means the RT is truly dead: it switches to the error terminal state and exits the recovery-probe rotation,
+// otherwise a dead account would be picked up by the recovery probe each cooldown cycle and retried once, never reaching a terminal state.
 const permanentRefreshFailureTerminalLimit = 3
 
-// markPermanentRefreshFailure 记录一次不可恢复的刷新失败并落对应状态。
-// 计数在刷新成功与 ClearCooldown(人工清理/重新授权)时清零。
+// markPermanentRefreshFailure records one unrecoverable refresh failure and sets the corresponding status.
+// The count is reset to zero on a successful refresh and on ClearCooldown (manual cleanup / re-authorization).
 func (s *Store) markPermanentRefreshFailure(acc *Account, err error) {
 	if acc == nil || err == nil {
 		return
@@ -9835,9 +9835,9 @@ func (s *Store) markPermanentRefreshFailure(acc *Account, err error) {
 	acc.PermanentRefreshFailures++
 	failures := acc.PermanentRefreshFailures
 	if failures >= permanentRefreshFailureTerminalLimit && acc.HealthTier == HealthTierBanned {
-		// 前几轮 unauthorized 冷却已把健康层压到 banned,而 banned 层在
-		// runtimeStatusLocked 里无条件显示 unauthorized、且是恢复探测的
-		// 准入层。不先降层,终态账号会永远显示未授权、进不了 error 筛选。
+		// the first few rounds of unauthorized cooldown have already pushed the health tier down to banned, while the banned tier in
+		// runtimeStatusLocked unconditionally shows unauthorized, and is the admission tier of the recovery probe.
+		// If the tier is not lowered first, a terminal account would show as unauthorized forever and never reach the error filter.
 		acc.HealthTier = HealthTierRisky
 	}
 	acc.mu.Unlock()
@@ -9845,7 +9845,7 @@ func (s *Store) markPermanentRefreshFailure(acc *Account, err error) {
 		s.MarkError(acc, err.Error())
 		return
 	}
-	// 时长入参会被 unauthorized 自适应策略覆盖：首犯 6h，24h 内再犯 24h。
+	// the duration argument is overridden by the unauthorized adaptive policy: first offense 6h, a repeat within 24h 24h.
 	s.MarkCooldownWithError(acc, 24*time.Hour, "unauthorized", err.Error())
 }
 
@@ -9854,7 +9854,7 @@ func (s *Store) MarkError(acc *Account, errorMsg string) {
 		return
 	}
 
-	errorMsg = normalizeAccountErrorMessage(errorMsg, "账号测试失败")
+	errorMsg = normalizeAccountErrorMessage(errorMsg, "account test failed")
 
 	now := time.Now()
 	acc.mu.Lock()
@@ -9874,13 +9874,13 @@ func (s *Store) MarkError(acc *Account, errorMsg string) {
 	s.persistAccountCooldownState(acc, true, false)
 }
 
-// ClearCooldown 清除账号冷却状态，并同步清理数据库
+// ClearCooldown clears the account cooldown state and syncs the database
 func (s *Store) ClearCooldown(acc *Account) {
 	if acc == nil {
 		return
 	}
 
-	atomic.StoreInt32(&acc.Disabled, 0) // 清除原子禁用标志
+	atomic.StoreInt32(&acc.Disabled, 0) // clears the atomic disabled flag
 	acc.mu.Lock()
 	wasCooling := acc.Status == StatusCooldown
 	wasError := acc.Status == StatusError
@@ -9891,7 +9891,7 @@ func (s *Store) ClearCooldown(acc *Account) {
 	acc.ErrorMsg = ""
 	acc.CooldownUtil = time.Time{}
 	acc.CooldownReason = ""
-	// 人工清理即重新给自愈机会:重置死 RT 判定,恢复探测资格随之恢复。
+	// a manual cleanup gives a fresh chance to self-heal: reset the dead-RT judgment, so probe eligibility is restored.
 	acc.PermanentRefreshFailures = 0
 	acc.transientRateLimitBackoff = 0
 	acc.transientRateLimitUntil = time.Time{}
@@ -9910,16 +9910,16 @@ func (s *Store) ClearCooldown(acc *Account) {
 	s.persistAccountCooldownState(acc, true, true)
 }
 
-// ReleaseUsageWindowCooldownForCredits 在积分门打开后释放由本地用量窗口判罚产生的 cooldown。
+// ReleaseUsageWindowCooldownForCredits releases the cooldown that local usage-window penalties produced, once the credit gate is open.
 //
-// 为什么需要：信用开关此前只阻止「进入」用量窗口 cooldown（MarkUsage7dRateLimited 早退），
-// 对已经在 cooldown 里的账号无效。而用户最自然的用法恰恰是「发现账号限流了才去开开关」，
-// 那时判罚已经落下，不主动释放就得干等到窗口重置——开关看起来完全没用。
+// Why it is needed: the credit switch previously only blocked *entering* a usage-window cooldown (MarkUsage7dRateLimited returned early),
+// which had no effect on accounts already in cooldown. The most natural use, though, is "turn the switch on after noticing the account is rate-limited",
+// and by then the penalty had already landed; without actively releasing it, you would have to wait until the window resets, and the switch would look completely useless.
 //
-// 只释放本地用量判罚（usageWindowCooldownLocked：7d 按判罚时长对齐 Reset7dAt 识别，
-// premium 5h 按 rate_limited_5h reason 识别），
-// 上游 429 的冷却不动。万一识别错放行了，上游会再拒一次并重新进入冷却，代价是一个请求。
-// 返回是否真的释放了。
+// Only the local usage penalty is released (usageWindowCooldownLocked: 7d is identified by the penalty duration aligned to Reset7dAt,
+// premium 5h is identified by the rate_limited_5h reason),
+// upstream 429 cooldowns are left untouched. If identification is wrong and something is released, upstream will reject once more and re-enter cooldown, at the cost of one request.
+// Returns whether it was actually released.
 func (s *Store) ReleaseUsageWindowCooldownForCredits(acc *Account) bool {
 	if s == nil || acc == nil {
 		return false
@@ -9931,7 +9931,7 @@ func (s *Store) ReleaseUsageWindowCooldownForCredits(acc *Account) bool {
 		return false
 	}
 	s.ClearCooldown(acc)
-	log.Printf("[账号 %d] 积分可用，已释放用量窗口限流冷却", acc.DBID)
+	log.Printf("[account %d] credits available, released the usage-window rate-limit cooldown", acc.DBID)
 	return true
 }
 
@@ -10064,7 +10064,7 @@ func (s *Store) RecordManualTestSuccess(acc *Account, latency time.Duration) {
 	s.persistAccountCooldownState(acc, true, true)
 }
 
-// ReportRequestSuccess 记录一次成功请求，用于动态调度评分
+// ReportRequestSuccess records one successful request, used for dynamic scheduling scores.
 func (s *Store) ReportRequestSuccess(acc *Account, latency time.Duration) {
 	if acc == nil {
 		return
@@ -10086,23 +10086,23 @@ func (s *Store) ReportRequestSuccess(acc *Account, latency time.Duration) {
 	s.fastSchedulerUpdate(acc)
 }
 
-// transportFailureTierDropStreak 是传输层失败开始降档所需的连续失败次数。
-// 成功一次即清零 FailureStreak，因此偶发断流不会累积到这个阈值。
+// transportFailureTierDropStreak is the number of consecutive transport-layer failures required before the tier starts dropping.
+// One success resets FailureStreak, so occasional disconnects never add up to this threshold.
 const transportFailureTierDropStreak = 3
 
-// isolatedTransportFailureLocked 判断"最近一次失败是孤立的传输层断流"。
+// isolatedTransportFailureLocked determines whether "the most recent failure was an isolated transport-layer disconnect".
 //
-// 传输层断流多来自上游边缘重置或链路抖动（对端 RST_STREAM、连接中途被重置），
-// 与账号自身健康无关：一天几次这样的背景噪声本不该让正常账号被削掉一半并发
-// （issue #491）。连续失败达到阈值才认定账号/出口真有问题——那时按分数也已经
-// 掉出 Healthy（每次连击扣 6 分），两条判据自然一致。
+// Transport-layer disconnects mostly come from upstream edge resets or link jitter (peer RST_STREAM, connection reset mid-way),
+// unrelated to the account's own health: a few such background-noise events a day should not cut a normal account's concurrency in half
+// (issue #491). Only when consecutive failures reach the threshold is the account or egress deemed truly faulty, and by then the score has also already
+// dropped out of Healthy (each consecutive failure deducts 6 points), so the two criteria naturally agree.
 func (a *Account) isolatedTransportFailureLocked() bool {
 	return a.LastFailureKind == transportFailureKind && a.FailureStreak < transportFailureTierDropStreak
 }
 
 const transportFailureKind = "transport"
 
-// ReportRequestFailure 记录一次失败请求，用于动态调度评分
+// ReportRequestFailure records one failed request for dynamic scheduling scoring
 func (s *Store) ReportRequestFailure(acc *Account, kind string, latency time.Duration) {
 	if acc == nil {
 		return
@@ -10140,10 +10140,10 @@ func (s *Store) ReportRequestFailure(acc *Account, kind string, latency time.Dur
 			acc.HealthTier = HealthTierRisky
 		}
 	case transportFailureKind:
-		// 这里刻意不动 HealthTier：本函数结尾的 recomputeSchedulerLocked 会按
-		// 分数重算并覆盖档位，此处赋值是无效的（其它分支的赋值同样如此，只有
-		// unauthorized 的 Banned 会被重算逻辑显式保留）。传输层失败的档位由
-		// 连击扣分 + isolatedTransportFailureLocked 的豁免共同决定。
+		// HealthTier is deliberately left untouched here: recomputeSchedulerLocked at the end of this function recalculates
+		// from the score and overwrites the tier, so an assignment here has no effect (assignments in the other branches are the same, except that only
+		// the Banned state of unauthorized is explicitly kept by the recalculation logic). The tier for transport-layer failures is decided by
+		// the consecutive-failure deduction together with the exemption from isolatedTransportFailureLocked.
 	case "client":
 		if acc.HealthTier == HealthTierHealthy {
 			acc.HealthTier = HealthTierWarm
@@ -10155,7 +10155,7 @@ func (s *Store) ReportRequestFailure(acc *Account, kind string, latency time.Dur
 	s.fastSchedulerUpdate(acc)
 }
 
-// PersistUsageSnapshot 持久化账号用量快照（7d + 5h）
+// PersistUsageSnapshot persists the account's usage snapshot (7d + 5h)
 func (s *Store) PersistUsageSnapshot(acc *Account, pct7d float64) {
 	s.PublishUsageSnapshot(acc, pct7d, time.Now(), true)
 }
@@ -10178,7 +10178,7 @@ func (s *Store) PublishUsageSnapshot(acc *Account, pct7d float64, observedAt tim
 		return false
 	}
 
-	// 如果有 5h 数据，使用完整存储
+	// If there is 5h data, store the full snapshot
 	if pct5h, ok := acc.GetUsagePercent5h(); ok {
 		reset5hAt := acc.GetReset5hAt()
 		reset7dAt := acc.GetReset7dAt()
@@ -10188,7 +10188,7 @@ func (s *Store) PublishUsageSnapshot(acc *Account, pct7d float64, observedAt tim
 			return s.db.UpdateUsageSnapshotFull(ctx, acc.DBID, pct7d, reset7dAt, pct5h, reset5hAt, observedAt, acc.GetUsageUpdatedAt5h())
 		})
 		if err != nil {
-			log.Printf("[账号 %d] 持久化用量快照失败: %v", acc.DBID, err)
+			log.Printf("[account %d] failed to persist usage snapshot: %v", acc.DBID, err)
 			return false
 		}
 		return true
@@ -10200,7 +10200,7 @@ func (s *Store) PublishUsageSnapshot(acc *Account, pct7d float64, observedAt tim
 		return s.db.UpdateUsageSnapshot(ctx, acc.DBID, pct7d, observedAt)
 	})
 	if err != nil {
-		log.Printf("[账号 %d] 持久化用量快照失败: %v", acc.DBID, err)
+		log.Printf("[account %d] failed to persist usage snapshot: %v", acc.DBID, err)
 		return false
 	}
 	return true
@@ -10241,7 +10241,7 @@ func (s *Store) UpdateAccountSubscriptionExpiresAt(acc *Account, expiresAt time.
 		defer cancel()
 		row, err := s.db.GetAccountByID(ctx, acc.DBID)
 		if err != nil {
-			log.Printf("[账号 %d] 读取 subscription_expires_at 失败: %v", acc.DBID, err)
+			log.Printf("[account %d] failed to read subscription_expires_at: %v", acc.DBID, err)
 			return changed
 		}
 		if row.GetCredential("subscription_expires_at") == formatted {
@@ -10252,16 +10252,16 @@ func (s *Store) UpdateAccountSubscriptionExpiresAt(acc *Account, expiresAt time.
 	ctx, cancel := context.WithTimeout(context.Background(), 2*time.Second)
 	defer cancel()
 	if err := s.db.UpdateCredentials(ctx, acc.DBID, map[string]interface{}{"subscription_expires_at": formatted}); err != nil {
-		log.Printf("[账号 %d] 持久化 subscription_expires_at 失败: %v", acc.DBID, err)
+		log.Printf("[account %d] failed to persist subscription_expires_at: %v", acc.DBID, err)
 	}
 	return changed
 }
 
-// StaleSubscriptionExpiry 判断「付费套餐 + 到期时间已过去」的陈旧组合。
-// 订阅到期时间唯一来源是 JWT 的 chatgpt_subscription_active_until，续费后该 claim
-// 不随 token 刷新更新，上游也没有能查到新到期时间的端点（wham/usage 实测不含订阅
-// 字段）；而套餐真到期后上游权威 plan_type 会降回 free。因此付费套餐下已过去的
-// 到期时间必为续费前的旧值，不应再当作「已过期」展示或持久化。(issue #360)
+// StaleSubscriptionExpiry determines the stale combination of "paid plan + expiry time already passed".
+// The only source of the subscription expiry time is the JWT's chatgpt_subscription_active_until. After a renewal, this claim
+// is not updated by token refresh, and upstream has no endpoint that returns the new expiry time (wham/usage, as tested, does not include the subscription
+// field). Once the plan really expires, the authoritative upstream plan_type drops back to free. So an expiry time that has passed under a paid plan
+// must be an old value from before the renewal, and should no longer be shown or persisted as "expired". (issue #360)
 func StaleSubscriptionExpiry(planType string, expiresAt time.Time, now time.Time) bool {
 	if expiresAt.IsZero() || expiresAt.After(now) {
 		return false
@@ -10270,17 +10270,17 @@ func StaleSubscriptionExpiry(planType string, expiresAt time.Time, now time.Time
 	return plan != "" && plan != "free" && plan != "api"
 }
 
-// OnStaleSubscriptionCleared 在陈旧到期时间被清理（推断已续费）后触发，供上层
-// 立即发起一次权威订阅同步以把「待确认」尽快落成「已确认」。由 proxy 包注入。
+// OnStaleSubscriptionCleared is triggered after a stale expiry time is cleared (inferred as renewed), so the upper layer
+// can immediately start an authoritative subscription sync to move "pending confirmation" to "confirmed" as soon as possible. Injected by the proxy package.
 var OnStaleSubscriptionCleared func(store *Store, acc *Account)
 
-// ClearStaleSubscriptionExpiresAt 在观测到上游权威付费 plan_type 后清理陈旧的
-// 订阅到期时间，避免账号已续费仍长期显示「已过期」。返回是否发生清理。(issue #360)
+// ClearStaleSubscriptionExpiresAt clears a stale subscription expiry time after an authoritative paid plan_type is observed upstream
+// so that an account that has renewed does not keep showing "expired" for a long time. Returns whether a clear happened. (issue #360)
 //
-// 清理不再是静默抹掉：同步状态切到 pending、来源记为 plan_header、记录
-// renewal_detected_at 与清理前的 last_known_status，前端据此显示「已续费 · 待确认」
-// 而不是空白；随后触发一次权威同步。宽限期内（订阅提供方明确给了 grace 结束时间）
-// 的已过去到期时间不算陈旧。
+// Clearing is no longer a silent wipe: the sync state switches to pending, the source is recorded as plan_header, and it records
+// renewal_detected_at and the last_known_status from before the clear; the frontend uses these to show "renewed · pending confirmation"
+// instead of a blank; then an authoritative sync is triggered. Within the grace period (where the subscription provider explicitly gave a grace end time),
+// an expiry time that has passed is not treated as stale.
 func (s *Store) ClearStaleSubscriptionExpiresAt(acc *Account) bool {
 	if s == nil || acc == nil {
 		return false
@@ -10309,7 +10309,7 @@ func (s *Store) ClearStaleSubscriptionExpiresAt(acc *Account) bool {
 		return false
 	}
 	s.fastSchedulerUpdate(acc)
-	log.Printf("[账号 %d] 套餐仍为付费但订阅到期时间已过去（应已续费），清理陈旧到期时间并等待权威确认", acc.DBID)
+	log.Printf("[account %d] plan is still paid but the subscription expiry time has passed (should have been renewed), clearing the stale expiry time and waiting for authoritative confirmation", acc.DBID)
 	s.persistSubscriptionMeta(acc.DBID, meta, map[string]interface{}{"subscription_expires_at": ""})
 	if hook := OnStaleSubscriptionCleared; hook != nil {
 		hook(s, acc)
@@ -10354,7 +10354,7 @@ func (s *Store) updateAccountPlanType(acc *Account, planType string, persist boo
 	}
 
 	if err := s.withUsageSnapshotWrite(acc, func() error { return s.persistUsageFramePlan(acc) }); err != nil {
-		log.Printf("[账号 %d] 持久化 plan_type 失败: %v", acc.DBID, err)
+		log.Printf("[account %d] failed to persist plan_type: %v", acc.DBID, err)
 	}
 	return changed
 }
@@ -10392,7 +10392,7 @@ func (s *Store) UpdateAccountIdentity(acc *Account, email, accountID string) boo
 	ctx, cancel := context.WithTimeout(context.Background(), 2*time.Second)
 	defer cancel()
 	if err := s.db.UpdateCredentials(ctx, acc.DBID, fields); err != nil {
-		log.Printf("[账号 %d] 持久化账号身份失败: %v", acc.DBID, err)
+		log.Printf("[account %d] failed to persist account identity: %v", acc.DBID, err)
 	}
 	return changed
 }
@@ -10429,7 +10429,7 @@ func (s *Store) ApplyUsageLimitMetadata(acc *Account, planType string, resetAt t
 	}
 	s.fastSchedulerUpdate(acc)
 
-	// free plan 的 7d 窗口重置时刻武装「到点即探」，重置一到即刷新进度条。
+	// For the free plan, arm a "probe at the boundary" at the 7d window reset time, so the progress bar refreshes as soon as the reset happens.
 	if plan == "free" {
 		s.WakeBoundaryProbe(resetAt)
 	}
@@ -10441,11 +10441,11 @@ func (s *Store) ApplyUsageLimitMetadata(acc *Account, planType string, resetAt t
 	ctx, cancel := context.WithTimeout(context.Background(), 2*time.Second)
 	defer cancel()
 	if err := s.db.UpdateCredentials(ctx, acc.DBID, fields); err != nil {
-		log.Printf("[账号 %d] 持久化 usage_limit 元数据失败: %v", acc.DBID, err)
+		log.Printf("[account %d] failed to persist usage_limit metadata: %v", acc.DBID, err)
 	}
 }
 
-// SetUsageProbeFunc 注册主动探针回调
+// SetUsageProbeFunc registers the active probe callback
 func (s *Store) SetUsageProbeFunc(fn func(context.Context, *Account) error) {
 	s.usageProbeMu.Lock()
 	defer s.usageProbeMu.Unlock()
@@ -10490,26 +10490,26 @@ func (s *Store) TriggerUsageProbeForAccountAsync(account *Account) {
 		ctx, cancel := context.WithTimeout(parent, 25*time.Second)
 		defer cancel()
 		if err := probeFn(ctx, account); err != nil {
-			log.Printf("[账号 %d] Responses 限流后立即刷新 WHAM 用量失败: %v", account.DBID, err)
+			log.Printf("[account %d] failed to refresh WHAM usage right after Responses rate limiting: %v", account.DBID, err)
 		}
 	}) {
 		account.FinishUsageProbe()
 	}
 }
 
-// wsAuthVerifyMinInterval 限制同一账号 WS 鉴权验证探针的最小触发间隔，
-// 避免高频 WS 上游异常关闭下反复探针。
+// wsAuthVerifyMinInterval limits the minimum interval between WS auth verification probes for the same account,
+// so probes are not repeated over and over when the WS upstream closes abnormally at high frequency.
 const wsAuthVerifyMinInterval = 30 * time.Second
 
-// VerifyAccountAuthAsync 在 WS 上游异常关闭（如 close 1008 policy violation）后，
-// 异步对单个账号跑一次用量探针（wham 优先、零额度成本）。
+// VerifyAccountAuthAsync runs, after the WS upstream closes abnormally (such as close 1008 policy violation),
+// one usage probe for the single account asynchronously (wham first, zero quota cost).
 //
-// 背景：token 失效在 HTTP 通道会返回 401 → 走 applyCooldown 标记 unauthorized 冷却；
-// 但在 WS 通道上游是用 close 1008 踢连接，被归类为普通 transport 失败，账号不会被封、
-// 仍留在号池反复失败。这里用一次探针把"看不见的 401"补成与 HTTP 一致的处理：
-// wham 探针 401 时由 /responses 回退探针裁决，回退命中 401 才 MarkCooldownWithError
-// （wham 单方面 401 不定罪，避免误封 wham 恒 401 但流量可用的 codex_at 账号，issue #328）；
-// 若只是内容策略/网络抖动触发的 1008，探针返回正常，不会误封。带最小间隔节流。
+// Background: on the HTTP channel, an invalid token returns 401 → goes through applyCooldown to mark an unauthorized cooldown;
+// but on the WS channel, upstream kicks the connection with close 1008, which is classified as an ordinary transport failure, so the account is not banned
+// and stays in the account pool failing repeatedly. Here one probe turns the "invisible 401" into the same handling as HTTP:
+// when the wham probe gets a 401, the /responses fallback probe decides; only when the fallback also hits 401 does MarkCooldownWithError run
+// (a 401 from wham alone does not convict, to avoid wrongly banning codex_at accounts where wham always returns 401 but traffic works, issue #328);
+// if the 1008 was only triggered by a content policy or network jitter, the probe returns normally and nothing is wrongly banned. Throttled with a minimum interval.
 func (s *Store) VerifyAccountAuthAsync(account *Account) {
 	if s == nil || account == nil {
 		return
@@ -10538,14 +10538,14 @@ func (s *Store) VerifyAccountAuthAsync(account *Account) {
 		ctx, cancel := context.WithTimeout(parent, 25*time.Second)
 		defer cancel()
 		if err := probeFn(ctx, account); err != nil {
-			log.Printf("[账号 %d] WS 上游异常关闭后鉴权验证探针失败: %v", account.DBID, err)
+			log.Printf("[account %d] auth verification probe failed after WS upstream closed abnormally: %v", account.DBID, err)
 		}
 	}) {
 		account.FinishUsageProbe()
 	}
 }
 
-// TriggerUsageProbeAsync 异步触发一次批量用量探针
+// TriggerUsageProbeAsync asynchronously triggers one batch usage probe
 func (s *Store) TriggerUsageProbeAsync() {
 	if !s.usageProbeBatch.CompareAndSwap(false, true) {
 		return
@@ -10559,21 +10559,21 @@ func (s *Store) TriggerUsageProbeAsync() {
 	}
 }
 
-// WakeBoundaryProbe 提示「到点即探」调度器：某账号的限流冷却 / 窗口重置边界发生了变化，
-// 可能出现了比当前武装更早的边界，需要重排定时器。at 为该边界时刻（IsZero 表示未知，
-// 强制重排）。仅当 at 严格早于当前武装边界（或未武装）时才打扰后台 goroutine，避免
-// 高频 429/流量刷新导致的无谓重排。本方法只做一次非阻塞 channel 写入，任何锁下调用都安全。
+// WakeBoundaryProbe tells the "probe at the boundary" scheduler that an account's rate-limit cooldown / window reset boundary has changed,
+// so an earlier boundary than the currently armed one may exist and the timer needs rescheduling. at is that boundary's time (IsZero means unknown,
+// forces a reschedule). The background goroutine is disturbed only when at is strictly earlier than the currently armed boundary (or nothing is armed), to avoid
+// pointless reschedules caused by frequent 429s or traffic refreshes. This method does just one non-blocking channel write, so calling it under any lock is safe.
 func (s *Store) WakeBoundaryProbe(at time.Time) {
 	if s == nil || s.boundaryProbeWakeCh == nil {
 		return
 	}
 	if !at.IsZero() {
 		if !at.After(time.Now()) {
-			return // 边界已过，交给常规巡检/探针即可
+			return // the boundary has already passed; leave it to the regular background check or probe
 		}
 		armed := s.armedBoundaryAt.Load()
 		if armed != 0 && at.UnixNano() >= armed {
-			return // 已有更早或同刻的唤醒计划，定时器到点后会重新扫描接管更晚的边界
+			return // a wake-up plan that is earlier or at the same time already exists; when the timer fires it rescans and takes over the later boundaries
 		}
 	}
 	select {
@@ -10582,9 +10582,9 @@ func (s *Store) WakeBoundaryProbe(at time.Time) {
 	}
 }
 
-// armNextBoundaryProbe 扫描所有账号，找出最近的「到点即探」边界并把 timer 重排到该时刻
-// （加 probeBoundaryLag 滞后）。无待处理边界时停表。只在后台刷新 goroutine 内调用
-// （该 goroutine 不持有任何账号锁，故此处逐账号取 RLock 不会死锁）。
+// armNextBoundaryProbe scans all accounts, finds the nearest "probe at the boundary" and reschedules the timer to that moment
+// (plus a probeBoundaryLag delay). When there is no pending boundary, the timer is stopped. Called only inside the background refresh goroutine
+// (that goroutine holds no account locks, so taking RLock per account here cannot deadlock).
 func (s *Store) armNextBoundaryProbe(timer *time.Timer) {
 	now := time.Now()
 	accounts := s.accountSnapshotAccounts()
@@ -10616,7 +10616,7 @@ func (s *Store) armNextBoundaryProbe(timer *time.Timer) {
 	timer.Reset(d)
 }
 
-// TriggerRecoveryProbeAsync 异步触发一次封禁账号恢复探测
+// TriggerRecoveryProbeAsync asynchronously triggers one recovery probe for banned accounts
 func (s *Store) TriggerRecoveryProbeAsync() {
 	if s.GetLazyMode() {
 		return
@@ -10633,7 +10633,7 @@ func (s *Store) TriggerRecoveryProbeAsync() {
 	}
 }
 
-// TriggerAutoCleanupAsync 异步触发一次自动清理巡检
+// TriggerAutoCleanupAsync asynchronously triggers one automatic cleanup check
 func (s *Store) TriggerAutoCleanupAsync() {
 	if !s.autoCleanupBatch.CompareAndSwap(false, true) {
 		return
@@ -10670,11 +10670,11 @@ func (s *Store) runAutoCleanupSweep(ctx context.Context) {
 	}
 
 	if cleanedUnauthorized > 0 || cleanedRateLimited > 0 || cleanedError > 0 {
-		log.Printf("自动清理完成: unauthorized=%d, rate_limited=%d, error=%d", cleanedUnauthorized, cleanedRateLimited, cleanedError)
+		log.Printf("auto cleanup finished: unauthorized=%d, rate_limited=%d, error=%d", cleanedUnauthorized, cleanedRateLimited, cleanedError)
 	}
 }
 
-// CleanFullUsageAccounts 清理用量达到 100% 的账号（跳过正在处理请求的账号）
+// CleanFullUsageAccounts cleans up accounts whose usage has reached 100% (skipping accounts that are handling requests)
 func (s *Store) CleanFullUsageAccounts(ctx context.Context) int {
 	accounts := s.accountSnapshotAccounts()
 	cleaned := 0
@@ -10684,23 +10684,23 @@ func (s *Store) CleanFullUsageAccounts(ctx context.Context) int {
 			continue
 		}
 
-		// 锁定账号跳过自动清理
+		// Skip locked accounts in automatic cleanup
 		if atomic.LoadInt32(&acc.Locked) == 1 {
 			continue
 		}
 
-		// 跳过正在处理请求的账号
+		// Skip accounts that are handling requests
 		if acc.ActiveRequests.Load() > 0 {
 			continue
 		}
 
-		// 用量窗口对该账号仅作展示参考时（忽略用量限制/重置券跳过窗口），
-		// 快照不构成"账号已耗尽"的依据，不做自动清理。
+		// When the usage window is only a display reference for this account (usage limits / reset coupons skip the window),
+		// the snapshot is not grounds for "account exhausted", so no automatic cleanup is done.
 		if acc.SkipsUsageWindowLimits() {
 			continue
 		}
 
-		// 检查用量是否 >= 100%
+		// Check whether usage is >= 100%
 		pct, valid := acc.GetUsagePercent7d()
 		if !valid || pct < 100.0 {
 			continue
@@ -10708,42 +10708,42 @@ func (s *Store) CleanFullUsageAccounts(ctx context.Context) int {
 
 		if s.db != nil {
 			if err := s.db.SoftDeleteAccount(ctx, acc.DBID); err != nil {
-				log.Printf("[账号 %d] 清理用量满账号失败: %v", acc.DBID, err)
+				log.Printf("[account %d] failed to clean up account with full usage: %v", acc.DBID, err)
 				continue
 			}
 		}
 
 		s.RemoveAccount(acc.DBID)
-		log.Printf("[账号 %d] 用量 %.1f%% 已满，已自动清理 (email=%s)", acc.DBID, pct, acc.Email)
+		log.Printf("[account %d] usage %.1f%% is full, automatically cleaned up (email=%s)", acc.DBID, pct, acc.Email)
 		if s.db != nil {
 			if err := s.db.InsertAccountEvent(ctx, acc.DBID, "deleted", "clean_full_usage"); err != nil {
-				log.Printf("[账号 %d] 记录满用量清理事件失败: %v", acc.DBID, err)
+				log.Printf("[account %d] failed to record full-usage cleanup event: %v", acc.DBID, err)
 			}
 		}
 		cleaned++
 	}
 
 	if cleaned > 0 {
-		log.Printf("用量清理完成: 共清理 %d 个满用量账号", cleaned)
+		log.Printf("usage cleanup finished: cleaned %d full-usage accounts", cleaned)
 	}
 	return cleaned
 }
 
-// CleanExpiredAccounts 清理加入号池超过指定时长的账号（不管是否被调用过）
-// 批量操作优化：先收集所有过期 ID，再一次性完成数据库更新和内存移除
+// CleanExpiredAccounts cleans up accounts that have been in the pool longer than the given duration (whether or not they have been used)
+// Batch optimization: first collect all expired IDs, then finish the database update and in-memory removal in one go
 func (s *Store) CleanExpiredAccounts(ctx context.Context, maxAge time.Duration) int {
 	accounts := s.accountSnapshotAccounts()
 	now := time.Now()
 	cutoff := now.Add(-maxAge).UnixNano()
 
-	// 1. 收集所有需要清理的账号 ID
+	// 1. Collect the IDs of all accounts that need cleanup
 	var expiredIDs []int64
 	var skipNoAddedAt, skipNotExpired, skipActive, skipProven int
 	for _, acc := range accounts {
 		if acc == nil {
 			continue
 		}
-		// 锁定账号跳过自动清理
+		// Skip locked accounts in automatic cleanup
 		if atomic.LoadInt32(&acc.Locked) == 1 {
 			continue
 		}
@@ -10760,7 +10760,7 @@ func (s *Store) CleanExpiredAccounts(ctx context.Context, maxAge time.Duration) 
 			skipActive++
 			continue
 		}
-		// 成功请求超过 10 次的账号保留，不做过期清理
+		// Keep accounts with more than 10 successful requests; do not expire-clean them
 		if acc.TotalRequests.Load() > 10 {
 			skipProven++
 			continue
@@ -10768,58 +10768,58 @@ func (s *Store) CleanExpiredAccounts(ctx context.Context, maxAge time.Duration) 
 		expiredIDs = append(expiredIDs, acc.DBID)
 	}
 
-	log.Printf("过期清理扫描: 总数=%d, 待清理=%d, 跳过(无时间=%d, 未过期=%d, 处理中=%d, 已验证=%d)",
+	log.Printf("expired cleanup scan: total=%d, pending cleanup=%d, skipped (no time=%d, not expired=%d, in progress=%d, verified=%d)",
 		len(accounts), len(expiredIDs), skipNoAddedAt, skipNotExpired, skipActive, skipProven)
 
 	if len(expiredIDs) == 0 {
 		return 0
 	}
 
-	log.Printf("过期清理: 发现 %d 个超时账号，开始批量处理", len(expiredIDs))
+	log.Printf("expired cleanup: found %d timed-out accounts, starting batch processing", len(expiredIDs))
 
-	// 2. 批量更新数据库状态
+	// 2. Batch-update the database state
 	if s.db != nil {
 		if err := s.db.BatchSoftDeleteAccounts(ctx, expiredIDs); err != nil {
-			log.Printf("过期清理: 批量更新数据库失败: %v，回退逐条处理", err)
+			log.Printf("expired cleanup: batch database update failed: %v, falling back to per-item processing", err)
 			return s.cleanExpiredFallback(ctx, expiredIDs)
 		}
 	}
 
-	// 3. 批量从内存池移除
+	// 3. Batch-remove from the in-memory pool
 	s.RemoveAccounts(expiredIDs)
 
-	// 4. 批量写入事件日志；清理本身已在后台任务中运行，保持同一生命周期。
+	// 4. Batch-write event logs; the cleanup itself already runs in a background task, so keep the same lifecycle.
 	if s.db != nil {
 		if err := s.db.BatchInsertAccountEvents(ctx, expiredIDs, "deleted", "clean_expired"); err != nil {
-			log.Printf("过期清理: 记录批量事件失败: %v", err)
+			log.Printf("expired cleanup: failed to record batch events: %v", err)
 		}
 	}
 
-	log.Printf("过期清理完成: 共清理 %d 个超时账号", len(expiredIDs))
+	log.Printf("expired cleanup finished: cleaned %d timed-out accounts", len(expiredIDs))
 	return len(expiredIDs)
 }
 
-// cleanExpiredFallback 批量操作失败时逐条回退处理
+// cleanExpiredFallback falls back to per-item processing when the batch operation fails
 func (s *Store) cleanExpiredFallback(ctx context.Context, ids []int64) int {
 	cleaned := 0
 	for _, id := range ids {
 		if err := s.db.SoftDeleteAccount(ctx, id); err != nil {
-			log.Printf("[账号 %d] 过期清理失败: %v", id, err)
+			log.Printf("[account %d] expired cleanup failed: %v", id, err)
 			continue
 		}
 		s.RemoveAccount(id)
 		if err := s.db.InsertAccountEvent(ctx, id, "deleted", "clean_expired"); err != nil {
-			log.Printf("[账号 %d] 记录过期清理事件失败: %v", id, err)
+			log.Printf("[account %d] failed to record expired cleanup event: %v", id, err)
 		}
 		cleaned++
 	}
 	if cleaned > 0 {
-		log.Printf("过期清理(回退): 共清理 %d 个超时账号", cleaned)
+		log.Printf("expired cleanup (fallback): cleaned %d timed-out accounts", cleaned)
 	}
 	return cleaned
 }
 
-// RemoveAccounts 批量从内存池移除账号（一次加锁、一次遍历，避免 O(n²)）
+// RemoveAccounts removes accounts from the in-memory pool in batch (one lock, one pass, avoiding O(n²))
 func (s *Store) RemoveAccounts(dbIDs []int64) {
 	if len(dbIDs) == 0 {
 		return
@@ -10862,8 +10862,8 @@ func (s *Store) parallelProbeUsage(ctx context.Context) {
 	s.parallelProbeUsageWith(ctx, s.GetUsageProbeMaxAge())
 }
 
-// parallelProbeUsageWith 以指定 maxAge 阈值执行一次批量用量探针。
-// maxAge<=0 时视为"立即探针"——只要账号能跑就刷一次。
+// parallelProbeUsageWith runs one batch usage probe with the given maxAge threshold.
+// maxAge<=0 means "probe immediately": refresh once as long as the account can run.
 func (s *Store) parallelProbeUsageWith(ctx context.Context, maxAge time.Duration) {
 	s.usageProbeMu.RLock()
 	probeFn := s.usageProbe
@@ -10895,7 +10895,7 @@ func (s *Store) parallelProbeUsageWith(ctx context.Context, maxAge time.Duration
 			probeCtx, cancel := context.WithTimeout(ctx, 25*time.Second)
 			defer cancel()
 			if err := probeFn(probeCtx, account); err != nil {
-				log.Printf("[账号 %d] 用量探针失败: %v", account.DBID, err)
+				log.Printf("[account %d] usage probe failed: %v", account.DBID, err)
 			}
 		}(acc)
 	}
@@ -10903,8 +10903,8 @@ func (s *Store) parallelProbeUsageWith(ctx context.Context, maxAge time.Duration
 	wg.Wait()
 }
 
-// TriggerUsageProbeForceAsync 异步触发一次"无视缓存阈值"的批量用量探针。
-// 用于管理端手动刷新场景。
+// TriggerUsageProbeForceAsync asynchronously triggers one batch usage probe that "ignores the cache threshold".
+// Used for manual refresh from the admin panel.
 func (s *Store) TriggerUsageProbeForceAsync() {
 	if !s.usageProbeBatch.CompareAndSwap(false, true) {
 		return
@@ -10951,22 +10951,22 @@ func (s *Store) parallelRecoveryProbe(ctx context.Context) {
 
 			if account.NeedsRefresh() {
 				if err := s.refreshAccount(probeCtx, account); err != nil {
-					log.Printf("[账号 %d] 恢复探测前刷新失败: %v", account.DBID, err)
+					log.Printf("[account %d] refresh failed before recovery probe: %v", account.DBID, err)
 				}
 			}
 
 			if err := probeFn(probeCtx, account); err != nil {
-				log.Printf("[账号 %d] 恢复探测失败: %v", account.DBID, err)
+				log.Printf("[account %d] recovery probe failed: %v", account.DBID, err)
 			} else {
-				// 用量已耗尽的账号不重置状态
+				// Accounts whose usage is exhausted do not have their state reset
 				account.mu.RLock()
 				exhausted := account.usageExhaustedLocked()
 				account.mu.RUnlock()
 				if exhausted {
-					log.Printf("[账号 %d] 恢复探测成功但用量已耗尽，保持当前状态", account.DBID)
+					log.Printf("[account %d] recovery probe succeeded but usage is exhausted, keeping the current state", account.DBID)
 				} else {
-					// 探测成功：将账号从 banned 升级到 warm，给予重新调度的机会
-					atomic.StoreInt32(&account.Disabled, 0) // 清除原子禁用标志
+					// Probe succeeded: upgrade the account from banned to warm, giving it a chance to be scheduled again
+					atomic.StoreInt32(&account.Disabled, 0) // clear the atomic disabled flag
 					account.mu.Lock()
 					if account.HealthTier == HealthTierBanned {
 						account.HealthTier = HealthTierWarm
@@ -10980,10 +10980,10 @@ func (s *Store) parallelRecoveryProbe(ctx context.Context) {
 							account.CooldownReason = ""
 						}
 						account.recomputeSchedulerLocked(s.maxConcurrency.Load())
-						log.Printf("[账号 %d] 恢复探测成功！已从 banned 升级到 warm", account.DBID)
+						log.Printf("[account %d] recovery probe succeeded! upgraded from banned to warm", account.DBID)
 					}
 					account.mu.Unlock()
-					// 清理数据库冷却状态
+					// Clear the database cooldown state
 					s.persistAccountCooldownState(account, true, false)
 				}
 			}
@@ -10993,7 +10993,7 @@ func (s *Store) parallelRecoveryProbe(ctx context.Context) {
 	wg.Wait()
 }
 
-// RefreshSingle 刷新单个账号（供 admin handler 调用）
+// RefreshSingle refreshes a single account (called by the admin handler)
 func (s *Store) RefreshSingle(ctx context.Context, dbID int64) error {
 	s.mu.RLock()
 	var target *Account
@@ -11006,7 +11006,7 @@ func (s *Store) RefreshSingle(ctx context.Context, dbID int64) error {
 	s.mu.RUnlock()
 
 	if target == nil {
-		return fmt.Errorf("账号 %d 不存在", dbID)
+		return fmt.Errorf("account %d does not exist", dbID)
 	}
 	return s.refreshAccountForced(ctx, target)
 }
@@ -11021,17 +11021,17 @@ func (s *Store) RefreshSingleAsync(dbID int64) {
 		ctx, cancel := context.WithTimeout(parent, 30*time.Second)
 		defer cancel()
 		if err := s.RefreshSingle(ctx, dbID); err != nil {
-			log.Printf("[账号 %d] 异步强制刷新失败: %v", dbID, err)
+			log.Printf("[account %d] asynchronous forced refresh failed: %v", dbID, err)
 		}
 	})
 }
 
-// AccountCount 返回账号数量
+// AccountCount returns the number of accounts
 func (s *Store) AccountCount() int {
 	return len(s.accountSnapshotAccounts())
 }
 
-// AvailableCount 返回可用账号数量
+// AvailableCount returns the number of available accounts
 func (s *Store) AvailableCount() int {
 	count := 0
 	lazy := s.GetLazyMode()
@@ -11081,7 +11081,7 @@ func (s *Store) HealthCountsNonBlocking() (available int, total int, complete bo
 	return available, total, complete
 }
 
-// Accounts 返回所有账号（用于统计）
+// Accounts returns all accounts (used for statistics)
 func (s *Store) Accounts() []*Account {
 	accounts := s.accountSnapshotAccounts()
 	result := make([]*Account, len(accounts))
@@ -11089,9 +11089,9 @@ func (s *Store) Accounts() []*Account {
 	return result
 }
 
-// ==================== 并行刷新 ====================
+// ==================== parallel refresh ====================
 
-// parallelRefreshAll 并行刷新所有需要刷新的账号（Worker Pool，并发度 10）
+// parallelRefreshAll refreshes all accounts that need refreshing in parallel (worker pool, concurrency 10)
 func (s *Store) parallelRefreshAll(ctx context.Context) {
 	accounts := s.accountSnapshotAccounts()
 
@@ -11110,9 +11110,9 @@ func (s *Store) parallelRefreshAll(ctx context.Context) {
 			defer func() { <-sem }()
 
 			if err := s.refreshAccount(ctx, account); err != nil {
-				log.Printf("[账号 %d] 刷新失败: %v", idx+1, err)
+				log.Printf("[account %d] refresh failed: %v", idx+1, err)
 			} else {
-				log.Printf("[账号 %d] 刷新成功: email=%s", idx+1, account.Email)
+				log.Printf("[account %d] refresh succeeded: email=%s", idx+1, account.Email)
 			}
 		}(i, acc)
 	}
@@ -11127,14 +11127,14 @@ func (s *Store) refreshAccountForced(ctx context.Context, acc *Account) error {
 	return s.refreshAccountWithOptions(ctx, acc, true)
 }
 
-// refreshAccountWithOptions 刷新单个账号的 AT（带缓存锁与 token 缓存）
+// refreshAccountWithOptions refreshes a single account's AT (with the cache lock and token cache)
 func (s *Store) refreshAccountWithOptions(ctx context.Context, acc *Account, forceRefresh bool) error {
 	return s.refreshCodexAccount(ctx, acc, forceRefresh)
 }
 
-// propagateSharedOAuthCredentials 将一次成功刷新得到的新凭据同步给使用同一旧 RT
-// 的兄弟工作区路由。只同步认证材料和 Token 原生身份；每条路由自己的
-// Chatgpt-Account-Id、代理、分组、用量、冷却和调度配置保持不变。
+// propagateSharedOAuthCredentials syncs the new credentials from a successful refresh to the sibling workspace routes that use the same old RT
+// Only the auth material and the token-native identity are synced; each route's own
+// Chatgpt-Account-Id, proxy, group, usage, cooldown and scheduling settings stay unchanged.
 func (s *Store) propagateSharedOAuthCredentials(
 	ctx context.Context,
 	source *Account,
@@ -11191,13 +11191,13 @@ func (s *Store) propagateSharedOAuthCredentials(
 
 		if s.db != nil {
 			if err := s.db.UpdateCredentials(ctx, sibling.DBID, credentials); err != nil {
-				log.Printf("[账号 %d] 同步共享 OAuth 凭据失败: %v", sibling.DBID, err)
+				log.Printf("[account %d] failed to sync shared OAuth credentials: %v", sibling.DBID, err)
 			}
 		}
 		if s.tokenCache != nil && ttl > 0 {
 			_ = s.tokenCache.SetAccessToken(ctx, sibling.DBID, td.AccessToken, ttl)
 		}
-		log.Printf("[账号 %d] 已同步账号 %d 刷新的共享 OAuth 凭据，工作区路由保持独立", sibling.DBID, sourceID)
+		log.Printf("[account %d] synced shared OAuth credentials refreshed by account %d; workspace routes stay independent", sibling.DBID, sourceID)
 	}
 	if sourcePlanType != "" {
 		s.invalidateRoutingSchedulers()

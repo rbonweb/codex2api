@@ -5,7 +5,7 @@ import (
 	"net/http"
 )
 
-// 由启动装配注入，与对话共用解析器，避免 auth 反向依赖 proxy。
+// Injected by startup wiring and shares the resolver with conversations, so that auth does not depend on proxy in reverse.
 var CodexOAuthIdentityHeaders func(*Account) (http.Header, error)
 
 type codexOAuthIdentityKey struct{}
@@ -32,7 +32,7 @@ func withCodexOAuthIdentity(ctx context.Context, account *Account, force bool) (
 
 func applyCodexOAuthIdentity(req *http.Request) {
 	identity, _ := req.Context().Value(codexOAuthIdentityKey{}).(codexOAuthIdentity)
-	// OAuth 刷新只使用默认客户端身份，不携带对话、设备证明或账号认证头。
+	// OAuth refresh uses only the default client identity and carries no conversation, device attestation, or account auth headers.
 	for _, name := range []string{"User-Agent", "Originator"} {
 		if value := identity.headers.Get(name); value != "" {
 			req.Header.Set(name, value)

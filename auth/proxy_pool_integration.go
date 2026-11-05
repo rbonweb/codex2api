@@ -11,7 +11,7 @@ import (
 	"github.com/codex2api/security"
 )
 
-// EnhancedProxyPool 增强的代理池管理器
+// EnhancedProxyPool is the enhanced proxy pool manager.
 type EnhancedProxyPool struct {
 	pool        *ProxyPool
 	db          *database.DB
@@ -19,7 +19,7 @@ type EnhancedProxyPool struct {
 	initialized atomic.Bool
 }
 
-// NewEnhancedProxyPool 创建增强代理池
+// NewEnhancedProxyPool creates an enhanced proxy pool.
 func NewEnhancedProxyPool(db *database.DB, config *ProxyPoolConfig) *EnhancedProxyPool {
 	return &EnhancedProxyPool{
 		pool: NewProxyPool(config),
@@ -27,24 +27,24 @@ func NewEnhancedProxyPool(db *database.DB, config *ProxyPoolConfig) *EnhancedPro
 	}
 }
 
-// Init 初始化代理池
+// Init initializes the proxy pool.
 func (e *EnhancedProxyPool) Init(ctx context.Context) error {
 	if e.db == nil {
 		return nil
 	}
 
-	// 从数据库加载代理
+	// Load proxies from the database.
 	proxies, err := e.db.ListEnabledProxies(ctx)
 	if err != nil {
 		return err
 	}
 
-	// 添加到代理池
+	// Add to the proxy pool.
 	for _, p := range proxies {
-		// 使用延迟作为权重的基础（延迟越低，权重越高）
+		// Use latency as the base of the weight (lower latency, higher weight).
 		weight := int64(100)
 		if p.TestLatencyMs > 0 {
-			// 延迟越小，权重越高
+			// Lower latency, higher weight.
 			weight = int64(10000 / (p.TestLatencyMs + 1))
 			if weight < 1 {
 				weight = 1
@@ -53,41 +53,41 @@ func (e *EnhancedProxyPool) Init(ctx context.Context) error {
 		e.pool.AddProxy(p.URL, weight)
 	}
 
-	// 设置回调
+	// Set callbacks.
 	e.pool.SetOnIsolation(func(entry *ProxyEntry) {
-		log.Printf("[ProxyPool] 代理被隔离: %s (连续失败 %d 次)", security.MaskURLCredentials(entry.URL), entry.ConsecutiveFailures)
+		log.Printf("[ProxyPool] proxy isolated: %s (%d consecutive failures)", security.MaskURLCredentials(entry.URL), entry.ConsecutiveFailures)
 	})
 
 	e.pool.SetOnRecovery(func(entry *ProxyEntry) {
-		log.Printf("[ProxyPool] 代理已恢复: %s", security.MaskURLCredentials(entry.URL))
+		log.Printf("[ProxyPool] proxy recovered: %s", security.MaskURLCredentials(entry.URL))
 	})
 
 	e.pool.SetOnHealthCheck(func(result *HealthCheckResult) {
 		if !result.Healthy && result.Error != nil {
-			log.Printf("[ProxyPool] 代理健康检查失败: %s, error: %v", security.MaskURLCredentials(result.URL), result.Error)
+			log.Printf("[ProxyPool] proxy health check failed: %s, error: %v", security.MaskURLCredentials(result.URL), result.Error)
 		}
 	})
 
-	// 启动健康检查
+	// Start health checks.
 	e.pool.StartHealthCheck()
 	e.enabled.Store(true)
 	e.initialized.Store(true)
 
-	log.Printf("[ProxyPool] 增强代理池已初始化，共 %d 个代理", len(proxies))
+	log.Printf("[ProxyPool] enhanced proxy pool initialized, %d proxies total", len(proxies))
 	return nil
 }
 
-// Enabled 返回代理池是否启用
+// Enabled returns whether the proxy pool is enabled.
 func (e *EnhancedProxyPool) Enabled() bool {
 	return e.enabled.Load()
 }
 
-// SetEnabled 设置代理池启用状态
+// SetEnabled sets whether the proxy pool is enabled.
 func (e *EnhancedProxyPool) SetEnabled(enabled bool) {
 	e.enabled.Store(enabled)
 }
 
-// NextProxy 获取下一个代理（兼容原有接口）
+// NextProxy returns the next proxy (kept for compatibility with the original interface).
 func (e *EnhancedProxyPool) NextProxy() string {
 	if !e.enabled.Load() || !e.initialized.Load() {
 		return ""
@@ -100,7 +100,7 @@ func (e *EnhancedProxyPool) NextProxy() string {
 	return entry.URL
 }
 
-// SelectWithStrategy 使用指定策略选择代理
+// SelectWithStrategy selects a proxy with the given strategy.
 func (e *EnhancedProxyPool) SelectWithStrategy(strategy ProxySelectionStrategy) *ProxyEntry {
 	if !e.enabled.Load() || !e.initialized.Load() {
 		return nil
@@ -109,7 +109,7 @@ func (e *EnhancedProxyPool) SelectWithStrategy(strategy ProxySelectionStrategy) 
 	return e.pool.SelectWithStrategy(strategy)
 }
 
-// MarkProxySuccess 标记代理成功
+// MarkProxySuccess marks the proxy as successful.
 func (e *EnhancedProxyPool) MarkProxySuccess(url string) {
 	if !e.initialized.Load() {
 		return
@@ -117,7 +117,7 @@ func (e *EnhancedProxyPool) MarkProxySuccess(url string) {
 	e.pool.MarkSuccess(url)
 }
 
-// MarkProxyFailure 标记代理失败
+// MarkProxyFailure marks the proxy as failed.
 func (e *EnhancedProxyPool) MarkProxyFailure(url string) {
 	if !e.initialized.Load() {
 		return
@@ -125,7 +125,7 @@ func (e *EnhancedProxyPool) MarkProxyFailure(url string) {
 	e.pool.MarkFailure(url)
 }
 
-// AcquireConnection 获取代理连接
+// AcquireConnection acquires a proxy connection.
 func (e *EnhancedProxyPool) AcquireConnection(url string) bool {
 	if !e.initialized.Load() {
 		return false
@@ -133,7 +133,7 @@ func (e *EnhancedProxyPool) AcquireConnection(url string) bool {
 	return e.pool.AcquireConnection(url)
 }
 
-// ReleaseConnection 释放代理连接
+// ReleaseConnection releases a proxy connection.
 func (e *EnhancedProxyPool) ReleaseConnection(url string) {
 	if !e.initialized.Load() {
 		return
@@ -141,7 +141,7 @@ func (e *EnhancedProxyPool) ReleaseConnection(url string) {
 	e.pool.ReleaseConnection(url)
 }
 
-// ReloadFromDB 从数据库重新加载代理
+// ReloadFromDB reloads proxies from the database.
 func (e *EnhancedProxyPool) ReloadFromDB(ctx context.Context) error {
 	if e.db == nil {
 		return nil
@@ -152,14 +152,14 @@ func (e *EnhancedProxyPool) ReloadFromDB(ctx context.Context) error {
 		return err
 	}
 
-	// 获取当前所有代理
+	// Get all current proxies.
 	currentProxies := e.pool.GetAllProxies()
 	currentMap := make(map[string]bool)
 	for _, url := range currentProxies {
 		currentMap[url] = true
 	}
 
-	// 添加新代理
+	// Add new proxies.
 	for _, p := range proxies {
 		if !currentMap[p.URL] {
 			weight := int64(100)
@@ -170,11 +170,11 @@ func (e *EnhancedProxyPool) ReloadFromDB(ctx context.Context) error {
 				}
 			}
 			e.pool.AddProxy(p.URL, weight)
-			log.Printf("[ProxyPool] 新增代理: %s", security.MaskURLCredentials(p.URL))
+			log.Printf("[ProxyPool] proxy added: %s", security.MaskURLCredentials(p.URL))
 		}
 	}
 
-	// 移除已禁用的代理
+	// Remove disabled proxies.
 	newMap := make(map[string]bool)
 	for _, p := range proxies {
 		newMap[p.URL] = true
@@ -182,14 +182,14 @@ func (e *EnhancedProxyPool) ReloadFromDB(ctx context.Context) error {
 	for _, url := range currentProxies {
 		if !newMap[url] {
 			e.pool.RemoveProxy(url)
-			log.Printf("[ProxyPool] 移除代理: %s", security.MaskURLCredentials(url))
+			log.Printf("[ProxyPool] proxy removed: %s", security.MaskURLCredentials(url))
 		}
 	}
 
 	return nil
 }
 
-// GetStats 获取代理统计信息
+// GetStats returns proxy statistics.
 func (e *EnhancedProxyPool) GetStats() map[string]*ProxyStats {
 	if !e.initialized.Load() {
 		return make(map[string]*ProxyStats)
@@ -197,7 +197,7 @@ func (e *EnhancedProxyPool) GetStats() map[string]*ProxyStats {
 	return e.pool.GetStats()
 }
 
-// GetPoolStatus 获取代理池状态
+// GetPoolStatus returns the proxy pool status.
 func (e *EnhancedProxyPool) GetPoolStatus() *ProxyPoolStatus {
 	if !e.initialized.Load() {
 		return &ProxyPoolStatus{
@@ -209,7 +209,7 @@ func (e *EnhancedProxyPool) GetPoolStatus() *ProxyPoolStatus {
 	return e.pool.GetPoolStatus()
 }
 
-// SetStrategy 设置选择策略
+// SetStrategy sets the selection strategy.
 func (e *EnhancedProxyPool) SetStrategy(strategy ProxySelectionStrategy) {
 	if !e.initialized.Load() {
 		return
@@ -217,7 +217,7 @@ func (e *EnhancedProxyPool) SetStrategy(strategy ProxySelectionStrategy) {
 	e.pool.SetStrategy(strategy)
 }
 
-// ForceHealthCheck 强制健康检查
+// ForceHealthCheck forces a health check.
 func (e *EnhancedProxyPool) ForceHealthCheck(ctx context.Context) {
 	if !e.initialized.Load() {
 		return
@@ -225,7 +225,7 @@ func (e *EnhancedProxyPool) ForceHealthCheck(ctx context.Context) {
 	e.pool.ForceHealthCheck(ctx)
 }
 
-// Stop 停止代理池
+// Stop stops the proxy pool.
 func (e *EnhancedProxyPool) Stop() {
 	if !e.initialized.Load() {
 		return
@@ -234,7 +234,7 @@ func (e *EnhancedProxyPool) Stop() {
 	e.enabled.Store(false)
 }
 
-// GetHealthyProxies 获取健康代理列表
+// GetHealthyProxies returns the list of healthy proxies.
 func (e *EnhancedProxyPool) GetHealthyProxies() []string {
 	if !e.initialized.Load() {
 		return []string{}
@@ -242,7 +242,7 @@ func (e *EnhancedProxyPool) GetHealthyProxies() []string {
 	return e.pool.GetHealthyProxies()
 }
 
-// HasHealthyProxy 检查是否有健康代理
+// HasHealthyProxy checks whether a healthy proxy exists.
 func (e *EnhancedProxyPool) HasHealthyProxy() bool {
 	if !e.initialized.Load() {
 		return false
@@ -250,7 +250,7 @@ func (e *EnhancedProxyPool) HasHealthyProxy() bool {
 	return e.pool.HasHealthyProxy()
 }
 
-// UpdateProxyStats 更新代理统计数据到数据库
+// UpdateProxyStats writes proxy statistics to the database.
 func (e *EnhancedProxyPool) UpdateProxyStats(ctx context.Context) error {
 	if e.db == nil || !e.initialized.Load() {
 		return nil
@@ -258,15 +258,15 @@ func (e *EnhancedProxyPool) UpdateProxyStats(ctx context.Context) error {
 
 	stats := e.pool.GetStats()
 	for url, stat := range stats {
-		// 这里可以扩展数据库模型来存储更详细的统计信息
+		// This could be extended with a database model to store more detailed statistics.
 		_ = url
 		_ = stat
-		// TODO: 实现数据库更新逻辑
+		// TODO: implement the database update logic.
 	}
 	return nil
 }
 
-// SetProxyWeight 设置代理权重
+// SetProxyWeight sets the weight of a proxy.
 func (e *EnhancedProxyPool) SetProxyWeight(url string, weight int64) {
 	if !e.initialized.Load() {
 		return
@@ -274,20 +274,20 @@ func (e *EnhancedProxyPool) SetProxyWeight(url string, weight int64) {
 	e.pool.UpdateProxyWeight(url, weight)
 }
 
-// StoreProxyPoolIntegration Store 与代理池集成
+// StoreProxyPoolIntegration integrates Store with the proxy pool.
 type StoreProxyPoolIntegration struct {
-	store       *Store
+	store        *Store
 	enhancedPool *EnhancedProxyPool
 	useEnhanced  atomic.Bool
 }
 
-// NewStoreProxyPoolIntegration 创建 Store 与代理池集成
+// NewStoreProxyPoolIntegration creates a Store-to-proxy-pool integration.
 func NewStoreProxyPoolIntegration(store *Store, db *database.DB, settings *database.SystemSettings) *StoreProxyPoolIntegration {
 	integration := &StoreProxyPoolIntegration{
 		store: store,
 	}
 
-	// 如果启用代理池，创建增强代理池
+	// If the proxy pool is enabled, create the enhanced proxy pool.
 	if settings != nil && settings.ProxyPoolEnabled {
 		config := &ProxyPoolConfig{
 			Strategy:           ParseStrategy(getEnv("PROXY_POOL_STRATEGY", "round_robin")),
@@ -305,7 +305,7 @@ func NewStoreProxyPoolIntegration(store *Store, db *database.DB, settings *datab
 	return integration
 }
 
-// Init 初始化
+// Init initializes.
 func (s *StoreProxyPoolIntegration) Init(ctx context.Context) error {
 	if s.enhancedPool != nil {
 		return s.enhancedPool.Init(ctx)
@@ -313,55 +313,55 @@ func (s *StoreProxyPoolIntegration) Init(ctx context.Context) error {
 	return nil
 }
 
-// NextProxy 获取下一个代理
+// NextProxy returns the next proxy.
 func (s *StoreProxyPoolIntegration) NextProxy() string {
 	if s.useEnhanced.Load() && s.enhancedPool != nil && s.enhancedPool.Enabled() {
 		return s.enhancedPool.NextProxy()
 	}
-	// 回退到原有实现
+	// Fall back to the original implementation.
 	if s.store != nil {
 		return s.store.NextProxy()
 	}
 	return ""
 }
 
-// MarkProxySuccess 标记代理成功
+// MarkProxySuccess marks the proxy as successful.
 func (s *StoreProxyPoolIntegration) MarkProxySuccess(url string) {
 	if s.useEnhanced.Load() && s.enhancedPool != nil {
 		s.enhancedPool.MarkProxySuccess(url)
 	}
 }
 
-// MarkProxyFailure 标记代理失败
+// MarkProxyFailure marks the proxy as failed.
 func (s *StoreProxyPoolIntegration) MarkProxyFailure(url string) {
 	if s.useEnhanced.Load() && s.enhancedPool != nil {
 		s.enhancedPool.MarkProxyFailure(url)
 	}
 }
 
-// GetEnhancedPool 获取增强代理池
+// GetEnhancedPool returns the enhanced proxy pool.
 func (s *StoreProxyPoolIntegration) GetEnhancedPool() *EnhancedProxyPool {
 	return s.enhancedPool
 }
 
-// UseEnhanced 是否使用增强代理池
+// UseEnhanced reports whether the enhanced proxy pool is used.
 func (s *StoreProxyPoolIntegration) UseEnhanced() bool {
 	return s.useEnhanced.Load()
 }
 
-// SetUseEnhanced 设置是否使用增强代理池
+// SetUseEnhanced sets whether the enhanced proxy pool is used.
 func (s *StoreProxyPoolIntegration) SetUseEnhanced(use bool) {
 	s.useEnhanced.Store(use)
 }
 
-// Stop 停止
+// Stop stops.
 func (s *StoreProxyPoolIntegration) Stop() {
 	if s.enhancedPool != nil {
 		s.enhancedPool.Stop()
 	}
 }
 
-// 辅助函数
+// Helper functions.
 func getEnv(key, defaultValue string) string {
 	if value := getEnvFunc(key); value != "" {
 		return value
@@ -369,7 +369,7 @@ func getEnv(key, defaultValue string) string {
 	return defaultValue
 }
 
-// 用于测试注入
+// For test injection.
 var getEnvFunc = os.Getenv
 
 func parseDuration(s string, defaultValue time.Duration) time.Duration {
