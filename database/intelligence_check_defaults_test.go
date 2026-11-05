@@ -185,7 +185,12 @@ func TestIntelligenceCheckNewAccountConcurrentSettings(t *testing.T) {
 		t.Fatal(err)
 	}
 	s.Revision++
-	raw, err := json.Marshal(s)
+	// Codex is the only channel, so a Codex account always fits an existing target group.
+	// Commit a switch_group policy whose target group does not exist: enrollment must follow
+	// it (account stays opted out) rather than the previous "none" policy (account opted in).
+	committed := s
+	committed.TargetGroupID = target + 1_000_000
+	raw, err := json.Marshal(committed)
 	if err != nil {
 		t.Fatal(err)
 	}

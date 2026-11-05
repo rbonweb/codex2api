@@ -29,7 +29,6 @@ before(async () => {
    return `import React from 'react'; import {createRoot} from 'react-dom/client'; import {MemoryRouter} from 'react-router-dom';
    import IntelligenceCheck from ${JSON.stringify(path.join(root, 'src/pages/IntelligenceCheck.tsx'))};
    import Accounts from ${JSON.stringify(path.join(root, 'src/pages/Accounts.tsx'))};
-   import {VisibleChannelsProvider} from ${JSON.stringify(path.join(root, 'src/visibleChannels.tsx'))};
    import AccountIntelligenceBar, {AccountIntelligenceActions} from ${JSON.stringify(path.join(root, 'src/components/AccountIntelligenceBar.tsx'))};
    import {useIntelligenceBars} from ${JSON.stringify(path.join(root, 'src/hooks/useIntelligenceBars.ts'))};
    import AccountHealthBar from ${JSON.stringify(path.join(root, 'src/components/AccountHealthBar.tsx'))};
@@ -37,7 +36,7 @@ before(async () => {
    import {ToastProvider} from ${JSON.stringify(path.join(root, 'src/components/ToastProvider.tsx'))};
    import ${JSON.stringify(path.join(root, 'src/i18n.ts'))}; import ${JSON.stringify(path.join(root, 'src/index.css'))};
    createRoot(document.getElementById('root')).render(React.createElement(MemoryRouter, {initialEntries:[window.__initialPath||'/']}, React.createElement(ToastProvider,null,
-   React.createElement('main',{style:{padding:'24px',maxWidth:'1400px',margin:'0 auto'}}, window.__showBar ? React.createElement(BarHarness) : null, window.__accountsPage ? React.createElement(VisibleChannelsProvider,null,React.createElement(Accounts)) : React.createElement(IntelligenceCheck)))));`
+   React.createElement('main',{style:{padding:'24px',maxWidth:'1400px',margin:'0 auto'}}, window.__showBar ? React.createElement(BarHarness) : null, window.__accountsPage ? React.createElement(Accounts) : React.createElement(IntelligenceCheck)))));`
   },
  }], resolve: { alias: { '@': path.join(root, 'src') } }, define: { 'process.env.NODE_ENV': '"production"' }, build: { write: false, minify: false, rollupOptions: { input: 'virtual:intelligence-harness' }, lib: { entry: 'virtual:intelligence-harness', formats: ['iife'], name: 'IntelligenceHarness' } } })
  const bundle = Array.isArray(result) ? result[0] : result
@@ -61,7 +60,6 @@ async function fixture(t, options = {}) {
   window.__api = async (name, args) => {
    window.__calls.push({ name, args })
    const account = { id: 1, name: '本地 Codex 测试账号', email: 'fixture@example.test', account_type: 'oauth', status: 'active', enabled: true, health_tier: 'healthy', created_at: '2026-10-15T12:00:00Z', group_ids: [], models: ['gpt-6-astra'], detail_loaded: true, usage_percent_7d: 12, active_requests: 2, dynamic_concurrency_limit: 200, ...options.accountOverrides }
-   if (name === 'getVisibleChannels') return { channels: ['codex'] }
    if (name === 'getAccountsPage') return { accounts: [account], total: 1, page: 1, page_size: 20, facets: { tags: [], email_domains: [] }, summary: { total: 1 } }
    if (name === 'getAccount') return account
    if (name === 'getAccountHealthBars') return { buckets: {} }
