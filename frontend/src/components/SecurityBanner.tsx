@@ -1,28 +1,18 @@
 import { useCallback, useEffect, useState } from 'react'
-import { useTranslation } from 'react-i18next'
 import { ShieldAlert, X } from 'lucide-react'
 import { api } from '../api'
 
 const DISMISS_STORAGE_KEY = 'codex2api_security_banner_dismissed_at'
-const DISMISS_TTL_MS = 24 * 60 * 60 * 1000 // 用户手动关闭后 24h 内不再骚扰
+const DISMISS_TTL_MS = 24 * 60 * 60 * 1000 // do not show the banner again for 24h after the user dismisses it
 
 const COPY = {
-  zh: {
-    title: '安全提示：尚未配置对外 API Key',
-    body: '默认情况下，/v1/* 接口在创建第一把 API Key 之前会拒绝所有请求（503）。请进入「API 密钥」页面创建至少一把 Key，再向客户端分发。（注意：如果服务端启用了 CODEX_ALLOW_ANONYMOUS=true，匿名调用将被放行，仅建议在内网/测试场景使用。）',
-    cta: '前往创建',
-    dismiss: '我知道了',
-  },
-  en: {
-    title: 'Security notice: no public API key has been configured',
-    body: 'By default, /v1/* requests are refused (503) until at least one API key is created. Open the API Keys page to create one before exposing this service. (Note: when the server is started with CODEX_ALLOW_ANONYMOUS=true, anonymous traffic is allowed — recommended for internal/testing scenarios only.)',
-    cta: 'Create API key',
-    dismiss: 'Dismiss',
-  },
+  title: 'Security notice: no public API key has been configured',
+  body: 'By default, /v1/* requests are refused (503) until at least one API key is created. Open the API Keys page to create one before exposing this service. (Note: when the server is started with CODEX_ALLOW_ANONYMOUS=true, anonymous traffic is allowed — recommended for internal/testing scenarios only.)',
+  cta: 'Create API key',
+  dismiss: 'Dismiss',
 } as const
 
 export default function SecurityBanner() {
-  const { i18n } = useTranslation()
   const [keyCount, setKeyCount] = useState<number | null>(null)
   const [dismissed, setDismissed] = useState(() => {
     const ts = Number(localStorage.getItem(DISMISS_STORAGE_KEY) ?? '0')
@@ -34,7 +24,7 @@ export default function SecurityBanner() {
       const res = await api.getAPIKeys({ view: 'lite' })
       setKeyCount((res.keys ?? []).length)
     } catch {
-      setKeyCount(null) // 401/网络异常时不显示，避免登录前打扰
+      setKeyCount(null) // hide on 401 or network errors so it does not interrupt before login
     }
   }, [])
 
@@ -50,8 +40,7 @@ export default function SecurityBanner() {
   if (keyCount === null) return null
   if (keyCount > 0) return null
 
-  const lang = (i18n.language || 'zh').startsWith('zh') ? 'zh' : 'en'
-  const copy = COPY[lang]
+  const copy = COPY
 
   const handleDismiss = () => {
     localStorage.setItem(DISMISS_STORAGE_KEY, String(Date.now()))

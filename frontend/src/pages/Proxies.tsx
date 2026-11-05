@@ -428,7 +428,7 @@ const BindAccountRow = memo(function BindAccountRow({
 });
 
 export default function Proxies() {
-  const { t, i18n } = useTranslation();
+  const { t } = useTranslation();
   const { showToast } = useToast();
   const { confirm, confirmDialog } = useConfirmDialog();
   const [proxies, setProxies] = useState<ProxyRow[]>([]);
@@ -496,7 +496,7 @@ export default function Proxies() {
   const [balanceMaxPerProxy, setBalanceMaxPerProxy] = useState("");
   const [balanceSubmitting, setBalanceSubmitting] = useState(false);
 
-  const ipApiLang = i18n.language?.startsWith("zh") ? "zh-CN" : "en";
+  const ipApiLang = "en";
 
   const reloadAccounts = useCallback(async () => {
     if (!bindingProxy) return;
