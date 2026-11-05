@@ -1,8 +1,10 @@
-name: codex2api-local
+# Gateway with bundled PostgreSQL and Redis. Set the database variables in .env (see .env.example).
+# For an external database such as Neon, or for SQLite, use docker-compose.yml instead.
+name: codex2api
 
 services:
   codex2api:
-    build: .
+    image: ghcr.io/rbonweb/codex2api:latest
     container_name: codex2api
     ports:
       - "${BIND_HOST:-0.0.0.0}:${CODEX_PORT:-8080}:${CODEX_PORT:-8080}"
@@ -16,6 +18,13 @@ services:
         condition: service_healthy
       redis:
         condition: service_healthy
+    healthcheck:
+      test: ["CMD-SHELL", "wget -q -O - http://127.0.0.1:$${CODEX_PORT:-8080}/health >/dev/null || exit 1"]
+      interval: 10s
+      timeout: 3s
+      retries: 6
+      start_period: 60s
+    stop_grace_period: 60s
     restart: unless-stopped
     networks:
       - codex2api-net
@@ -32,7 +41,7 @@ services:
     volumes:
       - pgdata:/var/lib/postgresql/data
     # ports:
-    #   - "5432:5432"   # 取消注释以便本地调试
+    #   - "5432:5432"   # uncomment for local debugging
     healthcheck:
       test: ["CMD-SHELL", "pg_isready -U ${DATABASE_USER:-codex2api}"]
       interval: 5s
@@ -51,7 +60,7 @@ services:
     volumes:
       - redisdata:/data
     # ports:
-    #   - "6379:6379"   # 取消注释以便本地调试
+    #   - "6379:6379"   # uncomment for local debugging
     healthcheck:
       test: ["CMD", "redis-cli", "ping"]
       interval: 5s
@@ -67,8 +76,8 @@ networks:
 
 volumes:
   pgdata:
-    name: codex2api-local_pgdata
+    name: codex2api_pgdata
   redisdata:
-    name: codex2api-local_redisdata
+    name: codex2api_redisdata
   image-assets:
-    name: codex2api-local_image-assets
+    name: codex2api_image-assets

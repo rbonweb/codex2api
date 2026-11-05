@@ -32,7 +32,7 @@ USAGE_WINDOW_LOGIC.md
 .claude/settings.local.json
 .pi
 scripts
-# 上面的 scripts 会匹配任意层级的同名目录;前端构建/CI 用的脚本需要入库。
+# The "scripts" rule above matches that directory at any depth; frontend build and CI scripts must be tracked.
 !frontend/scripts/
 !.github/scripts/
 

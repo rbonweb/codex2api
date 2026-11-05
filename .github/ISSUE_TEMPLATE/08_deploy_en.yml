@@ -1,5 +1,5 @@
 name: Deploy / Config Help (English)
-description: Docker won't start, env vars unclear, SQLite/PG switch, deploy.sh errors, etc.
+description: Docker won't start, env vars unclear, SQLite/PostgreSQL switch, etc.
 title: "[Deploy] "
 labels: ["type/help", "area/deploy"]
 body:
@@ -13,7 +13,7 @@ body:
     attributes:
       label: Before I submit
       options:
-        - label: I read the deploy notes in [README](https://github.com/james-6-23/codex2api#documentation) and `docs/`
+        - label: I read the deploy notes in [README](https://github.com/rbonweb/codex2api#documentation) and `docs/`
           required: true
         - label: I redacted secrets from the docker-compose / env / logs I'm pasting
           required: true
@@ -23,10 +23,9 @@ body:
     attributes:
       label: Which deploy shape am I using?
       options:
-        - Docker Compose (PostgreSQL + Redis)
-        - Docker Compose (SQLite + Memory)
+        - Docker Compose, full (bundled PostgreSQL + Redis)
+        - Docker Compose (external PostgreSQL or SQLite)
         - Running from source
-        - deploy.sh script
         - Render / other cloud platform
         - Other
     validations:

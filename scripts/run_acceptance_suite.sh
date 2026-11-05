@@ -1,6 +1,6 @@
 #!/usr/bin/env bash
 # scripts/run_acceptance_suite.sh
-# 自动化执行 Codex2API 模型输出失控防护验收测试套件
+# Runs the Codex2API model output runaway guard acceptance test suite
 set -euo pipefail
 
 export GOCACHE="/tmp/go-build"
