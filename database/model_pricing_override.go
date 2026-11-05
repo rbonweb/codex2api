@@ -17,12 +17,12 @@ const (
 // ModelPricingOverride 是单个模型的定价覆盖（设置存储与同步 URL 载荷共用同一形态）。
 // Token 价格单位：USD / 1M tokens。Token 字段为 0 时回退代码默认价。
 // ImageUnitPrice 则为用户单位价（按张/按次/按秒模式下的 USD / 计费单位），这些模式要求显式正单价；
-// MediaUnitCost 是 Grok Imagine 媒体模型的上游单位成本（USD / 张 或 USD / 秒）。
+// MediaUnitCost 是媒体模型的上游单位成本（USD / 张 或 USD / 秒）。
 // 优先级：custom > synced > 代码默认。
 type ModelPricingOverride struct {
 	UserBillingMode string  `json:"user_billing_mode,omitempty"`
 	ImageUnitPrice  float64 `json:"image_unit_price,omitempty"` // USD per billed unit (image / video / second) in unit billing modes; upstream cost stays independent.
-	// MediaUnitCost 是 Grok Imagine 媒体模型的上游单位成本(USD/张 或 USD/秒)。
+	// MediaUnitCost 是媒体模型的上游单位成本(USD/张 或 USD/秒)。
 	MediaUnitCost    float64 `json:"media_unit_cost,omitempty"`
 	ImageInput       float64 `json:"image_input,omitempty"`
 	CachedImageInput float64 `json:"cached_image_input,omitempty"`
@@ -31,9 +31,8 @@ type ModelPricingOverride struct {
 	// 标准档（短上下文）
 	Input       float64 `json:"input,omitempty"`
 	CachedInput float64 `json:"cached_input,omitempty"`
-	// Anthropic prompt-cache creation prices are informational today; actual
-	// billing still uses CachedInput (cache read) because usage logs expose
-	// cache reads separately from cache creation only in provider payloads.
+	// Prompt-cache creation prices are informational today; actual
+	// billing still uses CachedInput (cache read).
 	CacheWrite5m float64 `json:"cache_write_5m,omitempty"`
 	CacheWrite1h float64 `json:"cache_write_1h,omitempty"`
 	Output       float64 `json:"output,omitempty"`
@@ -43,7 +42,7 @@ type ModelPricingOverride struct {
 	CachedInputPriority float64 `json:"cached_input_priority,omitempty"`
 	OutputPriority      float64 `json:"output_priority,omitempty"`
 
-	// 长上下文档（input 超过该模型的分档线：OpenAI 272K、Grok 200K）
+	// 长上下文档（input 超过该模型的分档线：OpenAI 272K）
 	InputLong       float64 `json:"input_long,omitempty"`
 	CachedInputLong float64 `json:"cached_input_long,omitempty"`
 	OutputLong      float64 `json:"output_long,omitempty"`
@@ -54,7 +53,7 @@ type ModelPricingOverride struct {
 	CachedInputLongPriority float64 `json:"cached_input_long_priority,omitempty"`
 	OutputLongPriority      float64 `json:"output_long_priority,omitempty"`
 
-	// 官方长上下文分档线。OpenAI 当前为 272K，xAI 当前为 200K；同步保存该值，
+	// 官方长上下文分档线。OpenAI 当前为 272K；同步保存该值，
 	// 避免新模型在只有价格覆盖时错误继承全局默认阈值。
 	LongContextThresholdTokens int `json:"long_context_threshold_tokens,omitempty"`
 }
@@ -274,12 +273,6 @@ func CanonicalBillingModelKey(model string) string {
 	if codexModel, ok := normalizeCodexBillingModel(normalized); ok {
 		return strings.ToLower(codexModel)
 	}
-	if key := GrokMediaPricingKey(normalized); key != "" {
-		return key
-	}
-	if canonical := antigravityCanonicalPricingModel(normalized); canonical != "" {
-		return canonical
-	}
 	return strings.ToLower(normalized)
 }
 
@@ -297,9 +290,6 @@ func PricingManagementModelKey(model string) string {
 	normalized := normalizeBillingModelName(model)
 	compact := strings.NewReplacer(" ", "-", "_", "-").Replace(normalized)
 	if compact == "codex-auto-review" {
-		return compact
-	}
-	if isAntigravityPricingAlias(compact) {
 		return compact
 	}
 	return CanonicalBillingModelKey(normalized)
@@ -320,36 +310,6 @@ func daybreakPricingAliasKey(model string) string {
 		return normalized
 	}
 	return ""
-}
-
-func antigravityCanonicalPricingModel(model string) string {
-	normalized := normalizeBillingModelName(model)
-	if normalized == "" {
-		return ""
-	}
-	lower := strings.ToLower(strings.TrimSpace(normalized))
-	if strings.HasPrefix(lower, "gemini-") {
-		for _, suffix := range []string{"-high", "-medium", "-low", "-tiered"} {
-			if strings.HasSuffix(lower, suffix) {
-				return strings.TrimSuffix(lower, suffix)
-			}
-		}
-	}
-	if strings.HasPrefix(lower, "claude-") {
-		if strings.HasSuffix(lower, "-thinking") {
-			return strings.TrimSuffix(lower, "-thinking")
-		}
-		for _, suffix := range []string{"-high", "-medium", "-low"} {
-			if strings.HasSuffix(lower, suffix) {
-				return strings.TrimSuffix(lower, suffix)
-			}
-		}
-	}
-	return ""
-}
-
-func isAntigravityPricingAlias(model string) bool {
-	return antigravityCanonicalPricingModel(model) != ""
 }
 
 // PricingAliasTarget reports the canonical fallback for an independently

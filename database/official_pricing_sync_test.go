@@ -21,7 +21,7 @@ func TestOfficialPricingSyncConfigLifecycleSQLite(t *testing.T) {
 	if err != nil {
 		t.Fatalf("Get initial config: %v", err)
 	}
-	if initial.Enabled || initial.IntervalMinutes != 1440 || !initial.IncludeOpenAI || !initial.IncludeGrok {
+	if initial.Enabled || initial.IntervalMinutes != 1440 || !initial.IncludeOpenAI {
 		t.Fatalf("unexpected initial config: %+v", initial)
 	}
 
@@ -29,24 +29,23 @@ func TestOfficialPricingSyncConfigLifecycleSQLite(t *testing.T) {
 		Enabled:         true,
 		IntervalMinutes: 360,
 		IncludeOpenAI:   true,
-		IncludeGrok:     false,
 	})
 	if err != nil {
 		t.Fatalf("Update config: %v", err)
 	}
-	if !updated.Enabled || updated.IntervalMinutes != 360 || !updated.IncludeOpenAI || updated.IncludeGrok {
+	if !updated.Enabled || updated.IntervalMinutes != 360 || !updated.IncludeOpenAI {
 		t.Fatalf("unexpected updated config: %+v", updated)
 	}
 
 	attempted := time.Now().UTC().Truncate(time.Millisecond)
-	if err := db.RecordOfficialPricingSyncResult(ctx, attempted, errors.New("temporary upstream error"), []string{"grok warning"}); err != nil {
+	if err := db.RecordOfficialPricingSyncResult(ctx, attempted, errors.New("temporary upstream error"), []string{"pricing warning"}); err != nil {
 		t.Fatalf("Record failed result: %v", err)
 	}
 	failed, err := db.GetOfficialPricingSyncConfig(ctx)
 	if err != nil {
 		t.Fatalf("Get failed result: %v", err)
 	}
-	if !failed.LastAttemptAt.Valid || failed.LastSuccessAt.Valid || failed.LastError == "" || failed.LastWarning != "grok warning" {
+	if !failed.LastAttemptAt.Valid || failed.LastSuccessAt.Valid || failed.LastError == "" || failed.LastWarning != "pricing warning" {
 		t.Fatalf("unexpected failed state: %+v", failed)
 	}
 
@@ -126,7 +125,6 @@ func TestOfficialPricingSyncConfigUpgradesLegacyTableSQLite(t *testing.T) {
 		enabled BOOLEAN NOT NULL DEFAULT FALSE,
 		interval_minutes INTEGER NOT NULL DEFAULT 1440,
 		include_openai BOOLEAN NOT NULL DEFAULT TRUE,
-		include_grok BOOLEAN NOT NULL DEFAULT TRUE,
 		last_attempt_at TIMESTAMP NULL,
 		last_success_at TIMESTAMP NULL,
 		last_error TEXT NOT NULL DEFAULT '',
@@ -143,7 +141,7 @@ func TestOfficialPricingSyncConfigUpgradesLegacyTableSQLite(t *testing.T) {
 	if err != nil {
 		t.Fatalf("Get legacy config: %v", err)
 	}
-	if !cfg.Enabled || cfg.IntervalMinutes != 360 || !cfg.IncludeClaude {
+	if !cfg.Enabled || cfg.IntervalMinutes != 360 || !cfg.IncludeOpenAI {
 		t.Fatalf("legacy config not upgraded: %+v", cfg)
 	}
 }

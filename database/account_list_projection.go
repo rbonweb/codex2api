@@ -19,10 +19,6 @@ func (db *DB) ListAccountListProjection(ctx context.Context, channel string) ([]
 			upstream_type text, email text, base_url text, plan_type text,
 			models jsonb, api_key text, refresh_token text, scheduler_priority text,
 			avatar_url text, verified_email boolean, project_id text,
-			antigravity_sync_error text, antigravity_sync_warning text,
-			antigravity_permissions text, antigravity_entitlements text, antigravity_quota text,
-			claude_usage_probe_at text, claude_usage_probe_error text,
-			claude_auth_kind text,
 			subscription_expires_at text, subscription_sync_state text, subscription_grace_until text
 		)`
 	credentialColumns := `
@@ -37,13 +33,6 @@ func (db *DB) ListAccountListProjection(ctx context.Context, channel string) ([]
 		COALESCE(account_public.avatar_url, ''),
 		COALESCE(account_public.verified_email, false),
 		COALESCE(account_public.project_id, ''),
-		COALESCE(account_public.antigravity_sync_error, ''),
-		COALESCE(account_public.antigravity_sync_warning, ''),
-		COALESCE(NULLIF(account_public.antigravity_permissions, ''), account_public.antigravity_entitlements, ''),
-		COALESCE(account_public.antigravity_quota, ''),
-		COALESCE(account_public.claude_usage_probe_at, ''),
-		COALESCE(account_public.claude_usage_probe_error, ''),
-		COALESCE(account_public.claude_auth_kind, ''),
 		COALESCE(account_public.subscription_expires_at, ''),
 		COALESCE(account_public.subscription_sync_state, ''),
 		COALESCE(account_public.subscription_grace_until, '')`
@@ -62,13 +51,6 @@ func (db *DB) ListAccountListProjection(ctx context.Context, channel string) ([]
 			COALESCE(json_extract(credentials, '$.avatar_url'), ''),
 			CASE WHEN COALESCE(json_extract(credentials, '$.verified_email'), 0) <> 0 THEN 1 ELSE 0 END,
 			COALESCE(json_extract(credentials, '$.project_id'), ''),
-			COALESCE(json_extract(credentials, '$.antigravity_sync_error'), ''),
-			COALESCE(json_extract(credentials, '$.antigravity_sync_warning'), ''),
-			COALESCE(NULLIF(json_extract(credentials, '$.antigravity_permissions'), ''), json_extract(credentials, '$.antigravity_entitlements'), '{}'),
-			COALESCE(json_extract(credentials, '$.antigravity_quota'), '{}'),
-			COALESCE(json_extract(credentials, '$.claude_usage_probe_at'), ''),
-			COALESCE(json_extract(credentials, '$.claude_usage_probe_error'), ''),
-			COALESCE(json_extract(credentials, '$.claude_auth_kind'), ''),
 			COALESCE(json_extract(credentials, '$.subscription_expires_at'), ''),
 			COALESCE(json_extract(credentials, '$.subscription_sync_state'), ''),
 			COALESCE(json_extract(credentials, '$.subscription_grace_until'), '')`
@@ -95,10 +77,6 @@ func (db *DB) ListAccountListProjection(ctx context.Context, channel string) ([]
 	if err := rows.Err(); err != nil {
 		return nil, err
 	}
-	rows.Close()
-	if err := db.HydrateGrokDisplay(ctx, result); err != nil {
-		return nil, err
-	}
 	return result, nil
 }
 
@@ -111,8 +89,6 @@ func scanAccountListProjection(scanner accountProjectionScanner) (*AccountRow, e
 	var cooldownRaw, tagsRaw, createdRaw, updatedRaw interface{}
 	var upstreamType, email, baseURL, planType, schedulerPriority string
 	var avatarURL, projectID string
-	var antigravitySyncError, antigravitySyncWarning, antigravityPermissions, antigravityQuota string
-	var claudeUsageProbeAt, claudeUsageProbeError, claudeAuthKind string
 	var subscriptionExpiresAt, subscriptionSyncState, subscriptionGraceUntil string
 	var modelsRaw interface{}
 	var hasAPIKey, hasRefreshToken, verifiedEmail bool
@@ -123,8 +99,6 @@ func scanAccountListProjection(scanner accountProjectionScanner) (*AccountRow, e
 		&upstreamType, &email, &baseURL, &planType, &modelsRaw,
 		&hasAPIKey, &hasRefreshToken, &schedulerPriority,
 		&avatarURL, &verifiedEmail, &projectID,
-		&antigravitySyncError, &antigravitySyncWarning, &antigravityPermissions, &antigravityQuota,
-		&claudeUsageProbeAt, &claudeUsageProbeError, &claudeAuthKind,
 		&subscriptionExpiresAt, &subscriptionSyncState, &subscriptionGraceUntil,
 	); err != nil {
 		return nil, fmt.Errorf("扫描账号列表投影失败: %w", err)
@@ -162,29 +136,6 @@ func scanAccountListProjection(scanner accountProjectionScanner) (*AccountRow, e
 	}
 	if trimmed := strings.TrimSpace(projectID); trimmed != "" {
 		row.Credentials["project_id"] = trimmed
-	}
-	if trimmed := strings.TrimSpace(antigravitySyncError); trimmed != "" {
-		row.Credentials["antigravity_sync_error"] = trimmed
-	}
-	if trimmed := strings.TrimSpace(antigravitySyncWarning); trimmed != "" {
-		row.Credentials["antigravity_sync_warning"] = trimmed
-	}
-	if trimmed := strings.TrimSpace(antigravityPermissions); trimmed != "" && trimmed != "{}" {
-		row.Credentials["antigravity_permissions"] = trimmed
-	}
-	if trimmed := strings.TrimSpace(antigravityQuota); trimmed != "" && trimmed != "{}" {
-		row.Credentials["antigravity_quota"] = trimmed
-	}
-	if trimmed := strings.TrimSpace(claudeUsageProbeAt); trimmed != "" {
-		row.Credentials["claude_usage_probe_at"] = trimmed
-	}
-	if trimmed := strings.TrimSpace(claudeUsageProbeError); trimmed != "" {
-		row.Credentials["claude_usage_probe_error"] = trimmed
-	}
-	// Claude 凭据形态(oauth / setup_token)参与列表筛选与 summary 计数;投影缺了它会让
-	// 所有 Claude 账号都被推断成 oauth,Setup Token 页签恒为 0。
-	if trimmed := strings.TrimSpace(claudeAuthKind); trimmed != "" {
-		row.Credentials["claude_auth_kind"] = trimmed
 	}
 	// 订阅状态筛选按快照行计算业务状态（到期/宽限期/同步状态）;投影缺了这三个键会让
 	// 全部账号被判成"状态未知"。

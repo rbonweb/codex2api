@@ -16,17 +16,6 @@ const (
 	UserBillingModePerSecond = "per_second"
 )
 
-// grokMediaUnitCosts 是 xAI 官方 Imagine 价目快照(docs.x.ai/developers/pricing,
-// 2026-09-28):生图 USD/张,生视频 USD/秒。未收录的型号上游成本记为未定价(0),
-// 由定价页提示管理员补填,而不是套用文本 token 价。
-var grokMediaUnitCosts = map[string]float64{
-	"grok-imagine-image":         0.02,
-	"grok-imagine-image-2.0":     0.04,
-	"grok-imagine-image-quality": 0.05,
-	"grok-imagine-video":         0.05,
-	"grok-imagine-video-1.5":     0.08,
-}
-
 // GrokMediaPricingKey 返回 Grok Imagine 媒体模型的规范定价键;非媒体模型返回空串。
 // 裸别名 grok-imagine 与网关的生图归一一致,指向质量档;video-1.5 的 -preview
 // 发布名与正式名共用一行价格。
@@ -54,10 +43,6 @@ func MediaBillingUnit(model string) string {
 		return MediaUnitImage
 	}
 	return ""
-}
-
-func grokMediaBasePricing(key string) *ModelPricing {
-	return &ModelPricing{MediaUnitCost: grokMediaUnitCosts[key]}
 }
 
 // IsUnitUserBillingMode 判断用户计费模式是否按媒体单位(张/次/秒)结算,

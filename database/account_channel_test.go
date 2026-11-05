@@ -34,8 +34,9 @@ func TestNormalizeAccountGroupChannel(t *testing.T) {
 		want string
 	}{
 		{in: "codex", want: AccountGroupChannelCodex},
-		{in: " GROK ", want: AccountGroupChannelGrok},
-		{in: "Antigravity", want: AccountGroupChannelAntigravity},
+		{in: " GROK ", want: AccountGroupChannelCodex},
+		{in: "Antigravity", want: AccountGroupChannelCodex},
+		{in: "claude", want: AccountGroupChannelCodex},
 		{in: "", want: AccountGroupChannelCodex},
 		{in: "other", want: AccountGroupChannelCodex},
 	}
@@ -58,83 +59,48 @@ func TestSQLiteListAccountListProjectionByChannel(t *testing.T) {
 	if err != nil {
 		t.Fatalf("insert codex account: %v", err)
 	}
-	grokID, err := db.InsertAccountWithUpstream(ctx, "grok", "xai", "oauth", map[string]interface{}{
-		"upstream_type": "grok",
-		"api_key":       "grok-secret",
+	otherID, err := db.InsertAccountWithUpstream(ctx, "codex-two", "openai", "oauth", map[string]interface{}{
+		"refresh_token":  "codex-secret",
+		"avatar_url":     "https://example.com/avatar.png",
+		"verified_email": true,
+		"project_id":     "project-1",
 	}, "")
 	if err != nil {
-		t.Fatalf("insert grok account: %v", err)
-	}
-	antigravityID, err := db.InsertAccountWithUpstream(ctx, "antigravity", "google", "oauth", map[string]interface{}{
-		"upstream_type":            "antigravity",
-		"refresh_token":            "antigravity-secret",
-		"avatar_url":               "https://example.com/avatar.png",
-		"verified_email":           true,
-		"project_id":               "project-1",
-		"antigravity_sync_error":   "sync failed",
-		"antigravity_sync_warning": "credits snapshot preserved",
-		"antigravity_permissions":  `{"allowed":false}`,
-		"antigravity_quota":        `{"models":[],"forbidden":true}`,
-	}, "")
-	if err != nil {
-		t.Fatalf("insert antigravity account: %v", err)
-	}
-	claudeID, err := db.InsertAccountWithUpstream(ctx, "claude", "anthropic", "oauth", map[string]interface{}{
-		"upstream_type":            "claude",
-		"access_token":             "claude-secret",
-		"claude_usage_probe_at":    "2026-08-29T05:00:00Z",
-		"claude_usage_probe_error": "",
-		"models":                   []string{"claude-sonnet-4-5"},
-	}, "")
-	if err != nil {
-		t.Fatalf("insert Claude account: %v", err)
+		t.Fatalf("insert second codex account: %v", err)
 	}
 
-	tests := []struct {
-		channel string
-		wantID  int64
-	}{
-		{channel: UpstreamChannelCodex, wantID: codexID},
-		{channel: UpstreamChannelGrok, wantID: grokID},
-		{channel: UpstreamChannelAntigravity, wantID: antigravityID},
-		{channel: UpstreamChannelClaude, wantID: claudeID},
-	}
-	for _, tt := range tests {
-		t.Run(tt.channel, func(t *testing.T) {
-			rows, err := db.ListAccountListProjection(ctx, tt.channel)
+	for _, channel := range []string{UpstreamChannelAuto, UpstreamChannelCodex} {
+		t.Run("channel "+channel, func(t *testing.T) {
+			rows, err := db.ListAccountListProjection(ctx, channel)
 			if err != nil {
-				t.Fatalf("ListAccountListProjection(%q) error: %v", tt.channel, err)
+				t.Fatalf("ListAccountListProjection(%q) error: %v", channel, err)
 			}
-			if len(rows) != 1 || rows[0].ID != tt.wantID {
-				t.Fatalf("ListAccountListProjection(%q) = %+v, want id %d", tt.channel, rows, tt.wantID)
+			if len(rows) != 2 || rows[0].ID != codexID || rows[1].ID != otherID {
+				t.Fatalf("ListAccountListProjection(%q) = %+v, want ids %d and %d", channel, rows, codexID, otherID)
 			}
-			if tt.channel == UpstreamChannelAntigravity && (rows[0].GetCredential("avatar_url") == "" || !rows[0].GetCredentialBool("verified_email") || rows[0].GetCredential("project_id") != "project-1" || rows[0].GetCredential("antigravity_sync_error") != "sync failed" || rows[0].GetCredential("antigravity_sync_warning") == "" || rows[0].GetCredential("antigravity_permissions") == "" || rows[0].GetCredential("antigravity_quota") == "") {
-				t.Fatalf("Antigravity projection omitted control-plane status fields: %#v", rows[0].Credentials)
-			}
-			if tt.channel == UpstreamChannelClaude && (rows[0].GetCredential("claude_usage_probe_at") == "" || rows[0].GetCredential("claude_usage_probe_error") != "" || len(rows[0].GetCredentialStringSlice("models")) != 1) {
-				t.Fatalf("Claude projection omitted sampling metadata: %#v", rows[0].Credentials)
+			if rows[1].GetCredential("avatar_url") == "" || !rows[1].GetCredentialBool("verified_email") || rows[1].GetCredential("project_id") != "project-1" {
+				t.Fatalf("projection omitted control-plane status fields: %#v", rows[1].Credentials)
 			}
 		})
 	}
 }
 
 func TestReplaceAccountCredentialsCASUpdatesCanonicalFamily(t *testing.T) {
-	db, err := New("sqlite", filepath.Join(t.TempDir(), "antigravity-family-cas.db"))
+	db, err := New("sqlite", filepath.Join(t.TempDir(), "credential-family-cas.db"))
 	if err != nil {
 		t.Fatal(err)
 	}
 	defer db.Close()
 
 	ctx := context.Background()
-	id, err := db.InsertAccountWithUpstream(ctx, "antigravity", "google", "oauth", map[string]interface{}{
-		"upstream_type":        "antigravity",
+	id, err := db.InsertAccountWithUpstream(ctx, "codex-cas", "openai", "oauth", map[string]interface{}{
 		"refresh_token":        "old-refresh",
-		"credential_family_id": "ag_old",
+		"credential_family_id": "cf_old",
 	}, "")
 	if err != nil {
 		t.Fatal(err)
 	}
-	newGeneration, applied, err := db.ReplaceAccountCredentialsCAS(ctx, id, 1, "ag_new", map[string]any{
+	newGeneration, applied, err := db.ReplaceAccountCredentialsCAS(ctx, id, 1, "cf_new", map[string]any{
 		"refresh_token": "new-refresh",
 	})
 	if err != nil || !applied || newGeneration != 2 {
@@ -144,33 +110,32 @@ func TestReplaceAccountCredentialsCASUpdatesCanonicalFamily(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if row.CredentialGeneration != 2 || row.CredentialFamilyID != "ag_new" || row.GetCredential("credential_family_id") != "ag_new" || row.GetCredential("refresh_token") != "new-refresh" {
+	if row.CredentialGeneration != 2 || row.CredentialFamilyID != "cf_new" || row.GetCredential("credential_family_id") != "cf_new" || row.GetCredential("refresh_token") != "new-refresh" {
 		t.Fatalf("updated row = generation %d family %q credentials %#v", row.CredentialGeneration, row.CredentialFamilyID, row.Credentials)
 	}
-	if _, applied, err := db.ReplaceAccountCredentialsCAS(ctx, id, 1, "ag_stale", map[string]any{"refresh_token": "stale"}); err != nil || applied {
+	if _, applied, err := db.ReplaceAccountCredentialsCAS(ctx, id, 1, "cf_stale", map[string]any{"refresh_token": "stale"}); err != nil || applied {
 		t.Fatalf("stale ReplaceAccountCredentialsCAS() applied=%v err=%v", applied, err)
 	}
 }
 
 func TestUpdateAccountCredentialsCASKeepsEmbeddedFamilyCanonical(t *testing.T) {
-	db, err := New("sqlite", filepath.Join(t.TempDir(), "antigravity-family-refresh-cas.db"))
+	db, err := New("sqlite", filepath.Join(t.TempDir(), "credential-family-refresh-cas.db"))
 	if err != nil {
 		t.Fatal(err)
 	}
 	defer db.Close()
 
 	ctx := context.Background()
-	id, err := db.InsertAccountWithUpstream(ctx, "antigravity", "google", "oauth", map[string]interface{}{
-		"upstream_type":        "antigravity",
+	id, err := db.InsertAccountWithUpstream(ctx, "codex-cas", "openai", "oauth", map[string]interface{}{
 		"refresh_token":        "old-refresh",
-		"credential_family_id": "ag_canonical",
+		"credential_family_id": "cf_canonical",
 	}, "")
 	if err != nil {
 		t.Fatal(err)
 	}
 	newGeneration, applied, err := db.UpdateAccountCredentialsCAS(ctx, id, 1, map[string]any{
 		"refresh_token":        "rotated-refresh",
-		"credential_family_id": "ag_drifted",
+		"credential_family_id": "cf_drifted",
 	})
 	if err != nil || !applied || newGeneration != 2 {
 		t.Fatalf("UpdateAccountCredentialsCAS() = generation %d applied %v err %v", newGeneration, applied, err)
@@ -179,62 +144,8 @@ func TestUpdateAccountCredentialsCASKeepsEmbeddedFamilyCanonical(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if row.CredentialGeneration != 2 || row.CredentialFamilyID != "ag_canonical" || row.GetCredential("credential_family_id") != "ag_canonical" || row.GetCredential("refresh_token") != "rotated-refresh" {
+	if row.CredentialGeneration != 2 || row.CredentialFamilyID != "cf_canonical" || row.GetCredential("credential_family_id") != "cf_canonical" || row.GetCredential("refresh_token") != "rotated-refresh" {
 		t.Fatalf("updated row = generation %d family %q credentials %#v", row.CredentialGeneration, row.CredentialFamilyID, row.Credentials)
-	}
-}
-
-func TestSQLiteListAccountListProjectionCarriesClaudeAuthKind(t *testing.T) {
-	db, err := New("sqlite", filepath.Join(t.TempDir(), "account-list-projection-claude-auth-kind.db"))
-	if err != nil {
-		t.Fatalf("New(sqlite) error: %v", err)
-	}
-	defer db.Close()
-	ctx := context.Background()
-	setupID, err := db.InsertAccountWithUpstream(ctx, "claude-setup", "anthropic", "claude", map[string]interface{}{
-		"upstream_type":    "claude",
-		"access_token":     "sk-ant-oat01-secret",
-		"claude_auth_kind": "setup_token",
-	}, "")
-	if err != nil {
-		t.Fatal(err)
-	}
-	oauthID, err := db.InsertAccountWithUpstream(ctx, "claude-oauth", "anthropic", "claude", map[string]interface{}{
-		"upstream_type": "claude",
-		"access_token":  "at",
-		"refresh_token": "rt",
-	}, "")
-	if err != nil {
-		t.Fatal(err)
-	}
-	apiID, err := db.InsertAccountWithUpstream(ctx, "claude-api", "anthropic", "claude", map[string]interface{}{
-		"upstream_type": "claude", "claude_auth_kind": "api_key", "claude_base_url": "https://example.com/v1", "access_token": "api-secret",
-	}, "")
-	if err != nil {
-		t.Fatal(err)
-	}
-	rows, err := db.ListAccountListProjection(ctx, UpstreamChannelClaude)
-	if err != nil {
-		t.Fatal(err)
-	}
-	byID := map[int64]*AccountRow{}
-	for _, row := range rows {
-		byID[row.ID] = row
-	}
-	if got := byID[apiID]; got == nil || got.GetCredential("claude_auth_kind") != "api_key" || got.GetCredential("access_token") != "" || got.GetCredential("refresh_token") != "" {
-		t.Fatal("API key projection must carry auth kind without secret credentials")
-	}
-	if got := byID[setupID].GetCredential("claude_auth_kind"); got != "setup_token" {
-		t.Fatalf("setup token projection auth kind = %q", got)
-	}
-	if got := byID[setupID].GetCredential("access_token"); got != "" {
-		t.Fatalf("projection must never carry the access token, got %q", got)
-	}
-	if got := byID[oauthID].GetCredential("claude_auth_kind"); got != "" {
-		t.Fatalf("legacy oauth row must keep an empty auth kind in the projection, got %q", got)
-	}
-	if got := byID[oauthID].GetCredential("refresh_token"); got != "configured" {
-		t.Fatalf("refresh token presence marker = %q", got)
 	}
 }
 

@@ -229,36 +229,6 @@ func TestIntelligenceCheckQuestionRotationAfterDisablingEarlierQuestion(t *testi
 		t.Fatal(third.Question)
 	}
 }
-func TestIntelligenceCheckRestoreSkipsChangedGroupChannel(t *testing.T) {
-	db := intelligenceDB(t)
-	ctx := context.Background()
-	now := time.Now().UTC()
-	id := intelligenceAccount(t, db)
-	old, _ := db.CreateAccountGroup(ctx, "old", "", "", 0, 0, sql.NullInt64{})
-	target, _ := db.CreateAccountGroup(ctx, "target", "", "", 0, 0, sql.NullInt64{})
-	db.SetAccountGroups(ctx, id, []int64{old})
-	s, _ := db.GetIntelligenceCheckSettings(ctx)
-	s.Action = "switch_group"
-	s.TargetGroupID = target
-	s.DegradeThreshold = 1
-	if _, e := db.SaveIntelligenceCheckSettings(ctx, s); e != nil {
-		t.Fatal(e)
-	}
-	intelligenceRun(t, db, id, now, "29")
-	grok := "grok"
-	if e := db.UpdateAccountGroup(ctx, old, nil, nil, nil, &UpdateAccountGroupOpts{Channel: &grok}); e != nil {
-		t.Fatal(e)
-	}
-	run := intelligenceRun(t, db, id, now.Add(time.Minute), "21")
-	groups, e := db.GetAccountGroupIDs(ctx, id)
-	if e != nil || len(groups) != 0 {
-		t.Fatal("restored incompatible original group", groups, e)
-	}
-	stored, e := db.GetIntelligenceCheckRun(ctx, run.ID)
-	if e != nil || !strings.Contains(stored.ActionMessage, "incompatible") {
-		t.Fatal(stored.ActionMessage, e)
-	}
-}
 func TestIntelligenceCheckPendingRecoveryIgnoresNewTargetRemoval(t *testing.T) {
 	db := intelligenceDB(t)
 	ctx := context.Background()
@@ -330,38 +300,6 @@ func TestIntelligenceCheckClaimRejectsRemovedTargetBeforeSending(t *testing.T) {
 	stored, e := db.GetIntelligenceCheckRun(ctx, ids[0])
 	if e != nil || stored.Status != "interrupted" || !strings.Contains(stored.Error, "target") {
 		t.Fatal(stored.Status, stored.Error, e)
-	}
-}
-func TestIntelligenceCheckRestorePreservesUnchangedLegacyMixedGroup(t *testing.T) {
-	db := intelligenceDB(t)
-	ctx := context.Background()
-	now := time.Now().UTC()
-	id, e := db.InsertAccountWithUpstream(ctx, "legacy claude", "anthropic", "oauth", map[string]interface{}{"upstream_type": "claude"}, "")
-	if e != nil {
-		t.Fatal(e)
-	}
-	original, _ := db.CreateAccountGroup(ctx, "legacy mixed", "", "", 0, 0, sql.NullInt64{})
-	target, _ := db.CreateAccountGroup(ctx, "claude target", "", "", 0, 0, sql.NullInt64{})
-	claude := "claude"
-	if e = db.UpdateAccountGroup(ctx, target, nil, nil, nil, &UpdateAccountGroupOpts{Channel: &claude}); e != nil {
-		t.Fatal(e)
-	}
-	// Existing provider migration intentionally preserves these mixed memberships.
-	if e = db.SetAccountGroups(ctx, id, []int64{original}); e != nil {
-		t.Fatal(e)
-	}
-	s, _ := db.GetIntelligenceCheckSettings(ctx)
-	s.Action = "switch_group"
-	s.TargetGroupID = target
-	s.DegradeThreshold = 1
-	if _, e = db.SaveIntelligenceCheckSettings(ctx, s); e != nil {
-		t.Fatal(e)
-	}
-	intelligenceRun(t, db, id, now, "29")
-	intelligenceRun(t, db, id, now.Add(time.Minute), "21")
-	groups, e := db.GetAccountGroupIDs(ctx, id)
-	if e != nil || len(groups) != 1 || groups[0] != original {
-		t.Fatal("unchanged legacy membership was dropped", groups, e)
 	}
 }
 func TestIntelligenceCheckRunSnapshotOmitsUnrelatedQuestionBank(t *testing.T) {

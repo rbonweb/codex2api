@@ -12,7 +12,7 @@ import (
 
 func TestIntelligenceCheckNewAccountDefaults(t *testing.T) {
 	for _, action := range []string{"none", "pause", "switch_group"} {
-		for _, channel := range []string{"codex", "claude"} {
+		for _, channel := range []string{"codex"} {
 			for _, defaultEnabled := range []bool{false, true} {
 				name := action + "/" + channel + "/disabled"
 				if defaultEnabled {
@@ -38,8 +38,7 @@ func TestIntelligenceCheckNewAccountDefaults(t *testing.T) {
 						t.Fatal(err)
 					}
 					for _, account := range []struct{ platform, upstream, channel string }{
-						{"openai", "", "codex"}, {"AnThRoPiC", "", "claude"}, {"openai", "ClAuDe", "claude"},
-						{"xai", "grok", "grok"}, {"google", "antigravity", "antigravity"},
+						{"openai", "", "codex"},
 					} {
 						id, err := db.InsertAccountWithUpstream(ctx, "fixture", account.platform, "oauth", map[string]interface{}{"upstream_type": account.upstream}, "")
 						if err != nil {
@@ -49,7 +48,7 @@ func TestIntelligenceCheckNewAccountDefaults(t *testing.T) {
 						if err := db.conn.QueryRowContext(ctx, `SELECT enabled FROM intelligence_check_accounts WHERE account_id=$1`, id).Scan(&enabled); err != nil {
 							t.Fatal(err)
 						}
-						want := defaultEnabled && (account.channel == "codex" || account.channel == "claude") && (action != "switch_group" || account.channel == channel)
+						want := defaultEnabled && account.channel == "codex"
 						if enabled != want {
 							t.Errorf("%s/%s enabled=%v want=%v", account.platform, account.upstream, enabled, want)
 						}
