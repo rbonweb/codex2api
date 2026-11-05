@@ -469,6 +469,7 @@ Codex2API is not just a forwarding proxy. It is a long-running Codex gateway wit
 
 - Exposes a unified OpenAI-style API surface.
 - Serves real-time voice over WebRTC and WebSocket, plus `/v1/audio/transcriptions`, backed by ChatGPT Live.
+- Serves the GPT-Live API at `/v1/live/sessions` for voice agents: a WebSocket route where the gateway owns the audio, a WebRTC route where the client does, and delegation of requests to your own code.
 - Maintains a Refresh Token account pool and Access Token lifecycle.
 - Coordinates persistence and runtime state through PostgreSQL + Redis or SQLite + in-memory cache.
 - Provides operational observability through the `/admin` dashboard.
