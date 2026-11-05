@@ -567,7 +567,7 @@ func TestScheduledConnectionTestsOverlapAndShutdown_CodexUpstream(t *testing.T) 
 					t.Fatal("first batch did not start four attempts")
 				}
 			}
-			// A blocked first batch must not prevent dispatching the following minute.
+			// Dispatching the next minute while the first batch is blocked must return at once and must not deadlock; the claim itself is only proven by the end state below because production code offers no claim hook and polling is not allowed.
 			h.dispatchScheduledConnectionTests(ctx, now.Add(time.Minute))
 			if shutdown {
 				cancel()
@@ -588,12 +588,12 @@ func TestScheduledConnectionTestsOverlapAndShutdown_CodexUpstream(t *testing.T) 
 			}
 			if !shutdown {
 				if calls.Load() != 10 {
-					t.Fatalf("upstream attempts=%d, want one per account per minute (10)", calls.Load())
+					t.Fatalf("end state after release: upstream attempts=%d, want 10 (one per account per minute, so both overlapping minutes ran)", calls.Load())
 				}
 				for _, id := range ids {
 					jobs, err := db.ListOneShotMaintenanceJobs(ctx, id, scheduledTestJobPrefix, 10)
 					if err != nil || len(jobs) != 2 {
-						t.Fatalf("account %d jobs=%v err=%v", id, jobs, err)
+						t.Fatalf("end state after release: account %d jobs=%v err=%v, want two claimed minute slots", id, jobs, err)
 					}
 					for _, job := range jobs {
 						var result scheduledTestRecord
