@@ -59,13 +59,13 @@ func TestSendCodexInvite_Success(t *testing.T) {
 	if gotOriginator != inviteOriginator {
 		t.Errorf("originator = %q, want %q", gotOriginator, inviteOriginator)
 	}
-	// 上游要求 program_id + entrypoint + emails 三个必填字段，缺一个就是 422。
+	// The upstream requires three mandatory fields, program_id + entrypoint + emails; missing any one returns 422.
 	if body.ProgramID != DefaultProgramID || body.Entrypoint != DefaultEntrypoint || len(body.Emails) != 1 {
 		t.Errorf("upstream body = %+v", body)
 	}
 }
 
-// 上游发送响应若改用 items[] 而非 invites[]（跟踪端点就是这种形态），明细仍要能解析出来。
+// If the upstream send response uses items[] instead of invites[] (as the tracking endpoint does), the details must still parse.
 func TestSendCodexInvite_ParsesItemsAlias(t *testing.T) {
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
 		w.WriteHeader(http.StatusOK)
@@ -143,9 +143,9 @@ func TestSendCodexInvite_403KeepsUpstream(t *testing.T) {
 	}
 }
 
-// 实测的收件人级拒绝：403 + detail 为对象。账号资格完好（send/reward 都有余额），
-// 失败原因只是这个收件人已有有效邀请。必须把 message 和 failed_emails 透出来，
-// 否则前端只看到 403，会误报成「该账号没有推荐邀请资格」。
+// Observed recipient-level rejection: 403 with detail as an object. Account eligibility is intact (send/reward both have balance),
+// and the failure reason is only that this recipient already has a valid invite. The message and failed_emails must be surfaced,
+// otherwise the frontend sees only a 403 and would wrongly report "this account has no referral invite eligibility".
 func TestSendCodexInvite_ParsesRecipientRejection(t *testing.T) {
 	const upstream = `{"detail":{"message":"此人已收到推荐邀请","failed_emails":["75950465@qq.com"]}}`
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
@@ -172,13 +172,13 @@ func TestSendCodexInvite_ParsesRecipientRejection(t *testing.T) {
 	if len(res.FailedEmails) != 1 || res.FailedEmails[0] != "75950465@qq.com" {
 		t.Errorf("failed_emails = %v, want the rejected recipient", res.FailedEmails)
 	}
-	// 收件人级拒绝不是 Cloudflare 挑战，也不该被当成挑战处理。
+	// A recipient-level rejection is not a Cloudflare challenge, and must not be handled as one.
 	if res.Challenged {
 		t.Error("challenged = true, want false for a business rejection")
 	}
 }
 
-// detail 为字符串的账号级无资格必须同样解析出来。
+// Account-level ineligibility with detail as a string must be parsed the same way.
 func TestSendCodexInvite_ParsesStringDetail(t *testing.T) {
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
 		w.WriteHeader(http.StatusForbidden)
@@ -247,7 +247,7 @@ func TestSendCodexInvite_NoEmails(t *testing.T) {
 
 func TestQueryCodexInviteEligibility_ParsesCapacity(t *testing.T) {
 	var gotQuery, gotMethod string
-	// 实测响应体（截取关键字段），含双层配额：send 10/月、reward 3/月。
+	// Observed response body (key fields excerpted), with two-tier quota: send 10/month, reward 3/month.
 	const upstream = `{"should_show":true,"ineligible_reason":null,"ineligible_reason_code":null,` +
 		`"program_id":"codex_referral_consumer","entrypoint":"persistent","offer_id":"credits_1000",` +
 		`"grants":[{"recipient":"referrer","grant_type":"personal_credits","amount":1000,"reward_id":"rid-a"},` +
@@ -300,7 +300,7 @@ func TestQueryCodexInviteEligibility_ParsesCapacity(t *testing.T) {
 	}
 }
 
-// 上游没给 remaining_* 字段时必须留 nil，不能退化成 0 —— 0 会被前端当成「配额已用尽」。
+// When the upstream does not send remaining_* fields, they must stay nil, not fall back to 0. 0 would be read by the frontend as "quota used up".
 func TestQueryCodexInviteEligibility_MissingCapacityStaysNil(t *testing.T) {
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
 		w.WriteHeader(http.StatusOK)
@@ -320,7 +320,7 @@ func TestQueryCodexInviteEligibility_MissingCapacityStaysNil(t *testing.T) {
 	if res.RemainingSendCapacity != nil || res.RemainingRewardCapacity != nil {
 		t.Fatalf("capacity = (%v,%v), want both nil", res.RemainingSendCapacity, res.RemainingRewardCapacity)
 	}
-	// 上游未回显 program_id/entrypoint 时保留请求参数，不能被清空。
+	// When the upstream does not echo program_id/entrypoint, keep the request parameters; they must not be cleared.
 	if res.ProgramID != DefaultProgramID || res.Entrypoint != DefaultEntrypoint {
 		t.Errorf("program = (%q,%q), want request values preserved", res.ProgramID, res.Entrypoint)
 	}
@@ -381,7 +381,7 @@ func TestQueryCodexInviteTracking_ParsesItems(t *testing.T) {
 	if item.ReferralID != "6a70" || item.Status != "redeemed" || item.CanResend {
 		t.Errorf("item = %+v", item)
 	}
-	// invite_url / resend_available_at 上游为 null，解析后应为空串而非报错。
+	// invite_url / resend_available_at are null from the upstream; after parsing they should be empty strings, not an error.
 	if item.InviteURL != "" || item.ResendAvailableAt != "" {
 		t.Errorf("null fields = %q %q, want empty", item.InviteURL, item.ResendAvailableAt)
 	}
@@ -390,7 +390,7 @@ func TestQueryCodexInviteTracking_ParsesItems(t *testing.T) {
 	}
 }
 
-// 超限或非正的 limit 一律夹到官方默认值，避免上游 422。
+// A limit that is over the cap or not positive is always clamped to the official default, to avoid an upstream 422.
 func TestQueryCodexInviteTracking_ClampsLimit(t *testing.T) {
 	var gotQuery string
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
@@ -413,9 +413,9 @@ func TestQueryCodexInviteTracking_ClampsLimit(t *testing.T) {
 	}
 }
 
-// Cloudflare 的 managed challenge 借用 403 状态码返回挑战页 HTML。这种响应必须标成
-// Challenged 而不是当成「上游判定无资格」，否则用户会被告知账号没有推荐权限——实测同一账号
-// 连续请求会在 200 和挑战 403 之间来回跳，按状态码解读就是纯误报。
+// Cloudflare's managed challenge reuses the 403 status code to return challenge-page HTML. Such a response must be marked as
+// Challenged, not treated as "the upstream ruled the account ineligible"; otherwise the user is told the account has no referral permission. In testing, the same account
+// bounces back and forth between 200 and a challenge 403 on consecutive requests, so reading the status code is a pure false report.
 const cfChallengeBody = `<html><head><style global>body{}</style></head><body>` +
 	`<script>(function(){window._cf_chl_opt = {cRay: 'a253ab385a765121'};` +
 	`var a = document.createElement('script');a.src = '/cdn-cgi/challenge-platform/h/g/orchestrate/chl_page/v1';}());</script>` +
@@ -441,7 +441,7 @@ func TestQueryCodexInviteEligibility_DetectsCloudflareChallenge(t *testing.T) {
 	if !res.Challenged {
 		t.Fatal("challenged = false, want true for a Cloudflare challenge page")
 	}
-	// 挑战页不代表无资格：should_show 不能被置成有意义的值，HTML 也不该回给前端。
+	// A challenge page does not mean ineligible: should_show must not be set to a meaningful value, and the HTML must not be returned to the frontend.
 	if res.ShouldShow {
 		t.Error("should_show = true, want false when challenged")
 	}
@@ -477,7 +477,7 @@ func TestSendCodexInvite_DetectsCloudflareChallenge(t *testing.T) {
 	}
 }
 
-// 真正的业务 403（JSON detail）不能被误标成 Cloudflare 挑战。
+// A real business 403 (JSON detail) must not be mislabeled as a Cloudflare challenge.
 func TestInviteChallengeDetection_IgnoresBusiness403(t *testing.T) {
 	if isCloudflareChallenge(http.StatusForbidden, []byte(`{"detail":"not eligible"}`)) {
 		t.Error("business 403 JSON misdetected as a Cloudflare challenge")
@@ -490,10 +490,10 @@ func TestInviteChallengeDetection_IgnoresBusiness403(t *testing.T) {
 	}
 }
 
-// 真实挑战页把 ~7KB 的内联 SVG 图标放在挑战脚本之前，特征标记远在文档开头之外。
-// 只扫正文头部会漏判，403 就会被当成「无资格」上报给用户。
+// The real challenge page puts ~7KB of inline SVG icons before the challenge script, so the signature marker is far beyond the start of the document.
+// Scanning only the start of the body would miss it, and the 403 would be reported to the user as "not eligible".
 func TestInviteChallengeDetection_MarkerBeyondHeadOfBody(t *testing.T) {
-	// 用与真实挑战页同构的体积：先一大段 SVG path，再出现 cf_chl_opt。
+	// Use a body of the same shape and size as the real challenge page: a large block of SVG path first, then cf_chl_opt.
 	padding := strings.Repeat("M37.5324 16.8707C37.9808 15.5241 38.1363 14.0974 ", 200)
 	body := []byte(`<html><head><style global>body{}</style></head><body><svg><path d="` + padding +
 		`" /></svg><script>(function(){window._cf_chl_opt = {cRay: 'abc'};}());</script></body></html>`)
@@ -505,7 +505,7 @@ func TestInviteChallengeDetection_MarkerBeyondHeadOfBody(t *testing.T) {
 	}
 }
 
-// cookie jar 按账号隔离，避免把一个账号的 oai-sc 串到另一个账号的请求上。
+// The cookie jar is isolated per account, so one account's oai-sc does not leak into another account's requests.
 func TestInviteCookieJarIsolatedPerAccount(t *testing.T) {
 	a := &auth.Account{DBID: 1, AccountID: "acc-1"}
 	b := &auth.Account{DBID: 2, AccountID: "acc-2"}

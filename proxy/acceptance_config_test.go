@@ -18,12 +18,12 @@ import (
 	"github.com/gorilla/websocket"
 )
 
-// 场景 22: 5 秒后台 Revision 轮询、在途快照隔离与冷启动 503/1013 强阻断、LKG 保留
+// Scenario 22: 5-second background revision polling, in-flight snapshot isolation, hard blocking of cold start with 503/1013, LKG retention
 func TestAcceptanceScenario22_RuntimePollerLKGAndColdStart503(t *testing.T) {
 	gin.SetMode(gin.TestMode)
 	ResetOutputGuardStateForTest()
 
-	// 1. 冷启动未就绪拦截：HTTP 返回 503 service_unavailable
+	// 1. Cold-start not-ready block: HTTP returns 503 service_unavailable
 	t.Run("ColdStart503Block", func(t *testing.T) {
 		SetOutputGuardReadyForTest(false)
 		w := httptest.NewRecorder()
@@ -41,7 +41,7 @@ func TestAcceptanceScenario22_RuntimePollerLKGAndColdStart503(t *testing.T) {
 		}
 	})
 
-	// 2. 冷启动 WebSocket 未就绪：先发送协议 error 帧，随后发送 1013 Close 帧
+	// 2. Cold-start WebSocket not ready: first send a protocol error frame, then send a 1013 Close frame
 	t.Run("ColdStartWebSocket1013Block", func(t *testing.T) {
 		SetOutputGuardReadyForTest(false)
 		upgrader := websocket.Upgrader{CheckOrigin: func(r *http.Request) bool { return true }}
@@ -65,7 +65,7 @@ func TestAcceptanceScenario22_RuntimePollerLKGAndColdStart503(t *testing.T) {
 			_ = resp.Body.Close()
 		}
 
-		// 必须先读取到 JSON error frame
+		// Must read the JSON error frame first
 		msgType, msg, err := clientConn.ReadMessage()
 		if err != nil {
 			t.Fatalf("expected error frame before close, got err: %v", err)
@@ -74,7 +74,7 @@ func TestAcceptanceScenario22_RuntimePollerLKGAndColdStart503(t *testing.T) {
 			t.Fatalf("expected service_unavailable error frame, got: %s", string(msg))
 		}
 
-		// 随后必须收到 1013 CloseTryAgainLater 控制帧
+		// Then must receive the 1013 CloseTryAgainLater control frame
 		_, _, err = clientConn.ReadMessage()
 		if err == nil {
 			t.Fatalf("expected close error 1013, got nil")
@@ -85,7 +85,7 @@ func TestAcceptanceScenario22_RuntimePollerLKGAndColdStart503(t *testing.T) {
 		}
 	})
 
-	// 3. 在途旧快照隔离与两次 Apply 检验旧 value copy，以及非法配置被拒绝保留旧 snapshot / Ready
+	// 3. In-flight old snapshot isolation; two Applys verify the old value copy, and an invalid config is rejected while the old snapshot / Ready is kept
 	t.Run("InFlightSnapshotIsolationAndValueCopy", func(t *testing.T) {
 		ResetOutputGuardStateForTest()
 		enabledVal := true
@@ -101,13 +101,13 @@ func TestAcceptanceScenario22_RuntimePollerLKGAndColdStart503(t *testing.T) {
 			t.Fatalf("initial ApplyOutputGuardSettings failed")
 		}
 
-		// 在途请求在 turn 开始时获取快照
+		// The in-flight request takes its snapshot when the turn starts
 		inFlightSnapshot := CurrentOutputGuardConfig()
 		if inFlightSnapshot.Generation != 1 || inFlightSnapshot.MaxToolArgumentBytes != 262144 {
 			t.Fatalf("unexpected in-flight snapshot: %+v", inFlightSnapshot)
 		}
 
-		// 系统后台应用新配置 (Generation 2)
+		// The system applies the new config in the background (Generation 2)
 		gen2Bytes := int64(524288)
 		gen2 := database.OutputGuardSettings{
 			Enabled:               &enabledVal,
@@ -121,7 +121,7 @@ func TestAcceptanceScenario22_RuntimePollerLKGAndColdStart503(t *testing.T) {
 			t.Fatalf("second ApplyOutputGuardSettings failed")
 		}
 
-		// 断言在途请求持有的旧快照是不可变 value copy，绝不被新应用配置篡改
+		// Assert that the old snapshot held by the in-flight request is an immutable value copy, never altered by the newly applied config
 		if inFlightSnapshot.Generation != 1 {
 			t.Fatalf("in-flight snapshot generation was mutated! want 1, got %d", inFlightSnapshot.Generation)
 		}
@@ -129,16 +129,16 @@ func TestAcceptanceScenario22_RuntimePollerLKGAndColdStart503(t *testing.T) {
 			t.Fatalf("in-flight snapshot bytes was mutated! want 262144, got %d", inFlightSnapshot.MaxToolArgumentBytes)
 		}
 
-		// 新请求获取到的则是最新快照
+		// A new request gets the latest snapshot
 		newTurnSnapshot := CurrentOutputGuardConfig()
 		if newTurnSnapshot.Generation != 2 || newTurnSnapshot.MaxToolArgumentBytes != 524288 {
 			t.Fatalf("new turn snapshot want gen 2 / 524288 bytes, got %+v", newTurnSnapshot)
 		}
 
-		// 场景 21/22 补强: runtime 应用非法值（例如 tool > channel，或超出上限范围）被拒绝，且严格保留旧 snapshot 与 Ready 状态
+		// Scenario 21/22 reinforcement: the runtime rejects an invalid value (for example tool > channel, or out of the allowed range), and strictly keeps the old snapshot and Ready state
 		illegalSettings := database.OutputGuardSettings{
 			Enabled:               &enabledVal,
-			MaxToolArgumentBytes:  50000000, // 超过 4MiB 上限且大于 channel
+			MaxToolArgumentBytes:  50000000, // over the 4MiB limit and greater than the channel
 			MaxToolArgumentDeltas: 4096,
 			MaxChannelBytes:       2097152,
 			MaxRequestBytes:       4194304,
@@ -156,15 +156,15 @@ func TestAcceptanceScenario22_RuntimePollerLKGAndColdStart503(t *testing.T) {
 		}
 	})
 
-	// 4. 5 秒后台轮询器、同步刷新与 DB 故障保留 LKG
+	// 4. The 5-second background poller, synchronous refresh and DB failure keep the LKG
 	t.Run("PollerLKGAndFailurePreservation", func(t *testing.T) {
 		ResetOutputGuardStateForTest()
 		db, err := database.New("sqlite", filepath.Join(t.TempDir(), "poller_test.db"))
 		if err != nil {
 			t.Fatal(err)
 		}
-		// database.DB.Close 不是幂等操作（内部 close(db.logStop) 二次调用会 panic），
-		// 因此用标志位保证 cleanup 只在故障注入未提前关闭时兜底关闭一次。
+		// database.DB.Close is not idempotent (a second internal close(db.logStop) call panics),
+		// so a flag ensures cleanup closes it only once as a fallback, when fault injection has not already closed it.
 		dbClosed := false
 		t.Cleanup(func() {
 			if !dbClosed {
@@ -180,16 +180,16 @@ func TestAcceptanceScenario22_RuntimePollerLKGAndColdStart503(t *testing.T) {
 			t.Fatalf("failed to start poller")
 		}
 
-		// 触发首次 poll 确保就绪
+		// Trigger the first poll to make sure it is ready
 		_ = PollOutputGuardConfigOnceForTest(ctx, db)
 		if !IsOutputGuardReady() {
 			t.Fatalf("expected output guard to be ready after poller initial load")
 		}
 
-		// 记录当前 LKG 配置
+		// Record the current LKG config
 		lkgBefore := CurrentOutputGuardConfig()
 
-		// 更新 DB 配置
+		// Update the DB config
 		newBytes := int64(524288)
 		_, err = db.UpdateOutputGuardSettings(ctx, database.OutputGuardSettingsUpdate{
 			MaxToolArgumentBytes: &newBytes,
@@ -198,7 +198,7 @@ func TestAcceptanceScenario22_RuntimePollerLKGAndColdStart503(t *testing.T) {
 			t.Fatal(err)
 		}
 
-		// 提供单次注入 tick poll 接口快速同步，同时支持带超时的 generation 轮询同步，杜绝无断言 sleep
+		// Provide a single injected tick poll interface for fast sync, while also supporting generation polling sync with a timeout, to rule out sleeps without assertions
 		_ = PollOutputGuardConfigOnceForTest(ctx, db)
 
 		timeout := time.Now().Add(2 * time.Second)
@@ -217,19 +217,19 @@ func TestAcceptanceScenario22_RuntimePollerLKGAndColdStart503(t *testing.T) {
 
 		lkgCurrent := CurrentOutputGuardConfig()
 
-		// 模拟 DB 发生严重故障（如直接关闭连接）
+		// Simulate a severe DB failure (such as closing the connection directly)
 		if err := db.Close(); err != nil {
 			t.Fatalf("close db for fault injection: %v", err)
 		}
 		dbClosed = true
 
-		// 执行单次 poll 触发读取失败
+		// Run a single poll to trigger a read failure
 		err = PollOutputGuardConfigOnceForTest(ctx, db)
 		if err == nil {
 			t.Fatalf("expected poll on closed DB to fail")
 		}
 
-		// 断言 DB 故障后保留 last-known-good 配置，不崩溃、不清空、不降为零值
+		// Assert that after the DB failure the last-known-good config is kept, without crashing, clearing, or falling back to zero values
 		preserved := CurrentOutputGuardConfig()
 		if preserved.Generation != lkgCurrent.Generation || preserved.MaxToolArgumentBytes != lkgCurrent.MaxToolArgumentBytes {
 			t.Fatalf("LKG violated after DB failure: want %+v, got %+v", lkgCurrent, preserved)
@@ -240,9 +240,9 @@ func TestAcceptanceScenario22_RuntimePollerLKGAndColdStart503(t *testing.T) {
 	})
 }
 
-// 场景 23: 显式 Guard 关闭时，传输 Framing 依然对超大行/多行 Event 进行硬上限拦截，且保持现有 WS 48MB 容量
+// Scenario 23: when the Guard is explicitly disabled, transport framing still applies hard limits to oversized lines and multi-line events, and keeps the existing WS 48MB capacity
 func TestAcceptanceScenario23_FramingGuardOffStillBounded(t *testing.T) {
-	// 显式关闭语义 Guard 开关：配置中 Enabled=false，但传输层 Framing 硬上限必须独立生效。
+	// Explicitly turn off the semantic Guard switch: Enabled=false in the config, but the transport-layer framing hard limits must still apply independently.
 	ResetOutputGuardStateForTest()
 	t.Cleanup(ResetOutputGuardStateForTest)
 	disabledVal := false
@@ -260,7 +260,7 @@ func TestAcceptanceScenario23_FramingGuardOffStillBounded(t *testing.T) {
 		t.Fatalf("expected output guard Enabled=false for framing independence check")
 	}
 
-	// 1. 关闭语义 Guard 开关，SSE 超大无换行单行 (8 MiB) 依然被拦截
+	// 1. With the semantic Guard switch off, an oversized SSE single line with no newline (8 MiB) is still blocked
 	t.Run("SSELineCapRemainsActiveWithGuardOff", func(t *testing.T) {
 		oversizedLine := strings.Repeat("a", MaxSSELineBytes+1024)
 		err := ReadSSEStreamWithEvent(strings.NewReader(oversizedLine), func(event string, data []byte) bool {
@@ -271,7 +271,7 @@ func TestAcceptanceScenario23_FramingGuardOffStillBounded(t *testing.T) {
 		}
 	})
 
-	// 2. 多行 Event 累积超 8 MiB 依然被拦截
+	// 2. A multi-line event that accumulates over 8 MiB is still blocked
 	t.Run("SSEEventCapRemainsActiveWithGuardOff", func(t *testing.T) {
 		chunk := "data: " + strings.Repeat("b", 1<<20) + "\n"
 		oversizedEvent := strings.Repeat(chunk, 9) + "\n"
@@ -283,7 +283,7 @@ func TestAcceptanceScenario23_FramingGuardOffStillBounded(t *testing.T) {
 		}
 	})
 
-	// 3. 非流式超大 Response Body (16 MiB) 缺失路径有界拦截
+	// 3. Bounded blocking of an oversized non-streaming Response Body (16 MiB) on the path that previously lacked it
 	t.Run("ResponseBodyCapActive", func(t *testing.T) {
 		oversizedBody := strings.Repeat("c", 1024)
 		_, err := ReadBoundedResponseBody(strings.NewReader(oversizedBody), 512)
@@ -292,7 +292,7 @@ func TestAcceptanceScenario23_FramingGuardOffStillBounded(t *testing.T) {
 		}
 	})
 
-	// 4. 验证 WebSocket 容量依然为 48MB (security.MaxRequestBodySize)，未被误收紧为 8MB
+	// 4. Verify the WebSocket capacity is still 48MB (security.MaxRequestBodySize), not wrongly tightened to 8MB
 	t.Run("WSWireBudgetRemains48MB", func(t *testing.T) {
 		if security.MaxRequestBodySize != 48*1024*1024 {
 			t.Fatalf("WebSocket wire limit must remain 48MB (%d), got %d", 48*1024*1024, security.MaxRequestBodySize)

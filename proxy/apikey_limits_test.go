@@ -13,10 +13,10 @@ func TestUsageLimitedPoolMessagesTransientCarriesRetryAfter(t *testing.T) {
 	if got.RetryAfterSeconds != 15 {
 		t.Fatalf("RetryAfterSeconds = %d, want 15 (ceil)", got.RetryAfterSeconds)
 	}
-	if !strings.Contains(got.Chinese, "15 秒") || !strings.Contains(got.English, "15 seconds") {
+	if !strings.Contains(got.Chinese, "15 seconds") || !strings.Contains(got.English, "15 seconds") {
 		t.Fatalf("messages = %#v, want the wait time in both texts", got)
 	}
-	if strings.Contains(got.Chinese, "用量窗口") {
+	if strings.Contains(got.Chinese, "usage window") {
 		t.Fatal("transient throttle must not be described as an exhausted usage window")
 	}
 

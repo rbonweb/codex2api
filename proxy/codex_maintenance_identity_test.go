@@ -12,7 +12,7 @@ import (
 
 const testDesktopUserAgentConfig = `{"client_kind":"codex-desktop","os_name":"Mac OS","arch":"arm64"}`
 
-// applyMaintenanceIdentitySettings 固定版本目录后改写运行时设置，测试结束自动恢复。
+// applyMaintenanceIdentitySettings pins the version catalog, rewrites runtime settings, and restores them automatically when the test ends.
 func applyMaintenanceIdentitySettings(t *testing.T, mutate func(*RuntimeSettings)) {
 	t.Helper()
 	codexTestIdentityCache(t)
@@ -123,7 +123,7 @@ func TestQueryWhamUsageUsesUnifiedIdentity(t *testing.T) {
 	if got.Get("User-Agent") != want.UserAgent || got.Get("Originator") != "Codex Desktop" {
 		t.Fatalf("wham probe identity UA=%q Originator=%q, want %+v", got.Get("User-Agent"), got.Get("Originator"), want)
 	}
-	// 维护请求不凭空补发真实客户端不会带的身份头。
+	// Maintenance requests do not add identity headers out of nowhere that a real client would not send.
 	if got.Get("Version") != "" || got.Get(codexInstallationIDHeader) != "" || got.Get("X-Oai-Attestation") != "" {
 		t.Fatalf("wham probe must not add Version/installation headers: Version=%q installation=%q", got.Get("Version"), got.Get(codexInstallationIDHeader))
 	}

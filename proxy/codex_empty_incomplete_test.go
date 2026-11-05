@@ -189,8 +189,8 @@ func TestEmptyIncompleteNonStreamBody(t *testing.T) {
 }
 
 func TestReportStreamOutcomeFailure_SkipsRequestScoped(t *testing.T) {
-	// 空 incomplete 与容量降载一样不进账号健康度:用真实 store 与账号断言
-	// 连击与健康档位不变,并以同样的非请求维度故障做对照。
+	// An empty incomplete, like capacity load shedding, does not affect account health: assert with a real store and accounts
+	// The consecutive-failure streak and the health tier stay unchanged, and this is checked against the same non-request-scoped failure as a control.
 	store := auth.NewStore(nil, nil, &database.SystemSettings{MaxConcurrency: 1, TestConcurrency: 1, TestModel: "gpt-5.4"})
 	t.Cleanup(store.Stop)
 	account := &auth.Account{DBID: 1, AccessToken: "at-1", PlanType: "pro", AccountID: "acct-1"}

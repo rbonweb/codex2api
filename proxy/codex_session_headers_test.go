@@ -11,7 +11,7 @@ func TestApplyCodexSessionHeadersNativeShape(t *testing.T) {
 	outbound := http.Header{}
 	ApplyCodexSessionHeaders(outbound, nil, "cache-key", nil, false)
 
-	// 真实客户端的三个会话头（codex-rs/codex-api/src/endpoint/responses.rs）。
+	// The three real-client session headers (codex-rs/codex-api/src/endpoint/responses.rs).
 	for name, want := range map[string]string{
 		"Session-Id":          "cache-key",
 		"Thread-Id":           "cache-key",
@@ -21,7 +21,7 @@ func TestApplyCodexSessionHeadersNativeShape(t *testing.T) {
 			t.Fatalf("%s = %q, want %q", name, got, want)
 		}
 	}
-	// 下划线写法与 Conversation_id 都不属于真实形态。同时发新旧两套比只发旧的更可疑。
+	// The underscore spelling and Conversation_id are both outside the real shape. Sending both the new and old sets is more suspicious than sending only the old.
 	for _, name := range []string{"Session_id", "Conversation_id"} {
 		if got := outbound.Get(name); got != "" {
 			t.Fatalf("%s = %q, want empty", name, got)
@@ -30,8 +30,8 @@ func TestApplyCodexSessionHeadersNativeShape(t *testing.T) {
 }
 
 func TestApplyCodexSessionHeadersClearsLegacyLeftovers(t *testing.T) {
-	// 上游改写链路里可能已经有人写过旧头（如账号自定义头、历史透传）；native 档
-	// 必须把它们清掉，否则出站同时带两套会话头。
+	// An earlier rewrite step in the upstream path may already have written an old header (e.g. an account custom header or historical pass-through); the native tier
+	// must clear them, otherwise both sets of session headers would go out together.
 	outbound := http.Header{}
 	outbound.Set("Session_id", "stale")
 	outbound.Set("Conversation_id", "stale")
@@ -46,15 +46,15 @@ func TestApplyCodexSessionHeadersClearsLegacyLeftovers(t *testing.T) {
 }
 
 func TestApplyCodexSessionHeadersPreservesForwardedClientRequestID(t *testing.T) {
-	// x-client-request-id 已由白名单透传 + 指纹收敛定稿时不得覆盖，
-	// 否则会把已经对齐的收敛结果冲掉。
+	// x-client-request-id, already settled by the whitelist pass-through plus fingerprint convergence, must not be overwritten,
+	// otherwise the already-aligned convergence result would be overwritten.
 	outbound := http.Header{}
 	outbound.Set("X-Client-Request-Id", "converged-thread")
 
 	ApplyCodexSessionHeaders(outbound, nil, "cache-key", nil, false)
 
 	if got := outbound.Get("X-Client-Request-Id"); got != "converged-thread" {
-		t.Fatalf("X-Client-Request-Id = %q, want 保留已有取值", got)
+		t.Fatalf("X-Client-Request-Id = %q, want the existing value to be kept", got)
 	}
 }
 
@@ -135,13 +135,13 @@ func TestApplyCodexSessionHeadersFingerprintThreadMatrix(t *testing.T) {
 }
 
 func TestApplyCodexSessionHeadersSkipsEmptySessionID(t *testing.T) {
-	// 会话键为空是合法状态（stateless WS + 默认隔离时 resolveHandshakeSessionID
-	// 刻意返回空串，好让上游没有任何可绑定的连接级会话身份）。此时一个头都不该发。
+	// An empty session key is a legitimate state (with stateless WS plus default isolation, resolveHandshakeSessionID
+	// deliberately returns an empty string, so the upstream has no connection-level session identity to bind to). In that case no header should be sent at all.
 	outbound := http.Header{}
 	ApplyCodexSessionHeaders(outbound, nil, "   ", nil, false)
 
 	if len(outbound) != 0 {
-		t.Fatalf("空会话键仍写出了头: %v", outbound)
+		t.Fatalf("empty session key still wrote headers: %v", outbound)
 	}
 }
 
@@ -154,13 +154,13 @@ func TestApplyCodexSessionHeadersLegacyModeRestoresOldShape(t *testing.T) {
 		t.Fatalf("legacy HTTP Session_id = %q, want %q", got, "cache-key")
 	}
 	if got := httpHeaders.Get("Conversation_id"); got != "" {
-		t.Fatalf("legacy HTTP Conversation_id = %q, want empty（HTTP 旧行为就是删它）", got)
+		t.Fatalf("legacy HTTP Conversation_id = %q, want empty (the old HTTP behavior is to delete it)", got)
 	}
 	if got := httpHeaders.Get("Session-Id"); got != "" {
-		t.Fatalf("legacy 档不该写连字符头, got %q", got)
+		t.Fatalf("legacy mode must not write the hyphenated header, got %q", got)
 	}
 
-	// WS 握手旧行为会连带发 Conversation_id，legacy 的契约是逐路径复原。
+	// The old WS handshake behavior also sent Conversation_id, so the legacy contract is to restore each path individually.
 	wsHeaders := http.Header{}
 	ApplyCodexSessionHeaders(wsHeaders, nil, "cache-key", nil, true)
 	if got := wsHeaders.Get("Conversation_id"); got != "cache-key" {
@@ -176,27 +176,27 @@ func TestApplyCodexSessionHeadersConvergedAlignmentIsOptIn(t *testing.T) {
 
 	convergedSessionID, convergedThreadID := ConvergedCodexSessionIdentity(account, downstream)
 	if convergedSessionID == "" || convergedThreadID == "" {
-		t.Fatal("session 档未推导出收敛身份")
+		t.Fatal("session mode did not derive a converged identity")
 	}
 
-	// 默认：出站会话键仍归 resolveUpstreamSessionID 管，收敛不介入——这是本仓库
-	// 既有约束，保护的是 prompt cache 隔离语义。
+	// Default: the outbound session key still belongs to resolveUpstreamSessionID, and convergence does not intervene. This is this repository's
+	// existing constraint, which protects prompt cache isolation semantics.
 	off := http.Header{}
 	ApplyCodexSessionHeaders(off, account, "gateway-cache-key", downstream, false)
 	if got := off.Get("Session-Id"); got != "gateway-cache-key" {
-		t.Fatalf("默认档 Session-Id = %q, want 网关会话键未被收敛覆盖", got)
+		t.Fatalf("default mode Session-Id = %q, want the gateway session key not overwritten by convergence", got)
 	}
-	// thread-id 不受该约束限制：这个头此前不存在，且必须与已收敛的
-	// x-client-request-id 同值。
+	// thread-id is not subject to that constraint: this header did not exist before, and it must match the converged
+	// x-client-request-id with the same value.
 	if got := off.Get("Thread-Id"); got != convergedThreadID {
 		t.Fatalf("Thread-Id = %q, want converged %q", got, convergedThreadID)
 	}
 
-	// 显式开启后 session-id 与 metadata.session_id 对齐。
+	// After explicitly enabling it, session-id is aligned with metadata.session_id.
 	t.Setenv("CODEX_SESSION_HEADER_ALIGN_CONVERGED", "1")
 	on := http.Header{}
 	ApplyCodexSessionHeaders(on, account, "gateway-cache-key", downstream, false)
 	if got := on.Get("Session-Id"); got != convergedSessionID {
-		t.Fatalf("对齐开启后 Session-Id = %q, want converged %q", got, convergedSessionID)
+		t.Fatalf("after alignment was enabled, Session-Id = %q, want converged %q", got, convergedSessionID)
 	}
 }

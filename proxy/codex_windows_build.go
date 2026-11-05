@@ -112,7 +112,7 @@ func codexWindowsPackageVersion(ctx context.Context, client *http.Client) (strin
 	return update.BuildVersion, parts, nil
 }
 
-// FetchCodexDesktopWindowsBuild 以 Range 分片读取 MSIX 内 ASAR 的压缩前缀。
+// FetchCodexDesktopWindowsBuild reads the compressed prefix of the ASAR inside the MSIX using Range-sliced requests.
 func FetchCodexDesktopWindowsBuild(ctx context.Context, proxyURL string) (string, error) {
 	client, closeClient := codexBuildHTTPClient(codexWindowsUpdateURL, proxyURL)
 	defer closeClient()
@@ -120,7 +120,7 @@ func FetchCodexDesktopWindowsBuild(ctx context.Context, proxyURL string) (string
 	if err != nil {
 		return "", err
 	}
-	// 版本化路径并非每个 Store 版本都会上传，缺失时回退到最新包。
+	// The versioned path is not uploaded for every Store version; when it is missing, fall back to the latest package.
 	var ranges *codexRangeReader
 	fallback := false
 	for i, url := range []string{
@@ -154,8 +154,8 @@ func FetchCodexDesktopWindowsBuild(ctx context.Context, proxyURL string) (string
 	return version, nil
 }
 
-// codexWindowsBuildMatchesStore:版本化包必须与清单主次版本一致;回退的最新包常落后于
-// 清单几天(Store 先发布、包后上传),只拒绝比清单还新的异常包。
+// codexWindowsBuildMatchesStore: a versioned package must match the manifest's major and minor version; the fallback latest package often lags behind
+// the manifest by a few days (the Store publishes first and uploads the package later), so only packages newer than the manifest are rejected as abnormal.
 func codexWindowsBuildMatchesStore(build, store []int64, fallback bool) bool {
 	if !fallback {
 		return build[0] == store[0] && build[1] == store[1]
@@ -163,7 +163,7 @@ func codexWindowsBuildMatchesStore(build, store []int64, fallback bool) bool {
 	return build[0] < store[0] || build[0] == store[0] && build[1] <= store[1]
 }
 
-// codexWindowsBuildCache 以 MSIX URL+ETag+大小为键缓存解析结果:包不变时省掉数十次 Range 请求。
+// codexWindowsBuildCache caches parse results keyed by MSIX URL + ETag + size: when the package is unchanged, dozens of Range requests are skipped.
 var codexWindowsBuildCache codexWindowsBuildMemo
 
 type codexWindowsBuildMemo struct {

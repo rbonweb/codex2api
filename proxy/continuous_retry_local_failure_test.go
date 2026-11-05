@@ -547,8 +547,8 @@ func TestContinuousRetryImageReplayLimitIsLocalProtocolFailure(t *testing.T) {
 	body := recorder.Body.String()
 	// Images publishes its existing connected comment before model output, so a
 	// later local replay failure must stay in-protocol on the already-committed
-	// 200 stream. 生图流先发既有 connected 注释保活，后续本地失败必须用 SSE
-	// 错误收尾，不能伪造新的 HTTP 状态。
+	// 200 stream. The image-generation stream first sends the existing connected comment as keepalive, so later local failures must use SSE
+	// error endings, and must not fabricate a new HTTP status.
 	if calls.Load() != 1 || recorder.Code != http.StatusOK {
 		t.Fatalf("image local failure = calls %d status %d body %q", calls.Load(), recorder.Code, body)
 	}

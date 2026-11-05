@@ -21,7 +21,7 @@ type codexClientMetadataResult struct {
 	cli        codexFetchOutcome
 }
 
-// 保持上游各来源并发拉取的语义；网络完成后再持久化。
+// Keep the semantics of fetching from each upstream source concurrently; persist after the network calls finish.
 func fetchCodexClientMetadata(ctx context.Context, input codexClientMetadataInput) codexClientMetadataResult {
 	fetchers := []func() []codexClientCandidate{
 		func() []codexClientCandidate {

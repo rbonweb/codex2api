@@ -17,27 +17,27 @@ import (
 	"github.com/tidwall/sjson"
 )
 
-// codexAlphaSearchURL 是 ChatGPT 后端的 Codex standalone 联网搜索端点。
-// Codex CLI 开启 web_search = "live"（或 --search）后会调用
-// POST {base_url}/alpha/search 完成独立搜索；这与 Responses 请求里的
-// hosted tool（tools: [{"type":"web_search"}]）不是同一条链路。
+// codexAlphaSearchURL is the standalone Codex web search endpoint on the ChatGPT backend.
+// The Codex CLI calls it when web_search = "live" (or --search) is enabled
+// POST {base_url}/alpha/search performs the standalone search; this is not the same path as the
+// hosted tool (tools: [{"type":"web_search"}]) in Responses requests.
 const codexAlphaSearchURL = "https://chatgpt.com/backend-api/codex/alpha/search"
 
-// codexAlphaSearchURLForTest 允许测试替换默认 URL。生产代码不要赋值。
+// codexAlphaSearchURLForTest lets tests replace the default URL. Production code must not assign it.
 var codexAlphaSearchURLForTest = ""
 
-// 搜索请求与结果均为结构化 JSON，正常远小于该值，仅作读取护栏。
+// Search requests and results are structured JSON and are normally far smaller than this value; it is only a read guard.
 const codexAlphaSearchBodyLimit int64 = 4 << 20
 
-// codexAlphaSearchUnsupportedFields 是 standalone 搜索端点不接受、转发前需剥离的字段。
-// 新版 codex 客户端会把 Responses 风格的会话/缓存字段也塞进搜索体，而上游
-// /alpha/search 的 schema 更窄，会以 400 "Unknown parameter" 拒绝（issue #433）：
-// 同批 /responses 请求接受 prompt_cache_key，唯独搜索端点拒绝。这些字段对一次检索
-// 调用无意义，剥离不改变搜索语义。
+// codexAlphaSearchUnsupportedFields lists the fields the standalone search endpoint rejects and that must be stripped before forwarding.
+// Newer codex clients also put Responses-style session and cache fields into the search body, but the upstream
+// /alpha/search schema is narrower and rejects them with 400 "Unknown parameter" (issue #433):
+// The same batch of /responses requests accepts prompt_cache_key, but only the search endpoint rejects it. These fields are meaningless for a single search
+// call, so stripping them does not change search semantics.
 var codexAlphaSearchUnsupportedFields = []string{"prompt_cache_key"}
 
-// sanitizeCodexAlphaSearchBody 在转发前移除搜索端点不支持的字段，避免上游 400。
-// 只删已知不兼容字段，其余请求体保持原样透传。
+// sanitizeCodexAlphaSearchBody removes fields the search endpoint does not support before forwarding, to avoid an upstream 400.
+// It only removes known incompatible fields and passes the rest of the request body through unchanged.
 func sanitizeCodexAlphaSearchBody(rawBody []byte) []byte {
 	sanitized := rawBody
 	for _, field := range codexAlphaSearchUnsupportedFields {
@@ -51,10 +51,10 @@ func sanitizeCodexAlphaSearchBody(rawBody []byte) []byte {
 	return sanitized
 }
 
-// CodexAlphaSearchHandler 透传 Codex CLI 的 standalone 联网搜索（issue #359）。
+// CodexAlphaSearchHandler passes through the Codex CLI standalone web search (issue #359).
 //
-// 端点只存在于 ChatGPT 后端，用一个可调度的 ChatGPT OAuth 账号的凭据实时转发，
-// 请求体与响应（含上游错误状态码）原样透传，不在本地解析或伪造搜索结果。
+// The endpoint exists only on the ChatGPT backend. It forwards live using the credentials of one schedulable ChatGPT OAuth account,
+// and the request body and response (including upstream error status codes) pass through unchanged, with no local parsing and no fabricated search results.
 func (h *Handler) CodexAlphaSearchHandler(c *gin.Context) {
 	rawBody, err := io.ReadAll(io.LimitReader(c.Request.Body, codexAlphaSearchBodyLimit))
 	if err != nil {
@@ -96,7 +96,7 @@ func (h *Handler) CodexAlphaSearchHandler(c *gin.Context) {
 		apiKey,
 	)
 	if err != nil {
-		// 版本不可用在出站前就已拦下，是本地配置问题，不能报成上游 502。
+		// A version-unavailable error is caught before the request goes out; it is a local configuration problem and must not be reported as an upstream 502.
 		var identityErr *Error
 		if errors.As(err, &identityErr) && identityErr.Code == ErrorCodeCodexClientVersionUnavailable {
 			api.SendErrorWithStatus(c,
@@ -120,16 +120,16 @@ func (h *Handler) CodexAlphaSearchHandler(c *gin.Context) {
 	c.Data(resp.StatusCode, contentType, resp.Body)
 }
 
-// CodexAlphaSearchResponse 承载上游搜索响应原文，供 handler 原样透传。
+// CodexAlphaSearchResponse carries the raw upstream search response for the handler to pass through unchanged.
 type CodexAlphaSearchResponse struct {
 	StatusCode  int
 	ContentType string
 	Body        []byte
 }
 
-// ForwardCodexAlphaSearch 用账号凭据向 ChatGPT 后端转发 standalone 搜索请求。
-// 上游状态码与响应体原样带回（含 4xx/5xx），让 CLI 拿到真实的错误语义；
-// 仅传输层失败返回 error。
+// ForwardCodexAlphaSearch forwards a standalone search request to the ChatGPT backend using the account credentials.
+// The upstream status code and response body are returned unchanged (including 4xx/5xx), so the CLI gets the real error semantics;
+// only transport-level failures return an error.
 func ForwardCodexAlphaSearch(ctx context.Context, account *auth.Account, proxyURL string, rawBody []byte, downstreamHeaders http.Header, deviceCfg *DeviceProfileConfig, apiKey string) (*CodexAlphaSearchResponse, error) {
 	if account == nil {
 		return nil, fmt.Errorf("account is nil")
@@ -139,7 +139,7 @@ func ForwardCodexAlphaSearch(ctx context.Context, account *auth.Account, proxyUR
 		return nil, fmt.Errorf("account has no access token")
 	}
 
-	// 剥离搜索端点不支持的字段（如客户端塞进来的 prompt_cache_key），否则上游 400（issue #433）。
+	// Strip fields the search endpoint does not support (such as prompt_cache_key sent by the client), otherwise upstream returns 400 (issue #433).
 	rawBody = sanitizeCodexAlphaSearchBody(rawBody)
 
 	endpoint := codexAlphaSearchURL
@@ -147,7 +147,7 @@ func ForwardCodexAlphaSearch(ctx context.Context, account *auth.Account, proxyUR
 		endpoint = codexAlphaSearchURLForTest
 	}
 
-	// standalone 搜索是模型驱动的检索回合，上游耗时可达数十秒。
+	// A standalone search is a model-driven retrieval turn, and upstream can take tens of seconds.
 	reqCtx, cancel := context.WithTimeout(ctx, 120*time.Second)
 	defer cancel()
 	req, err := http.NewRequestWithContext(reqCtx, http.MethodPost, endpoint, strings.NewReader(string(rawBody)))
@@ -175,8 +175,8 @@ func ForwardCodexAlphaSearch(ctx context.Context, account *auth.Account, proxyUR
 		req.Header.Set("chatgpt-account-id", accountID)
 	}
 
-	// 复用网关同款 transport（支持 uTLS Chrome 指纹），与 /responses、清单透传一致。
-	// 池化而非每次新建，避免一次性 uTLS transport 泄漏连接（issue #446）。
+	// Reuse the same gateway transport (with uTLS Chrome fingerprint support) as /responses and the manifest passthrough.
+	// Pool the transport instead of creating one per request, to avoid leaking connections from one-off uTLS transports (issue #446).
 	client := getCodexMaintenanceClient(account, proxyURL)
 	resp, err := executeHTTPWithContinuousRetryKeepalive(reqCtx, func() (*http.Response, error) {
 		return client.Do(req)
@@ -191,7 +191,7 @@ func ForwardCodexAlphaSearch(ctx context.Context, account *auth.Account, proxyUR
 		return nil, fmt.Errorf("read codex search response: %w", err)
 	}
 	if resp.StatusCode < 200 || resp.StatusCode >= 300 {
-		log.Printf("codex alpha search 上游返回 %d: %s", resp.StatusCode, truncateForLog(body, 512))
+		log.Printf("codex alpha search upstream returned %d: %s", resp.StatusCode, truncateForLog(body, 512))
 	}
 	return &CodexAlphaSearchResponse{
 		StatusCode:  resp.StatusCode,

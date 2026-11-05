@@ -9,7 +9,7 @@ import (
 	"strings"
 )
 
-// 65554 = 最新稳定版和预览版 + 文件 + 属性；避免拉取整个历史版本清单。
+// 65554 = latest stable and preview versions + files + properties; avoids fetching the full version history list.
 const codexLatestMarketplaceQuery = `{"filters":[{"criteria":[{"filterType":7,"value":"openai.chatgpt"}]}],"flags":65554}`
 
 var codexVSCodeTargets = []string{"darwin-arm64", "darwin-x64", "win32-arm64", "win32-x64", "linux-arm64", "linux-x64"}

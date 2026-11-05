@@ -20,8 +20,8 @@ func fingerprintAccount(t *testing.T, mode string) *auth.Account {
 	return &auth.Account{DBID: 42, CodexFingerprintMode: mode}
 }
 
-// codexClientHeaders 模拟真实 Codex CLI 的下游请求头：带 x-codex- 前缀头（引擎特征）
-// 和连字符形式的 session-id。
+// codexClientHeaders simulates the downstream request headers of the real Codex CLI: the x-codex- prefixed headers (engine traits)
+// and the hyphenated session-id.
 func codexClientHeaders(turnMetadata, sessionID string) http.Header {
 	headers := http.Header{}
 	if turnMetadata != "" {
@@ -33,7 +33,7 @@ func codexClientHeaders(turnMetadata, sessionID string) http.Header {
 	return headers
 }
 
-// codexUUIDUnixMilli 解出 v7 UUID 前 48 bit 的毫秒时间戳，用于断言时间戳位被正确写入。
+// codexUUIDUnixMilli decodes the millisecond timestamp from the first 48 bits of a v7 UUID, used to assert that the timestamp bits were written correctly.
 func codexUUIDUnixMilli(t *testing.T, id string) int64 {
 	t.Helper()
 	u, err := uuid.Parse(id)
@@ -43,7 +43,7 @@ func codexUUIDUnixMilli(t *testing.T, id string) int64 {
 	return int64(u[0])<<40 | int64(u[1])<<32 | int64(u[2])<<24 | int64(u[3])<<16 | int64(u[4])<<8 | int64(u[5])
 }
 
-// deriveStableCodexUUID 现在只服务 installation_id：真实客户端的 installation 标识是 v4。
+// deriveStableCodexUUID now serves only installation_id: the real client's installation identifier is v4.
 func TestDeriveStableCodexUUIDIsDeterministicAndV4(t *testing.T) {
 	first := deriveStableCodexUUID("seed-a")
 	if second := deriveStableCodexUUID("seed-a"); first != second {
@@ -65,10 +65,10 @@ func TestDeriveStableCodexUUIDIsDeterministicAndV4(t *testing.T) {
 	}
 }
 
-// TestDeriveStableCodexUUIDv7 锁定 session/thread/window 的派生：真实客户端这三个标识
-// 是 UUIDv7，收敛值必须同为 v7 且时间戳位被精确写入（否则按 UUID 排序会暴露，见 #536）。
+// TestDeriveStableCodexUUIDv7 locks down the derivation of session/thread/window: the real client's three identifiers
+// are UUIDv7, so converged values must also be v7 and their timestamp bits must be written precisely (otherwise sorting by UUID would expose them, see #536).
 func TestDeriveStableCodexUUIDv7(t *testing.T) {
-	const ts int64 = 1786949015072 // 抓包量级的毫秒时间戳
+	const ts int64 = 1786949015072 // millisecond timestamp at packet-capture magnitude
 	first := deriveStableCodexUUIDv7("seed-a", ts)
 	if second := deriveStableCodexUUIDv7("seed-a", ts); first != second {
 		t.Fatalf("deriveStableCodexUUIDv7(%q) = %q then %q, want identical values", "seed-a", first, second)
@@ -92,8 +92,8 @@ func TestDeriveStableCodexUUIDv7(t *testing.T) {
 	}
 }
 
-// TestConvergedIdentityUUIDVersionsAndTimestamp 走完整推导，断言 session/thread/window
-// 是 v7 且时间戳锚定在账号加入时间的散布窗口内，而 installation 仍是 v4。
+// TestConvergedIdentityUUIDVersionsAndTimestamp runs the full derivation and asserts that session/thread/window
+// are v7 with timestamps anchored within the spread window of the account join time, while installation remains v4.
 func TestConvergedIdentityUUIDVersionsAndTimestamp(t *testing.T) {
 	const addedAtMilli int64 = 1780000000000
 	account := &auth.Account{DBID: 42, CodexFingerprintMode: auth.CodexFingerprintModeSession}
@@ -123,7 +123,7 @@ func TestConvergedIdentityUUIDVersionsAndTimestamp(t *testing.T) {
 		}
 	}
 
-	// installation 真实是 v4，不受 v7 改动影响。
+	// installation really is v4 and is not affected by the v7 change.
 	installation, err := uuid.Parse(ids.installationID)
 	if err != nil {
 		t.Fatalf("installation id %q not a valid uuid: %v", ids.installationID, err)
@@ -132,7 +132,7 @@ func TestConvergedIdentityUUIDVersionsAndTimestamp(t *testing.T) {
 		t.Fatalf("installation id version = %d, want 4", installation.Version())
 	}
 
-	// session 与 thread 种子不同，时间戳位应随之散开而非全部撞在同一毫秒。
+	// session and thread seeds differ, so their timestamp bits should spread apart rather than all colliding on the same millisecond.
 	if codexUUIDUnixMilli(t, ids.sessionID) == codexUUIDUnixMilli(t, ids.threadID) {
 		t.Fatal("session and thread share the same v7 timestamp, want the per-seed spread to separate them")
 	}
@@ -173,7 +173,7 @@ func TestResolveCodexFingerprintIDsPerMode(t *testing.T) {
 		t.Fatalf("window id = %q, want %q", session.windowID, want)
 	}
 
-	// 不同客户端会话派生出不同线程，同一客户端会话恒定派生同一线程。
+	// Different client sessions derive different threads; the same client session always derives the same thread.
 	other := resolveCodexFingerprintIDs(fingerprintAccount(t, auth.CodexFingerprintModeSession), codexClientHeaders("", "client-session-2"))
 	if other.threadID == session.threadID {
 		t.Fatal("distinct client sessions derived the same thread id")
@@ -191,7 +191,7 @@ func TestResolveCodexFingerprintIDsPerMode(t *testing.T) {
 		t.Fatalf("full mode thread id = %q, want it to equal session id %q", full.threadID, full.sessionID)
 	}
 
-	// 客户端没发会话头时，session 档退回单线程而不是每请求漂移。
+	// When the client sends no session header, the session tier falls back to a single thread rather than drifting per request.
 	noSession := resolveCodexFingerprintIDs(fingerprintAccount(t, auth.CodexFingerprintModeSession), http.Header{})
 	if noSession.threadID != noSession.sessionID {
 		t.Fatalf("thread id = %q, want fallback to session id %q", noSession.threadID, noSession.sessionID)
@@ -247,9 +247,9 @@ func TestResolveCodexFingerprintIDsIsolatesAccounts(t *testing.T) {
 	}
 }
 
-// TestResolveCodexFingerprintIDsHonorsPinnedInstallationHeader 验证运维在账号自定义头里
-// 钉死的 installation id 优先于派生值——自定义头本来就会覆盖出站头，取同一值才能让
-// 请求头与 metadata 一致。
+// TestResolveCodexFingerprintIDsHonorsPinnedInstallationHeader verifies that the installation id the operator pins in the account's custom headers
+// takes priority over the derived value: custom headers override outbound headers anyway, so taking the same value keeps the
+// request headers and metadata consistent.
 func TestResolveCodexFingerprintIDsHonorsPinnedInstallationHeader(t *testing.T) {
 	account := &auth.Account{
 		DBID:                 42,
@@ -263,7 +263,7 @@ func TestResolveCodexFingerprintIDsHonorsPinnedInstallationHeader(t *testing.T) 
 }
 
 func TestApplyCodexFingerprintHeadersRewritesOnlyPresentTurnMetadataKeys(t *testing.T) {
-	// sandbox / thread_source 等非身份字段必须原样保留，缺失的 window_id 不能被补上。
+	// Non-identity fields such as sandbox / thread_source must be kept verbatim, and a missing window_id must not be filled in.
 	const raw = `{"thread_id":"client-thread","installation_id":"client-install","sandbox":"danger-full-access","session_id":"client-session","turn_id":"client-turn","turn_started_at_unix_ms":1730000000000}`
 	outbound := http.Header{}
 	outbound.Set("X-Codex-Turn-Metadata", raw)
@@ -289,14 +289,14 @@ func TestApplyCodexFingerprintHeadersRewritesOnlyPresentTurnMetadataKeys(t *test
 	if value := gjson.Get(got, "sandbox").String(); value != "danger-full-access" {
 		t.Fatalf("sandbox = %q, want it preserved", value)
 	}
-	// turn_id 与其时间戳是逐轮随机值，不标识设备；重写只会引入头体不一致。
+	// turn_id and its timestamp are per-turn random values and do not identify a device; rewriting them would only introduce a header/body inconsistency.
 	if value := gjson.Get(got, "turn_id").String(); value != "client-turn" {
 		t.Fatalf("turn_id = %q, want the client value preserved", value)
 	}
 	if value := gjson.Get(got, "turn_started_at_unix_ms").Int(); value != 1730000000000 {
 		t.Fatalf("turn_started_at_unix_ms = %d, want the client value preserved", value)
 	}
-	// 键序必须保持原样：重排本身就是可识别特征。
+	// Key order must be kept as is: reordering is itself a recognizable trait.
 	if wantPrefix := `{"thread_id":"`; !strings.HasPrefix(got, wantPrefix) {
 		t.Fatalf("rewritten metadata = %q, want original key order starting with %q", got, wantPrefix)
 	}
@@ -324,9 +324,9 @@ func TestApplyCodexFingerprintHeadersDeviceModeLeavesSessionFieldsAlone(t *testi
 	}
 }
 
-// TestApplyCodexFingerprintHeadersNeverTouchesSessionIDHeader 锁定与既有上游会话
-// 隔离逻辑的边界：Session_id 由 resolveUpstreamSessionID 决定，收敛不得介入，
-// 否则 prompt cache 隔离语义会被改变。
+// TestApplyCodexFingerprintHeadersNeverTouchesSessionIDHeader locks the boundary with the existing upstream session isolation logic:
+// Session_id is decided by resolveUpstreamSessionID, and convergence must not intervene,
+// otherwise the prompt cache isolation semantics would change.
 func TestApplyCodexFingerprintHeadersNeverTouchesSessionIDHeader(t *testing.T) {
 	outbound := http.Header{}
 	outbound.Set("Session_id", "upstream-isolated-id")
@@ -342,8 +342,8 @@ func TestApplyCodexFingerprintHeadersNeverTouchesSessionIDHeader(t *testing.T) {
 	}
 }
 
-// TestApplyCodexFingerprintHeadersSkipsNonCodexClients 验证不给没有 Codex 引擎特征的
-// 下游请求伪造 x-codex-* 头——半套特征比不发更可疑。
+// TestApplyCodexFingerprintHeadersSkipsNonCodexClients verifies that x-codex-* headers are not fabricated for downstream requests
+// that lack Codex engine traits: a half-set of traits is more suspicious than sending none.
 func TestApplyCodexFingerprintHeadersSkipsNonCodexClients(t *testing.T) {
 	outbound := http.Header{}
 	plainSDKHeaders := http.Header{"User-Agent": []string{"OpenAI/Python 1.0"}}
@@ -358,10 +358,10 @@ func TestApplyCodexFingerprintHeadersSkipsNonCodexClients(t *testing.T) {
 	}
 }
 
-// TestApplyCodexFingerprintHeadersNeverAddsAbsentIdentityHeaders 锁定「只覆盖、不新增」
-// 对请求头同样成立。实测真实 Codex CLI 只发 x-codex-window-id，从不发
-// x-codex-installation-id（该值只存在于 turn metadata JSON 里）——凭空补发等于给请求
-// 添一个真实客户端不会有的头。
+// TestApplyCodexFingerprintHeadersNeverAddsAbsentIdentityHeaders locks in "overwrite only, never add" for request headers as well.
+// Measurements show the real Codex CLI only sends x-codex-window-id and never sends
+// x-codex-installation-id (that value exists only inside the turn metadata JSON); adding it out of thin air would give the request
+// a header the real client would never have.
 func TestApplyCodexFingerprintHeadersNeverAddsAbsentIdentityHeaders(t *testing.T) {
 	outbound := http.Header{}
 	account := fingerprintAccount(t, auth.CodexFingerprintModeSession)
@@ -376,14 +376,14 @@ func TestApplyCodexFingerprintHeadersNeverAddsAbsentIdentityHeaders(t *testing.T
 	if got := outbound.Get("X-Codex-Window-Id"); got != "" {
 		t.Fatalf("X-Codex-Window-Id = %q, want unset (downstream never sent it)", got)
 	}
-	// metadata 内部的 installation_id 仍应收敛——收敛面本来就在 JSON 里。
+	// installation_id inside metadata should still converge: the convergence surface is in the JSON anyway.
 	if got := gjson.Get(outbound.Get("X-Codex-Turn-Metadata"), "installation_id").String(); got == "client-install" {
 		t.Fatal("metadata installation_id was left at the client value")
 	}
 }
 
-// TestApplyCodexFingerprintHeadersOverridesPresentIdentityHeaders 验证下游确实发过时，
-// 出站取值被收敛值覆盖（真实 CLI 会发 window id，这条是它的主路径）。
+// TestApplyCodexFingerprintHeadersOverridesPresentIdentityHeaders verifies that when the downstream did send a header,
+// the outbound value is overridden by the converged value (the real CLI does send the window id; this is its main path).
 func TestApplyCodexFingerprintHeadersOverridesPresentIdentityHeaders(t *testing.T) {
 	outbound := http.Header{}
 	account := fingerprintAccount(t, auth.CodexFingerprintModeSession)
@@ -468,20 +468,20 @@ func TestApplyCodexFingerprintToBodyLeavesBodiesWithoutClientMetadata(t *testing
 		t.Fatalf("body = %s, want %s unchanged", got, body)
 	}
 
-	// client_metadata 存在但不含身份字段时不得新增字段。
+	// client_metadata that exists but has no identity fields must not gain fields.
 	partial := []byte(`{"client_metadata":{"ws_request_header_x_openai_internal_codex_responses_lite":"true"}}`)
 	if got := ApplyCodexFingerprintToBody(partial, account, downstream); string(got) != string(partial) {
 		t.Fatalf("body = %s, want %s unchanged", got, partial)
 	}
 }
 
-// TestCodexFingerprintHeaderAndBodyAgree 是这套改写的核心不变量：请求头与请求体在
-// 两个独立改写点各自推导，必须落到完全相同的一组标识。
+// TestCodexFingerprintHeaderAndBodyAgree is the core invariant of this rewrite: the request headers and request body are
+// derived at two independent rewrite points, and must land on exactly the same set of identifiers.
 func TestCodexFingerprintHeaderAndBodyAgree(t *testing.T) {
 	account := fingerprintAccount(t, auth.CodexFingerprintModeSession)
 	const raw = `{"installation_id":"client-install","session_id":"client-session","thread_id":"client-thread","window_id":"client-window:0"}`
 	downstream := codexClientHeaders(raw, "client-session")
-	// 标识头只在下游发过时才被覆盖，这里补上以便断言头与 metadata 的一致性。
+	// Identifier headers are overwritten only when the downstream sent them; this fills them in here so the header/metadata consistency can be asserted.
 	downstream.Set("X-Codex-Installation-Id", "client-install")
 	downstream.Set("X-Codex-Window-Id", "client-window:0")
 
@@ -523,8 +523,8 @@ func TestCodexFingerprintHeaderAndBodyAgree(t *testing.T) {
 	}
 }
 
-// TestApplyCodexFingerprintHeadersIgnoresInvalidTurnMetadata 验证客户端发来的非法 JSON
-// 原样透传，不因改写失败而破坏请求。
+// TestApplyCodexFingerprintHeadersIgnoresInvalidTurnMetadata verifies that illegal JSON sent by the client
+// passes through verbatim and a failed rewrite does not break the request.
 func TestApplyCodexFingerprintHeadersIgnoresInvalidTurnMetadata(t *testing.T) {
 	outbound := http.Header{}
 	outbound.Set("X-Codex-Turn-Metadata", "not-json")
@@ -536,13 +536,13 @@ func TestApplyCodexFingerprintHeadersIgnoresInvalidTurnMetadata(t *testing.T) {
 	}
 }
 
-// compact 路径此前只收敛请求头、请求体 client_metadata 原样发出，上游会看到
-// 「头说设备 A、体说设备 B」这种真实客户端不会有的矛盾（也让收敛形同虚设）。
+// The compact path previously converged only the request headers and sent the request body client_metadata verbatim, so the upstream would see
+// the contradiction of "header says device A, body says device B", which a real client would never have (it also made the convergence meaningless).
 func TestExecuteCompactRequestConvergesBodyAndHeaders(t *testing.T) {
 	account := fingerprintAccount(t, auth.CodexFingerprintModeSession)
 	account.AccessToken = "token-compact"
-	// 带 turn metadata 才算真 Codex 客户端（见 ApplyCodexFingerprintHeaders 的
-	// EvaluateEngineFingerprint 门）；标识头还需下游确实发过才会被覆盖。
+	// Only a request carrying turn metadata counts as a real Codex client (see the EvaluateEngineFingerprint gate in
+	// ApplyCodexFingerprintHeaders); identifier headers are still overwritten only when the downstream actually sent them.
 	downstream := codexClientHeaders(`{"installation_id":"client-install","session_id":"client-session"}`, "client-session")
 	downstream.Set("X-Codex-Installation-Id", "client-install")
 	ids := resolveCodexFingerprintIDs(account, downstream)
@@ -560,7 +560,7 @@ func TestExecuteCompactRequestConvergesBodyAndHeaders(t *testing.T) {
 	}))
 	defer server.Close()
 
-	// 经 Resin 反代把出站请求引到本地服务器，从而断言真实发出的字节。
+	// Route the outbound request through the Resin reverse proxy to a local server, so the bytes actually sent can be asserted.
 	previousResin := resinCfg.Load()
 	t.Cleanup(func() { resinCfg.Store(previousResin) })
 	SetResinConfig(&ResinConfig{BaseURL: server.URL, PlatformName: "test"})
@@ -583,7 +583,7 @@ func TestExecuteCompactRequestConvergesBodyAndHeaders(t *testing.T) {
 			t.Fatalf("outbound %s = %q, want converged %q", tc.path, got, tc.want)
 		}
 	}
-	// 头与体必须来自同一份推导，否则矛盾本身就是特征。
+	// Headers and body must come from the same derivation, otherwise the contradiction is itself a trait.
 	if got := capturedHeader.Get(codexInstallationIDHeader); got != ids.installationID {
 		t.Fatalf("outbound %s = %q, want %q", codexInstallationIDHeader, got, ids.installationID)
 	}
@@ -592,9 +592,9 @@ func TestExecuteCompactRequestConvergesBodyAndHeaders(t *testing.T) {
 	}
 }
 
-// TestConvergedClientRequestIDFollowsClientIdentity 覆盖 issue #536 的主诉：
-// 实测真实客户端把 X-Client-Request-Id 取成与自身 thread_id 相同的值，收敛必须跟上，
-// 否则原始线程标识会绕过 metadata 改写直达上游。
+// TestConvergedClientRequestIDFollowsClientIdentity covers the main complaint of issue #536:
+// measurements show the real client sets X-Client-Request-Id to the same value as its own thread_id, so convergence must follow it,
+// otherwise the original thread identifier would bypass the metadata rewrite and go straight to the upstream.
 func TestConvergedClientRequestIDFollowsClientIdentity(t *testing.T) {
 	account := fingerprintAccount(t, auth.CodexFingerprintModeSession)
 
@@ -603,7 +603,7 @@ func TestConvergedClientRequestIDFollowsClientIdentity(t *testing.T) {
 		downstream := codexClientHeaders(raw, "client-session")
 		downstream.Set("Thread-Id", "client-thread")
 		outbound := http.Header{}
-		outbound.Set("X-Client-Request-Id", "client-thread") // 白名单原样透传的结果
+		outbound.Set("X-Client-Request-Id", "client-thread") // result of the allowlist's verbatim passthrough
 		outbound.Set("X-Codex-Turn-Metadata", raw)
 
 		ApplyCodexFingerprintHeaders(outbound, account, downstream)
@@ -632,7 +632,7 @@ func TestConvergedClientRequestIDFollowsClientIdentity(t *testing.T) {
 		}
 	})
 
-	// 与任何自报身份都对不上时说明它确实是每请求随机值，改写它反而制造不一致。
+	// When it matches none of the self-reported identities, it is confirmed to be a random per-request value, and rewriting it would only create an inconsistency.
 	t.Run("leaves unrelated values alone", func(t *testing.T) {
 		downstream := codexClientHeaders("", "client-session")
 		outbound := http.Header{}
@@ -645,7 +645,7 @@ func TestConvergedClientRequestIDFollowsClientIdentity(t *testing.T) {
 		}
 	})
 
-	// device 档不收敛会话级标识，也就不该动这个头。
+	// The device tier does not converge session-level identifiers, so this header should not be touched either.
 	t.Run("device mode is a noop", func(t *testing.T) {
 		downstream := codexClientHeaders("", "client-session")
 		outbound := http.Header{}
@@ -659,12 +659,12 @@ func TestConvergedClientRequestIDFollowsClientIdentity(t *testing.T) {
 	})
 }
 
-// TestScrubCodexWorkspacesRemovesWorkspaceIdentity 验证工作区身份被抹掉：本地绝对
-// 路径含系统用户名、associated_remote_urls 含仓库归属，多人共享账号时这些会把每个
-// 下游用户的身份原样送到上游。
+// TestScrubCodexWorkspacesRemovesWorkspaceIdentity verifies that workspace identity is removed: local absolute
+// paths contain the system username and associated_remote_urls contain repository ownership, so when accounts are shared by several people these would send each
+// downstream user's identity verbatim to the upstream.
 func TestScrubCodexWorkspacesRemovesWorkspaceIdentity(t *testing.T) {
-	// commit hash 用真实长度的值：它是全局唯一的仓库标记，公开仓库可反查到归属，
-	// 与 remote URL 泄漏的是同一份身份。
+	// commit hash uses a value of real length: it is a globally unique repository marker, and a public repository can be traced back to its owner from it,
+	// it is the same identity leaked as the remote URL.
 	const originalCommit = "3cd12a685fe3ea23b84a9097fd4563927857ea21"
 	const raw = `{"request_kind":"memory","workspaces":{"/Users/alice/code/secret-project":{"associated_remote_urls":{"origin":"https://github.com/alice-corp/secret-project.git"},"latest_git_commit_hash":"` + originalCommit + `","has_changes":false}}}`
 
@@ -689,7 +689,7 @@ func TestScrubCodexWorkspacesRemovesWorkspaceIdentity(t *testing.T) {
 		if entry.Get("associated_remote_urls").Exists() {
 			t.Fatalf("associated_remote_urls survived in %q", entry.Raw)
 		}
-		// 形状保持：字段仍在，且仍是等长的十六进制串。
+		// Shape is preserved: the field is still there, and it is still a hex string of the same length.
 		if replaced := entry.Get("latest_git_commit_hash").String(); len(replaced) != len(originalCommit) {
 			t.Fatalf("latest_git_commit_hash = %q, want a same-length derived placeholder", replaced)
 		}
@@ -698,7 +698,7 @@ func TestScrubCodexWorkspacesRemovesWorkspaceIdentity(t *testing.T) {
 		}
 	}
 
-	// 同一路径恒定映射到同一占位符，不同路径互不相同。
+	// The same path always maps to the same placeholder, and different paths are distinct from each other.
 	repeat, _ := scrubCodexWorkspaces(raw, 42)
 	if repeat != got {
 		t.Fatalf("scrub is not deterministic: %q vs %q", repeat, got)
@@ -707,8 +707,8 @@ func TestScrubCodexWorkspacesRemovesWorkspaceIdentity(t *testing.T) {
 		t.Fatal("distinct workspace paths collapsed to the same placeholder")
 	}
 
-	// 账号维度隔离：同一路径在不同账号下必须派生出不同占位符，否则上游可以把
-	// 同一个下游用户跨账号关联起来。
+	// Account-level isolation: the same path under different accounts must derive different placeholders, otherwise the upstream could
+	// link the same downstream user across accounts.
 	if placeholderWorkspacePath(42, "/Users/alice/a") == placeholderWorkspacePath(43, "/Users/alice/a") {
 		t.Fatal("same path produced the same placeholder across accounts")
 	}
@@ -717,20 +717,20 @@ func TestScrubCodexWorkspacesRemovesWorkspaceIdentity(t *testing.T) {
 		t.Fatal("scrub result is identical across accounts, want account-scoped derivation")
 	}
 
-	// 抹除必须幂等：重试链路可能把改写过的载荷再送进来一次。
+	// The scrub must be idempotent: a retry path may send a rewritten payload in a second time.
 	if again, changedAgain := scrubCodexWorkspaces(got, 42); changedAgain || again != got {
 		t.Fatalf("second scrub changed the payload again: %q -> %q", got, again)
 	}
 
-	// 没有 workspaces 的 metadata 不受影响。
+	// Metadata without workspaces is not affected.
 	if _, changed := scrubCodexWorkspaces(`{"session_id":"s"}`, 42); changed {
 		t.Fatal("metadata without workspaces was modified")
 	}
 }
 
-// TestCodexFingerprintLeavesNoOriginalIdentifierOutbound 是 issue #536 要求的一致性
-// 回归：用真实抓包的请求形态跑完整条改写链，断言出站头里不再残留任何一个原始标识。
-// 将来协议新增身份字段导致遗漏时，这条会先失败。
+// TestCodexFingerprintLeavesNoOriginalIdentifierOutbound is the consistency regression required by issue #536: it runs the full rewrite chain with a real captured request shape, and asserts that no original identifier remains in the outbound headers.
+// Regression: runs the full rewrite chain with a request shape from a real packet capture, and asserts that no original identifier is left in the outbound headers.
+// If a future protocol adds an identity field that is missed, this test fails first.
 func TestCodexFingerprintLeavesNoOriginalIdentifierOutbound(t *testing.T) {
 	const (
 		clientSessionUUID = "01a00e75-8856-7542-89bf-35812620690f"
@@ -744,7 +744,7 @@ func TestCodexFingerprintLeavesNoOriginalIdentifierOutbound(t *testing.T) {
 		clientSessionUUID + `:0","request_kind":"turn","sandbox":"none","workspaces":{"` + workspacePath +
 		`":{"associated_remote_urls":{"origin":"` + remoteURL + `"},"latest_git_commit_hash":"` + commitHash + `"}},"turn_started_at_unix_ms":1786949015072}`
 
-	// 复刻真实 CLI 的下游头集合。
+	// Replicates the set of downstream headers from the real CLI.
 	downstream := http.Header{}
 	downstream.Set("X-Codex-Turn-Metadata", rawMetadata)
 	downstream.Set("Session-Id", clientSessionUUID)
@@ -752,7 +752,7 @@ func TestCodexFingerprintLeavesNoOriginalIdentifierOutbound(t *testing.T) {
 	downstream.Set("X-Client-Request-Id", clientSessionUUID)
 	downstream.Set("X-Codex-Window-Id", clientSessionUUID+":0")
 
-	// 复刻网关的白名单透传结果（见 codexAllowedForwardHeaders）。
+	// Replicates the result of the gateway's allowlist passthrough (see codexAllowedForwardHeaders).
 	outbound := http.Header{}
 	outbound.Set("X-Codex-Turn-Metadata", rawMetadata)
 	outbound.Set("X-Client-Request-Id", clientSessionUUID)
@@ -773,7 +773,7 @@ func TestCodexFingerprintLeavesNoOriginalIdentifierOutbound(t *testing.T) {
 	}
 	outboundDump.Write(body)
 
-	// turn_id 不在此列：它是逐轮随机值，不标识设备或会话，重写只会引入不一致。
+	// turn_id is not in this list: it is a per-turn random value and does not identify a device or session, so rewriting it would only introduce an inconsistency.
 	for _, leaked := range []string{clientSessionUUID, clientInstallUUID, workspacePath, remoteURL, "james-6-23", commitHash} {
 		if strings.Contains(outboundDump.String(), leaked) {
 			t.Fatalf("original identifier %q survived into the outbound request:\n%s", leaked, outboundDump.String())
@@ -781,10 +781,10 @@ func TestCodexFingerprintLeavesNoOriginalIdentifierOutbound(t *testing.T) {
 	}
 }
 
-// TestApplyCodexRequestHeadersConvergesForwardedClientRequestID 走真实的出站头组装
-// 顺序（白名单透传 → 指纹收敛 → 账号自定义头），而不是单独调收敛函数。
-// issue #536 的 bug 正出在这个顺序上：X-Client-Request-Id 先被白名单原样透传，
-// 收敛若不接手，原始线程标识就直达上游。
+// TestApplyCodexRequestHeadersConvergesForwardedClientRequestID runs the real outbound header assembly
+// order (allowlist passthrough, then fingerprint convergence, then account custom headers), rather than calling the convergence function alone.
+// The bug in issue #536 was in exactly this order: X-Client-Request-Id is passed through verbatim by the allowlist first,
+// and if convergence does not take over, the original thread identifier goes straight to the upstream.
 func TestApplyCodexRequestHeadersConvergesForwardedClientRequestID(t *testing.T) {
 	const (
 		clientUUID    = "01a00e75-8856-7542-89bf-35812620690f"
@@ -816,18 +816,18 @@ func TestApplyCodexRequestHeadersConvergesForwardedClientRequestID(t *testing.T)
 	if got := req.Header.Get("X-Client-Request-Id"); got != ids.threadID {
 		t.Fatalf("X-Client-Request-Id = %q, want converged thread id %q", got, ids.threadID)
 	}
-	// 出站会话键仍归 resolveUpstreamSessionID 管，收敛默认不得介入
-	// （对齐需显式开 CODEX_SESSION_HEADER_ALIGN_CONVERGED）。头名改成真实形态，
-	// 但取值语义不变。
+	// The outbound session key still belongs to resolveUpstreamSessionID, and convergence must not intervene by default
+	// (aligning requires explicitly enabling CODEX_SESSION_HEADER_ALIGN_CONVERGED). The header name is changed to the real form,
+	// but the value semantics are unchanged.
 	if got := req.Header.Get("Session-Id"); got != "upstream-cache-key" {
 		t.Fatalf("Session-Id = %q, want the cache key untouched", got)
 	}
-	// thread-id 与 x-client-request-id 必须同值：后者已被收敛改写，前者回落到
-	// 未收敛的值就自相矛盾。
+	// thread-id and x-client-request-id must be the same value: the latter has already been rewritten by convergence, so if the former falls back to
+	// the unconverged value, they would contradict each other.
 	if got := req.Header.Get("Thread-Id"); got != ids.threadID {
 		t.Fatalf("Thread-Id = %q, want converged thread id %q", got, ids.threadID)
 	}
-	// 下游没发 installation 头，出站也不该有。
+	// The downstream sent no installation header, so none should be outbound either.
 	if got := req.Header.Get("X-Codex-Installation-Id"); got != "" {
 		t.Fatalf("X-Codex-Installation-Id = %q, want unset", got)
 	}

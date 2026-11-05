@@ -10,8 +10,8 @@ import (
 	"github.com/gin-gonic/gin"
 )
 
-// 未转换的握手工作区停用错误必须以 503 池级错误返回,绝不能 500 + 原始握手细节
-// 漏给下游。
+// An unconverted handshake workspace-deactivated error must be returned as a 503 pool-level error, and must never be returned as 500 plus the raw handshake details
+// leaked to the downstream.
 func TestErrorToGinResponseHandshakeDeactivatedBecomes503(t *testing.T) {
 	gin.SetMode(gin.TestMode)
 	rec := httptest.NewRecorder()
@@ -27,7 +27,7 @@ func TestErrorToGinResponseHandshakeDeactivatedBecomes503(t *testing.T) {
 	if !strings.Contains(body, "account_pool_deactivated") {
 		t.Fatalf("body = %s", body)
 	}
-	// 文案须附上游原始错误体,但握手内部细节(Cf-Ray 等)不外漏。
+	// The message must include the raw upstream error body, but the handshake internals (Cf-Ray and the like) must not leak.
 	if !strings.Contains(body, "deactivated_workspace") {
 		t.Fatalf("upstream detail missing: %s", body)
 	}
@@ -35,7 +35,7 @@ func TestErrorToGinResponseHandshakeDeactivatedBecomes503(t *testing.T) {
 		t.Fatalf("raw handshake detail leaked: %s", body)
 	}
 
-	// 普通错误仍走 500 fallback
+	// Ordinary errors still take the 500 fallback
 	rec = httptest.NewRecorder()
 	c, _ = gin.CreateTestContext(rec)
 	ErrorToGinResponse(c, errors.New("dial tcp timeout"))

@@ -128,7 +128,7 @@ func TestSetResinConfigSyncsAuthEgressFlagAndSummary(t *testing.T) {
 		t.Fatalf("endpoint must hide the token: %q", got.ResinEndpoint)
 	}
 
-	// 只填一半等于禁用,标记必须跟着回落。
+	// Filling only half is the same as disabled, so the flag must fall back too.
 	SetResinConfig(&ResinConfig{BaseURL: "http://127.0.0.1:2260/secret-token"})
 	if IsResinEnabled() || auth.ResinEgressEnabled() {
 		t.Fatal("half-filled config must disable resin and clear the flag")

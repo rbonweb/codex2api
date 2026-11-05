@@ -136,12 +136,12 @@ func TestCodexTelemetryMetricsContract(t *testing.T) {
 	}
 }
 
-// TestCodexTelemetryMetricAggregationKeepsObservations 回归 CodeRabbit 的
-// "preserve per-profile histogram observations" 问题：不同 model 的同一轮指标必须
-// 各自成点、保留独立 count/属性，同一 model 的多轮才累加。
+// TestCodexTelemetryMetricAggregationKeepsObservations is a regression test for CodeRabbit's
+// "preserve per-profile histogram observations" issue: metrics of the same turn for different models must
+// each form their own point and keep independent count and attributes, and only the multiple turns of the same model accumulate.
 func TestCodexTelemetryMetricAggregationKeepsObservations(t *testing.T) {
 	m := newCodexTelemetryManager()
-	m.once.Do(func() {}) // 不启动 worker，直接检查内部状态
+	m.once.Do(func() {}) // do not start the worker, check the internal state directly
 	base := testCodexTelemetryProfile()
 	accountID := base.client.account.ID()
 
@@ -180,7 +180,7 @@ func TestCodexTelemetryMetricAggregationKeepsObservations(t *testing.T) {
 		t.Fatalf("durations collapsed across profiles: fast=%v slow=%v", fast.sum, slow.sum)
 	}
 
-	// 同一 model 再来一轮，应并入同一个点，count 累加而不是新建。
+	// The same model runs another round: it should merge into the same point, with count accumulating rather than creating a new one.
 	m.recordTurnMetrics(profileA, codexTelemetryTerminal{status: "completed"})
 	if fast.count != 2 {
 		t.Fatalf("same-profile observations must accumulate, count = %d", fast.count)
@@ -190,8 +190,8 @@ func TestCodexTelemetryMetricAggregationKeepsObservations(t *testing.T) {
 	}
 }
 
-// TestCodexTelemetryHookHistogramCountsObservations 校验 hook 时长直方图按真实
-// 观测数累加，而不是旧实现的量纲特判。
+// TestCodexTelemetryHookHistogramCountsObservations checks that the hook duration histogram accumulates by the real
+// observation count, rather than the old implementation's special case for units.
 func TestCodexTelemetryHookHistogramCountsObservations(t *testing.T) {
 	m := newCodexTelemetryManager()
 	m.once.Do(func() {})
@@ -220,8 +220,8 @@ func TestCodexTelemetryHookHistogramCountsObservations(t *testing.T) {
 	t.Fatal("hook duration histogram missing")
 }
 
-// TestCodexTelemetryRedirectRejected 校验遥测请求拒绝跟随重定向，避免携带
-// Bearer 凭证被转发到重定向目标。
+// TestCodexTelemetryRedirectRejected checks that telemetry requests refuse to follow redirects, to avoid carrying the
+// Bearer credential being forwarded to the redirect target.
 func TestCodexTelemetryRedirectRejected(t *testing.T) {
 	var targetHits int
 	target := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, request *http.Request) {
@@ -244,8 +244,8 @@ func TestCodexTelemetryRedirectRejected(t *testing.T) {
 	}
 }
 
-// TestCodexTelemetryAcceptedLinesIsolatedRequest 校验 accepted-line-fingerprints
-// 独占一个请求，其余事件合并成批。
+// TestCodexTelemetryAcceptedLinesIsolatedRequest checks that accepted-line-fingerprints
+// occupies a request on its own, and the other events are merged into batches.
 func TestCodexTelemetryAcceptedLinesIsolatedRequest(t *testing.T) {
 	m := newCodexTelemetryManager()
 	m.once.Do(func() {})
@@ -288,7 +288,7 @@ func TestCodexTelemetryAcceptedLinesIsolatedRequest(t *testing.T) {
 	}
 }
 
-// TestCodexTelemetryStatsigGuard 校验客户端明确禁用的指标不会被发往 Statsig。
+// TestCodexTelemetryStatsigGuard checks that metrics the client explicitly disables are not sent to Statsig.
 func TestCodexTelemetryStatsigGuard(t *testing.T) {
 	for _, name := range []string{"codex.tool.call", "codex.tool.call.duration_ms", "codex.turn.token_usage", "codex.api_request"} {
 		if codexTelemetryStatsigAllowed(name) {
@@ -343,8 +343,8 @@ func TestCodexTelemetryTransportHeaders(t *testing.T) {
 	}
 }
 
-// TestCodexTelemetryStartupMetricPartition 校验启动/动态指标的划分来自显式名单，
-// 而不是 `codexMetricDescriptors[:62]` 的位置契约。
+// TestCodexTelemetryStartupMetricPartition checks that the startup/dynamic metric split comes from an explicit list,
+// not from the positional contract of `codexMetricDescriptors[:62]`.
 func TestCodexTelemetryStartupMetricPartition(t *testing.T) {
 	catalog := make(map[string]bool, len(codexMetricDescriptors))
 	startup := 0
@@ -367,7 +367,7 @@ func TestCodexTelemetryStartupMetricPartition(t *testing.T) {
 	}
 }
 
-// TestCodexTelemetryTimingProbeGate 校验临时计时探针默认关闭、按 env 开启。
+// TestCodexTelemetryTimingProbeGate checks that the temporary timing probe is off by default and turned on by env.
 func TestCodexTelemetryTimingProbeGate(t *testing.T) {
 	t.Setenv("CODEX_TELEMETRY_TIMING_DEBUG", "")
 	if codexTelemetryTimingDebug() {
@@ -379,7 +379,7 @@ func TestCodexTelemetryTimingProbeGate(t *testing.T) {
 	}
 }
 
-// TestCodexTelemetryTimingProbeRecordsParse 校验探针开启时统计事件数与解析耗时。
+// TestCodexTelemetryTimingProbeRecordsParse checks that, when the probe is on, the event count and parse time are recorded.
 func TestCodexTelemetryTimingProbeRecordsParse(t *testing.T) {
 	t.Setenv("CODEX_TELEMETRY_TIMING_DEBUG", "1")
 	attempt := &codexTelemetryAttempt{profile: testCodexTelemetryProfile(), timing: true}
@@ -400,9 +400,9 @@ func TestCodexTelemetryTimingProbeRecordsParse(t *testing.T) {
 	}
 }
 
-// TestCodexTelemetryParsesWebsocketSSE 校验 WS 上游的 SSE 包装流同样被解析：
-// wsrelay.websocketResponseToHTTP 把每个 WebSocket 帧写成 `data: <json>\n\n`，
-// 与 HTTP 路径同形，所以两种传输共用同一套观测逻辑。
+// TestCodexTelemetryParsesWebsocketSSE checks that the SSE-wrapped stream from a WS upstream is parsed as well:
+// wsrelay.websocketResponseToHTTP writes each WebSocket frame as `data: <json>\n\n`,
+// the same shape as the HTTP path, so both transports share the same observation logic.
 func TestCodexTelemetryParsesWebsocketSSE(t *testing.T) {
 	attempt := &codexTelemetryAttempt{profile: testCodexTelemetryProfile()}
 	stream := "data: {\"type\":\"response.output_text.delta\",\"delta\":\"hi\"}\n\n" +
@@ -471,7 +471,7 @@ func TestCodexTelemetryJobRoutesThroughResin(t *testing.T) {
 
 func TestCodexTelemetryRecordTurnWithoutStateDoesNotPanic(t *testing.T) {
 	m := newCodexTelemetryManager()
-	m.once.Do(func() {}) // 不启动 worker，直接观察队列内容
+	m.once.Do(func() {}) // do not start the worker, observe the queue contents directly
 	profile := testCodexTelemetryProfile()
 	profile.started = time.Now().Add(-2 * codexTelemetryStateTTL)
 	m.recordTurnMetrics(profile, codexTelemetryTerminal{status: "completed"})
@@ -482,13 +482,13 @@ func TestCodexTelemetryRecordTurnWithoutStateDoesNotPanic(t *testing.T) {
 	if state == nil || time.Since(state.lastSeen) > time.Minute {
 		t.Fatalf("state after long turn = %#v", state)
 	}
-	// 分钟级 flush 不应把刚结束的长回合状态清掉，也不应再发第二批启动指标。
+	// A minute-level flush must not clear the state of a long turn that just ended, and must not send a second startup metric batch.
 	m.flushMetrics(time.Now())
 	if m.metrics[profile.client.account.ID()] == nil {
 		t.Fatal("state evicted right after a long turn")
 	}
 	m.recordTurnMetrics(profile, codexTelemetryTerminal{status: "completed"})
-	if len(m.queue) != 2 { // 1 startup + 1 flush batch；第二轮不再发启动指标
+	if len(m.queue) != 2 { // 1 startup + 1 flush batch; the second round no longer sends startup metrics
 		t.Fatalf("queue after second turn = %d, want 2", len(m.queue))
 	}
 }

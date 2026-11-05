@@ -59,7 +59,7 @@ func TestEnforceAPIKeyLimits_DisableImageGeneration(t *testing.T) {
 
 func TestEnforceAPIKeyLimits_ImageAllowedWhenFlagOff(t *testing.T) {
 	h := &Handler{}
-	// 未开启禁用时，生图请求正常放行（limits 为空 → IsZero → 直接通过）。
+	// When disabling is not enabled, image generation requests pass normally (limits empty → IsZero → passes directly).
 	c := newImageLimitCtx(t, "/v1/images/generations", `{"prompt":"a cat"}`, database.APIKeyLimits{})
 	if status, msg := h.enforceAPIKeyLimits(c, "gpt-image-2"); status != 0 {
 		t.Fatalf("image request should pass when flag off, got %d (%q)", status, msg)

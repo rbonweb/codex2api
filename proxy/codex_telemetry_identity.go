@@ -2,7 +2,7 @@ package proxy
 
 import "strings"
 
-// codexAppServerClient 按客户端指纹构造 App Server 身份字段。
+// codexAppServerClient builds the App Server identity fields from the client fingerprint.
 func codexAppServerClient(profile codexTelemetryProfile) map[string]any {
 	clientName, appVersion, _, _, _ := codexUserAgentParts(profile.client.userAgent, profile.client.version)
 	transport := "in_process"
@@ -12,7 +12,7 @@ func codexAppServerClient(profile codexTelemetryProfile) map[string]any {
 	return map[string]any{"product_client_id": clientName, "client_name": clientName, "client_version": appVersion, "rpc_transport": transport, "experimental_api_enabled": true}
 }
 
-// codexRuntime 从客户端指纹生成 Codex runtime 属性。
+// codexRuntime generates the Codex runtime attributes from the client fingerprint.
 func codexRuntime(profile codexTelemetryProfile) map[string]any {
 	_, _, osName, osVersion, arch := codexUserAgentParts(profile.client.userAgent, profile.client.version)
 	runtimeOS := strings.ToLower(osName)
@@ -25,13 +25,13 @@ func codexRuntime(profile codexTelemetryProfile) map[string]any {
 	return map[string]any{"codex_rs_version": profile.client.version, "runtime_os": runtimeOS, "runtime_os_version": osVersion, "runtime_arch": arch}
 }
 
-// codexClientName 返回遥测使用的产品客户端名称。
+// codexClientName returns the product client name used for telemetry.
 func codexClientName(profile codexTelemetryProfile) string {
 	name, _, _, _, _ := codexUserAgentParts(profile.client.userAgent, profile.client.version)
 	return name
 }
 
-// codexUserAgentParts 解析 Codex User-Agent 中的客户端、系统与架构信息。
+// codexUserAgentParts parses the client, system and architecture information from the Codex User-Agent.
 func codexUserAgentParts(userAgent, fallbackVersion string) (client, appVersion, osName, osVersion, arch string) {
 	client = strings.TrimSpace(strings.SplitN(userAgent, "/", 2)[0])
 	appVersion = fallbackVersion
@@ -52,7 +52,7 @@ func codexUserAgentParts(userAgent, fallbackVersion string) (client, appVersion,
 	return
 }
 
-// splitCodexOS 将平台描述拆分为系统名称和版本。
+// splitCodexOS splits the platform description into the system name and version.
 func splitCodexOS(platform string) (string, string) {
 	for _, name := range []string{"Mac OS", "Windows", "Ubuntu", "Linux", "Debian", "Arch Linux"} {
 		if strings.HasPrefix(platform, name+" ") {

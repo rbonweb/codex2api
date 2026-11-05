@@ -122,7 +122,7 @@ func (h *Handler) acquireAPIKeyConcurrencyForWebSocket(c *gin.Context) (func(), 
 	return nil, api.NewAPIError(api.ErrCodeRateLimitReached, msg, api.ErrorTypeRateLimit), false
 }
 
-// acquireTracked 为不限并发的密钥保留计数，不改变限流器的旁路约定。
+// acquireTracked keeps a count for keys with unlimited concurrency, without changing the rate limiter's bypass convention.
 func (l *apiKeyConcurrencyLimiter) acquireTracked(id int64, limit int) (func(), int64, bool) {
 	if limit <= 0 {
 		limit = math.MaxInt
@@ -130,7 +130,7 @@ func (l *apiKeyConcurrencyLimiter) acquireTracked(id int64, limit int) (func(), 
 	return l.acquire(id, limit)
 }
 
-// APIKeyConcurrency 只读取指定密钥的并发数，不为闲置密钥创建计数器。
+// APIKeyConcurrency only reads the concurrency of the given key, and does not create a counter for idle keys.
 func (h *Handler) APIKeyConcurrency(apiKeyID int64) int64 {
 	if h == nil {
 		return 0
@@ -144,7 +144,7 @@ func (h *Handler) APIKeyConcurrency(apiKeyID int64) int64 {
 	return 0
 }
 
-// APIKeyConcurrencySnapshot 返回当前进程中各密钥的并发快照。
+// APIKeyConcurrencySnapshot returns the concurrency snapshot of each key in the current process.
 func (h *Handler) APIKeyConcurrencySnapshot() map[int64]int64 {
 	result := make(map[int64]int64)
 	if h == nil {

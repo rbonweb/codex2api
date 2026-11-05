@@ -54,7 +54,7 @@ func TestScopeBudgetGateFilterPreservesInnerFilter(t *testing.T) {
 	if !filter(&auth.Account{DBID: 2, GroupIDs: []int64{20}}) {
 		t.Fatal("inner filter acceptance must pass through")
 	}
-	// 只有内层过滤器拒绝时，不应把失败归因到 scope 预算。
+	// When only the inner filter rejects, the failure must not be attributed to the scope budget.
 	if gate.exhaustedMessage() != "" {
 		t.Fatalf("exhaustedMessage = %q, want empty when nothing was blocked by budget", gate.exhaustedMessage())
 	}
@@ -80,7 +80,7 @@ func TestNilScopeBudgetGateIsTransparent(t *testing.T) {
 func TestScopeUsageTrackerOnlyCountsTrackedKeysAfterSnapshot(t *testing.T) {
 	tracker := newAPIKeyScopeUsageTracker()
 
-	// 未标记跟踪的 Key 不记账，避免为所有 Key 保留事件。
+	// Untracked keys are not billed, to avoid keeping events for every key.
 	tracker.record(7, 1, 100, 0.5)
 	if delta := tracker.deltaSince(7, time.Now().Add(-time.Minute)); len(delta) != 0 {
 		t.Fatalf("untracked key delta = %+v, want empty", delta)
@@ -101,7 +101,7 @@ func TestScopeUsageTrackerOnlyCountsTrackedKeysAfterSnapshot(t *testing.T) {
 		t.Fatalf("account 1 delta = %+v, want 2 requests / 150 tokens / 0.75 cost", got)
 	}
 
-	// 快照时间之后没有新事件时不叠加，避免与 DB 聚合重复计数。
+	// Nothing is added when there are no new events after the snapshot time, to avoid double counting with the DB aggregate.
 	if delta := tracker.deltaSince(7, time.Now()); len(delta) != 0 {
 		t.Fatalf("delta after the latest event = %+v, want empty", delta)
 	}
@@ -164,8 +164,8 @@ func TestEvaluateAPIKeyScopeBudgetsNoScopesIsNoOp(t *testing.T) {
 	}
 }
 
-// scopeBudgetTestEnv 搭一个真实 sqlite + 账号池的最小环境，用来端到端验证
-// 「按分组折算用量 → 剔除候选 / 直接拒绝」这条链路。
+// scopeBudgetTestEnv sets up a minimal environment with a real sqlite and an account pool, used to verify end to end
+// the path of "convert usage by group → remove candidates / reject outright".
 func scopeBudgetTestEnv(t *testing.T) (*Handler, *database.DB, int64) {
 	t.Helper()
 	db, err := database.New("sqlite", filepath.Join(t.TempDir(), "codex2api.db"))
@@ -205,7 +205,7 @@ func insertScopeUsageLog(t *testing.T, db *database.DB, keyID, accountID int64, 
 
 func TestEvaluateAPIKeyScopeBudgetsBlocksExhaustedGroupOnly(t *testing.T) {
 	handler, db, keyID := scopeBudgetTestEnv(t)
-	// 优质组账号 1 已经消耗了 4000 token，劣质组账号 2 没有用量。
+	// Account 1 in the premium group has already used 4000 tokens; account 2 in the low-quality group has no usage.
 	insertScopeUsageLog(t, db, keyID, 1, 4000)
 
 	row := &database.APIKeyRow{ID: keyID, Limits: database.APIKeyLimits{ScopeLimits: []database.APIKeyScopeLimit{
@@ -269,7 +269,7 @@ func TestEvaluateAPIKeyScopeBudgetsUnderLimitKeepsEveryone(t *testing.T) {
 
 func TestEvaluateAPIKeyScopeBudgetsAccountScopeIgnoresSiblings(t *testing.T) {
 	handler, db, keyID := scopeBudgetTestEnv(t)
-	// 同组的另一个账号把量用掉，不应影响针对账号 1 的账号维度预算。
+	// Another account in the same group using up its quota must not affect the account-scope budget for account 1.
 	insertScopeUsageLog(t, db, keyID, 2, 4000)
 
 	row := &database.APIKeyRow{ID: keyID, Limits: database.APIKeyLimits{ScopeLimits: []database.APIKeyScopeLimit{
@@ -284,7 +284,7 @@ func TestEvaluateAPIKeyScopeBudgetsAccountScopeIgnoresSiblings(t *testing.T) {
 
 func TestScopeBudgetGateDoesNotClaimBlocksForInnerRejections(t *testing.T) {
 	gate := &scopeBudgetGate{blockedGroups: map[int64]struct{}{10: {}}, message: "exhausted"}
-	// 内层过滤器（例如模型不匹配）先拒绝：这次失败不该归因到 scope 预算。
+	// When the inner filter (for example a model mismatch) rejects first, this failure must not be attributed to the scope budget.
 	filter := gate.filter(func(*auth.Account) bool { return false })
 	if filter(&auth.Account{DBID: 1, GroupIDs: []int64{10}}) {
 		t.Fatal("inner rejection must win")
@@ -293,7 +293,7 @@ func TestScopeBudgetGateDoesNotClaimBlocksForInnerRejections(t *testing.T) {
 		t.Fatalf("exhaustedMessage = %q, want empty when the account was unusable anyway", gate.exhaustedMessage())
 	}
 
-	// 本来选得上、只因预算被拒时才算 blocked。
+	// Only count as "blocked" when the account would otherwise have been selectable and was rejected only because of the budget.
 	filter = gate.filter(func(*auth.Account) bool { return true })
 	if filter(&auth.Account{DBID: 1, GroupIDs: []int64{10}}) {
 		t.Fatal("exhausted group must be filtered out")
@@ -304,13 +304,13 @@ func TestScopeBudgetGateDoesNotClaimBlocksForInnerRejections(t *testing.T) {
 }
 
 func TestSharedScopeDeltaAfterSnapshotSkipsSnapshotMinute(t *testing.T) {
-	base := time.Unix(1_800_000_000, 0) // 整分钟起点
+	base := time.Unix(1_800_000_000, 0) // start of a whole minute
 	snapshotAt := base.Add(30 * time.Second)
 	snapshotMinute := snapshotAt.Unix() / 60
 	buckets := map[int64]map[int64]database.APIKeyWindowUsage{
-		// 跨越快照时刻的桶：整桶相加会把快照已包含的用量重复计一次，必须跳过。
+		// A bucket spanning the snapshot time: adding the whole bucket would count the usage already in the snapshot twice, so it must be skipped.
 		snapshotMinute: {1: {Requests: 5, Tokens: 500, UserBilled: 5}},
-		// 快照之后的桶：全部算增量。
+		// Buckets after the snapshot: all count as increments.
 		snapshotMinute + 1: {1: {Requests: 2, Tokens: 200, UserBilled: 2}, 2: {Requests: 1, Tokens: 10, UserBilled: 1}},
 	}
 
@@ -339,18 +339,18 @@ func TestDeltaWithSharedBucketsAvoidsDoubleCounting(t *testing.T) {
 	snapshotMinute := snapshotAt.Unix() / 60
 
 	tracker.events[7] = []apiKeyScopeUsageEvent{
-		// 快照之前：DB 快照已包含。
+		// Before the snapshot: already included in the DB snapshot.
 		{at: snapshotAt.Add(-time.Second), accountID: 1, tokens: 1000, cost: 10},
-		// 快照那一分钟内、快照之后：共享桶跳过了这一分钟，只能靠本地补。
+		// Within the snapshot minute, after the snapshot: the shared bucket skipped this minute, so it can only be filled in locally.
 		{at: snapshotAt.Add(time.Second), accountID: 1, tokens: 7, cost: 0.07},
-		// 快照之后的分钟、且早于共享桶读取时刻：已在共享桶里，不能再算。
+		// A minute after the snapshot but before the shared bucket read time: already in the shared bucket, must not be counted again.
 		{at: sharedReadAt.Add(-20 * time.Second), accountID: 1, tokens: 500, cost: 5},
-		// 共享桶读取之后：还没被读到，要补。
+		// After the shared bucket read: not yet read, must be filled in.
 		{at: sharedReadAt.Add(time.Second), accountID: 1, tokens: 3, cost: 0.03},
 	}
-	// 构造校验前提：第三条事件确实落在快照分钟之后。
+	// Construction check: the precondition that the third event really falls after the snapshot minute.
 	if tracker.events[7][2].at.Unix()/60 <= snapshotMinute {
-		t.Skip("测试时刻落在分钟边界，跳过")
+		t.Skip("test time falls on a minute boundary, skipping")
 	}
 
 	delta := tracker.deltaWithSharedBuckets(7, snapshotAt, sharedReadAt)
@@ -366,7 +366,7 @@ func TestScopeConcurrencyFilterBlocksWhenFullAndReleasesAfterwards(t *testing.T)
 	cheap := &auth.Account{DBID: 2, GroupIDs: []int64{20}}
 	filter := gate.filter(nil)
 
-	// 没占位时放行。
+	// Allowed through when no slot is taken.
 	if !filter(premium) {
 		t.Fatal("account must be schedulable while the scope has a free slot")
 	}
@@ -379,7 +379,7 @@ func TestScopeConcurrencyFilterBlocksWhenFullAndReleasesAfterwards(t *testing.T)
 		t.Fatalf("inflight = %d, want 1", got)
 	}
 
-	// 位满 → 该 scope 的账号被剔除，其它分组不受影响。
+	// Slots full → accounts in that scope are removed; other groups are not affected.
 	if filter(premium) {
 		t.Fatal("account must be filtered out once the scope concurrency slot is taken")
 	}
@@ -390,7 +390,7 @@ func TestScopeConcurrencyFilterBlocksWhenFullAndReleasesAfterwards(t *testing.T)
 		t.Fatalf("exhaustedMessage = %q, want a concurrency explanation", msg)
 	}
 
-	// 换号重试时上一轮的位要先释放，否则一个请求会把自己挤死。
+	// On account-switch retry, the previous round's slot must be released first, otherwise one request would starve itself.
 	handler.AcquireAPIKeyScopeConcurrency(c, cheap)
 	if got := APIKeyScopeInflight(4242, database.APIKeyScopeTypeGroup, 10); got != 0 {
 		t.Fatalf("inflight after switching accounts = %d, want 0", got)
@@ -408,7 +408,7 @@ func TestScopeConcurrencyLeaseSelfHeals(t *testing.T) {
 	if got := apiKeyScopeConcurrency.count(key); got != 1 {
 		t.Fatalf("inflight = %d, want 1", got)
 	}
-	// 模拟某条路径漏了释放：位过期后必须自动回收，不能永久卡死这条 scope。
+	// Simulate a path that forgot to release: after a slot expires it must be reclaimed automatically and must not permanently block this scope.
 	apiKeyScopeConcurrency.mu.Lock()
 	apiKeyScopeConcurrency.inflight[key][lease.id] = time.Now().Add(-time.Second)
 	apiKeyScopeConcurrency.mu.Unlock()
@@ -439,14 +439,14 @@ func TestCumulativeQuotaExhaustionBlocksScope(t *testing.T) {
 	limits := database.APIKeyLimits{ScopeLimits: []database.APIKeyScopeLimit{
 		{ScopeType: database.APIKeyScopeTypeAccount, ScopeID: 1, QuotaRequests: 2},
 	}}
-	// 累计计数器只为「持久化的 limits 里配了累计额度」的 Key 记账，所以配置必须落库。
+	// Cumulative counters only account for keys whose persisted limits configure a cumulative quota, so the config must be saved to the DB.
 	if err := db.UpdateAPIKey(context.Background(), keyID, database.APIKeyUpdate{Limits: limits, LimitsSet: true}); err != nil {
 		t.Fatalf("UpdateAPIKey: %v", err)
 	}
 	db.InvalidateScopeQuotaKeyCache()
 	row := &database.APIKeyRow{ID: keyID, Limits: limits}
 
-	// 未达累计上限：不拦。
+	// Cumulative limit not reached: do not block.
 	if gate, _ := handler.evaluateAPIKeyScopeBudgets(context.Background(), row); gate != nil {
 		t.Fatalf("gate = %+v, want nil below the cumulative quota", gate)
 	}
@@ -454,7 +454,7 @@ func TestCumulativeQuotaExhaustionBlocksScope(t *testing.T) {
 	for i := 0; i < 2; i++ {
 		insertScopeUsageLog(t, db, keyID, 1, 10)
 	}
-	// 计数器缓存 5s，测试里直接清掉以立刻观察新状态。
+	// The counter cache is 5s; the test clears it directly to observe the new state immediately.
 	handler.scopeUsage.counters = map[int64]*scopeCounterCache{}
 
 	gate, _ := handler.evaluateAPIKeyScopeBudgets(context.Background(), row)

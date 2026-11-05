@@ -12,19 +12,19 @@ import (
 	"github.com/tidwall/sjson"
 )
 
-// ==================== compact 端点 body-signal 兼容 ====================
-// 上游已下线专用的 /responses/compact 端点（返回 404），会话压缩迁移到普通
-// /responses 请求体内嵌 type=compaction_trigger 的 input item（新版 Codex CLI
-// 的 body-signal 形态）。系统设置 compact_via_responses_enabled 开启后，官方
-// Codex OAuth 账号的 /v1/responses/compact 透传改写为该形态：注入触发器走
-// /responses SSE，再把流聚合回 compact 的一次性 JSON 返回下游。中转（OpenAI
-// Responses API）账号不受影响，仍请求中转自身的 /responses/compact。
+// ==================== compact endpoint body-signal compatibility ====================
+// The upstream has retired the dedicated /responses/compact endpoint (it returns 404), so session compaction moves to the regular
+// /responses request body, which embeds an input item with type=compaction_trigger (the body-signal form of the newer Codex CLI
+// body-signal form). When the system setting compact_via_responses_enabled is enabled, official
+// Codex OAuth accounts' /v1/responses/compact pass-through is rewritten into this form: the trigger is injected and goes through
+// /responses SSE, and the stream is then aggregated back into the one-shot compact JSON returned downstream. Relay (OpenAI
+// Responses API) accounts are not affected and still request their own relay /responses/compact.
 
-// appendCompactionTriggerToResponsesBody 把已准备好的 Codex compact body 改写成
-// body-signal 压缩形态。compact 预处理为旧专用端点剥除了 store/stream/include，
-// 而 /responses 上游要求 stream=true 且 store=false（实测缺 store 直接
-// 400 "Store must be set to false"），这里补回，并在 input 末尾追加
-// compaction_trigger。客户端已经携带触发器时也会归一到 input 最后一项。
+// appendCompactionTriggerToResponsesBody rewrites the prepared Codex compact body into
+// the body-signal compaction form. Compact preprocessing for the old dedicated endpoint stripped store/stream/include,
+// but the /responses upstream requires stream=true and store=false (measured: a missing store directly
+// 400 "Store must be set to false"), so they are restored here, and appended at the end of input
+// compaction_trigger. If the client already carries the trigger, it is normalized to the last input item too.
 func appendCompactionTriggerToResponsesBody(body []byte) []byte {
 	out, _ := sjson.SetBytes(body, "stream", true)
 	out, _ = sjson.SetBytes(out, "store", false)
@@ -100,7 +100,7 @@ func normalizeCompactionTriggerFinal(body []byte, addIfMissing bool) []byte {
 		normalized := make([]json.RawMessage, 0, 2)
 		switch {
 		case input.Type == gjson.String:
-			// input 为字符串时先转成标准 message item，再追加触发器。
+			// When input is a string, first convert it into a standard message item, then append the trigger.
 			msg, err := json.Marshal(map[string]any{
 				"type": "message",
 				"role": "user",
@@ -139,16 +139,16 @@ func isCanonicalCompactionTrigger(item gjson.Result) bool {
 	return item.IsObject() && item.Get("type").String() == "compaction_trigger"
 }
 
-// collectCompactResponsesSSE 把 body-signal 压缩的上游 /responses SSE 流聚合成
-// compact 端点的一次性 JSON：取 response.completed 的 response 对象，并用沿途的
-// response.output_item.done（含 compaction 项）补齐 output。上游以 response.failed
-// 终止时原样返回该事件负载，由调用方按上游错误处理；流在终止事件前结束视为读错误。
+// collectCompactResponsesSSE aggregates the upstream /responses SSE stream of the body-signal compaction into
+// a one-shot JSON for the compact endpoint: it takes the response object from response.completed, and uses the
+// response.output_item.done events (including the compaction item) to fill in output. When the upstream ends with response.failed,
+// the payload of that event is returned unchanged for the caller to handle as an upstream error; a stream that ends before a terminal event is treated as a read error.
 func collectCompactResponsesSSE(body io.Reader) (responseJSON []byte, failedPayload []byte, err error) {
 	return collectCompactResponsesSSEWithContinuousRetryKeepalive(context.Background(), body)
 }
 
-// collectCompactResponsesSSEWithContinuousRetryKeepalive 聚合上游 compact SSE，
-// 并在读取期间通过请求级保活刷新下游连接。
+// collectCompactResponsesSSEWithContinuousRetryKeepalive aggregates the upstream compact SSE,
+// and, while reading, refreshes the downstream connection through request-level keepalive.
 func collectCompactResponsesSSEWithContinuousRetryKeepalive(ctx context.Context, body io.Reader) (responseJSON []byte, failedPayload []byte, err error) {
 	outputItems := make([]json.RawMessage, 0, 2)
 	seenOutputItems := make(map[string]struct{})

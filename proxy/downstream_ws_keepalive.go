@@ -11,12 +11,12 @@ const defaultDownstreamWSKeepaliveInterval = 45 * time.Second
 
 var downstreamWSKeepaliveInterval = downstreamWSKeepaliveIntervalFromEnv()
 
-// downstreamWSKeepaliveIntervalFromEnv 读取下游 WebSocket Ping 周期配置。
+// downstreamWSKeepaliveIntervalFromEnv reads the downstream WebSocket Ping period configuration.
 func downstreamWSKeepaliveIntervalFromEnv() time.Duration {
 	return durationFromEnv("DOWNSTREAM_WS_KEEPALIVE_INTERVAL", defaultDownstreamWSKeepaliveInterval)
 }
 
-// startDownstreamWSKeepalive 周期发送 WebSocket Ping，并在写入失败时取消连接。
+// startDownstreamWSKeepalive sends WebSocket Pings periodically and cancels the connection when a write fails.
 func startDownstreamWSKeepalive(ctx context.Context, conn *websocket.Conn, cancel context.CancelFunc) func() {
 	if conn == nil {
 		return func() {}

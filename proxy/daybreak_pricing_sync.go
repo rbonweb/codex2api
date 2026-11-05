@@ -2,8 +2,8 @@ package proxy
 
 import "github.com/codex2api/database"
 
-// projectDaybreakPricing 按底层型号匹配各来源，不要求 LiteLLM 收录本地访问计划别名。
-// 精确别名价目优先；未知基础型号继续回退项目默认价，不借用其他型号的同步价。
+// projectDaybreakPricing matches each source by the underlying model, and does not require LiteLLM to list the local access-plan aliases.
+// An exact alias price takes precedence; an unknown base model keeps falling back to the project default price and does not borrow another model's synced price.
 func projectDaybreakPricing(allowed map[string]struct{}, prices map[string]database.ModelPricingOverride) {
 	for model := range allowed {
 		if _, exact := prices[model]; exact {

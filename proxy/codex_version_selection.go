@@ -19,7 +19,7 @@ type codexVersionSelection struct {
 
 func codexClientVersionUnavailable(kind, target, floor string) error {
 	return &Error{Code: ErrorCodeCodexClientVersionUnavailable, Type: ErrorTypeServerError,
-		Message:    fmt.Sprintf("没有满足最低 CLI 版本 %s 的已知 Codex 客户端配对（%s / %s）", floor, kind, target),
+		Message:    fmt.Sprintf("no known Codex client pairing meets the minimum CLI version %s (%s / %s)", floor, kind, target),
 		HTTPStatus: http.StatusServiceUnavailable, Retryable: false}
 }
 
@@ -41,7 +41,7 @@ func codexTargetPlatform(osName, arch string) string {
 	}
 }
 
-// resolveCodexCurrentVersions 只选择完整配对；手填字段独立覆盖默认值。
+// resolveCodexCurrentVersions only selects complete pairs; manually entered fields independently override the default values.
 func resolveCodexCurrentVersions(spec *codexUAKindSpec, choice codexVersionSelection) (string, string, error) {
 	cli, app := normalizeCodexClientVersionText(choice.CLIOverride), strings.TrimSpace(choice.AppOverride)
 	if cli != "" && app != "" {

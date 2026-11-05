@@ -12,9 +12,9 @@ import (
 	"github.com/tidwall/gjson"
 )
 
-// 上游容量降载的真实序列是「event: error → event: response.failed」。可重试类
-// error 帧不能算客户端输出：一旦写出置位 wroteAnyBody，随后的 response.failed
-// 就进不了首包前静默换号分支。不可重试类维持原样立即转发。
+// The real sequence of upstream capacity shed is "event: error → event: response.failed". Retryable
+// error frames do not count as client output: once written, wroteAnyBody is set, and the following response.failed
+// can no longer reach the silent account-switch branch before the first packet. Non-retryable types keep being forwarded immediately, unchanged.
 func TestIsRetryableUpstreamErrorFrame(t *testing.T) {
 	cases := []struct {
 		name      string
@@ -22,14 +22,14 @@ func TestIsRetryableUpstreamErrorFrame(t *testing.T) {
 		payload   string
 		want      bool
 	}{
-		{"降载 server_is_overloaded", "error", `{"type":"error","error":{"type":"service_unavailable_error","code":"server_is_overloaded","message":"Our servers are currently overloaded. Please try again later."}}`, true},
-		{"降载 slow_down", "error", `{"type":"error","error":{"code":"slow_down","message":"slow down"}}`, true},
-		{"限流 rate_limit_exceeded", "error", `{"type":"error","error":{"type":"rate_limit_error","code":"rate_limit_exceeded","message":"limited"}}`, true},
-		{"不可重试 content_policy 原样转发", "error", `{"type":"error","error":{"type":"invalid_request_error","code":"content_policy_violation","message":"blocked"}}`, false},
-		{"不可重试 invalid_request 原样转发", "error", `{"type":"error","error":{"type":"invalid_request_error","code":"invalid_request","message":"bad"}}`, false},
-		{"response.failed 不归本判定管", "response.failed", `{"type":"response.failed","response":{"error":{"code":"server_is_overloaded"}}}`, false},
-		{"内容事件不归本判定管", "response.output_text.delta", `{"type":"response.output_text.delta","delta":"hi"}`, false},
-		{"空 payload", "error", ``, false},
+		{"capacity shed server_is_overloaded", "error", `{"type":"error","error":{"type":"service_unavailable_error","code":"server_is_overloaded","message":"Our servers are currently overloaded. Please try again later."}}`, true},
+		{"capacity shed slow_down", "error", `{"type":"error","error":{"code":"slow_down","message":"slow down"}}`, true},
+		{"rate limit rate_limit_exceeded", "error", `{"type":"error","error":{"type":"rate_limit_error","code":"rate_limit_exceeded","message":"limited"}}`, true},
+		{"non-retryable content_policy forwarded as-is", "error", `{"type":"error","error":{"type":"invalid_request_error","code":"content_policy_violation","message":"blocked"}}`, false},
+		{"non-retryable invalid_request forwarded as-is", "error", `{"type":"error","error":{"type":"invalid_request_error","code":"invalid_request","message":"bad"}}`, false},
+		{"response.failed is not covered by this check", "response.failed", `{"type":"response.failed","response":{"error":{"code":"server_is_overloaded"}}}`, false},
+		{"content events are not covered by this check", "response.output_text.delta", `{"type":"response.output_text.delta","delta":"hi"}`, false},
+		{"empty payload", "error", ``, false},
 	}
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
@@ -41,22 +41,22 @@ func TestIsRetryableUpstreamErrorFrame(t *testing.T) {
 	}
 }
 
-// isCapacityShedPayload 识别 response.failed / error 帧里的容量降载码，两种嵌套形态都认，
-// server_error / rate_limit 等不算降载。
+// isCapacityShedPayload recognizes capacity shed codes in response.failed / error frames, accepting both nesting shapes,
+// server_error / rate_limit and the like do not count as capacity shed.
 func TestIsCapacityShedPayload(t *testing.T) {
 	cases := []struct {
 		name    string
 		payload string
 		want    bool
 	}{
-		{"裸 error.code overloaded", `{"error":{"code":"server_is_overloaded"}}`, true},
-		{"裸 error.code slow_down", `{"error":{"code":"SLOW_DOWN"}}`, true},
-		{"嵌套 response.error.code", `{"response":{"error":{"code":"server_is_overloaded"}}}`, true},
+		{"bare error.code overloaded", `{"error":{"code":"server_is_overloaded"}}`, true},
+		{"bare error.code slow_down", `{"error":{"code":"SLOW_DOWN"}}`, true},
+		{"nested response.error.code", `{"response":{"error":{"code":"server_is_overloaded"}}}`, true},
 		{"status_details.error.code", `{"response":{"status_details":{"error":{"code":"slow_down"}}}}`, true},
-		{"server_error 不算降载", `{"error":{"code":"server_error"}}`, false},
-		{"rate_limit 不算降载", `{"error":{"code":"rate_limit_exceeded"}}`, false},
-		{"空 payload", ``, false},
-		{"非 JSON", `not json`, false},
+		{"server_error is not a capacity shed", `{"error":{"code":"server_error"}}`, false},
+		{"rate_limit is not a capacity shed", `{"error":{"code":"rate_limit_exceeded"}}`, false},
+		{"empty payload", ``, false},
+		{"non-JSON", `not json`, false},
 	}
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
@@ -67,8 +67,8 @@ func TestIsCapacityShedPayload(t *testing.T) {
 	}
 }
 
-// 降载事件在 classify 里既保持 penalize=true（复用首包前帧缓冲/透明重试机制），
-// 又置 capacityShed=true（供上报侧跳过账号连击）。环境变量可整体退回旧行为。
+// Capacity shed events in classify keep penalize=true (reusing the pre-first-packet frame buffering / transparent retry mechanism),
+// and also set capacityShed=true (so the reporting side skips the account failure streak). An environment variable can revert everything to the old behavior.
 func TestClassifyResponseFailedOutcomeCapacityShed(t *testing.T) {
 	shed := []byte(`{"type":"response.failed","response":{"status":"failed","error":{"code":"server_is_overloaded","message":"overloaded"}}}`)
 
@@ -77,27 +77,27 @@ func TestClassifyResponseFailedOutcomeCapacityShed(t *testing.T) {
 		t.Fatalf("capacityShed = false, want true for shed payload")
 	}
 	if !got.penalize {
-		t.Fatalf("penalize = false, want true (帧缓冲/透明重试依赖它)")
+		t.Fatalf("penalize = false, want true (frame buffering and transparent retry depend on it)")
 	}
 
-	// 普通 500 不是降载。
+	// A plain 500 is not capacity shed.
 	server := []byte(`{"type":"response.failed","response":{"status":"failed","error":{"code":"internal_error","status_code":500}}}`)
 	if classifyResponseFailedOutcome(server).capacityShed {
 		t.Fatalf("capacityShed = true for generic 500, want false")
 	}
 
-	// 逃生阀:整体退回旧行为。
+	// Escape hatch: revert everything to the old behavior.
 	t.Setenv("CODEX_DISABLE_CAPACITY_SHED_HANDLING", "1")
 	if classifyResponseFailedOutcome(shed).capacityShed {
 		t.Fatalf("capacityShed = true when disabled by env, want false")
 	}
 	if !classifyResponseFailedOutcome(shed).penalize {
-		t.Fatalf("penalize = false when disabled, want true (旧行为仍换号重试)")
+		t.Fatalf("penalize = false when disabled, want true (the old behavior still retries on another account)")
 	}
 }
 
-// 容量降载先在同账号退避重试 maxCapacityShedSameAccountRetries 次（保留亲和），耗尽后换号；
-// 非降载故障一律不保留亲和。预算按账号独立计（map 语义）。
+// A capacity shed first backs off and retries the same account maxCapacityShedSameAccountRetries times (keeping affinity), then switches account when exhausted;
+// non-shed failures never keep affinity. Budgets are counted per account (map semantics).
 func TestCapacityShedRetainsAffinity(t *testing.T) {
 	shed := streamOutcome{capacityShed: true, penalize: true}
 	for i := 0; i < maxCapacityShedSameAccountRetries; i++ {
@@ -113,7 +113,7 @@ func TestCapacityShedRetainsAffinity(t *testing.T) {
 		t.Fatalf("non-shed outcome should never retain affinity")
 	}
 
-	// 按账号独立预算：账号 A 用满后换到账号 B，B 从 0 起仍有自己的退避预算。
+	// Per-account budgets: after account A is used up and switches to account B, B starts from 0 and still has its own backoff budget.
 	retries := map[int64]int{}
 	const accountA, accountB = int64(11), int64(22)
 	for capacityShedRetainsAffinity(shed, retries[accountA]) {
@@ -127,8 +127,8 @@ func TestCapacityShedRetainsAffinity(t *testing.T) {
 	}
 }
 
-// 预算耗尽后必须软排除该账号：降载不惩罚健康度，仅解绑亲和不足以换号，软排除才能
-// 让调度选到兄弟账号，池试完后 ResetSoft 清空不会永久搁置。
+// After the budget is exhausted the account must be soft-excluded: shed does not penalize health, and merely unbinding affinity is not enough to switch accounts, so only soft exclusion can
+// let scheduling pick a sibling account; after the pool has been tried, ResetSoft clears it so it is never parked permanently.
 func TestCapacityShedExhaustionSoftExcludes(t *testing.T) {
 	ex := newRetryAccountExclusions()
 	ex.MarkSoft(11)
@@ -141,7 +141,7 @@ func TestCapacityShedExhaustionSoftExcludes(t *testing.T) {
 	if sel := ex.ForSelection(); sel[11] {
 		t.Fatalf("ResetSoft should clear soft exclusion of 11")
 	}
-	// 软排除不得覆盖硬排除。
+	// Soft exclusion must not override hard exclusion.
 	ex.MarkHard(33)
 	ex.MarkSoft(33)
 	ex.ResetSoft()
@@ -150,9 +150,9 @@ func TestCapacityShedExhaustionSoftExcludes(t *testing.T) {
 	}
 }
 
-// 只有降载码（server_is_overloaded/slow_down）被改写为客户端可重试的 server_error，
-// 其余错误码（尤其 rate_limit_exceeded，客户端依赖其原码解析重试延时）必须原样保留；
-// 错误消息一律不动。
+// Only the capacity shed codes (server_is_overloaded/slow_down) are rewritten to server_error, which clients can retry,
+// while other error codes (especially rate_limit_exceeded, whose original code clients rely on to parse the retry delay) must be kept as-is;
+// error messages are never changed.
 func TestSanitizeCapacityShedEventForClient(t *testing.T) {
 	cases := []struct {
 		name        string
@@ -162,39 +162,39 @@ func TestSanitizeCapacityShedEventForClient(t *testing.T) {
 		wantAbsent  string
 	}{
 		{
-			name:        "failed 事件嵌套 code 改写",
+			name:        "failed event nested code rewrite",
 			eventType:   "response.failed",
 			payload:     `{"type":"response.failed","response":{"status":"failed","error":{"code":"server_is_overloaded","message":"Our servers are currently overloaded. Please try again later."}}}`,
 			wantContain: `"code":"server_error"`,
 			wantAbsent:  "server_is_overloaded",
 		},
 		{
-			name:        "error 帧 code 改写且消息保留",
+			name:        "error frame code rewritten and message kept",
 			eventType:   "error",
 			payload:     `{"type":"error","error":{"code":"slow_down","message":"slow down"}}`,
 			wantContain: `"message":"slow down"`,
 			wantAbsent:  `"code":"slow_down"`,
 		},
 		{
-			name:        "rate_limit 不改写",
+			name:        "rate_limit not rewritten",
 			eventType:   "response.failed",
 			payload:     `{"type":"response.failed","response":{"error":{"code":"rate_limit_exceeded","message":"try again in 3s"}}}`,
 			wantContain: `"code":"rate_limit_exceeded"`,
 		},
 		{
-			name:        "普通 server_error 不改写",
+			name:        "plain server_error not rewritten",
 			eventType:   "error",
 			payload:     `{"type":"error","error":{"code":"server_error","message":"boom"}}`,
 			wantContain: `"code":"server_error"`,
 		},
 		{
-			name:        "非错误事件不碰",
+			name:        "non-error events untouched",
 			eventType:   "response.completed",
 			payload:     `{"type":"response.completed","response":{"id":"resp_1"}}`,
 			wantContain: `"id":"resp_1"`,
 		},
 		{
-			name:        "非 JSON 不碰",
+			name:        "non-JSON untouched",
 			eventType:   "error",
 			payload:     `not-json`,
 			wantContain: `not-json`,
@@ -213,15 +213,15 @@ func TestSanitizeCapacityShedEventForClient(t *testing.T) {
 	}
 }
 
-// capacityShedEpilogue 复刻 Responses 流式路径对 error/response.failed 帧的
-// 抑制→拦截→defer/写出时序（与 handler.go 的三条 SSE 转发循环同构），返回是否
-// 命中首包前静默换号分支。
+// capacityShedEpilogue replicates how the Responses streaming path handles error/response.failed frames:
+// the suppress → intercept → defer/write ordering (same shape as the three SSE forwarding loops in handler.go), and returns whether
+// it hit the silent account-switch branch before the first packet.
 func capacityShedEpilogue(t *testing.T, c *gin.Context, events [][]byte, attempt, maxRetries int) bool {
 	t.Helper()
 	c.Header("Content-Type", "text/event-stream")
 	flusher, ok := c.Writer.(http.Flusher)
 	if !ok {
-		t.Error("c.Writer 未实现 http.Flusher")
+		t.Error("c.Writer does not implement http.Flusher")
 		return false
 	}
 	streamWriter := newStreamFlushWriter(c.Writer, flusher)
@@ -276,7 +276,7 @@ func capacityShedEpilogue(t *testing.T, c *gin.Context, events [][]byte, attempt
 	return false
 }
 
-// 回归用例（真实上游降载序列）：created → in_progress → error 帧 → response.failed。
+// Regression case (real upstream shed sequence): created → in_progress → error frame → response.failed.
 func TestStreamCapacityShedWireBehavior(t *testing.T) {
 	gin.SetMode(gin.TestMode)
 
@@ -287,7 +287,7 @@ func TestStreamCapacityShedWireBehavior(t *testing.T) {
 		[]byte(`{"type":"response.in_progress","response":{"id":"resp_1"},"sequence_number":1}`),
 	}
 
-	t.Run("首包前降载且有重试额度 → 静默换号、零字节下发", func(t *testing.T) {
+	t.Run("shed before the first packet with retry budget left → silent account switch, zero bytes sent", func(t *testing.T) {
 		var suppressed bool
 		router := gin.New()
 		router.GET("/stream", func(c *gin.Context) {
@@ -304,14 +304,14 @@ func TestStreamCapacityShedWireBehavior(t *testing.T) {
 		body, _ := io.ReadAll(resp.Body)
 
 		if !suppressed {
-			t.Error("期望命中首包前静默换号分支")
+			t.Error("expected the silent account-switch branch before the first packet")
 		}
 		if len(body) != 0 {
-			t.Errorf("期望零字节下发, got %q", body)
+			t.Errorf("expected zero bytes sent, got %q", body)
 		}
 	})
 
-	t.Run("首包前降载且重试耗尽 → 真实 5xx JSON 而非 200 流", func(t *testing.T) {
+	t.Run("shed before the first packet with retries exhausted → real 5xx JSON instead of a 200 stream", func(t *testing.T) {
 		router := gin.New()
 		router.GET("/stream", func(c *gin.Context) {
 			capacityShedEpilogue(t, c, append(append([][]byte{}, preamble...), shedError, shedFailed), 3, 3)
@@ -334,7 +334,7 @@ func TestStreamCapacityShedWireBehavior(t *testing.T) {
 		}
 	})
 
-	t.Run("流中途降载 → 透传但降载码改写为可重试 server_error", func(t *testing.T) {
+	t.Run("shed mid-stream → passed through, but the shed code rewritten to a retryable server_error", func(t *testing.T) {
 		events := append(append([][]byte{}, preamble...),
 			[]byte(`{"type":"response.output_text.delta","delta":"partial"}`),
 			shedError, shedFailed)
@@ -357,19 +357,19 @@ func TestStreamCapacityShedWireBehavior(t *testing.T) {
 			t.Errorf("status = %d, want 200", resp.StatusCode)
 		}
 		if !strings.Contains(body, "partial") {
-			t.Errorf("body 应包含已下发的正文, got %q", body)
+			t.Errorf("body should include the content already sent, got %q", body)
 		}
 		if !strings.Contains(body, "response.failed") {
-			t.Errorf("body 应包含终止事件, got %q", body)
+			t.Errorf("body should include the terminal event, got %q", body)
 		}
 		if !strings.Contains(body, `"code":"server_error"`) {
-			t.Errorf("降载码应改写为 server_error, got %q", body)
+			t.Errorf("shed code should be rewritten to server_error, got %q", body)
 		}
 		if strings.Contains(body, "server_is_overloaded") {
-			t.Errorf("不应残留 server_is_overloaded, got %q", body)
+			t.Errorf("server_is_overloaded should not remain, got %q", body)
 		}
 		if !strings.Contains(body, "Our servers are currently overloaded") {
-			t.Errorf("错误消息应原样保留, got %q", body)
+			t.Errorf("error message should be kept as-is, got %q", body)
 		}
 	})
 }

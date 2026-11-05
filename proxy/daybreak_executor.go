@@ -10,7 +10,7 @@ import (
 	"github.com/tidwall/sjson"
 )
 
-// 最后一跳在 payload 规则之后固定程序，并再次验证账号与 Key 权限。
+// The last hop pins the program after the payload rules, and validates the account and API key permissions again.
 func guardDaybreakUpstream(ctx context.Context, account *auth.Account, body []byte) ([]byte, error) {
 	guard, _ := ctx.Value(daybreakContextKey{}).(daybreakGuard)
 	request := guard.Request

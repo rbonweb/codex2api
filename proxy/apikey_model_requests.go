@@ -119,8 +119,8 @@ func ConsumeAPIKeyModelRequestQuota(ctx context.Context, model string) error {
 				api.ErrorTypeRateLimit, hit.APIKeyModelRequestUsage)}
 	}
 	state.admitted = true
-	// 入站保活在额度准入前不能提交 SSE 200；准入成功后
-	// 立即激活，覆盖随后可能长时间无响应头的上游请求。
+	// Inbound keepalive cannot commit SSE 200 before quota admission; after admission succeeds
+	// activate it immediately, covering upstream requests that may later take a long time to return response headers.
 	if keepalive := continuousRetryKeepaliveForContext(ctx); keepalive != nil {
 		keepalive.Activate()
 	}

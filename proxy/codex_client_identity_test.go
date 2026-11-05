@@ -118,7 +118,6 @@ func TestCodexClientIdentityAutoComparesFullPrerelease(t *testing.T) {
 	}
 }
 
-
 func TestCodexClientIdentityUnavailableStopsLiveSideband(t *testing.T) {
 	codexTestIdentityCache(t)
 	ApplyRuntimeSettings(RuntimeSettings{ClientCompatMode: ClientCompatModeAuto, CodexMinCLIVersion: "0.999.0", CodexUserAgentConfig: `{"client_kind":"codex-desktop"}`})
@@ -178,7 +177,7 @@ func TestSyncCodexClientVersionsSharedRunSurvivesFirstCallerCancel(t *testing.T)
 	go func() { _, err := SyncCodexClientVersions(firstCtx, db, ""); firstDone <- err }()
 	<-started
 	cancelFirst()
-	// 发起者取消后应立即返回，不必等共享同步跑完。
+	// Return immediately once the initiator cancels, without waiting for the shared sync to finish.
 	if err := <-firstDone; !errors.Is(err, context.Canceled) {
 		t.Fatalf("first caller err = %v, want canceled", err)
 	}

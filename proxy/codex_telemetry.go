@@ -83,13 +83,13 @@ type codexTelemetryTerminal struct {
 
 type codexTelemetryAttempt struct {
 	profile codexTelemetryProfile
-	// mu 保护 firstEvent/firstToken：读流 goroutine 在 processEvent 里写，
-	// 上游超时或下游断开时 Close 可能从另一个 goroutine 触发 finish 读取。
+	// mu protects firstEvent/firstToken: the stream-reading goroutine writes them in processEvent,
+	// and when an upstream timeout or downstream disconnect happens, Close may trigger finish from another goroutine to read them.
 	mu         sync.Mutex
 	firstEvent time.Time
 	firstToken time.Time
 	done       sync.Once
-	// 临时计时探针：仅在 CODEX_TELEMETRY_TIMING_DEBUG=1 时采集，其余时候零开销。
+	// Temporary timing probe: collected only when CODEX_TELEMETRY_TIMING_DEBUG=1, zero overhead otherwise.
 	timing     bool
 	parseNanos atomic.Int64
 	eventCount atomic.Int64
@@ -108,12 +108,12 @@ type codexTelemetryManager struct {
 	mu      sync.Mutex
 	threads map[string]time.Time
 	metrics map[int64]*codexMetricState
-	// 队列满丢弃只按间隔汇总打日志，避免高流量下逐条刷屏。
+	// Drops due to a full queue are summarized in logs only at intervals, to avoid per-item log spam under high traffic.
 	dropped     atomic.Int64
 	dropLogUnix atomic.Int64
 }
 
-// newCodexTelemetryManager 创建进程内遥测队列与状态容器。
+// newCodexTelemetryManager creates the in-process telemetry queue and state container.
 func newCodexTelemetryManager() *codexTelemetryManager {
 	return &codexTelemetryManager{
 		queue:   make(chan codexTelemetryJob, codexTelemetryQueueSize),
@@ -122,10 +122,10 @@ func newCodexTelemetryManager() *codexTelemetryManager {
 	}
 }
 
-// start 按需启动发送 worker 和指标刷新循环。
+// start launches the send workers and the metrics flush loop on demand.
 //
-// 每个 job 是一次同步 POST（可能经账号代理，几百毫秒到 10s 超时），单 worker
-// 串行在几 QPS 就会把队列打满；用一小组并发 worker 撑住常规流量，队列满时仍丢弃。
+// Each job is a synchronous POST (possibly through an account proxy, with a timeout from a few hundred ms to 10s). A single serial worker
+// would back up the queue at just a few QPS; use a small set of concurrent workers to handle normal traffic, and still drop when the queue is full.
 func (m *codexTelemetryManager) start() {
 	m.once.Do(func() {
 		for range codexTelemetryWorkers {
@@ -141,16 +141,16 @@ func (m *codexTelemetryManager) start() {
 	})
 }
 
-// worker 串行发送队列中的遥测任务。
+// worker sends telemetry jobs from the queue serially.
 func (m *codexTelemetryManager) worker() {
 	for job := range m.queue {
 		if err := sendCodexTelemetryJob(job); err != nil {
-			log.Printf("Codex 遥测发送失败: %v", err)
+			log.Printf("Codex telemetry send failed: %v", err)
 		}
 	}
 }
 
-// enqueue 非阻塞地加入遥测任务，队列满时直接丢弃并按间隔汇总记日志。
+// enqueue adds a telemetry job without blocking; when the queue is full it drops the job directly and records a summary in the log at intervals.
 func (m *codexTelemetryManager) enqueue(job codexTelemetryJob) {
 	m.start()
 	select {
@@ -160,18 +160,18 @@ func (m *codexTelemetryManager) enqueue(job codexTelemetryJob) {
 		now := time.Now().Unix()
 		last := m.dropLogUnix.Load()
 		if now-last >= int64(codexTelemetryDropLogInterval/time.Second) && m.dropLogUnix.CompareAndSwap(last, now) {
-			log.Printf("Codex 遥测队列已满，累计丢弃 %d 批数据", dropped)
+			log.Printf("Codex telemetry queue is full, %d batches dropped in total", dropped)
 		}
 	}
 }
 
-// markThread 记录账号观察到的 thread，并报告它是否首次出现。
+// markThread records the thread observed for the account and reports whether it appears for the first time.
 func (m *codexTelemetryManager) markThread(accountID int64, threadID string, now time.Time) bool {
 	key := strconv.FormatInt(accountID, 10) + ":" + threadID
 	m.mu.Lock()
 	defer m.mu.Unlock()
 	_, found := m.threads[key]
-	// ponytail: 固定上限比维护第二套 LRU 更小；超过时整体重建即可。
+	// ponytail: a fixed cap is smaller than maintaining a second LRU; when it is exceeded, rebuild the whole thing.
 	if len(m.threads) >= 4096 {
 		m.threads = make(map[string]time.Time)
 		found = false
@@ -180,7 +180,7 @@ func (m *codexTelemetryManager) markThread(accountID int64, threadID string, now
 	return !found
 }
 
-// codexStatsigAPIKey 返回环境覆盖或官方公开 Statsig SDK key。
+// codexStatsigAPIKey returns the environment override or the official public Statsig SDK key.
 func codexStatsigAPIKey() string {
 	if value := strings.TrimSpace(os.Getenv("CODEX_STATSIG_API_KEY")); value != "" {
 		return value
@@ -188,10 +188,10 @@ func codexStatsigAPIKey() string {
 	return codexStatsigAPIKeyDefault
 }
 
-// codexTelemetryTimingDebug 是临时计时探针开关：管理后台「客户端遥测计时探针」
-// 或环境变量 CODEX_TELEMETRY_TIMING_DEBUG=1 任一开启即生效。关闭时不采集任何
-// 耗时，行为与不插桩完全一致；开启时只额外打印 [TELEMETRY-TIMING] 日志，用于
-// 对比开启/关闭遥测时的请求入口与流式解析开销。
+// codexTelemetryTimingDebug is the temporary timing probe switch: "Client telemetry timing probe" in the admin panel
+// or the environment variable CODEX_TELEMETRY_TIMING_DEBUG=1 takes effect if either is turned on. When off, it collects no
+// timing data, and behavior is exactly the same as without instrumentation; when on, it additionally prints [TELEMETRY-TIMING] logs for
+// comparing request-entry and streaming-parse overhead with telemetry on and off.
 func codexTelemetryTimingDebug() bool {
 	if CurrentRuntimeSettings().CodexTelemetryTimingDebug {
 		return true
@@ -204,10 +204,10 @@ func codexTelemetryTimingDebug() bool {
 	}
 }
 
-// codexTelemetryEnabled 合并运行时开关与部署级关闭设置。
+// codexTelemetryEnabled combines the runtime switch with the deployment-level off setting.
 //
-// 运行时开关默认关闭（实验性功能，事件是模拟生成的，是否外发由部署者决定），
-// 因此测试里调用 ExecuteRequest 不会把真实令牌打到上游，不需要按二进制名特判。
+// The runtime switch defaults to off (an experimental feature, and the events are simulated, so the deployer decides whether they are sent out),
+// so calling ExecuteRequest in tests does not send real tokens to the upstream, and there is no need to special-case by binary name.
 func codexTelemetryEnabled() bool {
 	if !CurrentRuntimeSettings().CodexTelemetryEnabled {
 		return false
@@ -220,7 +220,7 @@ func codexTelemetryEnabled() bool {
 	}
 }
 
-// codexTelemetryEligible 判断请求是否应模拟官方 Codex 遥测。
+// codexTelemetryEligible decides whether a request should simulate official Codex telemetry.
 func codexTelemetryEligible(body []byte, headers http.Header) bool {
 	if !codexTelemetryEnabled() || headers == nil || !gjson.ValidBytes(body) {
 		return false
@@ -234,11 +234,11 @@ func codexTelemetryEligible(body []byte, headers http.Header) bool {
 	return !responsesBodyRequestsImageGeneration(body) && !requestBodyCompactionMeta(body).UsageTriggered
 }
 
-// beginCodexTelemetry 为符合条件的请求创建观测并发送初始化数据。
+// beginCodexTelemetry creates an observation for eligible requests and sends the initialization data.
 //
-// HTTP 与 WebSocket 两条上游都覆盖：WS 执行器会把 WebSocket 帧包装成标准 SSE
-// `http.Response`（见 wsrelay.websocketResponseToHTTP），因此本链路基于 SSE 的
-// 解析对两种传输同样适用，不需要按传输分流。
+// Both the HTTP and WebSocket upstreams are covered: the WS executor wraps WebSocket frames as standard SSE
+// `http.Response` (see wsrelay.websocketResponseToHTTP), so the SSE-based parsing in this chain
+// applies equally to both transports and does not need to branch by transport.
 func beginCodexTelemetry(input codexTelemetryRequest) *codexTelemetryAttempt {
 	timing := codexTelemetryTimingDebug()
 	var startedAt time.Time
@@ -267,7 +267,7 @@ func beginCodexTelemetry(input codexTelemetryRequest) *codexTelemetryAttempt {
 	return attempt
 }
 
-// snapshotCodexTelemetryClient 固化本次请求实际使用的账号和客户端身份。
+// snapshotCodexTelemetryClient freezes the account and client identity actually used by this request.
 func snapshotCodexTelemetryClient(input codexTelemetryRequest) (codexTelemetryClient, bool) {
 	client := codexTelemetryClient{
 		account: input.account, accessToken: input.account.GetAccessToken(),
@@ -306,7 +306,7 @@ func snapshotCodexTelemetryClient(input codexTelemetryRequest) (codexTelemetryCl
 	return client, client.userAgent != "" && client.originator != ""
 }
 
-// codexTelemetryOriginator 复用合法下游值或按 User-Agent 推导 originator。
+// codexTelemetryOriginator reuses a valid downstream value, or derives the originator from the User-Agent.
 func codexTelemetryOriginator(userAgent string, headers http.Header) string {
 	if value := strings.TrimSpace(headers.Get("Originator")); IsCodexOfficialClientByHeaders(userAgent, value) && value != "" {
 		return value
@@ -314,15 +314,15 @@ func codexTelemetryOriginator(userAgent string, headers http.Header) string {
 	return CodexOriginatorForGeneratedUserAgent(userAgent)
 }
 
-// codexAnalyticsIsolatedEvent 是需要单独成批发送的事件类型。真实客户端
-// TrackEventRequest::should_send_in_isolated_request 只对 accepted-line-fingerprints
-// 返回 true，即该事件必须独占一个 HTTP 请求。
+// codexAnalyticsIsolatedEvent is an event type that must be sent in a batch of its own. Real clients decide this in
+// TrackEventRequest::should_send_in_isolated_request, which returns true only for accepted-line-fingerprints,
+// meaning this event must occupy its own HTTP request.
 func codexAnalyticsIsolatedEvent(eventType string) bool {
 	return eventType == "codex_accepted_line_fingerprints"
 }
 
-// enqueueAnalytics 按真实客户端的批处理规则编码并排队发送分析事件：
-// isolated 事件（accepted-line-fingerprints）单独成批，其余事件合并发送。
+// enqueueAnalytics encodes and queues analytics events following the real client's batching rules:
+// isolated events (accepted-line-fingerprints) are batched on their own, and the other events are sent merged together.
 func (m *codexTelemetryManager) enqueueAnalytics(events []codexAnalyticsEvent) {
 	if len(events) == 0 {
 		return
@@ -346,7 +346,7 @@ func (m *codexTelemetryManager) enqueueAnalytics(events []codexAnalyticsEvent) {
 	flush()
 }
 
-// enqueueAnalyticsBatch 编码一个非空事件批次并入队。
+// enqueueAnalyticsBatch encodes a non-empty event batch and queues it.
 func (m *codexTelemetryManager) enqueueAnalyticsBatch(events []codexAnalyticsEvent) {
 	if len(events) == 0 {
 		return
@@ -357,7 +357,7 @@ func (m *codexTelemetryManager) enqueueAnalyticsBatch(events []codexAnalyticsEve
 	}
 }
 
-// observeResult 根据上游结果立即结束观测或包装响应流。
+// observeResult finishes the observation immediately or wraps the response stream, based on the upstream result.
 func (a *codexTelemetryAttempt) observeResult(resp *http.Response, err error) {
 	if a == nil {
 		return
@@ -373,7 +373,7 @@ func (a *codexTelemetryAttempt) observeResult(resp *http.Response, err error) {
 	resp.Body = &codexTelemetryBody{ReadCloser: resp.Body, attempt: a}
 }
 
-// finish 仅一次地提交终止事件和本轮指标。
+// finish commits the terminal event and this round's metrics, only once.
 func (a *codexTelemetryAttempt) finish(status string, terminal []byte) {
 	if a == nil {
 		return
@@ -468,7 +468,7 @@ func (b *codexTelemetryBody) line(line []byte) {
 	}
 }
 
-// processEvent 解析 SSE 事件并记录首包、首 token 与终态。
+// processEvent parses the SSE events and records the first packet, first token, and terminal state.
 func (b *codexTelemetryBody) processEvent(data []byte) {
 	if !json.Valid(data) {
 		return
@@ -496,7 +496,7 @@ func (b *codexTelemetryBody) processEvent(data []byte) {
 	}
 }
 
-// flushJSON 在非流式响应结束时解析最终状态。
+// flushJSON parses the final state when a non-streaming response ends.
 func (b *codexTelemetryBody) flushJSON() {
 	if len(b.event) > 0 {
 		b.processEvent(b.event)

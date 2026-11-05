@@ -8,23 +8,23 @@ import (
 	"github.com/codex2api/auth"
 )
 
-// Codex 会话标识头保真。
+// Keep the Codex session identity headers faithful to real clients.
 //
-// 真实客户端在每个 HTTP /responses 上发三个会话头（codex-rs/codex-api/src/endpoint/
-// responses.rs stream_request + requests/headers.rs build_session_headers）：
+// Real clients send three session headers on every HTTP /responses request (codex-rs/codex-api/src/endpoint/
+// responses.rs stream_request + requests/headers.rs build_session_headers):
 //
 //	x-client-request-id: {thread_id}
 //	session-id:          {session_id}
 //	thread-id:           {thread_id}
 //
-// WS 握手同形（codex-rs/core/src/client.rs build_websocket_headers）。本网关此前只发
-// 一个 Session_id：HTTP/2 会把头名小写化成 session_id，与真实的 session-id 是**两个
-// 不同的头**；thread-id 与 x-client-request-id 则完全缺失。也就是说，凡是走本网关的
-// 请求，其会话头集合与任何真实 Codex 客户端都不重合，且这个差异每请求都在。
+// The WS handshake has the same shape (codex-rs/core/src/client.rs build_websocket_headers). The gateway previously sent only
+// one Session_id: HTTP/2 lowercases the header name to session_id, while the real header is session-id, and these are **two
+// different headers**; thread-id and x-client-request-id were missing entirely. In other words, every request that goes through this gateway
+// has a session header set that matches no real Codex client, and this difference is present on every request.
 //
-// 逃生阀：CODEX_SESSION_HEADER_MODE=legacy 恢复旧的 Session_id 形态。默认 native，
-// 因为旧形态是缺陷而非可选风格——但如果哪天发现上游反而依赖下划线写法，
-// 单个环境变量就能整体回退，不必改代码重新发版。
+// Escape hatch: CODEX_SESSION_HEADER_MODE=legacy restores the old Session_id form. The default is native,
+// because the old form is a defect rather than a style choice — but if it ever turns out that the upstream actually depends on the underscore spelling,
+// a single environment variable can roll back the whole thing without changing code or redeploying.
 const (
 	codexSessionHeaderModeNative = "native"
 	codexSessionHeaderModeLegacy = "legacy"
@@ -34,8 +34,8 @@ const (
 	codexConversationIDHeader  = "Conversation_id"
 )
 
-// codexSessionHeaderModeFromEnv 读取会话头形态档位。只有显式写 legacy 才回退，
-// 其余取值（含空、含拼错）都按 native 处理。
+// codexSessionHeaderModeFromEnv reads the session header form tier. Only an explicit legacy value falls back,
+// every other value (including empty and misspelled ones) is treated as native.
 func codexSessionHeaderModeFromEnv() string {
 	if strings.EqualFold(strings.TrimSpace(os.Getenv("CODEX_SESSION_HEADER_MODE")), codexSessionHeaderModeLegacy) {
 		return codexSessionHeaderModeLegacy
@@ -43,22 +43,22 @@ func codexSessionHeaderModeFromEnv() string {
 	return codexSessionHeaderModeNative
 }
 
-// codexSessionHeaderAlignsConverged 报告是否让出站 session-id 头改用收敛后的会话
-// 身份，与 turn metadata / client_metadata 里的 session_id 对齐。
+// codexSessionHeaderAlignsConverged reports whether the outbound session-id header uses the converged session
+// identity, aligning it with the session_id in turn metadata / client_metadata.
 //
-// 默认关，因为这会推翻本仓库一条既有的明确约束：出站会话键只归
-// resolveUpstreamSessionID 管，收敛不介入（见 codex_fingerprint.go 顶部说明与
-// auth/codex_fingerprint_mode.go）。那条约束保护的是 prompt cache 隔离——请求体的
-// prompt_cache_key 确实仍由 resolveUpstreamSessionID 独立决定、不受本开关影响，
-// 但上游是否**也**拿 session-id 头参与缓存分组，从客户端源码里看不出来。真要是
-// 参与了，开启后同账号下所有下游用户就共用一份缓存前缀，那是隐私和正确性问题，
-// 不是形状问题。
+// Off by default, because this would overturn an existing explicit constraint in this repository: the outbound session key belongs only to
+// resolveUpstreamSessionID, and convergence does not intervene (see the top of codex_fingerprint.go and
+// auth/codex_fingerprint_mode.go). That constraint protects prompt cache isolation: the request body's
+// prompt_cache_key is indeed still decided independently by resolveUpstreamSessionID and is not affected by this switch,
+// but whether the upstream **also** uses the session-id header in cache grouping cannot be seen from the client source. If it does,
+// then once this is enabled every downstream user under the same account would share one cache prefix, which is a privacy and correctness problem,
+// not a shape problem.
 //
-// 开启的收益：真实客户端的 session-id 头与 metadata.session_id 恒等
-// （core/src/client.rs 用同一个 session_id 填两处）。收敛只改 metadata 一侧，
-// 会让这两处各说各话，构成一个可比对的破绽——但这个比对需要上游主动关联
-// 头与体，成本远高于看一眼 UUID 版本位。所以默认留在安全的一侧，
-// 由部署者在确认上游缓存行为后显式打开。
+// Benefit of enabling: the real client's session-id header is identical to metadata.session_id
+// (core/src/client.rs fills both places with the same session_id). Convergence only changes the metadata side,
+// which would make these two places disagree with each other, creating a comparable inconsistency — but this comparison requires the upstream to actively link
+// the header and the body, which costs far more than a glance at the UUID version bit. So the default stays on the safe side,
+// and the deployer explicitly turns it on after confirming the upstream's caching behavior.
 func codexSessionHeaderAlignsConverged() bool {
 	switch strings.ToLower(strings.TrimSpace(os.Getenv("CODEX_SESSION_HEADER_ALIGN_CONVERGED"))) {
 	case "1", "true", "yes", "y", "on":
@@ -68,8 +68,8 @@ func codexSessionHeaderAlignsConverged() bool {
 	}
 }
 
-// ConvergedCodexSessionIdentity 返回本次请求收敛后的 (session, thread) 标识；
-// 收敛关闭（off 档）或推导不出时返回空串，由调用方回落到网关自己的会话键。
+// ConvergedCodexSessionIdentity returns the converged (session, thread) identity for this request;
+// with convergence off (off tier) or when nothing can be derived, it returns an empty string, and the caller falls back to the gateway's own session key.
 func ConvergedCodexSessionIdentity(account *auth.Account, downstreamHeaders http.Header) (sessionID, threadID string) {
 	ids := resolveCodexFingerprintIDs(account, downstreamHeaders)
 	if ids == nil {
@@ -78,19 +78,19 @@ func ConvergedCodexSessionIdentity(account *auth.Account, downstreamHeaders http
 	return ids.sessionID, ids.threadID
 }
 
-// ApplyCodexSessionHeaders 写出站会话标识头。
+// ApplyCodexSessionHeaders writes the outbound session identity headers.
 //
-// fallbackSessionID 是网关自己的会话/缓存键（resolveUpstreamSessionID 的产出）；
-// 为空时旧模式整体跳过。会话身份收敛模式可以使用显式的客户端身份；
-// 该模式的 WS 连接池也按映射后的 session/thread 分区，不跨对话复用握手。
+// fallbackSessionID is the gateway's own session/cache key (the output of resolveUpstreamSessionID);
+// when empty, the legacy mode skips everything. The session identity convergence mode may use an explicit client identity;
+// that mode's WS connection pool is also partitioned by the mapped session/thread, so handshakes are not reused across conversations.
 //
-// legacyConversationID 只在 legacy 档生效：WS 握手历史上会连带发一个 Conversation_id，
-// HTTP 路径则显式删掉它。legacy 的契约是逐路径复原旧行为，所以这个差异由调用方声明，
-// 而不是在这里替两条链路选一种。native 档两条路径都不发——真实客户端的 WS 握手头
-// （build_websocket_headers）里根本没有这个头。
+// legacyConversationID takes effect only in the legacy tier: the WS handshake historically also sent a Conversation_id,
+// while the HTTP path explicitly deletes it. The legacy contract is to restore the old behavior path by path, so this difference is declared by the caller,
+// rather than choosing one behavior for both paths here. The native tier sends neither on either path: the real client's WS handshake headers
+// (build_websocket_headers) contain no such header at all.
 //
-// 必须在指纹收敛之后、账号自定义头之前调用，与 ApplyCodexFingerprintHeaders
-// 保持同一套优先级约定。
+// Must be called after fingerprint convergence and before the account's custom headers, and it keeps the same priority convention as
+// ApplyCodexFingerprintHeaders.
 func ApplyCodexSessionHeaders(outbound http.Header, account *auth.Account, fallbackSessionID string, downstreamHeaders http.Header, legacyConversationID bool) {
 	if outbound == nil {
 		return
@@ -120,39 +120,39 @@ func ApplyCodexSessionHeaders(outbound http.Header, account *auth.Account, fallb
 
 	convergedSessionID, threadID := ConvergedCodexSessionIdentity(account, downstreamHeaders)
 	if threadID == "" {
-		// off/device 档不会生成收敛后的 thread_id，但真实 Codex 的
-		// Thread-Id 仍是区分父任务与子 Agent 的会话语义。优先保留下游
-		// 自报值（显式头优先、turn metadata 兜底），仅在确实缺失时才
-		// 回落到单线程会话形态。full 档会在上一步给出收敛值，仍按配置
-		// 有意把多条线程折叠为同一上游身份。
+		// off/device tiers do not generate a converged thread_id, but in real Codex
+		// Thread-Id is still the session semantics that distinguish the parent task from a child agent. Prefer the downstream
+		// self-reported value (explicit header first, turn metadata as fallback), and only when it is truly missing
+		// fall back to the single-thread session form. The full tier already gave a converged value in the previous step, and it still
+		// follows the configuration and intentionally folds multiple threads into one upstream identity.
 		_, threadID = extractClientCodexIdentity(downstreamHeaders)
 	}
 
-	// session-id 默认仍是网关自己的会话键：收敛不介入上游会话身份是既有约束，
-	// 只有显式开启对齐或选择会话身份收敛模式才改用收敛值。
+	// The session-id header still defaults to the gateway's own session key: convergence does not intervene in the upstream session identity, which is an existing constraint,
+	// and only an explicit opt-in to alignment or selection of the session identity convergence mode switches to the converged value.
 	sessionID := fallbackSessionID
 	if convergedSessionID != "" && (codexSessionHeaderAlignsConverged() || account.EffectiveCodexFingerprintMode() == auth.CodexFingerprintModeSingleMachineMultiWindow) {
 		sessionID = convergedSessionID
 	}
 
-	// thread-id 用收敛值不受上面那条约束影响：这个头本来就不存在，没有既有行为可破坏，
-	// 而它必须与 x-client-request-id 取同一个值——后者已经由 ApplyCodexFingerprintHeaders
-	// 收敛过了，这里再回落到未收敛的值就自相矛盾。
+	// The thread-id uses the converged value, which is not affected by the constraint above: this header did not exist before, so there is no existing behavior to break,
+	// and it must take the same value as x-client-request-id, which ApplyCodexFingerprintHeaders has already
+	// converged, so falling back to the unconverged value here would be self-contradictory.
 	if threadID == "" {
-		// 真实客户端的单线程会话里 thread_id 与 session_id 本就是同一个值
-		// （core/src/client.rs 用同一个标识填两处），所以这个回落不是杜撰形状。
+		// In a real client's single-thread session, thread_id and session_id are the same value
+		// (core/src/client.rs fills both with the same identifier), so this fallback is not a fabricated shape.
 		threadID = sessionID
 	}
 
 	outbound.Set(codexSessionIDHeader, sessionID)
 	outbound.Set(codexThreadIDHeader, threadID)
-	// x-client-request-id 实测恒等于 thread_id，且真实客户端无条件发送。下游若已
-	// 携带（白名单透传 + 收敛改写）就保留其取值，避免覆盖掉已经对齐的收敛结果。
+	// x-client-request-id is measured to be identical to thread_id, and real clients always send it. If the downstream has already
+	// carries it (via allowlist pass-through plus convergence rewrite), keep its value to avoid overwriting an already-aligned convergence result.
 	if strings.TrimSpace(outbound.Get(codexClientRequestIDHeader)) == "" {
 		outbound.Set(codexClientRequestIDHeader, threadID)
 	}
-	// 下划线写法与 Conversation_id 都不属于真实形态；native 档下清掉，
-	// 否则等于同时发新旧两套会话头，比只发旧的更可疑。
+	// The underscore spelling and Conversation_id are both outside the real shape; under the native tier, clear them,
+	// otherwise both the new and old session headers would be sent at once, which is more suspicious than sending only the old one.
 	outbound.Del(codexLegacySessionIDHeader)
 	outbound.Del(codexConversationIDHeader)
 }

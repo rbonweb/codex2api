@@ -332,18 +332,18 @@ func ErrorToGinResponse(c *gin.Context, err error) {
 		return
 	}
 
-	// 兜底识别:WS 握手阶段的工作区停用错误若因任何原因未在 wsrelay 层转换成
-	// 结构化响应(文本形如 "websocket handshake failed: ... deactivated_workspace"),
-	// 也绝不能以 500 + 原始握手内部细节漏给下游——按 503 池级错误返回(带
-	// Retry-After 提示退避),文案附上游原始错误体。坏账号会由采样探针/主路径
-	// 标错隔离,稍后重试可落到健康账号。
+	// As a fallback, WS handshake-stage workspace-deactivated errors that for any reason were not converted at the wsrelay layer
+	// into a structured response (text looking like "websocket handshake failed: ... deactivated_workspace"),
+	// must also never leak to the downstream as 500 plus the raw handshake internals; it is returned as a 503 pool-level error (with
+	// a Retry-After hint to back off). The message appends the raw upstream error body. Bad accounts are flagged by the sampling probe or the main path
+	// marking them as errored and isolating them, so a later retry can land on a healthy account.
 	if message := err.Error(); strings.Contains(message, "websocket handshake failed") &&
 		strings.Contains(message, "deactivated_workspace") {
 		if c.Writer.Header().Get("Retry-After") == "" {
 			c.Header("Retry-After", "30")
 		}
-		// 握手错误文本尾部携带上游 JSON 错误体,只取该部分,握手内部细节
-		// (Cf-Ray/X-Request-Id 等)不外漏。
+		// The handshake error text ends with the upstream JSON error body; take only that part, so the handshake internals
+		// (Cf-Ray/X-Request-Id and the like) are not leaked.
 		detail := ""
 		if idx := strings.Index(message, "{"); idx >= 0 {
 			detail = strings.TrimSpace(message[idx:])
@@ -368,8 +368,8 @@ func ErrorToGinResponse(c *gin.Context, err error) {
 	})
 }
 
-// deactivatedPoolErrorMessage 组装工作区停用的池级错误文案(英文,面向下游
-// 客户端展示),末尾附上游原始错误体(截断,避免超长 body 污染日志/客户端展示)。
+// deactivatedPoolErrorMessage builds the pool-level error message for a deactivated workspace (in English, for the downstream
+// client display), appending the raw upstream error body at the end (truncated, so an overly long body does not pollute logs or client display).
 func deactivatedPoolErrorMessage(upstreamDetail string) string {
 	const message = "No available account in the pool (upstream workspace deactivated), please retry later"
 	upstreamDetail = strings.TrimSpace(upstreamDetail)

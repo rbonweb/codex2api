@@ -14,7 +14,7 @@ import (
 
 const daybreakManifestLimit = 8 << 20
 
-// ParseDaybreakManifest 只接受逐账号返回的显式权限，不从模型名称推测。
+// ParseDaybreakManifest accepts only the explicit permissions returned per account and does not infer them from model names.
 func ParseDaybreakManifest(body []byte) (map[string][]string, error) {
 	var catalog struct {
 		Models []struct {
@@ -38,7 +38,7 @@ func ParseDaybreakManifest(body []byte) (map[string][]string, error) {
 	models := make(map[string][]string)
 	for _, item := range catalog.Models {
 		model := strings.ToLower(strings.TrimSpace(item.Slug))
-		// 仅给选单中的普通模型派生切换别名；Auto Review 是内部审查模型。
+		// Only derive switch aliases for the ordinary models in the picker; Auto Review is an internal review model.
 		if model == "" || item.Visibility != "list" || model == "codex-auto-review" ||
 			strings.EqualFold(item.Specialty, "cyber") || item.Access == nil {
 			continue
@@ -70,7 +70,7 @@ type DaybreakObservation struct {
 	Body     []byte
 }
 
-// Save 写盘成功后才发布；调用方在发起请求前捕获身份与时间。
+// Save publishes only after the write to disk succeeds; the caller captures identity and time before it sends the request.
 func (observation DaybreakObservation) Save(ctx context.Context, db *database.DB) error {
 	account, snapshot := observation.Account, observation.Snapshot
 	models, err := ParseDaybreakManifest(observation.Body)

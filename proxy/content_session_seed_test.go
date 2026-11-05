@@ -14,7 +14,7 @@ func TestDeriveContentSessionSeedStableAcrossTurns(t *testing.T) {
 			{"role":"user","content":"帮我写个爬虫"}
 		]
 	}`)
-	// 第二轮:同一对话,追加了 assistant 回复和新的 user 消息(首条 user 不变)
+	// Second turn: the same conversation, with an assistant reply and a new user message appended (the first user message is unchanged)
 	turn2 := []byte(`{
 		"model":"gpt-5.4",
 		"instructions":"You are a coding assistant.",
@@ -109,7 +109,7 @@ func TestDeriveContentSessionSeedChatCompletionsMessages(t *testing.T) {
 }
 
 func TestDeriveContentSessionSeedSkipsContinuation(t *testing.T) {
-	// 续链请求的 input 逐轮变化,内容种子会漂移导致换号,必须跳过
+	// The input of continuation requests changes every turn, and a content seed would drift and cause account switches, so it must be skipped
 	body := []byte(`{"model":"gpt-5.4","previous_response_id":"resp_1","input":[{"role":"user","content":"next"}]}`)
 	if seed := deriveContentSessionSeed(body); seed != "" {
 		t.Fatalf("continuation request must not derive content seed, got %q", seed)
@@ -117,7 +117,7 @@ func TestDeriveContentSessionSeedSkipsContinuation(t *testing.T) {
 }
 
 func TestDeriveContentSessionSeedRequiresUserAnchor(t *testing.T) {
-	// 没有 user 消息可锚定时放弃(回退按 API Key)
+	// Give up when there is no user message to anchor on (fall back to the API Key)
 	body := []byte(`{"model":"gpt-5.4","input":[{"role":"assistant","content":"orphan"}]}`)
 	if seed := deriveContentSessionSeed(body); seed != "" {
 		t.Fatalf("no user anchor must not derive seed, got %q", seed)
@@ -141,7 +141,7 @@ func TestResolveSessionIDUsesContentSeedBeforeAPIKeyFallback(t *testing.T) {
 		t.Fatalf("expected content-derived session ID, got %q", idA)
 	}
 
-	// 同一对话多轮 → 稳定
+	// Multiple turns of the same conversation → stable
 	convA2 := []byte(`{"model":"gpt-5.4","input":[{"role":"user","content":"conversation A"},{"role":"assistant","content":"hi"},{"role":"user","content":"more"}]}`)
 	if got := ResolveSessionID(headers, convA2); got != idA {
 		t.Fatalf("multi-turn same conversation must keep session ID: %q vs %q", got, idA)
@@ -161,7 +161,7 @@ func TestResolveSessionIDContinuationFallsBackToAPIKey(t *testing.T) {
 	cont := []byte(`{"model":"gpt-5.4","previous_response_id":"resp_1","input":[{"role":"user","content":"next"}]}`)
 	noBody := []byte(`{}`)
 
-	// 续链请求跳过内容种子,应与"无 body 信号"请求一样落到按 API Key 的确定性 UUID
+	// Continuation requests skip the content seed, and should land on the same deterministic API-Key-based UUID as requests with no body signal
 	if got, want := ResolveSessionID(headers, cont), ResolveSessionID(headers, noBody); got != want {
 		t.Fatalf("continuation must fall back to API-key derivation: %q vs %q", got, want)
 	}

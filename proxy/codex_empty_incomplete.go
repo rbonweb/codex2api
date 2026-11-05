@@ -8,28 +8,28 @@ import (
 	"github.com/tidwall/sjson"
 )
 
-// 上游偶发以 HTTP 200 + response.incomplete 结束一次"什么都没生成"的响应：
-// usage.output_tokens 精确为 0、response.output 为空、此前也没有任何非空 delta
-// 或 output_item.done。这不是 max_output_tokens 截断，而是上游静默中止（已知触发
-// 之一是工具 schema 里的大 oneOf/const 联合）。原样转发会让 Chat 下游拿到
-// finish_reason=length 的空回复且不会重试，看起来像"模型死了"。
+// Upstream occasionally ends a response that produced nothing with HTTP 200 + response.incomplete:
+// usage.output_tokens is exactly 0, response.output is empty, and there was no earlier non-empty delta
+// or output_item.done. This is not a max_output_tokens truncation but a silent upstream abort (one known trigger
+// is a large oneOf/const union in the tool schema). Forwarding it as-is would make the Chat downstream receive
+// an empty reply with finish_reason=length that is never retried, which looks like "the model died".
 //
-// 这里把它就地改写成 response.failed，复用既有的首包前透明重试/换号路径。判定
-// 条件刻意收紧（数值精确 0、无 output 项、无非空 delta），避免把正常截断重新
-// 误判成断流（v2.8.3 修过的那类回归）。故障按请求维度计：不进账号健康度。
+// Here it is rewritten in place as response.failed, reusing the existing transparent retry / account-switch path before the first packet. The check
+// is deliberately tight (exact value 0, no output item, no non-empty delta), to avoid misclassifying a normal truncation again
+// as a stream break (the kind of regression fixed in v2.8.3). The failure counts at the request level and does not affect account health.
 const (
 	codexEmptyIncompleteErrorCode    = "empty_incomplete_response"
 	codexEmptyIncompleteErrorMessage = "upstream terminated with an incomplete empty response (0 output tokens)"
 	codexEmptyIncompleteFailureKind  = "empty_incomplete"
 )
 
-// emptyIncompleteTracker 记录一次上游尝试内是否出现过真实输出。每个 attempt 一份。
+// emptyIncompleteTracker records whether real output appeared during one upstream attempt. One per attempt.
 type emptyIncompleteTracker struct {
 	sawOutputDelta bool
 	outputItems    int
 }
 
-// Observe 记录事件。只有非空的文本/思考/工具参数 delta 与 output_item.done 计入。
+// Observe records an event. Only non-empty text, thinking and tool argument deltas and output_item.done count.
 func (t *emptyIncompleteTracker) Observe(eventType string, parsed gjson.Result) {
 	if t == nil {
 		return
@@ -48,7 +48,7 @@ func (t *emptyIncompleteTracker) Observe(eventType string, parsed gjson.Result) 
 	}
 }
 
-// IsEmptyIncomplete 判断该终态事件是否为"零输出"的 response.incomplete。
+// IsEmptyIncomplete reports whether this terminal event is a zero-output response.incomplete.
 func (t *emptyIncompleteTracker) IsEmptyIncomplete(eventType string, parsed gjson.Result) bool {
 	if eventType != "response.incomplete" {
 		return false
@@ -59,8 +59,8 @@ func (t *emptyIncompleteTracker) IsEmptyIncomplete(eventType string, parsed gjso
 	return isEmptyIncompleteResponse(parsed.Get("response"))
 }
 
-// isEmptyIncompleteResponse 要求 output 为空且 usage.output_tokens 是字面量整数 0。
-// 缺失/null/浮点/非数字一律不算，宁可漏判也不误判。
+// isEmptyIncompleteResponse requires output to be empty and usage.output_tokens to be the literal integer 0.
+// A missing value, null, float or non-number never counts; it is better to miss a case than to misjudge one.
 func isEmptyIncompleteResponse(response gjson.Result) bool {
 	if !response.Exists() || !response.IsObject() {
 		return false
@@ -79,7 +79,7 @@ func isEmptyIncompleteResponse(response gjson.Result) bool {
 	return strings.TrimSpace(tokens.Raw) == "0"
 }
 
-// isEmptyIncompleteResponseBody 是非流式 Responses 对象的同款判定。
+// isEmptyIncompleteResponseBody applies the same check to a non-streaming Responses object.
 func isEmptyIncompleteResponseBody(body []byte) bool {
 	root := gjson.ParseBytes(body)
 	if strings.ToLower(strings.TrimSpace(root.Get("status").String())) != "incomplete" {
@@ -88,8 +88,8 @@ func isEmptyIncompleteResponseBody(body []byte) bool {
 	return isEmptyIncompleteResponse(root)
 }
 
-// synthesizeEmptyIncompleteFailureEvent 把 response.incomplete 事件改写成
-// response.failed，保留 response.id/model/usage 等字段供日志与计费使用。
+// synthesizeEmptyIncompleteFailureEvent rewrites a response.incomplete event into
+// response.failed, keeping response.id/model/usage and other fields for logging and billing.
 func synthesizeEmptyIncompleteFailureEvent(data []byte) []byte {
 	out := append([]byte(nil), data...)
 	out, _ = sjson.SetBytes(out, "type", "response.failed")
@@ -97,7 +97,7 @@ func synthesizeEmptyIncompleteFailureEvent(data []byte) []byte {
 	return setEmptyIncompleteFailure(out, "response.")
 }
 
-// synthesizeEmptyIncompleteFailureBody 是非流式 Responses 对象的同款改写。
+// synthesizeEmptyIncompleteFailureBody applies the same rewrite to a non-streaming Responses object.
 func synthesizeEmptyIncompleteFailureBody(body []byte) []byte {
 	out := append([]byte(nil), body...)
 	out, _ = sjson.DeleteBytes(out, "incomplete_details")
@@ -113,7 +113,7 @@ func setEmptyIncompleteFailure(payload []byte, prefix string) []byte {
 	return payload
 }
 
-// isEmptyIncompleteFailurePayload 识别本文件合成的失败载荷（流式事件或非流式对象）。
+// isEmptyIncompleteFailurePayload recognizes the failure payloads synthesized in this file (streaming events or non-streaming objects).
 func isEmptyIncompleteFailurePayload(payload []byte) bool {
 	if len(payload) == 0 {
 		return false
@@ -121,8 +121,8 @@ func isEmptyIncompleteFailurePayload(payload []byte) bool {
 	return gjson.GetBytes(responseFailedErrorBody(payload), "error.code").String() == codexEmptyIncompleteErrorCode
 }
 
-// rewriteEmptyIncompleteTerminal 是各条 SSE 读取循环共用的入口：命中时返回改写后的
-// 事件与 response.failed 类型，未命中时原样返回。调用方把返回值赋回本地变量即可。
+// rewriteEmptyIncompleteTerminal is the entry point shared by each SSE read loop: on a match it returns the rewritten
+// event and response.failed type, and on no match returns the input unchanged. Callers just assign the return value back to their local variable.
 func rewriteEmptyIncompleteTerminal(tracker *emptyIncompleteTracker, eventType string, data []byte, parsed gjson.Result) (string, []byte, gjson.Result) {
 	tracker.Observe(eventType, parsed)
 	if !tracker.IsEmptyIncomplete(eventType, parsed) {

@@ -456,14 +456,14 @@ func TestDeviceProfileScopeKey(t *testing.T) {
 }
 
 func TestDeviceProfileCacheKey(t *testing.T) {
-	// 测试缓存键生成是确定性的
+	// Tests that cache key generation is deterministic
 	key1 := deviceProfileCacheKey(nil, "test-key")
 	key2 := deviceProfileCacheKey(nil, "test-key")
 	if key1 != key2 {
 		t.Errorf("deviceProfileCacheKey() should be deterministic, got %v and %v", key1, key2)
 	}
 
-	// 测试不同 key 产生不同结果
+	// Tests that different keys produce different results
 	key3 := deviceProfileCacheKey(nil, "different-key")
 	if key1 == key3 {
 		t.Errorf("deviceProfileCacheKey() should produce different keys for different inputs")
@@ -504,7 +504,7 @@ func TestIsDeviceProfileStabilizationEnabled(t *testing.T) {
 }
 
 func TestDefaultDeviceProfile(t *testing.T) {
-	// 测试默认配置
+	// Tests the default configuration
 	cfg := &DeviceProfileConfig{}
 	profile := defaultDeviceProfile(cfg)
 
@@ -518,7 +518,7 @@ func TestDefaultDeviceProfile(t *testing.T) {
 		t.Error("defaultDeviceProfile() should have HasVersion = true")
 	}
 
-	// 测试自定义配置
+	// Tests a custom configuration
 	customCfg := &DeviceProfileConfig{
 		UserAgent:      "custom/1.0.0",
 		PackageVersion: "1.0.0",
@@ -534,7 +534,7 @@ func TestDefaultDeviceProfile(t *testing.T) {
 }
 
 func TestResolveDeviceProfile(t *testing.T) {
-	// 清理缓存
+	// Clean up the cache
 	deviceProfileCacheMu.Lock()
 	deviceProfileCache = make(map[string]deviceProfileCacheEntry)
 	deviceProfileCacheMu.Unlock()
@@ -548,7 +548,7 @@ func TestResolveDeviceProfile(t *testing.T) {
 		StabilizeDeviceProfile: true,
 	}
 
-	// 测试 1: 没有 headers 时返回默认值
+	// Test 1: returns the default value when there are no headers
 	t.Run("no headers returns default", func(t *testing.T) {
 		profile := ResolveDeviceProfile(nil, "", nil, cfg)
 		if profile.UserAgent != cfg.UserAgent {
@@ -556,7 +556,7 @@ func TestResolveDeviceProfile(t *testing.T) {
 		}
 	})
 
-	// 测试 2: 禁用稳定化时返回默认值
+	// Test 2: returns the default value when stabilization is disabled
 	t.Run("disabled stabilization returns default", func(t *testing.T) {
 		disabledCfg := &DeviceProfileConfig{StabilizeDeviceProfile: false}
 		profile := ResolveDeviceProfile(nil, "", nil, disabledCfg)
@@ -565,26 +565,26 @@ func TestResolveDeviceProfile(t *testing.T) {
 		}
 	})
 
-	// 测试 3: 有效的客户端 headers 会被缓存
+	// Test 3: valid client headers are cached
 	t.Run("valid client headers are cached", func(t *testing.T) {
 		headers := http.Header{
 			"User-Agent": []string{"codex_cli_rs/0.118.0 (Ubuntu 24.04; x86_64)"},
 		}
 		profile1 := ResolveDeviceProfile(nil, "test-api-key", headers, cfg)
 
-		// 验证版本被正确提取
+		// Verify the version is extracted correctly
 		if !profile1.HasVersion || profile1.Version.minor != 118 {
 			t.Errorf("Expected version 0.118.0, got %+v", profile1.Version)
 		}
 
-		// 第二次调用应该返回缓存的值
+		// The second call should return the cached value
 		profile2 := ResolveDeviceProfile(nil, "test-api-key", headers, cfg)
 		if profile2.UserAgent != profile1.UserAgent {
 			t.Errorf("Expected cached profile to match")
 		}
 	})
 
-	// 测试 4: 不同 API key 应该有不同的缓存
+	// Test 4: different API keys should have different caches
 	t.Run("different api keys have different cache", func(t *testing.T) {
 		headers := http.Header{
 			"User-Agent": []string{"codex_cli_rs/0.118.0 (Ubuntu 24.04; x86_64)"},
@@ -592,7 +592,7 @@ func TestResolveDeviceProfile(t *testing.T) {
 		profile1 := ResolveDeviceProfile(nil, "key1", headers, cfg)
 		profile2 := ResolveDeviceProfile(nil, "key2", headers, cfg)
 
-		// 两者应该有相同的 UA（因为是同一个客户端版本）
+		// Both should have the same UA (because they are the same client version)
 		if profile1.UserAgent != profile2.UserAgent {
 			t.Errorf("Same client version should produce same UA")
 		}
@@ -613,14 +613,14 @@ func TestApplyDeviceProfileHeaders(t *testing.T) {
 		t.Fatalf("Failed to create request: %v", err)
 	}
 
-	// 设置一些已存在的头
+	// Set some headers that already exist
 	req.Header.Set("User-Agent", "old-ua")
 	req.Header.Set("X-Stainless-Os", "old-os")
 	req.Header.Set("X-Custom-Header", "should-remain")
 
 	ApplyDeviceProfileHeaders(req, profile)
 
-	// 验证头被正确设置
+	// Verify the headers are set correctly
 	if req.Header.Get("User-Agent") != profile.UserAgent {
 		t.Errorf("User-Agent = %v, want %v", req.Header.Get("User-Agent"), profile.UserAgent)
 	}
@@ -631,14 +631,14 @@ func TestApplyDeviceProfileHeaders(t *testing.T) {
 		t.Errorf("X-Stainless-Os = %v, want %v", req.Header.Get("X-Stainless-Os"), profile.OS)
 	}
 
-	// 验证自定义头保留
+	// Verify custom headers are preserved
 	if req.Header.Get("X-Custom-Header") != "should-remain" {
 		t.Error("X-Custom-Header should be preserved")
 	}
 }
 
 func TestApplyDeviceProfileHeadersNilRequest(t *testing.T) {
-	// 测试 nil 请求不 panic
+	// Test that a nil request does not panic
 	ApplyDeviceProfileHeaders(nil, deviceProfile{})
 }
 
@@ -676,16 +676,16 @@ func TestIsCodexCodeClient(t *testing.T) {
 }
 
 func TestPurgeExpiredDeviceProfiles(t *testing.T) {
-	// 清理并设置测试数据
+	// Clean up and set up the test data
 	deviceProfileCacheMu.Lock()
 	deviceProfileCache = map[string]deviceProfileCacheEntry{
 		"expired": {
 			profile: deviceProfile{UserAgent: "expired"},
-			expire:  time.Now().Add(-time.Hour), // 已过期
+			expire:  time.Now().Add(-time.Hour), // expired
 		},
 		"valid": {
 			profile: deviceProfile{UserAgent: "valid"},
-			expire:  time.Now().Add(time.Hour), // 有效
+			expire:  time.Now().Add(time.Hour), // valid
 		},
 	}
 	deviceProfileCacheMu.Unlock()
@@ -704,20 +704,20 @@ func TestPurgeExpiredDeviceProfiles(t *testing.T) {
 		t.Error("valid entry should be kept")
 	}
 
-	// 清理
+	// Clean up
 	deviceProfileCacheMu.Lock()
 	deviceProfileCache = make(map[string]deviceProfileCacheEntry)
 	deviceProfileCacheMu.Unlock()
 }
 
 func TestMapStainlessOS(t *testing.T) {
-	// 这个测试依赖于 runtime.GOOS，所以我们只验证它返回非空字符串
+	// This test depends on runtime.GOOS, so we only verify that it returns a non-empty string
 	os := mapStainlessOS()
 	if os == "" {
 		t.Error("mapStainlessOS() should return non-empty string")
 	}
 
-	// 验证已知映射
+	// Verify the known mappings
 	validOS := map[string]bool{
 		"MacOS":   true,
 		"Windows": true,
@@ -725,27 +725,27 @@ func TestMapStainlessOS(t *testing.T) {
 		"FreeBSD": true,
 	}
 
-	// 如果不是已知值，应该以 "Other::" 开头
+	// If it is not a known value, it should start with "Other::"
 	if !validOS[os] && !strings.HasPrefix(os, "Other::") {
 		t.Errorf("mapStainlessOS() returned unexpected value: %v", os)
 	}
 }
 
 func TestMapStainlessArch(t *testing.T) {
-	// 这个测试依赖于 runtime.GOARCH
+	// This test depends on runtime.GOARCH
 	arch := mapStainlessArch()
 	if arch == "" {
 		t.Error("mapStainlessArch() should return non-empty string")
 	}
 
-	// 验证已知映射
+	// Verify the known mappings
 	validArch := map[string]bool{
 		"x64":   true,
 		"arm64": true,
 		"x86":   true,
 	}
 
-	// 如果不是已知值，应该以 "other::" 开头
+	// If it is not a known value, it should start with "other::"
 	if !validArch[arch] && !strings.HasPrefix(arch, "other::") {
 		t.Errorf("mapStainlessArch() returned unexpected value: %v", arch)
 	}
@@ -810,7 +810,7 @@ func TestApplyLegacyDeviceHeaders(t *testing.T) {
 
 	t.Run("nil request", func(t *testing.T) {
 		ApplyLegacyDeviceHeaders(nil, nil, cfg)
-		// 不应该 panic
+		// Should not panic
 	})
 
 	t.Run("sets default headers", func(t *testing.T) {
@@ -859,7 +859,7 @@ func TestApplyLegacyDeviceHeaders(t *testing.T) {
 	})
 }
 
-// Benchmark 测试
+// Benchmark test
 
 func BenchmarkParseCodexCLIVersion(b *testing.B) {
 	ua := "codex_cli_rs/0.117.0 (Mac OS 15.5.0; arm64) Apple_Terminal/464"
@@ -869,7 +869,7 @@ func BenchmarkParseCodexCLIVersion(b *testing.B) {
 }
 
 func BenchmarkResolveDeviceProfile(b *testing.B) {
-	// 清理缓存
+	// Clean up the cache
 	deviceProfileCacheMu.Lock()
 	deviceProfileCache = make(map[string]deviceProfileCacheEntry)
 	deviceProfileCacheMu.Unlock()

@@ -6,7 +6,7 @@ import (
 	"strings"
 )
 
-// ==================== 管理端视图 ====================
+// ==================== Admin view ====================
 
 type CodexUserAgentCatalogOption struct {
 	Value  string `json:"value"`
@@ -46,7 +46,7 @@ type CodexUserAgentCatalogView struct {
 	DefaultPoolMix map[string]int              `json:"default_pool_mix"`
 }
 
-// CodexUserAgentCatalog 返回管理页构建搭配选择所需的目录快照。
+// CodexUserAgentCatalog returns the catalog snapshot needed to build pairing choices on the admin page.
 func CodexUserAgentCatalog() CodexUserAgentCatalogView {
 	view := CodexUserAgentCatalogView{DefaultPoolMix: map[string]int{}}
 	for kind, w := range defaultCodexUAPoolMix {
@@ -119,8 +119,8 @@ type CodexUserAgentPreview struct {
 	Normalized string                  `json:"normalized"`
 }
 
-// PreviewCodexUserAgentConfig 按当前配置算出真实出站身份(UA / Originator / Version),
-// 号池模式下对给定账号逐个抽样。versionFloor 与执行链路同义(自动兼容模式下的最低 CLI 版本)。
+// PreviewCodexUserAgentConfig computes the real outbound identity (UA / Originator / Version) from the current config,
+// in pool mode, sampling each given account one by one. versionFloor has the same meaning as on the execution path (the minimum CLI version in auto-compatible mode).
 func PreviewCodexUserAgentConfig(raw, versionFloor string, sampleAccountIDs []int64) (CodexUserAgentPreview, error) {
 	normalized, err := NormalizeCodexUserAgentConfigJSON(raw)
 	if err != nil {
@@ -137,7 +137,7 @@ func PreviewCodexUserAgentConfig(raw, versionFloor string, sampleAccountIDs []in
 		return CodexUserAgentPreview{}, err
 	}
 	if !ok {
-		// 空配置:走内置画像池的默认画像,预览按账号 0 展示。
+		// Empty config: uses the default persona from the built-in persona pool; the preview shows it as account 0.
 		ua, version, err = generatedCodexClientHeadersChecked(nil, RuntimeSettings{CodexUserAgentConfig: normalized, CodexMinCLIVersion: versionFloor, ClientCompatMode: ClientCompatModeAuto})
 		if err != nil {
 			return CodexUserAgentPreview{}, err
@@ -151,7 +151,7 @@ func PreviewCodexUserAgentConfig(raw, versionFloor string, sampleAccountIDs []in
 	return preview, nil
 }
 
-// codexUserAgentComboWarnings 提示目录里从未出现过的静态画像字段(不阻止保存)。
+// codexUserAgentComboWarnings warns about static persona fields that never appear in the catalog (does not block saving).
 func codexUserAgentComboWarnings(cfg CodexUserAgentConfig, kind CodexClientKind) []string {
 	spec, ok := codexUAKindSpecFor(kind)
 	if !ok || cfg.RawUserAgent != "" {

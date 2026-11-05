@@ -16,12 +16,12 @@ func TestResolveContinuity(t *testing.T) {
 	gin.SetMode(gin.TestMode)
 
 	tests := []struct {
-		name        string
-		ctx         context.Context
-		account     *auth.Account
-		req         Request
-		opts        Options
-		wantSource  string
+		name         string
+		ctx          context.Context
+		account      *auth.Account
+		req          Request
+		opts         Options
+		wantSource   string
 		wantNonEmpty bool
 	}{
 		{
@@ -128,10 +128,10 @@ func TestResolveContinuity(t *testing.T) {
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			// 对于需要 account 的测试，创建一个模拟 account
+			// for tests that need an account, create a mock account
 			account := tt.account
 			if account == nil && tt.wantSource == "auth_id" {
-				// 只有明确测试 auth_id 分支时才创建 account
+				// only create an account when the auth_id branch is explicitly tested
 				account = &auth.Account{}
 			}
 
@@ -155,7 +155,7 @@ func TestResolveContinuity(t *testing.T) {
 func TestResolveContinuityWithAuthID(t *testing.T) {
 	gin.SetMode(gin.TestMode)
 
-	// 测试带 Email 的 account 会触发 auth_id 分支
+	// a test account with an Email triggers the auth_id branch
 	t.Run("account with email", func(t *testing.T) {
 		account := &auth.Account{
 			Email: "test@example.com",
@@ -175,13 +175,13 @@ func TestResolveContinuityWithAuthID(t *testing.T) {
 		}
 	})
 
-	// 测试带 DBID 的 account 会触发 auth_id 分支
+	// a test account with a DBID triggers the auth_id branch
 	t.Run("account with DBID", func(t *testing.T) {
-		// 由于 DBID 是私有字段，通过创建 Account 后内部设置
+		// DBID is a private field, so it is set internally after the Account is created
 		account := &auth.Account{}
-		// 使用反射或直接设置字段（如果可能）或通过 store 创建
-		// 这里我们使用 Email 为空，DBID 需要 > 0 才能生成 auth_id
-		// 由于无法直接设置私有字段 DBID，这个测试验证空 Email 且 DBID=0 时不生成 key
+		// use reflection or set the field directly (if possible), or create it through the store
+		// here Email is left empty, and DBID must be > 0 to generate an auth_id
+		// since the private DBID field cannot be set directly, this test verifies that no key is generated when Email is empty and DBID=0
 		req := Request{
 			Payload: []byte(`{}`),
 			Headers: http.Header{},
@@ -189,13 +189,13 @@ func TestResolveContinuityWithAuthID(t *testing.T) {
 		opts := Options{}
 
 		result := ResolveContinuity(context.Background(), account, req, opts)
-		// 空 account 应该返回空
+		// an empty account should return empty
 		if result.Key != "" {
 			t.Errorf("Expected empty key for empty account, got %v", result.Key)
 		}
 	})
 
-	// 测试 nil account
+	// test nil account
 	t.Run("nil account", func(t *testing.T) {
 		req := Request{
 			Payload: []byte(`{}`),
@@ -249,7 +249,7 @@ func TestApplyContinuityBody(t *testing.T) {
 			gotKey := gjson.GetBytes(result, "prompt_cache_key").String()
 			wantKey := gjson.GetBytes([]byte(tt.wantContains), "prompt_cache_key").String()
 
-			// 如果 wantContains 包含 prompt_cache_key，验证其值
+			// if wantContains includes prompt_cache_key, verify its value
 			if wantKey != "" {
 				if gotKey != wantKey {
 					t.Errorf("ApplyContinuityBody() prompt_cache_key = %v, want %v", gotKey, wantKey)
@@ -257,7 +257,7 @@ func TestApplyContinuityBody(t *testing.T) {
 				return
 			}
 
-			// 否则检查原始 body 是否保持不变
+			// otherwise check that the original body is unchanged
 			if !strings.Contains(string(result), tt.wantContains) {
 				t.Errorf("ApplyContinuityBody() = %v, want to contain %v", string(result), tt.wantContains)
 			}
@@ -285,7 +285,7 @@ func TestApplyContinuityHeaders(t *testing.T) {
 			wantValue:  "",
 		},
 		{
-			name: "nil headers",
+			name:       "nil headers",
 			headers:    nil,
 			continuity: Continuity{Key: "session-456", Source: "test"},
 			wantValue:  "",
@@ -429,7 +429,7 @@ func TestPrincipalString(t *testing.T) {
 }
 
 func TestUUIDGeneration(t *testing.T) {
-	// 测试 UUID 生成是确定性的
+	// test that UUID generation is deterministic
 	t.Run("consistent UUID generation", func(t *testing.T) {
 		input := "test-input-123"
 		uuid1 := uuid.NewSHA1(uuid.NameSpaceOID, []byte("codex2api:prompt-cache:"+input))

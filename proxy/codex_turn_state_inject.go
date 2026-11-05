@@ -9,11 +9,11 @@ import (
 	"github.com/tidwall/gjson"
 )
 
-// 观测到的 state 实测在 300 字符上下，留一个数量级的余量即可；超限的一律丢弃，
-// 截断后的 state 既不能复用也会误导排查。
+// Observed state values measure around 300 characters, so a margin of one order of magnitude is enough; anything over the limit is always dropped,
+// because a truncated state can neither be reused nor be a reliable troubleshooting aid.
 const maxObservedCodexTurnStateBytes = 4096
 
-// observedCodexTurnState 规整一个观测值：只接受单行可见字符串，超限丢弃。
+// observedCodexTurnState normalizes an observed value: it only accepts a single-line visible string and drops anything over the limit.
 func observedCodexTurnState(value string) string {
 	value = strings.TrimSpace(value)
 	if value == "" || len(value) > maxObservedCodexTurnStateBytes || !utf8.ValidString(value) {
@@ -29,9 +29,9 @@ func observedCodexTurnState(value string) string {
 
 var codexTurnStateFrameNeedles = [][]byte{[]byte("turn-state"), []byte("Turn-State")}
 
-// codexTurnStateFromFrame 从 WS 事件帧里找上游回带的 turn state。官方契约里 WS 路径
-// 的值来自握手响应头或 response.metadata 事件；这里按键名等值（大小写不敏感）在几个
-// 已知承载位置上找，找不到返回空。先做一次零分配的子串预检，避免每帧都解析 JSON。
+// codexTurnStateFromFrame looks for the upstream-echoed turn state in a WS event frame. In the official contract, the WS path
+// takes its value from the handshake response header or the response.metadata event; here it matches the key name exactly (case-insensitive) across several
+// known carrier locations, and returns empty if not found. It first runs a zero-allocation substring pre-check so that every frame does not have to parse JSON.
 func codexTurnStateFromFrame(payload []byte) string {
 	if len(payload) == 0 {
 		return ""
@@ -73,8 +73,8 @@ func codexTurnStateFromFrame(payload []byte) string {
 	return ""
 }
 
-// ObserveCodexTurnStateFrame 供 WS 中继在逐帧转发时调用：发现上游回带的 turn state
-// 就记到本次尝试的追踪里（用量日志据此显示“回带 Turn State”）。
+// ObserveCodexTurnStateFrame is called by the WS relay while forwarding frame by frame: when it finds the upstream-echoed turn state,
+// it records it in the trace of this attempt (the usage log uses this to show "Echoed Turn State").
 func ObserveCodexTurnStateFrame(ctx context.Context, payload []byte) string {
 	state := codexTurnStateFromFrame(payload)
 	if state != "" {

@@ -11,11 +11,11 @@ const (
 	apiKeyAdmissionIdleTTL  = 10 * time.Minute
 )
 
-// apiKeyAdmissionLimiter 在进程内按实际请求递增 RPM/RPD 计数。
+// apiKeyAdmissionLimiter increments the RPM/RPD counts per actual request, in process.
 //
-// 数据库聚合 + 60s 缓存适合展示和跨进程兜底，但不能约束同一缓存窗口内的并发
-// 突发：所有请求都读到同一个旧值。这里在准入点用原子计数补上这一段，缓存只负责
-// 历史用量。多实例部署时每个副本各有一份计数，跨副本仍需共享计数（见 issue）。
+// The database aggregate + 60s cache suits display and cross-process fallback, but cannot bound concurrency
+// bursts within the same cache window: all requests read the same stale value. An atomic count at the admission point fills that gap; the cache only handles
+// historical usage. With multi-instance deployments each replica keeps its own count, and counts still need sharing across replicas (see issue).
 type apiKeyAdmissionLimiter struct {
 	mu      sync.Mutex
 	entries map[int64]*apiKeyAdmissionEntry
@@ -48,8 +48,8 @@ func (h *Handler) admissionLimiter() *apiKeyAdmissionLimiter {
 	return h.admission
 }
 
-// allow 在 RPM/RPD 限额内为 requests 个上游请求预留计数。
-// limit <= 0 表示该维度不限制。拒绝时返回 "rpm" 或 "rpd"。
+// allow reserves counts for `requests` upstream requests within the RPM/RPD limits.
+// limit <= 0 means the dimension is unlimited. On rejection it returns "rpm" or "rpd".
 func (l *apiKeyAdmissionLimiter) allow(keyID int64, rpm, rpd, requests int, now time.Time) (bool, string) {
 	if l == nil || keyID <= 0 || requests <= 0 {
 		return true, ""
@@ -62,7 +62,7 @@ func (l *apiKeyAdmissionLimiter) allow(keyID int64, rpm, rpd, requests int, now 
 
 	entry := l.entries[keyID]
 	if entry == nil {
-		// 先清理再插入，否则满表时新键会被自己的淘汰逻辑删掉。
+		// Clean up before inserting; otherwise, when the table is full, the new key would be removed by its own eviction logic.
 		l.evictLocked(now)
 		if len(l.entries) >= apiKeyAdmissionMaxKeys {
 			return false, "capacity"
@@ -82,7 +82,7 @@ func (l *apiKeyAdmissionLimiter) allow(keyID int64, rpm, rpd, requests int, now 
 		}
 	}
 
-	// 两个维度都通过后再一起记账，避免 RPD 拒绝时仍消耗 RPM 配额。
+	// Record both dimensions together after both pass, so an RPD rejection does not still consume the RPM quota.
 	if rpm > 0 {
 		entry.rpmBuckets[now.Unix()%apiKeyAdmissionRPMSlots] += int64(requests)
 	}
@@ -120,7 +120,7 @@ func (e *apiKeyAdmissionEntry) recordRPD(now time.Time, count int64) {
 	e.rpdCount += count
 }
 
-// rpmUsed 推进秒级桶并返回最近 60 秒的计数，不写入本次请求。
+// rpmUsed advances the per-second buckets and returns the count for the last 60 seconds, without recording this request.
 func (e *apiKeyAdmissionEntry) rpmUsed(now time.Time) int64 {
 	second := now.Unix()
 	switch {

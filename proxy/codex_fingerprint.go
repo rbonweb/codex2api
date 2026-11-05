@@ -15,27 +15,27 @@ import (
 	"github.com/codex2api/auth"
 )
 
-// Codex 设备指纹收敛：把出站请求里携带的客户端标识改写成账号级恒定值，
-// 使上游看到的「设备数 / 会话数」收敛，而不是随共享该账号的下游用户数增长。
-// 档位语义见 auth/codex_fingerprint_mode.go。
+// Codex device fingerprint convergence: rewrite the client identifiers carried in outbound requests into account-level constant values,
+// so that the "device count / session count" seen by the upstream converges, instead of growing with the number of downstream users sharing the account.
+// For the semantics of each tier, see auth/codex_fingerprint_mode.go.
 //
 // single_machine_multi_window preserves real conversation/subagent topology and
 // aligns session/thread headers. See codex_fingerprint_modes.go. No fixed window
 // pool or fabricated subagents are used; existing turn IDs/timestamps survive.
 // The following historical constraints describe the original four modes.
-// 收敛面严格限定在两个载体：
-//   - X-Codex-Turn-Metadata 请求头里的 JSON（本项目按白名单原样透传，见
-//     codexAllowedForwardHeaders，客户端真实标识由此泄漏）
-//   - 请求体 client_metadata（Codex 官方路径同样原样透传）
+// Convergence is strictly limited to two carriers:
+//   - The JSON in the X-Codex-Turn-Metadata request header (this project passes it through verbatim per the allowlist, see
+//     codexAllowedForwardHeaders; this is where the client's real identifiers leak)
+//   - The client_metadata in the request body (the official Codex path also passes it through verbatim)
 //
-// 明确不改写的部分：
-//   - 出站 Session_id 头：由 resolveUpstreamSessionID 独立决定（默认隔离模式下每请求
-//     随机），收敛不介入，否则会改变 prompt cache 隔离语义。注意它与 metadata 里的
-//     session_id 是两套独立身份，开启收敛后两者取值不同属预期。
-//   - turn_id / turn_started_at_unix_ms：客户端逐轮随机值，不标识设备或会话；
-//     重算反而会让头与体、turn_id 与其时间戳彼此不一致，本身就是特征。
-//   - 客户端未携带的字段：只改写已存在的键，绝不新增，避免改变 metadata 的形状。
-//     该规则同样适用于请求头——出站只覆盖下游确实发过的标识头，不凭空补发。
+// Explicitly not rewritten:
+//   - The outbound Session_id header: decided independently by resolveUpstreamSessionID (in default isolation mode, per request
+//     random), convergence does not touch it, otherwise prompt cache isolation semantics would change. Note that it and the metadata's
+//     session_id are two separate identities; it is expected that their values differ once convergence is enabled.
+//   - turn_id / turn_started_at_unix_ms: per-turn random values from the client; they do not identify a device or session;
+//     recomputing them would make the header, the body, and turn_id and its timestamp inconsistent with each other, which is itself a fingerprint.
+//   - Fields the client did not send: only existing keys are rewritten, never added, so the shape of metadata does not change.
+//     This rule applies equally to request headers: outbound only overwrites identifier headers the downstream actually sent, and never fabricates them.
 
 const (
 	codexTurnMetadataHeader    = "X-Codex-Turn-Metadata"
@@ -46,9 +46,9 @@ const (
 	codexParentThreadIDHeader  = "X-Codex-Parent-Thread-Id"
 )
 
-// codexFingerprintIDs 是一次请求的收敛目标值。全部字段都由「账号 + 下游请求头」
-// 确定性推导，因此请求头改写点和请求体改写点各自推导也必然得到同一组值，
-// 不需要跨函数传递即可保证一致。
+// codexFingerprintIDs is the set of convergence target values for one request. All fields are derived deterministically from "account + downstream request headers",
+// so the request header rewrite point and the request body rewrite point each derive them and necessarily get the same set of values,
+// guaranteeing consistency without passing anything across functions.
 type codexFingerprintIDs struct {
 	mode           string
 	accountID      int64
@@ -58,12 +58,12 @@ type codexFingerprintIDs struct {
 	windowID       string
 }
 
-// deriveStableCodexUUID 从种子确定性派生一个 UUIDv4 格式的字符串：同一种子恒定返回
-// 同一值，跨进程重启也不变，因此无需落库。
+// deriveStableCodexUUID derives a UUIDv4-format string deterministically from a seed: the same seed always returns
+// the same value, and it does not change across process restarts, so nothing needs to be persisted.
 //
-// 仅用于 installation_id：抓包实证真实客户端的 installation 标识是 v4，session/thread/
-// window 则是 v7（见 deriveStableCodexUUIDv7）。这里没有复用 uuid.NewSHA1（本仓库其它
-// 确定性 ID 的做法），因为那会产出 v5 UUID，版本位与真实 v4 不同，本身可被识别。
+// Used only for installation_id: packet captures show the real client's installation identifier is v4, while session/thread/
+// window are v7 (see deriveStableCodexUUIDv7). NewSHA1 is not reused here (unlike other deterministic IDs in this repo),
+// because that would produce a v5 UUID whose version bits differ from the real v4, which is itself recognizable.
 func deriveStableCodexUUID(seed string) string {
 	sum := sha256.Sum256([]byte(seed))
 	var u uuid.UUID
@@ -73,15 +73,15 @@ func deriveStableCodexUUID(seed string) string {
 	return u.String()
 }
 
-// deriveStableCodexUUIDv7 从种子确定性派生一个 UUIDv7 格式的字符串：前 48 bit 是毫秒
-// 时间戳（big-endian，按 RFC 9562），其余 74 bit 取种子哈希。同一 (种子, 时间戳) 恒定
-// 返回同值，跨进程重启也不变，无需落库。
+// deriveStableCodexUUIDv7 derives a UUIDv7-format string deterministically from a seed: the first 48 bits are the millisecond
+// timestamp (big-endian, per RFC 9562), and the remaining 74 bits come from the seed hash. The same (seed, timestamp) always
+// returns the same value, and it does not change across process restarts, so nothing needs to be persisted.
 //
-// 用于 session / thread / window：抓包实证真实客户端的这三个标识是 UUIDv7，时间戳位
-// 解出的时刻与抓包时刻仅差数秒。之前一律写死 v4 有两处可识别特征——版本 nibble 与真实
-// 不符；更关键的是 v4 无时间序，上游若按 UUID 排序（主键索引 / 日志），一个 v4 会因其
-// 伪随机的"时间戳位"落到与真实会话完全无关的位置、跳到序列顶部或底部（见 #536 评论）。
-// installation_id 真实是 v4，仍走 deriveStableCodexUUID。
+// Used for session / thread / window: packet captures show the real client's three identifiers are UUIDv7, with timestamp bits
+// that decode to a moment only seconds away from the capture time. Hard-coding v4 everywhere previously had two recognizable traits: the version nibble differed from the real one;
+// and more importantly, v4 has no time ordering: if the upstream sorts by UUID (primary key index / logs), a v4 lands because of its
+// pseudo-random "timestamp bits" at a position completely unrelated to the real session, jumping to the top or bottom of the sequence (see the #536 comment).
+// installation_id really is v4, so it still uses deriveStableCodexUUID.
 func deriveStableCodexUUIDv7(seed string, unixMilli int64) string {
 	sum := sha256.Sum256([]byte(seed))
 	var u uuid.UUID
@@ -99,20 +99,20 @@ func deriveStableCodexUUIDv7(seed string, unixMilli int64) string {
 }
 
 const (
-	// codexIdentityFallbackEpochMilli 是账号加入时间不可用时的时间戳基准，取一个固定
-	// 的近期时刻（2025-01-01Z），确保派生的 v7 时间戳落在合理区间而不是 1970。
+	// codexIdentityFallbackEpochMilli is the timestamp baseline used when the account's join time is unavailable; it takes a fixed
+	// recent moment (2025-01-01Z) to ensure the derived v7 timestamps fall in a reasonable range rather than 1970.
 	codexIdentityFallbackEpochMilli int64 = 1_735_689_600_000
-	// codexIdentitySpreadMilli 是会话时间戳相对基准的散布窗口（30 天）：让同账号的
-	// session / thread / window 及不同线程的 v7 时间戳互不相同，又不至于漂移到远离
-	// 账号存在期。真实客户端每个会话都会新建一批时间戳相近但互异的标识。
+	// codexIdentitySpreadMilli is the spread window (30 days) of session timestamps relative to the baseline: it keeps the
+	// session / thread / window and the v7 timestamps of different threads under the same account distinct from each other, without drifting far from
+	// the account's lifetime. Each real client session creates a batch of identifiers with close but distinct timestamps.
 	codexIdentitySpreadMilli int64 = 30 * 24 * 60 * 60 * 1000
 )
 
-// codexIdentityUnixMilli 为账号的收敛身份 UUID 派生一个确定性毫秒时间戳，用作 v7 的
-// 时间戳位。以账号加入时间为基准（随新账号自然前移，避免所有收敛值挤在同一固定时刻），
-// 叠加一个由种子派生的有界偏移，使 session / thread / window 及不同线程的时间戳互不
-// 相同而仍聚集在账号存在期附近。全程只依赖账号加入时间和种子，不引入 time.Now，因此
-// 保持"同种子恒定、无需落库"的性质。
+// codexIdentityUnixMilli derives a deterministic millisecond timestamp for the account's converged identity UUID, used as the v7
+// timestamp bits. It is anchored on the account's join time (which naturally moves forward with new accounts, avoiding all converged values clustering at one fixed moment),
+// plus a bounded offset derived from the seed, so that session / thread / window and the timestamps of different threads are all distinct
+// yet still cluster near the account's lifetime. It relies only on the account join time and the seed throughout, and does not introduce time.Now, so
+// it keeps the property "same seed, constant value, no persistence needed".
 func codexIdentityUnixMilli(account *auth.Account, seed string) int64 {
 	base := account.AddedAt.Load() / int64(time.Millisecond)
 	if base <= 0 {
@@ -123,29 +123,29 @@ func codexIdentityUnixMilli(account *auth.Account, seed string) int64 {
 	return base + offset
 }
 
-// DeriveStableSessionUUIDv7 从种子确定性派生 UUIDv7 格式的会话身份，供没有账号
-// 上下文的调用点使用（上游 Session_id / prompt_cache_key 的派生只拿得到 API Key
-// 或 API Key ID）。时间戳位取固定基准加种子派生的有界偏移，因此同种子恒定返回
-// 同值、跨进程重启不变，且不同种子的时间戳互不相同。
+// DeriveStableSessionUUIDv7 derives a UUIDv7-format session identity deterministically from a seed, for call sites without an account
+// context (the derivation of upstream Session_id / prompt_cache_key only has access to the API Key
+// or API Key ID). The timestamp bits are a fixed baseline plus a bounded offset derived from the seed, so the same seed always returns
+// the same value, unchanged across process restarts, and different seeds have distinct timestamps.
 //
-// 存在的理由是格式保真：真实 Codex 客户端的 session_id 是 UUIDv7。本网关此前两处
-// 派生都不是——IsolateCodexSessionID 产出 16 位裸十六进制（连 UUID 都不是），
-// deterministicPromptCacheKey 用 uuid.NewSHA1 产出 v5（版本 nibble 与真实不符）。
-// 后者正是 deriveStableCodexUUID 注释里已经点名过的坑，当时只修了指纹模块这一侧。
+// It exists for format fidelity: the real Codex client's session_id is UUIDv7. Both of this gateway's earlier derivations were not
+// that: IsolateCodexSessionID produced 16-digit bare hex (not even a UUID),
+// and deterministicPromptCacheKey produced v5 with uuid.NewSHA1 (the version nibble does not match the real one).
+// The latter is exactly the pitfall already named in the deriveStableCodexUUID comment; back then only the fingerprint module's side was fixed.
 func DeriveStableSessionUUIDv7(seed string) string {
 	return deriveStableCodexUUIDv7(seed, seededIdentityUnixMilli(seed))
 }
 
-// NewUpstreamSessionUUID 生成一个每次都不同的 UUIDv7，供"每请求隔离"的上游会话
-// 身份使用（默认隔离模式下的 prompt_cache_key 与 session-id 头）。
+// NewUpstreamSessionUUID generates a UUIDv7 that differs on every call, for the upstream session identity used by "per-request isolation"
+// (the prompt_cache_key and session-id header in default isolation mode).
 //
-// 必须是 v7 而不是 uuid.NewString() 的 v4：真实 Codex 客户端的 session_id 恒为 v7，
-// 而默认隔离是本网关最常走的路径——绝大多数出站请求的会话键都由这里产出，
-// 版本位错了等于每个请求都带着一个与真实客户端不符的标记。v4 还没有时间序，
-// 上游若按 UUID 排序（主键索引 / 日志），它会因伪随机的"时间戳位"落到与真实
-// 会话完全无关的位置（与 deriveStableCodexUUIDv7 注释里记的是同一个问题）。
+// It must be v7, not the v4 from uuid.NewString(): the real Codex client's session_id is always v7,
+// and default isolation is the path this gateway takes most often; most outbound requests' session keys come from here,
+// so a wrong version nibble would mean every request carries a marker that differs from the real client. v4 also has no time ordering,
+// so if the upstream sorts by UUID (primary key index / logs), it lands because of its pseudo-random "timestamp bits" at a position
+// completely unrelated to the real session (the same problem recorded in the deriveStableCodexUUIDv7 comment).
 //
-// NewV7 只在系统熵源不可用时报错，那种情况下回落到 v4 也比让请求失败强。
+// NewV7 only errors when the system entropy source is unavailable; falling back to v4 in that case is still better than failing the request.
 func NewUpstreamSessionUUID() string {
 	if generated, err := uuid.NewV7(); err == nil {
 		return generated.String()
@@ -153,19 +153,19 @@ func NewUpstreamSessionUUID() string {
 	return uuid.NewString()
 }
 
-// seededIdentityUnixMilli 是 codexIdentityUnixMilli 的无账号版本：拿不到账号加入
-// 时间时以固定基准代替，其余散布逻辑一致。
+// seededIdentityUnixMilli is the no-account version of codexIdentityUnixMilli: when the account join time is unavailable, a fixed baseline
+// replaces it, and the rest of the spread logic is the same.
 func seededIdentityUnixMilli(seed string) int64 {
 	sum := sha256.Sum256([]byte("codex2api:session-identity-ts:v1:" + seed))
 	offset := int64(binary.BigEndian.Uint64(sum[:8]) % uint64(codexIdentitySpreadMilli))
 	return codexIdentityFallbackEpochMilli + offset
 }
 
-// resolveCodexFingerprintIDs 按账号配置推导收敛目标值，off 档或账号缺失时返回 nil。
+// resolveCodexFingerprintIDs derives the convergence target values from the account configuration; it returns nil for the off tier or when the account is missing.
 //
-// downstreamHeaders 是下游客户端的原始请求头，用于取客户端真实会话/线程标识来派生
-// thread_id。session 档：同一客户端会话一条线程；会话与线程不同（子代理）时按真实
-// thread 再拆一条，避免 X-Client-Request-Id 塌缩后 previous_response_id 找不到。
+// downstreamHeaders are the original request headers of the downstream client, used to take the client's real session/thread identifiers to derive
+// thread_id. Session tier: one client session maps to one thread; when session and thread differ (subagents), it splits one more thread out by the real
+// thread, so that previous_response_id can still be found after X-Client-Request-Id collapses.
 func resolveCodexFingerprintIDs(account *auth.Account, downstreamHeaders http.Header) *codexFingerprintIDs {
 	if account == nil {
 		return nil
@@ -216,9 +216,9 @@ func resolveCodexFingerprintIDs(account *auth.Account, downstreamHeaders http.He
 		var threadSeed string
 		switch {
 		case clientThreadID != "" && clientSessionID != "" && clientThreadID != clientSessionID:
-			// 子代理 / 多窗口：真实 thread 与 session 不同。仍按会话派生会把
-			// 多条线程收成一条，X-Client-Request-Id（实测恒等于 thread-id）
-			// 跟着塌缩后，上游按线程查找 previous_response_id 就会 400（#541）。
+			// Subagents / multiple windows: the real thread and session differ. Still deriving by session would fold
+			// multiple threads into one, and once X-Client-Request-Id (measured to always equal thread-id) collapses along with it,
+			// the upstream looking up previous_response_id by thread would return 400 (#541).
 			threadSeed = fmt.Sprintf("codex2api:codex-thread-id:v2:%d:%s", accountID, clientThreadID)
 		case clientSessionID != "":
 			threadSeed = fmt.Sprintf("codex2api:codex-thread-id:v1:%d:%s", accountID, clientSessionID)
@@ -233,10 +233,10 @@ func resolveCodexFingerprintIDs(account *auth.Account, downstreamHeaders http.He
 	return ids
 }
 
-// resolveConvergedInstallationID 返回账号级恒定的 installation_id。
-// 账号自定义头里显式配置的 installation id 优先——运维借此把账号钉到一个已知的
-// 真实设备标识上，且该值本来就会覆盖出站头（自定义头最后应用），这里一并采用可
-// 保证请求头与 metadata 中的取值一致。
+// resolveConvergedInstallationID returns the account-level constant installation_id.
+// An installation id explicitly set in the account's custom headers takes priority: operators use it to pin the account to a known
+// real device identifier, and since that value overrides outbound headers anyway (custom headers are applied last), it is adopted here as well so that
+// the header and metadata values are guaranteed to match.
 func resolveConvergedInstallationID(account *auth.Account, accountID int64) string {
 	for name, value := range account.GetCustomHeaders() {
 		if strings.EqualFold(strings.TrimSpace(name), codexInstallationIDHeader) {
@@ -248,19 +248,19 @@ func resolveConvergedInstallationID(account *auth.Account, accountID int64) stri
 	return deriveStableCodexUUID(fmt.Sprintf("codex2api:codex-install-id:v1:%d", accountID))
 }
 
-// extractClientCodexSessionID 取下游客户端的原始会话标识。
-// 只读请求头：请求头改写点拿不到请求体，限定在同一输入才能保证两处推导一致。
+// extractClientCodexSessionID takes the downstream client's original session identifier.
+// Read-only on request headers: the request header rewrite point cannot access the request body, so it is limited to the same input to guarantee the two derivations match.
 func extractClientCodexSessionID(headers http.Header) string {
 	if headers == nil {
 		return ""
 	}
-	// Codex CLI 走 HTTP/2 发的是连字符形式 session-id；下划线形式是旧写法，两者都认。
+	// The Codex CLI sends the hyphenated session-id over HTTP/2; the underscore form is the legacy spelling, and both are accepted.
 	for _, name := range []string{"Session-Id", "Session_id"} {
 		if value := strings.TrimSpace(headers.Get(name)); value != "" {
 			return value
 		}
 	}
-	// 客户端未发会话头时，退回 turn metadata 里自报的会话标识。
+	// When the client sends no session header, fall back to the session identifier self-reported in the turn metadata.
 	raw := strings.TrimSpace(headers.Get(codexTurnMetadataHeader))
 	if raw == "" || !gjson.Valid(raw) {
 		return ""
@@ -273,13 +273,13 @@ func extractClientCodexSessionID(headers http.Header) string {
 	return ""
 }
 
-// ApplyCodexFingerprintHeaders 按账号配置收敛出站请求头中的设备指纹。
-// 必须在白名单透传（applyCodexAllowedForwardHeaders）之后调用，才能覆盖掉客户端原值；
-// 也应在账号自定义头之前调用，让运维显式配置的头保持最终优先。
+// ApplyCodexFingerprintHeaders converges the device fingerprint in outbound request headers according to the account configuration.
+// Must be called after allowlist passthrough (applyCodexAllowedForwardHeaders) so it can overwrite the client's original values;
+// it should also be called before the account's custom headers, so that headers the operator configures explicitly keep final priority.
 //
-// downstreamHeaders 用于判断这次请求是否真的来自 Codex 客户端：非 Codex 下游
-// （普通 OpenAI SDK 等）不会补发 x-codex-* 头，否则等于给一个本来没有 Codex 特征的
-// 请求伪造出半套客户端特征，比不发更可疑。
+// downstreamHeaders decide whether this request really came from a Codex client: a non-Codex downstream
+// (a plain OpenAI SDK, etc.) does not send x-codex-* headers, otherwise it would amount to fabricating a half-set of client traits
+// on a request that has no Codex traits to begin with, which is more suspicious than not sending them.
 func ApplyCodexFingerprintHeaders(outbound http.Header, account *auth.Account, downstreamHeaders http.Header) {
 	if outbound == nil {
 		return
@@ -295,27 +295,27 @@ func ApplyCodexFingerprintHeaders(outbound http.Header, account *auth.Account, d
 		}
 	}
 
-	// X-Client-Request-Id 按白名单原样透传（codexAllowedForwardHeaders）。实测真实
-	// 客户端把它取成与自身 thread_id 相同的值，因此不处理就等于把下游用户的原始
-	// 线程标识直接送到上游，与已收敛的 metadata 各说各话。只在它确实复用了客户端
-	// 自报的会话/线程标识时改写；取值本就与身份无关时保持原样。
+	// X-Client-Request-Id is passed through verbatim per the allowlist (codexAllowedForwardHeaders). Measurements show the real
+	// client sets it to the same value as its own thread_id, so leaving it alone would send the downstream user's original
+	// thread identifier straight to the upstream, out of step with the converged metadata. Rewrite it only when it does reuse the client's
+	// self-reported session/thread identifier; when the value is unrelated to identity, keep it as is.
 	if converged := convergedClientRequestID(outbound.Get(codexClientRequestIDHeader), ids, downstreamHeaders); converged != "" {
 		outbound.Set(codexClientRequestIDHeader, converged)
 	}
 
-	// 仅对确有 Codex 引擎特征的下游请求处理标识头。
+	// Only handle identifier headers for downstream requests that do carry real Codex engine traits.
 	if !EvaluateEngineFingerprint(downstreamHeaders, nil, nil) {
 		return
 	}
-	// 只覆盖下游确实发过的标识头。实测真实 Codex CLI 只发 x-codex-window-id，
-	// 从不发 x-codex-installation-id（installation_id 只存在于 turn metadata JSON 里）：
-	// 无条件补发等于给请求添一个真实客户端不会有的头，与收敛目标相反。
+	// Only overwrite the identifier headers the downstream actually sent. Measurements show the real Codex CLI only sends x-codex-window-id,
+	// and never sends x-codex-installation-id (installation_id only exists inside the turn metadata JSON):
+	// unconditionally adding it would give the request a header the real client would never have, the opposite of the convergence goal.
 	overrideExistingHeader(outbound, downstreamHeaders, codexInstallationIDHeader, ids.installationID)
 	overrideExistingHeader(outbound, downstreamHeaders, codexWindowIDHeader, ids.windowID)
-	// x-codex-parent-thread-id 与 metadata 里的 parent_thread_id 必须报同一个值：
-	// 真实客户端这两处是同一份快照的两个投影（responses_metadata.rs
-	// compatibility_headers），一处收敛一处不收敛就成了可直接比对的破绽。
-	// device 档不做会话级收敛，与该档位其余字段保持一致。
+	// x-codex-parent-thread-id and parent_thread_id in metadata must report the same value:
+	// on the real client these two are two projections of the same snapshot (responses_metadata.rs
+	// compatibility_headers), and if one converges but the other does not, it becomes an easily compared giveaway.
+	// The device tier does no session-level convergence, consistent with the other fields of that tier.
 	if ids.mode != auth.CodexFingerprintModeDevice && downstreamHeaders != nil {
 		if original := strings.TrimSpace(downstreamHeaders.Get(codexParentThreadIDHeader)); original != "" {
 			overrideExistingHeader(outbound, downstreamHeaders, codexParentThreadIDHeader,
@@ -324,9 +324,9 @@ func ApplyCodexFingerprintHeaders(outbound http.Header, account *auth.Account, d
 	}
 }
 
-// overrideExistingHeader 仅在下游确实发过该头时，用收敛值覆盖出站取值。
-// 判定读下游头而非出站头：这两个标识头都不在 codexAllowedForwardHeaders 里，
-// 下游即使发了，到这一步出站请求上也没有。
+// overrideExistingHeader overwrites the outbound value with the converged value only when the downstream actually sent that header.
+// The check reads the downstream header rather than the outbound header: neither of these identifier headers is in codexAllowedForwardHeaders,
+// so even if the downstream sent them, the outbound request does not carry them at this point.
 func overrideExistingHeader(outbound, downstreamHeaders http.Header, name, value string) {
 	if value == "" || downstreamHeaders == nil {
 		return
@@ -337,8 +337,8 @@ func overrideExistingHeader(outbound, downstreamHeaders http.Header, name, value
 	outbound.Set(name, value)
 }
 
-// convergedClientRequestID 在 X-Client-Request-Id 复用了客户端自报身份时返回对应的
-// 收敛值，否则返回空串表示不改写。device 档没有会话级收敛值，恒不改写。
+// convergedClientRequestID returns the corresponding converged value when X-Client-Request-Id reuses the client's self-reported identity,
+// otherwise it returns an empty string, meaning no rewrite. The device tier has no session-level converged value, so it never rewrites.
 func convergedClientRequestID(current string, ids *codexFingerprintIDs, downstreamHeaders http.Header) string {
 	current = strings.TrimSpace(current)
 	if current == "" || ids == nil || ids.threadID == "" {
@@ -355,9 +355,9 @@ func convergedClientRequestID(current string, ids *codexFingerprintIDs, downstre
 	}
 }
 
-// extractClientCodexIdentity 取下游自报的原始会话/线程标识，用于判断别的头是否
-// 重复携带了同一个值。与 extractClientCodexSessionID 分开实现：后者是收敛值的派生
-// 输入，改动它会让既有账号已经稳定的 thread_id 发生漂移。
+// extractClientCodexIdentity takes the downstream's self-reported original session/thread identifiers, used to check whether other headers
+// carry the same value repeatedly. It is implemented separately from extractClientCodexSessionID: the latter is the input for deriving converged values,
+// and changing it would make the thread_id that existing accounts have already stabilized drift.
 func extractClientCodexIdentity(headers http.Header) (sessionID, threadID string) {
 	if headers == nil {
 		return "", ""
@@ -382,8 +382,8 @@ func extractClientCodexIdentity(headers http.Header) (sessionID, threadID string
 	return sessionID, threadID
 }
 
-// ApplyCodexFingerprintToBody 收敛请求体 client_metadata 中的设备指纹。
-// 请求体没有 client_metadata 时原样返回。
+// ApplyCodexFingerprintToBody converges the device fingerprint in the request body's client_metadata.
+// Returns the request body unchanged when there is no client_metadata.
 func ApplyCodexFingerprintToBody(body []byte, account *auth.Account, downstreamHeaders http.Header) []byte {
 	ids := resolveCodexFingerprintIDs(account, downstreamHeaders)
 	if ids == nil {
@@ -404,7 +404,7 @@ func ApplyCodexFingerprintToBody(body []byte, account *auth.Account, downstreamH
 		body = setExistingJSONString(body, "client_metadata.x-codex-window-id", ids.windowID)
 	}
 
-	// client_metadata 里可能内嵌一份 turn metadata JSON 字符串，同样要收敛。
+	// client_metadata may embed a turn metadata JSON string, which must be converged as well.
 	const embeddedPath = "client_metadata.x-codex-turn-metadata"
 	if embedded := gjson.GetBytes(body, embeddedPath); embedded.Type == gjson.String {
 		if rewritten, changed := rewriteCodexTurnMetadataJSON(embedded.String(), ids); changed {
@@ -416,9 +416,9 @@ func ApplyCodexFingerprintToBody(body []byte, account *auth.Account, downstreamH
 	return body
 }
 
-// rewriteCodexTurnMetadataJSON 收敛 turn metadata JSON 里的身份字段。
-// 用 sjson 原地替换而非 map 反序列化再序列化：后者会按字典序重排键、丢掉原始键序，
-// 这个形状差异本身就是可识别特征。未出现的键不会被补上。
+// rewriteCodexTurnMetadataJSON converges the identity fields in the turn metadata JSON.
+// It uses sjson to replace values in place rather than unmarshal to a map and re-marshal: the latter would re-sort keys lexicographically and drop the original key order,
+// and this shape difference is itself a recognizable trait. Keys that did not appear are not added.
 func rewriteCodexTurnMetadataJSON(raw string, ids *codexFingerprintIDs) (string, bool) {
 	if ids == nil || !gjson.Valid(raw) {
 		return raw, false
@@ -462,34 +462,34 @@ func rewriteCodexTurnMetadataJSON(raw string, ids *codexFingerprintIDs) (string,
 	return raw, changed
 }
 
-// codexLineageMetadataPaths 是 turn metadata 里剩下的、会跨请求稳定地标识下游
-// 会话/线程的字段（字段定义见 codex-rs/core/src/responses_metadata.rs
-// CodexTurnMetadataPayload）。前面那批收敛只覆盖了 installation/session/thread/window
-// 四个键，这些原样透传出去，等于换个字段泄漏同样的东西：
+// codexLineageMetadataPaths are the remaining turn metadata fields that stably identify the downstream
+// session/thread across requests (for field definitions see codex-rs/core/src/responses_metadata.rs
+// CodexTurnMetadataPayload). The earlier batch of convergence only covered the four keys installation/session/thread/window; these are passed through verbatim, which
+// is the same leak through different fields:
 //
-//   - context_window_id：Uuid::now_v7，会话内恒定、随 auto-compact 递增
-//     （core/src/session/mod.rs current_window）。它跨请求稳定，单独一个字段
-//     就能把同一个下游用户的多次请求串成一串，前面几项收敛随之失去意义。
-//   - parent_thread_id / forked_from_thread_id：下游真实 ThreadId，语义与 thread_id
-//     同级，泄漏面也相同。
+//   - context_window_id: Uuid::now_v7, constant within a session and incremented by auto-compact
+//     (core/src/session/mod.rs current_window). It is stable across requests, and on its own one field
+//     can string the multiple requests of the same downstream user into a chain, so the earlier convergence items lose their meaning.
+//   - parent_thread_id / forked_from_thread_id: the downstream's real ThreadId; same level as thread_id,
+//     and the leak surface is the same.
 //
-// 刻意不含 parent_turn_id / root_turn_id：它们是轮次级标识，与本文件顶部对
-// turn_id 的判断同理——逐轮变化、不标识设备或会话，重算反而会与同轮的
-// turn_id / turn_started_at_unix_ms 失去一致性，那种不一致本身就是特征。
+// Deliberately excludes parent_turn_id / root_turn_id: they are turn-level identifiers; for the same reason as the judgment on
+// turn_id at the top of this file, they change every turn and do not identify a device or session, and recomputing them would lose consistency with the same turn's
+// turn_id / turn_started_at_unix_ms, and that inconsistency is itself a trait.
 var codexLineageMetadataPaths = []string{
 	"context_window_id",
 	"parent_thread_id",
 	"forked_from_thread_id",
 }
 
-// convergeCodexLineageMetadata 把谱系字段替换成按账号 + 原值派生的收敛值。
+// convergeCodexLineageMetadata replaces the lineage fields with converged values derived from the account + original value.
 //
-// 按原值派生（而非全部塌缩成一个常量）保住了形态：不同下游窗口/父线程在上游
-// 看来仍是不同的值，这正是真实客户端的样子；变的只是它们不再等于下游的真实标识。
-// 种子带 accountID，与本文件其它收敛值的惯例一致——否则同一个下游用户的同一
-// 窗口在不同账号下会派生出相同占位值，上游据此就能把两个账号关联到同一个人。
+// Deriving from the original value (rather than collapsing everything to one constant) preserves the shape: different downstream windows/parent threads still look like
+// different values upstream, which is exactly how a real client looks; only the fact that they no longer equal the downstream's real identifiers changes.
+// The seed carries accountID, consistent with the convention of the file's other converged values: otherwise the same window of the same downstream user
+// under different accounts would derive the same placeholder value, and the upstream could then link two accounts to the same person.
 //
-// 只改写已存在且非空的字符串键，不新增、不改变 metadata 形状。
+// Only rewrites existing, non-empty string keys; nothing is added and the metadata shape does not change.
 func convergeCodexLineageMetadata(raw string, accountID int64) (string, bool) {
 	changed := false
 	for _, path := range codexLineageMetadataPaths {
@@ -515,29 +515,29 @@ func convergeCodexLineageMetadata(raw string, accountID int64) (string, bool) {
 	return raw, changed
 }
 
-// convergeCodexLineageValue 为单个谱系标识派生收敛值。key 参与种子，因此同一个
-// 原始 UUID 出现在不同字段上会得到不同结果——上游据此无法把"某人的父线程"和
-// "某人的上下文窗口"认作同一个对象。
+// convergeCodexLineageValue derives a converged value for a single lineage identifier. The key takes part in the seed, so the same
+// original UUID on different fields gets different results: the upstream thus cannot tell that "someone's parent thread" and
+// "someone's context window" are the same object.
 func convergeCodexLineageValue(accountID int64, key, original string) string {
 	seed := fmt.Sprintf("codex2api:codex-lineage:v1:%s:%d:%s", key, accountID, original)
 	return deriveStableCodexUUIDv7(seed, seededIdentityUnixMilli(seed))
 }
 
-// scrubCodexWorkspaces 抹掉 turn metadata 里的工作区身份。
+// scrubCodexWorkspaces removes the workspace identity from the turn metadata.
 //
-// workspaces 以本地绝对路径为键（含系统用户名），条目里带 git remote URL 和 commit
-// hash。多人共享一个账号时，这些字段会把每个下游用户的身份原样送到上游——同一个
-// installation_id 下面挂着一堆互不相干的仓库地址和用户名目录，既是隐私泄漏，也让
-// 前面几项标识的收敛失去意义。
+// workspaces are keyed by local absolute paths (which include the system username), and entries carry the git remote URL and commit
+// hash. When multiple people share one account, these fields would send each downstream user's identity verbatim to the upstream: the same
+// installation_id has a pile of unrelated repository addresses and username directories hanging under it, which is both a privacy leak and
+// makes the convergence of the earlier identifiers meaningless.
 //
-// 处理方式是收敛而非删除：路径键换成按原值派生的占位符（条目数与互异性都保留，
-// 不改变 metadata 形状），remote URL 整体移除，commit hash 换成派生占位值——
-// commit hash 是全局唯一的仓库标记，公开仓库可直接反查到归属，留着它等于换个
-// 字段泄漏 remote URL 同样的身份。
+// The approach is to converge rather than delete: path keys are replaced with placeholders derived from the original values (entry count and mutual distinctness are both kept,
+// the metadata shape does not change), the remote URL is removed entirely, and the commit hash is replaced with a derived placeholder value:
+// the commit hash is a globally unique repository marker, and a public repository can be traced back to its owner directly from it, so keeping it would be the same
+// identity leak as the remote URL field.
 //
-// 所有派生值都带 accountID：否则同一个下游用户的同一路径在不同账号下会得到相同
-// 占位符，上游据此就能把两个账号关联到同一个人。这也与本文件其它收敛值的种子
-// 惯例一致（见 resolveConvergedInstallationID）。
+// Every derived value carries accountID: otherwise the same path of the same downstream user under different accounts would get the same
+// placeholder, and the upstream could then link two accounts to the same person. This also matches the seed convention of the file's other converged values
+// (see resolveConvergedInstallationID).
 func scrubCodexWorkspaces(raw string, accountID int64) (string, bool) {
 	workspaces := gjson.Get(raw, "workspaces")
 	if !workspaces.IsObject() {
@@ -557,15 +557,15 @@ func scrubCodexWorkspaces(raw string, accountID int64) (string, bool) {
 		}
 		originalPath := key.String()
 		placeholder := originalPath
-		// 已是占位符就保持原样：重试链路可能把改写过的载荷再送进来一次，
-		// 二次哈希会让同一工作区在不同尝试间漂移。
+		// If it is already a placeholder, leave it as is: the retry path may send a rewritten payload in a second time,
+		// and a second hash would make the same workspace drift between attempts.
 		if !isPlaceholderWorkspacePath(originalPath) {
 			placeholder = placeholderWorkspacePath(accountID, originalPath)
 			changed = true
 		}
-		// commit hash 的占位值从「已派生的占位路径」导出，而不是从原哈希导出：
-		// 二次处理时路径已是占位符、导出结果不变，幂等性随之成立，同时不同工作区
-		// 仍得到互不相同的哈希。
+		// The placeholder value of the commit hash is derived from the "already-derived placeholder path", not from the original hash:
+		// on second processing the path is already a placeholder and the derived result is unchanged, so idempotency holds, while different workspaces
+		// still get mutually distinct hashes.
 		if hash := gjson.Get(entry, "latest_git_commit_hash"); hash.Type == gjson.String && hash.String() != "" {
 			if replacement := placeholderCommitHash(accountID, placeholder); replacement != hash.String() {
 				if updated, err := sjson.Set(entry, "latest_git_commit_hash", replacement); err == nil {
@@ -593,16 +593,16 @@ func scrubCodexWorkspaces(raw string, accountID int64) (string, bool) {
 	return updated, true
 }
 
-// placeholderWorkspacePath 把本地路径映射成稳定占位符：同一路径恒定得到同一占位符，
-// 不同路径互不相同，且不携带用户名或项目名。返回值不含 sjson 的路径元字符
-// （. * ?），可直接作为 sjson 路径使用。
+// placeholderWorkspacePath maps a local path to a stable placeholder: the same path always gets the same placeholder,
+// different paths are distinct from each other, and it carries no username or project name. The return value contains no sjson path metacharacters
+// (. * ?), so it can be used directly as an sjson path.
 func placeholderWorkspacePath(accountID int64, original string) string {
 	sum := sha256.Sum256(fmt.Appendf(nil, "codex2api:workspace-path:v2:%d:%s", accountID, original))
 	return workspacePlaceholderPrefix + fmt.Sprintf("%x", sum[:workspacePlaceholderDigestBytes])
 }
 
-// placeholderCommitHash 派生一个与真实 commit hash 等长（40 位十六进制）的占位值，
-// 保持字段形状不变。种子取占位路径而非原哈希，见调用点说明。
+// placeholderCommitHash derives a placeholder value the same length as a real commit hash (40 hex digits),
+// keeping the field shape unchanged. The seed is the placeholder path rather than the original hash; see the note at the call site.
 func placeholderCommitHash(accountID int64, placeholderPath string) string {
 	sum := sha256.Sum256(fmt.Appendf(nil, "codex2api:workspace-commit:v1:%d:%s", accountID, placeholderPath))
 	return fmt.Sprintf("%x", sum[:20])
@@ -610,12 +610,12 @@ func placeholderCommitHash(accountID int64, placeholderPath string) string {
 
 const (
 	workspacePlaceholderPrefix = "/workspace/"
-	// 32 bit 对低熵的本地路径来说太窄——既可能撞键把两个工作区并成一个，
-	// 也便于用候选路径表反查。64 bit 无额外代价。
+	// 32 bits is too narrow for low-entropy local paths: it could collide and merge two workspaces into one,
+	// and it also makes reverse lookup from a table of candidate paths easy. 64 bits costs nothing extra.
 	workspacePlaceholderDigestBytes = 8
 )
 
-// isPlaceholderWorkspacePath 判断路径是否已经是本函数产出的占位符，用于让抹除保持幂等。
+// isPlaceholderWorkspacePath checks whether a path is already a placeholder this function produces, so that the scrub stays idempotent.
 func isPlaceholderWorkspacePath(path string) bool {
 	suffix, ok := strings.CutPrefix(path, workspacePlaceholderPrefix)
 	if !ok || len(suffix) != workspacePlaceholderDigestBytes*2 {
@@ -629,8 +629,8 @@ func isPlaceholderWorkspacePath(path string) bool {
 	return true
 }
 
-// setExistingJSONString 只在目标路径已存在时替换其值，避免给客户端未携带该字段的
-// 请求新增字段。
+// setExistingJSONString replaces the value only when the target path already exists, so it does not add fields that the client did not send to the
+// request.
 func setExistingJSONString(body []byte, path, value string) []byte {
 	if value == "" {
 		return body

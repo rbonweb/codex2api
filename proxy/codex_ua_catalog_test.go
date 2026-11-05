@@ -37,7 +37,7 @@ func TestCodexUACatalogIntegrity(t *testing.T) {
 			}
 		}
 		for _, term := range spec.ReferenceTerminals {
-			// Codex 会把 [A-Za-z0-9-_./] 以外的字符替换成 "_",预设不能出现真实客户端发不出的 token。
+			// Codex replaces characters outside [A-Za-z0-9-_./] with "_", so presets must not contain tokens that a real client cannot emit.
 			if !validCodexUserAgentToken(term) || strings.IndexFunc(term, func(r rune) bool {
 				return !(r >= 'a' && r <= 'z' || r >= 'A' && r <= 'Z' || r >= '0' && r <= '9' || strings.ContainsRune("-_./", r))
 			}) >= 0 {
@@ -60,7 +60,7 @@ func TestCodexUACatalogIntegrity(t *testing.T) {
 			}
 		}
 	}
-	// TUI 默认值必须与历史常量一致,保证既有部署出站字节不变。
+	// The TUI default must match the historical constant, so the outbound bytes of existing deployments do not change.
 	tui := codexUACatalog[CodexClientKindTUI]
 	if tui.DefaultPlatform.OSName != defaultCodexUserAgentOSName || tui.DefaultPlatform.OSVersion != defaultCodexUserAgentOSVersion || tui.DefaultPlatform.Arch != defaultCodexUserAgentArch || tui.DefaultTerminal != defaultCodexUserAgentTerminal {
 		t.Fatalf("codex-tui defaults drifted from legacy constants: %+v %q", tui.DefaultPlatform, tui.DefaultTerminal)

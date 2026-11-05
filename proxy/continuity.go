@@ -13,30 +13,30 @@ import (
 	"github.com/tidwall/sjson"
 )
 
-// Continuity 会话连续性信息
+// Continuity holds session continuity information
 type Continuity struct {
-	Key    string // 会话 key
-	Source string // 来源标识
+	Key    string // session key
+	Source string // source identifier
 }
 
-// Request 请求结构（用于连续性解析）
+// Request is the request structure (used for continuity resolution)
 type Request struct {
-	Payload []byte      // 请求体
-	Headers http.Header // 请求头
+	Payload []byte      // request body
+	Headers http.Header // request headers
 }
 
-// Options 选项结构（用于传递元数据）
+// Options is the options structure (used to pass metadata)
 type Options struct {
-	Metadata map[string]any // 元数据
+	Metadata map[string]any // metadata
 }
 
-// Metadata 常量定义
+// Metadata constant definitions
 const (
 	ExecutionSessionMetadataKey = "execution_session"
 	SelectedAuthMetadataKey     = "selected_auth"
 )
 
-// metadataString 从元数据中提取字符串值
+// metadataString extracts a string value from the metadata
 func metadataString(meta map[string]any, key string) string {
 	if len(meta) == 0 {
 		return ""
@@ -55,7 +55,7 @@ func metadataString(meta map[string]any, key string) string {
 	}
 }
 
-// principalString 将任意值转换为字符串
+// principalString converts an arbitrary value to a string
 func principalString(raw any) string {
 	switch v := raw.(type) {
 	case string:
@@ -67,61 +67,61 @@ func principalString(raw any) string {
 	}
 }
 
-// getGinContext 尝试从 context 中获取 gin.Context
+// getGinContext tries to get the gin.Context from the context
 func getGinContext(ctx context.Context) *gin.Context {
 	if ctx == nil {
 		return nil
 	}
-	// gin.Context 通常存储在 key "gin-context"
+	// gin.Context is usually stored under the key "gin-context"
 	if c, ok := ctx.Value("gin-context").(*gin.Context); ok {
 		return c
 	}
-	// *gin.Context 本身不实现 context.Context，不能直接类型断言
-	// 必须通过存储在 context 中的 key 获取
+	// *gin.Context itself does not implement context.Context, so it cannot be type-asserted directly
+	// it must be fetched via the key stored in the context
 	return nil
 }
 
-// ResolveContinuity 解析会话连续性
-// 优先级（从高到低）：
-// 1. prompt_cache_key (请求体)
-// 2. execution_session (元数据)
-// 3. idempotency-key (请求头)
-// 4. client_principal (gin context 中的 apiKey)
-// 5. auth_id (账号 ID)
+// ResolveContinuity resolves session continuity
+// Priority (highest to lowest):
+// 1. prompt_cache_key (request body)
+// 2. execution_session (metadata)
+// 3. idempotency-key (request header)
+// 4. client_principal (apiKey in the gin context)
+// 5. auth_id (account ID)
 //
-// Deprecated: 线上的连续性/会话身份键由 executor.go 实现（ResolveSessionID /
-// resolveUpstreamSessionID / ExecuteRequest）。本函数在生产路径已无调用方（仅测试引用），
-// 切勿重新接入——其第 4/5 级会把无显式会话的请求按 API Key/账号收敛到同一上游身份，
-// 正是 issue #268 上下文污染的根因。新逻辑请改 executor.go。
+// Deprecated: the live continuity/session identity keys are implemented in executor.go (ResolveSessionID /
+// resolveUpstreamSessionID / ExecuteRequest). This function no longer has callers on the production path (only test references),
+// do not wire it back in: its levels 4/5 would collapse requests without an explicit session onto one upstream identity by API key/account,
+// which is the root cause of the issue #268 context pollution. Make changes to the new logic in executor.go.
 func ResolveContinuity(ctx context.Context, account *auth.Account, req Request, opts Options) Continuity {
-	// 1. 最高优先级：请求体中的 prompt_cache_key
+	// 1. Highest priority: prompt_cache_key in the request body
 	if promptCacheKey := strings.TrimSpace(gjson.GetBytes(req.Payload, "prompt_cache_key").String()); promptCacheKey != "" {
 		return Continuity{Key: promptCacheKey, Source: "prompt_cache_key"}
 	}
 
-	// 2. 元数据中的 execution_session
+	// 2. execution_session in the metadata
 	if executionSession := metadataString(opts.Metadata, ExecutionSessionMetadataKey); executionSession != "" {
 		return Continuity{Key: executionSession, Source: "execution_session"}
 	}
 
-	// 3. 请求头中的 Idempotency-Key
+	// 3. Idempotency-Key in the request headers
 	if req.Headers != nil {
 		if v := strings.TrimSpace(req.Headers.Get("Idempotency-Key")); v != "" {
 			return Continuity{Key: v, Source: "idempotency_key"}
 		}
 	}
 
-	// 4. gin context 中的 apiKey（client_principal）
-	// 优先从 Authorization header 读取
+	// 4. apiKey in the gin context (client_principal)
+	// read from the Authorization header first
 	apiKey := ""
 	if ginCtx := getGinContext(ctx); ginCtx != nil {
-		// 尝试从 Authorization header 读取
+		// try to read from the Authorization header
 		authHeader := ginCtx.GetHeader("Authorization")
 		if authHeader != "" {
 			apiKey = strings.TrimPrefix(authHeader, "Bearer ")
 			apiKey = strings.TrimSpace(apiKey)
 		}
-		// 回退：尝试从 gin context 中获取（如果中间件设置了）
+		// fallback: try to get it from the gin context (if middleware set it)
 		if apiKey == "" {
 			if v, exists := ginCtx.Get("apiKey"); exists && v != nil {
 				apiKey = principalString(v)
@@ -135,12 +135,12 @@ func ResolveContinuity(ctx context.Context, account *auth.Account, req Request, 
 		}
 	}
 
-	// 5. 最低优先级：基于 auth.ID 生成确定性 UUID
+	// 5. Lowest priority: generate a deterministic UUID from auth.ID
 	if account != nil {
 		account.Mu().RLock()
 		authID := strings.TrimSpace(account.Email)
 		if authID == "" {
-			// 只有当 DBID > 0 时才使用 ID 作为 fallback
+			// only use the ID as the fallback when DBID > 0
 			if account.DBID > 0 {
 				authID = fmt.Sprintf("%d", account.DBID)
 			}
@@ -158,8 +158,8 @@ func ResolveContinuity(ctx context.Context, account *auth.Account, req Request, 
 	return Continuity{}
 }
 
-// ApplyContinuityBody 将会话连续性应用到请求体
-// 将 continuity.Key 注入到 prompt_cache_key 字段
+// ApplyContinuityBody applies session continuity to the request body
+// injects continuity.Key into the prompt_cache_key field
 func ApplyContinuityBody(body []byte, c Continuity) []byte {
 	if c.Key == "" {
 		return body
@@ -168,8 +168,8 @@ func ApplyContinuityBody(body []byte, c Continuity) []byte {
 	return body
 }
 
-// ApplyContinuityHeaders 将会话连续性应用到请求头
-// 设置 session_id 头用于保持会话连续性
+// ApplyContinuityHeaders applies session continuity to the request headers
+// sets the session_id header to keep session continuity
 func ApplyContinuityHeaders(headers http.Header, c Continuity) {
 	if headers == nil || c.Key == "" {
 		return
@@ -177,12 +177,12 @@ func ApplyContinuityHeaders(headers http.Header, c Continuity) {
 	headers.Set("session_id", c.Key)
 }
 
-// GetSessionID 从连续性信息获取 session_id（向后兼容）
+// GetSessionID gets the session_id from the continuity information (backward compatible)
 func (c Continuity) GetSessionID() string {
 	return c.Key
 }
 
-// IsEmpty 检查连续性是否为空
+// IsEmpty checks whether the continuity is empty
 func (c Continuity) IsEmpty() bool {
 	return c.Key == ""
 }

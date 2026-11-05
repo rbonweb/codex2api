@@ -6,16 +6,16 @@ import (
 	"github.com/google/uuid"
 )
 
-// assertUUIDv7 断言取值是 UUIDv7：真实 Codex 客户端的 session_id / thread_id /
-// prompt_cache_key 都是 v7，版本 nibble 与 variant 位对任何解析 UUID 的一侧都直接可见。
+// assertUUIDv7 asserts that the value is UUIDv7: the session_id / thread_id /
+// prompt_cache_key of real Codex clients are all v7; the version nibble and variant bits are directly visible to any side that parses UUIDs.
 func assertUUIDv7(t *testing.T, label, value string) {
 	t.Helper()
 	parsed, err := uuid.Parse(value)
 	if err != nil {
-		t.Fatalf("%s = %q 不是合法 UUID: %v", label, value, err)
+		t.Fatalf("%s = %q is not a valid UUID: %v", label, value, err)
 	}
 	if got := parsed.Version(); got != 7 {
-		t.Fatalf("%s = %q 版本 = %d, want 7", label, value, got)
+		t.Fatalf("%s = %q version = %d, want 7", label, value, got)
 	}
 	if got := parsed.Variant(); got != uuid.RFC4122 {
 		t.Fatalf("%s = %q variant = %v, want RFC4122", label, value, got)
@@ -28,10 +28,10 @@ func TestDeriveStableSessionUUIDv7IsDeterministicAndV7(t *testing.T) {
 	assertUUIDv7(t, "DeriveStableSessionUUIDv7", first)
 
 	if second := DeriveStableSessionUUIDv7(seed); second != first {
-		t.Fatalf("同种子两次派生不一致: %q vs %q（跨进程重启也必须恒定，否则每次重启都换一批上游身份）", first, second)
+		t.Fatalf("same-seed derivations differ across two calls: %q vs %q (they must also stay constant across process restarts, otherwise every restart would swap in a new batch of upstream identities)", first, second)
 	}
 	if other := DeriveStableSessionUUIDv7(seed + ":other"); other == first {
-		t.Fatalf("不同种子派生撞值: %q", other)
+		t.Fatalf("different seeds derived a colliding value: %q", other)
 	}
 }
 
@@ -40,18 +40,18 @@ func TestIsolateCodexSessionIDProducesUUIDv7(t *testing.T) {
 	assertUUIDv7(t, "IsolateCodexSessionID", got)
 
 	if same := IsolateCodexSessionID(7, "downstream-seed"); same != got {
-		t.Fatalf("确定性丢失: %q vs %q", got, same)
+		t.Fatalf("determinism lost: %q vs %q", got, same)
 	}
 	if other := IsolateCodexSessionID(8, "downstream-seed"); other == got {
-		t.Fatalf("不同 API Key 未隔离，都得到 %q", got)
+		t.Fatalf("different API keys were not isolated, all got %q", got)
 	}
 }
 
 func TestIsolateCodexSessionIDLeavesRawWithoutAPIKeyScope(t *testing.T) {
-	// apiKeyID<=0 时保持原样返回：这是既有契约，隔离无从谈起时不该凭空造一个身份。
+	// apiKeyID<=0 returns the input unchanged: this is the existing contract, and when isolation does not apply, no identity should be made up.
 	const raw = "explicit-session"
 	if got := IsolateCodexSessionID(0, raw); got != raw {
-		t.Fatalf("IsolateCodexSessionID(0, %q) = %q, want 原样返回", raw, got)
+		t.Fatalf("IsolateCodexSessionID(0, %q) = %q, want returned unchanged", raw, got)
 	}
 }
 
@@ -59,23 +59,23 @@ func TestDeterministicPromptCacheKeyProducesUUIDv7(t *testing.T) {
 	got := deterministicPromptCacheKey("shared-key", nil)
 	assertUUIDv7(t, "deterministicPromptCacheKey", got)
 
-	// 与 resolveRequestSessionIdentity 的 API Key 兜底共享种子，必须同值——否则
-	// 同一个 API Key 在 HTTP 与 WS 两条路径上会拿到两个上游身份。
+	// It shares the seed with the API key fallback in resolveRequestSessionIdentity and must be the same value; otherwise
+	// the same API key would get two upstream identities on the HTTP and WS paths.
 	if want := DeriveStableSessionUUIDv7("codex2api:prompt-cache:shared-key"); got != want {
 		t.Fatalf("deterministicPromptCacheKey = %q, want %q", got, want)
 	}
 }
 
 func TestNewUpstreamSessionUUIDIsV7AndUnique(t *testing.T) {
-	// 默认隔离是本网关最常走的路径，出站 prompt_cache_key / session-id 绝大多数由
-	// NewUpstreamSessionUUID 产出。这条曾经用 uuid.NewString() 发 v4，实测时从上游
-	// 回显的 prompt_cache_key 里看出版本位不对才发现（另两处确定性派生已单独覆盖）。
+	// Default isolation is the path this gateway takes most often: most outbound prompt_cache_key / session-id values are
+	// produced by NewUpstreamSessionUUID. This path once sent v4 via uuid.NewString(), and it was caught only when the upstream
+	// echoed prompt_cache_key showed wrong version bits (the other two deterministic derivations are already covered separately).
 	seen := make(map[string]struct{}, 64)
 	for i := 0; i < 64; i++ {
 		got := NewUpstreamSessionUUID()
 		assertUUIDv7(t, "NewUpstreamSessionUUID", got)
 		if _, dup := seen[got]; dup {
-			t.Fatalf("每请求隔离的会话键重复: %q", got)
+			t.Fatalf("per-request isolated session keys repeated: %q", got)
 		}
 		seen[got] = struct{}{}
 	}
@@ -88,16 +88,16 @@ func TestResolveUpstreamSessionIDIsolatedModeProducesV7(t *testing.T) {
 	isolated.RequestIsolationMode = RequestIsolationModeIsolated
 	ApplyRuntimeSettings(isolated)
 
-	// 无显式会话 + 默认隔离 → 每请求唯一，且必须是 v7。
+	// No explicit session + default isolation → unique per request, and it must be v7.
 	first := resolveUpstreamSessionID(7, "seed", "", false)
 	assertUUIDv7(t, "resolveUpstreamSessionID(isolated)", first)
 	if second := resolveUpstreamSessionID(7, "seed", "", false); second == first {
-		t.Fatalf("隔离模式下两次请求拿到同一个会话键 %q", first)
+		t.Fatalf("in isolated mode two requests got the same session key %q", first)
 	}
 }
 
 func TestDeterministicPromptCacheKeyEmptyWithoutIdentity(t *testing.T) {
 	if got := deterministicPromptCacheKey("", nil); got != "" {
-		t.Fatalf("无 API Key 无账号时 = %q, want 空串", got)
+		t.Fatalf("without an API key or account the result = %q, want empty string", got)
 	}
 }

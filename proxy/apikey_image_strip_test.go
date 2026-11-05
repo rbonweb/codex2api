@@ -8,7 +8,7 @@ import (
 	"github.com/tidwall/gjson"
 )
 
-// TestResolveImageGenerationPolicy 校验新旧配置的归一优先级。
+// TestResolveImageGenerationPolicy checks the normalization priority of new and old configuration.
 func TestResolveImageGenerationPolicy(t *testing.T) {
 	cases := []struct {
 		name   string
@@ -33,7 +33,7 @@ func TestResolveImageGenerationPolicy(t *testing.T) {
 	}
 }
 
-// TestStripResponsesImageGenerationCapabilities 覆盖 issue #411 的剥离要求。
+// TestStripResponsesImageGenerationCapabilities covers the stripping requirements of issue #411.
 func TestStripResponsesImageGenerationCapabilities(t *testing.T) {
 	t.Run("removes flat image_generation tool, keeps others", func(t *testing.T) {
 		body := `{"model":"gpt-5.4","tools":[{"type":"image_generation"},{"type":"function","name":"foo"},{"type":"web_search"}]}`
@@ -126,8 +126,8 @@ func TestStripResponsesImageGenerationCapabilities(t *testing.T) {
 	})
 }
 
-// TestEnforceAPIKeyLimits_ImagePolicyBlock 校验 explicit block 策略仍触发 403，
-// 而 strip 策略不在 enforce 层短路（放行，由转发前改写处理）。
+// TestEnforceAPIKeyLimits_ImagePolicyBlock checks that the explicit block policy still triggers 403,
+// while the strip policy does not short-circuit at the enforce layer (it passes, and is handled by the rewrite before forwarding).
 func TestEnforceAPIKeyLimits_ImagePolicyBlockAndStrip(t *testing.T) {
 	h := &Handler{}
 	body := `{"model":"gpt-5.4","input":"hi","tools":[{"type":"image_generation"}]}`
@@ -145,7 +145,7 @@ func TestEnforceAPIKeyLimits_ImagePolicyBlockAndStrip(t *testing.T) {
 	}
 }
 
-// TestApplyImageGenerationStripPolicy 校验按 Key 策略选择性改写。
+// TestApplyImageGenerationStripPolicy checks the selective per-key policy rewrite.
 func TestApplyImageGenerationStripPolicy(t *testing.T) {
 	body := `{"model":"gpt-5.4","tools":[{"type":"image_generation"},{"type":"function","name":"foo"}]}`
 

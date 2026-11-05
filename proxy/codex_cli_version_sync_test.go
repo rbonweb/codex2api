@@ -16,7 +16,7 @@ func TestExtractCodexCLIVersion(t *testing.T) {
 		"0.144.1":           "0.144.1",
 		"v0.144.1":          "0.144.1",
 		"rust-v0.144.1":     "0.144.1",
-		"0.144.0-alpha.10":  "", // 预发布带 - 会被 LastIndexByte 截断，这里验证非法回退
+		"0.144.0-alpha.10":  "", // A prerelease with a hyphen is cut off by LastIndexByte, so this checks the invalid fallback
 		"":                  "",
 		"not-a-version":     "",
 		"codex-cli-0.145.0": "0.145.0",
@@ -64,26 +64,26 @@ func TestFetchLatestCodexCLIVersion_TagFallback(t *testing.T) {
 	}
 }
 
-// effectiveLatestCodexCLIVersion 绝不低于内置常量：远端返回旧版本时保持内置常量。
+// effectiveLatestCodexCLIVersion is never lower than the built-in constant: when the remote returns an old version, the built-in constant is kept.
 func TestEffectiveLatestCodexCLIVersion_NeverDowngrades(t *testing.T) {
 	prev := CurrentRuntimeSettings()
 	t.Cleanup(func() { ApplyRuntimeSettings(prev) })
 
 	s := prev
-	s.CodexSyncedCLIVersion = "0.100.0" // 远低于内置
+	s.CodexSyncedCLIVersion = "0.100.0" // Well below the built-in version
 	ApplyRuntimeSettings(s)
 	if got := effectiveLatestCodexCLIVersion(); got != latestCodexCLIVersion {
 		t.Fatalf("effective = %q, want builtin %q (no downgrade)", got, latestCodexCLIVersion)
 	}
 
-	s.CodexSyncedCLIVersion = "9.9.9" // 高于内置
+	s.CodexSyncedCLIVersion = "9.9.9" // Above the built-in version
 	ApplyRuntimeSettings(s)
 	if got := effectiveLatestCodexCLIVersion(); got != "9.9.9" {
 		t.Fatalf("effective = %q, want 9.9.9 (upgrade honored)", got)
 	}
 }
 
-// 同步到高于内置的版本后,生成的出站 UA / 版本号应抬升到该版本。
+// After syncing to a version above the built-in one, the generated outbound UA / version number should rise to that version.
 func TestGeneratedCodexClientHeaders_UsesSyncedVersion(t *testing.T) {
 	prev := CurrentRuntimeSettings()
 	t.Cleanup(func() { ApplyRuntimeSettings(prev) })
@@ -157,7 +157,7 @@ func TestUpdateRuntimeSettingsSerializesConcurrentFieldPatches(t *testing.T) {
 	}
 }
 
-// generatedCodexClientHeaders 是测试辅助：忽略版本不可用错误，只断言生成结果。
+// generatedCodexClientHeaders is a test helper: it ignores version-unavailable errors and only asserts the generated result.
 func generatedCodexClientHeaders(account *auth.Account, settings RuntimeSettings) (string, string) {
 	ua, version, _ := generatedCodexClientHeadersChecked(account, settings)
 	return ua, version

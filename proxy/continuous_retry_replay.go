@@ -36,7 +36,7 @@ type continuousRetryReplay struct {
 	closed      bool
 	// beforeReadForTest forces a file-backed commit failure after private writes;
 	// production constructors leave it nil.
-	// beforeReadForTest 在私有写入完成后注入文件回放提交失败；生产构造器保持 nil。
+	// beforeReadForTest injects a file replay commit failure after the private write completes; the production constructor keeps it nil.
 	beforeReadForTest func(*continuousRetryReplay)
 }
 

@@ -26,7 +26,7 @@ type informationalRecordingWriter struct {
 	informational []int
 }
 
-// WriteHeader 记录信息响应，其他状态码交给 ResponseRecorder 处理。
+// WriteHeader records informational responses; other status codes are passed to ResponseRecorder.
 func (w *informationalRecordingWriter) WriteHeader(code int) {
 	if code >= http.StatusContinue && code < http.StatusOK {
 		w.informational = append(w.informational, code)
@@ -48,7 +48,7 @@ func contextWithContinuousRetryKeepalive(keepalive continuousRetryKeepalive) con
 	return context.WithValue(context.Background(), continuousRetryKeepaliveContextKey{}, keepalive)
 }
 
-// TestRequestContinuousRetryKeepaliveAccumulatesShortWaits 验证短等待共用同一心跳时间窗。
+// TestRequestContinuousRetryKeepaliveAccumulatesShortWaits verifies that short waits share the same heartbeat window.
 func TestRequestContinuousRetryKeepaliveAccumulatesShortWaits(t *testing.T) {
 	previousInterval := continuousRetryKeepaliveInterval
 	continuousRetryKeepaliveInterval = time.Minute
@@ -79,7 +79,7 @@ func TestRequestContinuousRetryKeepaliveAccumulatesShortWaits(t *testing.T) {
 	}
 }
 
-// TestSetContinuousRetryKeepaliveActive 验证请求级保活可以切换激活状态。
+// TestSetContinuousRetryKeepaliveActive verifies that request-level keepalive can switch its active state.
 func TestSetContinuousRetryKeepaliveActive(t *testing.T) {
 	keepalive := &requestContinuousRetryKeepalive{}
 	ctx := contextWithContinuousRetryKeepalive(keepalive)
@@ -255,7 +255,7 @@ func TestExecuteHTTPWithContinuousRetryKeepaliveWhileWaitingForHeaders(t *testin
 	}
 }
 
-// TestRunWithContinuousRetryKeepaliveDuringBlockingOperation 验证阻塞操作期间保活仍持续触发。
+// TestRunWithContinuousRetryKeepaliveDuringBlockingOperation verifies that keepalive keeps firing during a blocking operation.
 func TestRunWithContinuousRetryKeepaliveDuringBlockingOperation(t *testing.T) {
 	previousInterval := continuousRetryKeepaliveInterval
 	continuousRetryKeepaliveInterval = 5 * time.Millisecond
@@ -318,7 +318,7 @@ func TestReadSSEStreamWithContinuousRetryKeepaliveWhileWaitingForFrame(t *testin
 	}
 }
 
-// TestContinuousRetrySSEKeepaliveAndCommittedErrors 验证已提交 SSE 可同时承载心跳和错误事件。
+// TestContinuousRetrySSEKeepaliveAndCommittedErrors verifies that a committed SSE stream can carry both heartbeats and error events.
 func TestContinuousRetrySSEKeepaliveAndCommittedErrors(t *testing.T) {
 	gin.SetMode(gin.TestMode)
 	recorder := httptest.NewRecorder()
@@ -353,7 +353,7 @@ func TestContinuousRetrySSEKeepaliveAndCommittedErrors(t *testing.T) {
 	}
 }
 
-// TestContinuousRetryMessagesKeepaliveWritesPingAfterCommit 验证 Messages 使用原生 ping 事件保活。
+// TestContinuousRetryMessagesKeepaliveWritesPingAfterCommit verifies that Messages uses the native ping event for keepalive.
 func TestContinuousRetryMessagesKeepaliveWritesPingAfterCommit(t *testing.T) {
 	gin.SetMode(gin.TestMode)
 	recorder := httptest.NewRecorder()
@@ -378,7 +378,7 @@ func TestContinuousRetryMessagesKeepaliveWritesPingAfterCommit(t *testing.T) {
 	}
 }
 
-// TestContinuousRetrySSEKeepaliveCommitsHeartbeatBeforeFirstEvent 验证首个心跳会先提交 SSE 200。
+// TestContinuousRetrySSEKeepaliveCommitsHeartbeatBeforeFirstEvent verifies that the first heartbeat commits SSE 200 first.
 func TestContinuousRetrySSEKeepaliveCommitsHeartbeatBeforeFirstEvent(t *testing.T) {
 	gin.SetMode(gin.TestMode)
 	recorder := httptest.NewRecorder()

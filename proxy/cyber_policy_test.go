@@ -18,9 +18,9 @@ import (
 	"github.com/tidwall/gjson"
 )
 
-// TestUpstreamCyberPolicyCodeDetectsResponseFailed 覆盖 #258：cyber_policy 封禁在
-// 流式响应里以 response.failed (HTTP 200) 事件下发，必须能被
-// upstreamCyberPolicyCode(responseFailedErrorBody(payload)) 识别。
+// TestUpstreamCyberPolicyCodeDetectsResponseFailed covers #258: a cyber_policy ban in
+// the streaming response is delivered as a response.failed (HTTP 200) event and must be
+// recognized by upstreamCyberPolicyCode(responseFailedErrorBody(payload)).
 func TestUpstreamCyberPolicyCodeDetectsResponseFailed(t *testing.T) {
 	cases := []struct {
 		name    string
@@ -409,7 +409,7 @@ func TestPromptPolicyRedactedLearningTextHonorsByteBudget(t *testing.T) {
 	if !utf8.ValidString(got) {
 		t.Fatal("learning text was truncated inside a UTF-8 rune")
 	}
-	// 预算刻意落在多字节字符中间,验证按字节截断会回退到字符起点。
+	// The budget deliberately lands in the middle of a multi-byte character, verifying that byte truncation backs up to the character start.
 	got = promptPolicyRedactedLearningText(strings.Repeat("测试🙂", 10000), 20000, 20001)
 	if len(got) > 20001 || !utf8.ValidString(got) {
 		t.Fatalf("mid-rune budget: bytes=%d valid=%t", len(got), utf8.ValidString(got))
@@ -422,9 +422,9 @@ func TestPromptPolicyRedactedLearningTextHonorsByteBudget(t *testing.T) {
 	}
 }
 
-// TestMarshalPromptPolicyEvidenceMetadataSurvivesEscapeInflation 复现 JSON
-// HTML 转义膨胀:20000 字节的 < 编码后约 120 KB,若不按编码后体积收缩,
-// 元数据会被 64 KiB 校验拒绝并连带丢弃整条事件记录。
+// TestMarshalPromptPolicyEvidenceMetadataSurvivesEscapeInflation reproduces JSON
+// HTML escape inflation: 20000 bytes of < become about 120 KB once encoded; if the size is not reduced by the encoded size,
+// the metadata is rejected by the 64 KiB check and the whole event record is dropped with it.
 func TestMarshalPromptPolicyEvidenceMetadataSurvivesEscapeInflation(t *testing.T) {
 	bundle := promptPolicyLearningBundle{
 		Version: 1, Quality: promptPolicyEvidenceQualityComplete,
@@ -463,7 +463,7 @@ func TestMarshalPromptPolicyEvidenceMetadataSurvivesEscapeInflation(t *testing.T
 			t.Fatalf("prompt_text was not shrunk: %d bytes", len(text))
 		}
 	}
-	// 小体积元数据必须原样通过。
+	// Small metadata must pass through unchanged.
 	small := map[string]any{"incident_id": "small", "learning_evidence": promptPolicyLearningBundle{Version: 1, Quality: "complete", PromptText: "hello"}}
 	if encoded := marshalPromptPolicyEvidenceMetadata(small, promptPolicyLearningBundle{Version: 1, PromptText: "hello"}, 0); !json.Valid(encoded) {
 		t.Fatal("small metadata must marshal untouched")

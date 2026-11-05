@@ -33,7 +33,7 @@ func TestCodexTurnStateOriginsCapped(t *testing.T) {
 		}
 		return true
 	})
-	// 最后一次清扫后最多再写入 255 条。
+	// At most 255 more entries are written after the last sweep.
 	if live > codexTurnStateMaxOrigins+255 {
 		t.Fatalf("turn-state origins = %d, want <= %d", live, codexTurnStateMaxOrigins+255)
 	}

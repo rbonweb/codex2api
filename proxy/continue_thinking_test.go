@@ -12,7 +12,7 @@ import (
 	"github.com/tidwall/gjson"
 )
 
-// --- fixture 构造 -----------------------------------------------------------
+// --- fixture construction -----------------------------------------------------------
 
 func sseBody(events ...string) io.ReadCloser {
 	var b strings.Builder
@@ -24,12 +24,12 @@ func sseBody(events ...string) io.ReadCloser {
 	return io.NopCloser(strings.NewReader(b.String()))
 }
 
-// sseResponse 构造包含给定事件的成功测试 SSE 响应。
+// sseResponse builds a successful test SSE response containing the given events.
 func sseResponse(events ...string) *http.Response {
 	return &http.Response{StatusCode: http.StatusOK, Body: sseBody(events...)}
 }
 
-// delayedSSEResponse 返回在指定延迟后写入事件的测试 SSE 响应。
+// delayedSSEResponse returns a test SSE response that writes its events after the given delay.
 func delayedSSEResponse(delay time.Duration, events ...string) *http.Response {
 	reader, writer := io.Pipe()
 	payload := sseBody(events...)
@@ -82,10 +82,10 @@ func evFailed(seq int) string {
 	return fmt.Sprintf(`{"type":"response.failed","sequence_number":%d,"response":{"id":"resp_r1","status":"failed","error":{"code":"server_error","message":"boom"}}}`, seq)
 }
 
-// collectFold 用收集器跑一次折叠，返回下游事件与结果。
+// collectFold runs one fold with a collector and returns the downstream events and the result.
 type foldCollector struct {
 	events   [][]byte
-	rounds   [][]byte // openRound 收到的请求体
+	rounds   [][]byte // request bodies received by openRound
 	nextResp []*http.Response
 	nextErr  []error
 }
@@ -123,23 +123,23 @@ func (c *foldCollector) eventTypes() []string {
 	return types
 }
 
-// assertMonotonicSeq 校验下游事件 sequence_number 严格递增、output_index 单调不减。
+// assertMonotonicSeq checks that downstream sequence_number strictly increases and output_index never decreases.
 func assertMonotonicSeq(t *testing.T, events [][]byte) {
 	t.Helper()
 	prevSeq := int64(-1)
 	for i, ev := range events {
 		seq := gjson.GetBytes(ev, "sequence_number")
 		if !seq.Exists() {
-			t.Fatalf("event %d 缺 sequence_number: %s", i, ev)
+			t.Fatalf("event %d is missing sequence_number: %s", i, ev)
 		}
 		if seq.Int() != prevSeq+1 {
-			t.Fatalf("event %d sequence_number 不连续: got %d want %d", i, seq.Int(), prevSeq+1)
+			t.Fatalf("event %d sequence_number is not contiguous: got %d want %d", i, seq.Int(), prevSeq+1)
 		}
 		prevSeq = seq.Int()
 	}
 }
 
-// --- 用例 -------------------------------------------------------------------
+// --- cases -------------------------------------------------------------------
 
 func TestIsReasoningTruncationTokens(t *testing.T) {
 	cases := []struct {
@@ -176,15 +176,15 @@ func TestFoldSingleCleanRound(t *testing.T) {
 		t.Fatalf("unexpected result: %+v", res)
 	}
 	if len(c.rounds) != 0 {
-		t.Fatalf("clean round 不应触发续想, got %d rounds", len(c.rounds))
+		t.Fatalf("a clean round should not trigger continue-thinking, got %d rounds", len(c.rounds))
 	}
 	types := c.eventTypes()
 	want := []string{
 		"response.created",
-		"response.output_item.added", // reasoning 实时
+		"response.output_item.added", // reasoning, forwarded in real time
 		"response.reasoning_summary_text.delta",
 		"response.output_item.done",
-		"response.output_item.added", // message 冲刷
+		"response.output_item.added", // message flush
 		"response.output_text.delta",
 		"response.output_item.done",
 		"response.completed",
@@ -209,7 +209,7 @@ func TestFoldSingleCleanRound(t *testing.T) {
 func TestFoldTwoRounds(t *testing.T) {
 	c := &foldCollector{
 		nextResp: []*http.Response{sseResponse(
-			evCreated(), // 隐藏轮生命周期事件应被吞掉
+			evCreated(), // hidden-round lifecycle events should be swallowed
 			evReasoningAdded(1, 0),
 			evReasoningDone(2, 0, "enc-b"),
 			evMessageAdded(3, 1),
@@ -225,54 +225,54 @@ func TestFoldTwoRounds(t *testing.T) {
 		evMessageAdded(3, 1),
 		evMessageDelta(4, 1, "truncated junk"),
 		evMessageDone(5, 1, "truncated junk"),
-		evCompleted(6, 100, 600, 516), // 516 = 命中指纹
+		evCompleted(6, 100, 600, 516), // 516 = matches the fingerprint
 	))
 
 	if res.StopReason != continueStopClean || res.RoundsRun != 2 {
 		t.Fatalf("unexpected result: %+v", res)
 	}
 	if len(res.Rounds) != 2 || res.Rounds[0].Usage.ReasoningTokens != 516 || res.Rounds[1].Usage.ReasoningTokens != 400 {
-		t.Fatalf("rounds stat 错误: %+v", res.Rounds)
+		t.Fatalf("rounds stat is wrong: %+v", res.Rounds)
 	}
 	if res.FinalUsage == nil || res.FinalUsage.OutputTokens != 900 {
-		t.Fatalf("FinalUsage 应为最终轮真实值: %+v", res.FinalUsage)
+		t.Fatalf("FinalUsage should be the final round's real value: %+v", res.FinalUsage)
 	}
 
-	// 续想请求体断言
+	// continue-thinking request body assertions
 	if len(c.rounds) != 1 {
-		t.Fatalf("应有 1 次续想, got %d", len(c.rounds))
+		t.Fatalf("expected 1 continue-thinking round, got %d", len(c.rounds))
 	}
 	body := c.rounds[0]
 	input := gjson.GetBytes(body, "input").Array()
-	if len(input) != 3 { // 原始 user 消息 + 剥 id 的 reasoning + marker
+	if len(input) != 3 { // original user message + reasoning with id stripped + marker
 		t.Fatalf("continuation input len = %d, want 3: %s", len(input), body)
 	}
 	if input[1].Get("type").String() != "reasoning" || input[1].Get("id").Exists() {
-		t.Errorf("回放 reasoning 应剥掉 id: %s", input[1].Raw)
+		t.Errorf("replayed reasoning should have its id stripped: %s", input[1].Raw)
 	}
 	if input[1].Get("encrypted_content").String() != "enc-a" {
-		t.Errorf("回放 reasoning 应保留 encrypted_content: %s", input[1].Raw)
+		t.Errorf("replayed reasoning should keep encrypted_content: %s", input[1].Raw)
 	}
 	marker := input[2]
 	if marker.Get("phase").String() != "commentary" || !strings.Contains(marker.Get("content.0.text").String(), "Continue thinking") {
-		t.Errorf("marker 形状错误: %s", marker.Raw)
+		t.Errorf("marker shape is wrong: %s", marker.Raw)
 	}
 	if gjson.GetBytes(body, "previous_response_id").Exists() {
-		t.Errorf("续想体不应有 previous_response_id")
+		t.Errorf("continue-thinking body should not have previous_response_id")
 	}
 
-	// 下游事件:第 1 轮被截断的 message 不应出现
+	// downstream events: round 1's truncated message should not appear
 	for _, ev := range c.events {
 		if strings.Contains(string(ev), "truncated junk") {
-			t.Fatalf("截断轮的暂定输出泄漏到下游: %s", ev)
+			t.Fatalf("tentative output of the truncated round leaked downstream: %s", ev)
 		}
 	}
 	types := c.eventTypes()
 	want := []string{
-		"response.created",                                        // 仅第 1 轮
+		"response.created",                                        // round 1 only
 		"response.output_item.added", "response.output_item.done", // r1 reasoning
 		"response.output_item.added", "response.output_item.done", // r2 reasoning
-		"response.output_item.added", "response.output_text.delta", "response.output_item.done", // r2 message 冲刷
+		"response.output_item.added", "response.output_text.delta", "response.output_item.done", // r2 message flush
 		"response.completed",
 	}
 	if strings.Join(types, ",") != strings.Join(want, ",") {
@@ -280,11 +280,11 @@ func TestFoldTwoRounds(t *testing.T) {
 	}
 	assertMonotonicSeq(t, c.events)
 
-	// 重构 usage:input=第 1 轮,reasoning=516+400,output=916+500(最终轮非 reasoning)
+	// rebuilt usage: input=round 1, reasoning=516+400, output=916+500 (non-reasoning part of the final round)
 	final := c.events[len(c.events)-1]
 	usage := gjson.GetBytes(final, "response.usage")
 	if usage.Get("input_tokens").Int() != 100 {
-		t.Errorf("usage.input_tokens = %d, want 100(第 1 轮)", usage.Get("input_tokens").Int())
+		t.Errorf("usage.input_tokens = %d, want 100 (round 1)", usage.Get("input_tokens").Int())
 	}
 	if usage.Get("output_tokens_details.reasoning_tokens").Int() != 916 {
 		t.Errorf("reasoning_tokens = %d, want 916", usage.Get("output_tokens_details.reasoning_tokens").Int())
@@ -295,7 +295,7 @@ func TestFoldTwoRounds(t *testing.T) {
 	if usage.Get("input_tokens_details.cached_tokens").Int() != 40 {
 		t.Errorf("cached_tokens = %d, want 40", usage.Get("input_tokens_details.cached_tokens").Int())
 	}
-	// output_index 应重编号为 0,1,2(r1 reasoning, r2 reasoning, r2 message)
+	// output_index should be renumbered to 0,1,2 (r1 reasoning, r2 reasoning, r2 message)
 	var ois []int64
 	for _, ev := range c.events {
 		if gjson.GetBytes(ev, "type").String() == "response.output_item.added" {
@@ -303,25 +303,25 @@ func TestFoldTwoRounds(t *testing.T) {
 		}
 	}
 	if fmt.Sprint(ois) != "[0 1 2]" {
-		t.Errorf("output_index 序列 = %v, want [0 1 2]", ois)
+		t.Errorf("output_index sequence = %v, want [0 1 2]", ois)
 	}
 }
 
-// TestFoldTerminalOutputKeepsOnlyLastRoundEncryptedContent 验证 issue #353 修复：
-// 折叠后的 response.completed.output 里，只有最后一轮 reasoning 保留
-// encrypted_content，更早各轮剥离（防止 N 份账号绑定加密载荷被客户端回传后
-// 顶爆上下文窗口 / 跨账号成批被拒）。同轮续想用的 replayTail 不受影响。
+// TestFoldTerminalOutputKeepsOnlyLastRoundEncryptedContent verifies the fix for issue #353:
+// in the folded response.completed.output, only the last round's reasoning keeps
+// encrypted_content; earlier rounds are stripped (to prevent N copies of account-bound encrypted payloads, sent back by the client,
+// from overflowing the context window or being rejected in bulk across accounts). The replayTail used for same-round continuation is not affected.
 func TestFoldTerminalOutputKeepsOnlyLastRoundEncryptedContent(t *testing.T) {
 	c := &foldCollector{
 		nextResp: []*http.Response{
-			// 第 2 轮：仍命中指纹（516）→ 继续第 3 轮
+			// round 2: still matches the fingerprint (516) → continue to round 3
 			sseResponse(
 				evCreated(),
 				evReasoningAdded(1, 0),
 				evReasoningDone(2, 0, "enc-r2"),
 				evCompleted(3, 120, 600, 516),
 			),
-			// 第 3 轮：干净结束（400 未命中）→ 最后一轮
+			// round 3: ends cleanly (400, no match) → last round
 			sseResponse(
 				evCreated(),
 				evReasoningAdded(1, 0),
@@ -337,7 +337,7 @@ func TestFoldTerminalOutputKeepsOnlyLastRoundEncryptedContent(t *testing.T) {
 		evCreated(),
 		evReasoningAdded(1, 0),
 		evReasoningDone(2, 0, "enc-r1"),
-		evCompleted(3, 100, 600, 516), // 命中指纹
+		evCompleted(3, 100, 600, 516), // matches the fingerprint
 	))
 	if res.RoundsRun != 3 || res.StopReason != continueStopClean {
 		t.Fatalf("unexpected result: RoundsRun=%d stop=%s", res.RoundsRun, res.StopReason)
@@ -345,7 +345,7 @@ func TestFoldTerminalOutputKeepsOnlyLastRoundEncryptedContent(t *testing.T) {
 
 	final := c.events[len(c.events)-1]
 	if gjson.GetBytes(final, "type").String() != "response.completed" {
-		t.Fatalf("最终事件应为 response.completed: %s", final)
+		t.Fatalf("final event should be response.completed: %s", final)
 	}
 	output := gjson.GetBytes(final, "response.output").Array()
 
@@ -356,23 +356,23 @@ func TestFoldTerminalOutputKeepsOnlyLastRoundEncryptedContent(t *testing.T) {
 		}
 	}
 	if len(reasoningEnc) != 3 {
-		t.Fatalf("output 应含 3 个 reasoning item, got %d: %s", len(reasoningEnc), final)
+		t.Fatalf("output should contain 3 reasoning items, got %d: %s", len(reasoningEnc), final)
 	}
-	// 前两轮剥离，最后一轮保留
+	// the first two rounds are stripped, the last round is kept
 	if reasoningEnc[0] != "" || reasoningEnc[1] != "" {
-		t.Errorf("更早各轮 reasoning 应剥离 encrypted_content: got %q, %q", reasoningEnc[0], reasoningEnc[1])
+		t.Errorf("earlier rounds' reasoning should have encrypted_content stripped: got %q, %q", reasoningEnc[0], reasoningEnc[1])
 	}
 	if reasoningEnc[2] != "enc-r3" {
-		t.Errorf("最后一轮 reasoning 应保留 encrypted_content: got %q", reasoningEnc[2])
+		t.Errorf("last round's reasoning should keep encrypted_content: got %q", reasoningEnc[2])
 	}
 
-	// replayTail（发上游续想）不受影响：第 1 轮续想体仍带 enc-r1
+	// replayTail (sent upstream for continuation) is not affected: the round 1 continuation body still carries enc-r1
 	if got := gjson.GetBytes(c.rounds[0], "input.1.encrypted_content").String(); got != "enc-r1" {
-		t.Errorf("续想体 1 应保留 enc-r1, got %q", got)
+		t.Errorf("continuation body 1 should keep enc-r1, got %q", got)
 	}
 }
 
-// TestFoldTerminalOutputKeepAllEncryptedEscapeHatch 验证逃生阀恢复旧行为。
+// TestFoldTerminalOutputKeepAllEncryptedEscapeHatch verifies that the escape hatch restores the old behavior.
 func TestFoldTerminalOutputKeepAllEncryptedEscapeHatch(t *testing.T) {
 	t.Setenv("CODEX_CONTINUE_KEEP_ALL_ENCRYPTED", "1")
 	c := &foldCollector{
@@ -394,13 +394,13 @@ func TestFoldTerminalOutputKeepAllEncryptedEscapeHatch(t *testing.T) {
 	final := c.events[len(c.events)-1]
 	output := gjson.GetBytes(final, "response.output").Array()
 	if output[0].Get("encrypted_content").String() != "enc-a" {
-		t.Errorf("逃生阀开启时更早轮应保留 encrypted_content: %s", output[0].Raw)
+		t.Errorf("with the escape hatch on, earlier rounds should keep encrypted_content: %s", output[0].Raw)
 	}
 }
 
 func TestFoldMaxRoundsGuard(t *testing.T) {
 	c := &foldCollector{}
-	res := c.fold(testBaseBody, 1, sseResponse( // maxRounds=1:即使命中指纹也不续想
+	res := c.fold(testBaseBody, 1, sseResponse( // maxRounds=1: no continue-thinking even when the fingerprint matches
 		evCreated(),
 		evReasoningAdded(1, 0),
 		evReasoningDone(2, 0, "enc-a"),
@@ -409,12 +409,12 @@ func TestFoldMaxRoundsGuard(t *testing.T) {
 		evCompleted(5, 100, 600, 516),
 	))
 	if res.StopReason != continueStopMaxRounds || len(c.rounds) != 0 {
-		t.Fatalf("应因 max_rounds 停止且不发续想: %+v rounds=%d", res, len(c.rounds))
+		t.Fatalf("should stop because of max_rounds without sending a continuation: %+v rounds=%d", res, len(c.rounds))
 	}
-	// 当前输出仍应冲刷给客户端
+	// the current output should still be flushed to the client
 	types := c.eventTypes()
 	if types[len(types)-1] != "response.completed" || !strings.Contains(strings.Join(types, ","), "response.output_item.added") {
-		t.Fatalf("护栏停止时应冲刷输出并给出终态: %v", types)
+		t.Fatalf("when the guardrail stops, output should be flushed and a terminal state given: %v", types)
 	}
 }
 
@@ -423,13 +423,13 @@ func TestFoldNoEncryptedContentGuard(t *testing.T) {
 	res := c.fold(testBaseBody, 8, sseResponse(
 		evCreated(),
 		evReasoningAdded(1, 0),
-		evReasoningDone(2, 0, ""), // 无 encrypted_content
+		evReasoningDone(2, 0, ""), // no encrypted_content
 		evMessageAdded(3, 1),
 		evMessageDone(4, 1, "answer"),
 		evCompleted(5, 100, 600, 516),
 	))
 	if res.StopReason != continueStopNoEncrypted || len(c.rounds) != 0 {
-		t.Fatalf("缺 encrypted_content 不应续想: %+v", res)
+		t.Fatalf("missing encrypted_content should not trigger continue-thinking: %+v", res)
 	}
 }
 
@@ -449,32 +449,32 @@ func TestFoldContinuationRoundRejected(t *testing.T) {
 	if res.StopReason != continueStopRoundError {
 		t.Fatalf("StopReason = %q, want continuation_error", res.StopReason)
 	}
-	// 失败的续想开轮记入 FailedContinuation（与真实成功轮 Rounds 分开，避免重复计费）。
+	// a failed continue-thinking open-round is recorded in FailedContinuation (kept separate from the real successful Rounds, to avoid double billing).
 	if len(res.Rounds) != 1 {
-		t.Fatalf("Rounds 应只含 1 个成功轮, got %+v", res.Rounds)
+		t.Fatalf("Rounds should contain only 1 successful round, got %+v", res.Rounds)
 	}
 	if res.FailedContinuation == nil || res.FailedContinuation.StatusCode != http.StatusBadRequest {
-		t.Fatalf("失败续想应记入 FailedContinuation: %+v", res.FailedContinuation)
+		t.Fatalf("a failed continuation should be recorded in FailedContinuation: %+v", res.FailedContinuation)
 	}
 	if res.FinalUsage == nil || res.FinalUsage.ReasoningTokens != 516 {
-		t.Fatalf("FinalUsage 应为最后成功轮真实用量: %+v", res.FinalUsage)
+		t.Fatalf("FinalUsage should be the real usage of the last successful round: %+v", res.FinalUsage)
 	}
 	if !res.GotTerminal {
-		t.Fatalf("续想失败已合成终态, GotTerminal 应为 true")
+		t.Fatalf("continuation failed and a terminal state was synthesized, GotTerminal should be true")
 	}
 	final := c.events[len(c.events)-1]
 	if gjson.GetBytes(final, "type").String() != "response.incomplete" {
-		t.Fatalf("续想失败应合成 response.incomplete: %s", final)
+		t.Fatalf("a failed continuation should synthesize response.incomplete: %s", final)
 	}
 	if gjson.GetBytes(final, "response.incomplete_details.reason").String() != "upstream_error" {
-		t.Fatalf("incomplete reason 错误: %s", final)
+		t.Fatalf("incomplete reason is wrong: %s", final)
 	}
 	assertMonotonicSeq(t, c.events)
 }
 
 func TestFoldFirstRoundContinuationFailsBillsRound1(t *testing.T) {
-	// 第 1 轮命中指纹但首次续想开轮即失败：FinalUsage 必须保留第 1 轮真实用量
-	// （否则整轮消耗漏记），且已合成终态（否则会被误判断流惩罚账号）。
+	// round 1 matches the fingerprint but the first continuation fails when opening: FinalUsage must keep round 1's real usage
+	// (otherwise the whole round's cost is missed), and a terminal state is synthesized (otherwise the account would be wrongly penalized for a stream break).
 	c := &foldCollector{
 		nextErr: []error{fmt.Errorf("dial timeout")},
 	}
@@ -488,28 +488,28 @@ func TestFoldFirstRoundContinuationFailsBillsRound1(t *testing.T) {
 		t.Fatalf("unexpected: RoundsRun=%d stop=%s", res.RoundsRun, res.StopReason)
 	}
 	if res.FinalUsage == nil || res.FinalUsage.InputTokens != 4000 || res.FinalUsage.ReasoningTokens != 516 {
-		t.Fatalf("第 1 轮真实用量应保留在 FinalUsage: %+v", res.FinalUsage)
+		t.Fatalf("round 1's real usage should be kept in FinalUsage: %+v", res.FinalUsage)
 	}
 	if res.FailedContinuation == nil {
-		t.Fatalf("首次续想失败应记入 FailedContinuation")
+		t.Fatalf("a failed first continuation should be recorded in FailedContinuation")
 	}
 	if !res.GotTerminal {
-		t.Fatalf("已合成终态, GotTerminal 应为 true(避免误判断流)")
+		t.Fatalf("a terminal state was synthesized, GotTerminal should be true (to avoid misreading a stream break)")
 	}
 }
 
 func TestFoldTwoRoundsThenOpenFailsNoDoubleCount(t *testing.T) {
-	// r1 命中 → r2 命中 → 开 r3 失败。Rounds 应含 r1、r2 两个成功轮，
-	// FailedContinuation 单独记 r3 失败；FinalUsage=r2，收尾计费 r2，
-	// logContinueThinkingRounds 计费 r1 + 失败占位，绝不重复计 r2。
+	// r1 matches → r2 matches → opening r3 fails. Rounds should contain the two successful rounds r1 and r2,
+	// FailedContinuation records the r3 failure separately; FinalUsage=r2, the wrap-up bills r2,
+	// logContinueThinkingRounds bills r1 plus a failure placeholder, and never bills r2 twice.
 	c := &foldCollector{
 		nextResp: []*http.Response{sseResponse(
 			evCreated(),
 			evReasoningAdded(1, 0),
 			evReasoningDone(2, 0, "enc-b"),
-			evCompleted(3, 120, 900, 516), // r2 也命中指纹
+			evCompleted(3, 120, 900, 516), // r2 also matches the fingerprint
 		)},
-		nextErr: []error{nil, fmt.Errorf("r3 dial fail")}, // 第 2 次 openRound(开 r3)失败
+		nextErr: []error{nil, fmt.Errorf("r3 dial fail")}, // the 2nd openRound (opening r3) fails
 	}
 	res := c.fold(testBaseBody, 8, sseResponse(
 		evCreated(),
@@ -521,65 +521,65 @@ func TestFoldTwoRoundsThenOpenFailsNoDoubleCount(t *testing.T) {
 		t.Fatalf("StopReason = %q, want continuation_error", res.StopReason)
 	}
 	if len(res.Rounds) != 2 {
-		t.Fatalf("Rounds 应含 2 个成功轮, got %d: %+v", len(res.Rounds), res.Rounds)
+		t.Fatalf("Rounds should contain 2 successful rounds, got %d: %+v", len(res.Rounds), res.Rounds)
 	}
 	if res.FailedContinuation == nil {
-		t.Fatalf("r3 失败应记入 FailedContinuation")
+		t.Fatalf("the r3 failure should be recorded in FailedContinuation")
 	}
 	if res.FinalUsage == nil || res.FinalUsage.OutputTokens != 900 {
-		t.Fatalf("FinalUsage 应为 r2: %+v", res.FinalUsage)
+		t.Fatalf("FinalUsage should be r2: %+v", res.FinalUsage)
 	}
-	// 记账口径核对：收尾计 FinalUsage(r2)，logContinueThinkingRounds 计 Rounds[:len-1]=[r1] + 失败占位。
-	// 断言 Rounds[:len-1] 恰为 [r1]，不含 r2，避免与收尾重复计费。
+	// Billing check: the wrap-up bills FinalUsage (r2), and logContinueThinkingRounds bills Rounds[:len-1]=[r1] plus the failure placeholder.
+	// assert that Rounds[:len-1] is exactly [r1] and excludes r2, to avoid double billing with the wrap-up.
 	if res.Rounds[0].Usage == nil || res.Rounds[0].Usage.InputTokens != 100 {
-		t.Fatalf("Rounds[0] 应为 r1: %+v", res.Rounds[0].Usage)
+		t.Fatalf("Rounds[0] should be r1: %+v", res.Rounds[0].Usage)
 	}
 }
 
 func TestFoldFirstRoundEOFSilent(t *testing.T) {
 	c := &foldCollector{}
 	res := c.fold(testBaseBody, 8, sseResponse(
-		evCreated(), // 只有生命周期事件,无 terminal
+		evCreated(), // lifecycle events only, no terminal
 	))
 	if res.GotTerminal || res.StopReason != continueStopUpstreamEOF {
-		t.Fatalf("第 1 轮 EOF 应静默(交给上层透明重试): %+v", res)
+		t.Fatalf("round 1 EOF should stay silent (left to the upper-layer transparent retry): %+v", res)
 	}
 	for _, ev := range c.events {
 		if gjson.GetBytes(ev, "type").String() == "response.incomplete" {
-			t.Fatalf("第 1 轮无输出 EOF 不应合成 incomplete: %s", ev)
+			t.Fatalf("round 1 EOF with no output should not synthesize incomplete: %s", ev)
 		}
 	}
 }
 
 func TestFoldFirstRoundEOFWithBufferedContentFlushes(t *testing.T) {
-	// 第 1 轮缓冲了 message 内容后 EOF（无 terminal）：不应静默丢弃，
-	// 应冲刷缓冲内容并合成 incomplete，避免客户端收到空的 200 流。
+	// round 1 buffered message content and then EOF (no terminal): it should not be silently dropped,
+	// the buffered content should be flushed and incomplete synthesized, so the client does not get an empty 200 stream.
 	c := &foldCollector{}
 	res := c.fold(testBaseBody, 8, sseResponse(
 		evCreated(),
 		evMessageAdded(1, 0),
 		evMessageDelta(2, 0, "partial answer"),
-		// 无 terminal
+		// no terminal
 	))
 	if !res.GotTerminal || res.StopReason != continueStopUpstreamEOF {
-		t.Fatalf("有缓冲内容的 EOF 应合成终态: %+v", res)
+		t.Fatalf("EOF with buffered content should synthesize a terminal state: %+v", res)
 	}
 	joined := ""
 	for _, ev := range c.events {
 		joined += string(ev)
 	}
 	if !strings.Contains(joined, "partial answer") {
-		t.Fatalf("缓冲内容应被冲刷给客户端, events=%v", c.eventTypes())
+		t.Fatalf("buffered content should be flushed to the client, events=%v", c.eventTypes())
 	}
 	if c.eventTypes()[len(c.eventTypes())-1] != "response.incomplete" {
-		t.Fatalf("末事件应为 incomplete: %v", c.eventTypes())
+		t.Fatalf("last event should be incomplete: %v", c.eventTypes())
 	}
 }
 
 func TestFoldContinuationRoundEOF(t *testing.T) {
 	c := &foldCollector{
 		nextResp: []*http.Response{sseResponse(
-			evReasoningAdded(1, 0), // 续想轮断流,无 terminal
+			evReasoningAdded(1, 0), // continuation round stream cut, no terminal
 		)},
 	}
 	res := c.fold(testBaseBody, 8, sseResponse(
@@ -589,12 +589,12 @@ func TestFoldContinuationRoundEOF(t *testing.T) {
 		evCompleted(3, 100, 516, 516),
 	))
 	if !res.GotTerminal || res.StopReason != continueStopUpstreamEOF {
-		t.Fatalf("续想轮 EOF 应合成终态: %+v", res)
+		t.Fatalf("continuation round EOF should synthesize a terminal state: %+v", res)
 	}
 	final := c.events[len(c.events)-1]
 	if gjson.GetBytes(final, "type").String() != "response.incomplete" ||
 		gjson.GetBytes(final, "response.incomplete_details.reason").String() != "upstream_eof" {
-		t.Fatalf("应合成 incomplete(upstream_eof): %s", final)
+		t.Fatalf("should synthesize incomplete (upstream_eof): %s", final)
 	}
 }
 
@@ -610,7 +610,7 @@ func TestFoldFirstRoundFailedPassthrough(t *testing.T) {
 	}
 	final := c.events[len(c.events)-1]
 	if string(final) != failed {
-		t.Fatalf("第 1 轮无输出的 failed 应字节级透传:\ngot  %s\nwant %s", final, failed)
+		t.Fatalf("round 1 with no output: failed should pass through byte-for-byte:\ngot  %s\nwant %s", final, failed)
 	}
 }
 
@@ -621,7 +621,7 @@ func TestFoldForwardAbort(t *testing.T) {
 		maxRounds: 8,
 		forward: func(data []byte) bool {
 			aborted = true
-			return false // 模拟首包前 failed 抑制等上层中止
+			return false // simulates an upper-layer abort, e.g. failed suppression before the first packet
 		},
 		observe:    func([]byte) {},
 		openRound:  func([]byte) (*http.Response, error) { return nil, fmt.Errorf("unreachable") },
@@ -633,7 +633,7 @@ func TestFoldForwardAbort(t *testing.T) {
 		evCompleted(2, 100, 516, 516),
 	), f)
 	if !aborted || res.StopReason != continueStopForwardAbort {
-		t.Fatalf("forward=false 应立即中止: %+v", res)
+		t.Fatalf("forward=false should abort immediately: %+v", res)
 	}
 }
 
@@ -647,7 +647,7 @@ func TestFoldClientGoneStopsContinuation(t *testing.T) {
 			return true
 		},
 		observe:    func([]byte) {},
-		openRound:  func([]byte) (*http.Response, error) { t.Fatal("客户端断开后不应开续想轮"); return nil, nil },
+		openRound:  func([]byte) (*http.Response, error) { t.Fatal("no round after client disconnect"); return nil, nil },
 		clientGone: func() bool { return true },
 	}
 	res := runContinueThinkingFold(sseResponse(
@@ -661,9 +661,9 @@ func TestFoldClientGoneStopsContinuation(t *testing.T) {
 	}
 }
 
-// --- 隐藏轮下游保活 (issue #458) --------------------------------------------
+// --- hidden-round downstream keepalive (issue #458) --------------------------------------------
 
-// keepaliveFold 构造带保活回调的折叠:openRound 延迟 openDelay 模拟慢续想轮。
+// keepaliveFold builds a fold with a keepalive callback: openRound is delayed by openDelay to simulate a slow continue-thinking round.
 func keepaliveFold(t *testing.T, counter *atomic.Int32, keepaliveRet func() bool, openDelay time.Duration, round2 *http.Response) *continueFold {
 	t.Helper()
 	return &continueFold{
@@ -686,7 +686,7 @@ func fingerprintFirstRound() *http.Response {
 		evCreated(),
 		evReasoningAdded(1, 0),
 		evReasoningDone(2, 0, "enc-a"),
-		evCompleted(3, 100, 516, 516), // 516 命中指纹 → 进入隐藏续想
+		evCompleted(3, 100, 516, 516), // 516 matches the fingerprint → enter a hidden continue-thinking round
 	)
 }
 
@@ -698,8 +698,8 @@ func cleanSecondRound() *http.Response {
 	)
 }
 
-// TestFoldKeepaliveFiresDuringHiddenRoundAndStopsAfterFold 验证隐藏续想轮等待期间会保活，
-// 且整个折叠结束后停止回调。
+// TestFoldKeepaliveFiresDuringHiddenRoundAndStopsAfterFold verifies that keepalive fires while a hidden continue-thinking round is waiting,
+// and that the callback stops once the whole fold has finished.
 func TestFoldKeepaliveFiresDuringHiddenRoundAndStopsAfterFold(t *testing.T) {
 	var counter atomic.Int32
 	f := keepaliveFold(t, &counter, func() bool { return true }, 80*time.Millisecond, cleanSecondRound())
@@ -710,30 +710,30 @@ func TestFoldKeepaliveFiresDuringHiddenRoundAndStopsAfterFold(t *testing.T) {
 	}
 	after := counter.Load()
 	if after < 1 {
-		t.Fatalf("openRound 延迟 80ms、间隔 10ms,保活至少应触发 1 次, got %d", after)
+		t.Fatalf("openRound delayed 80ms, interval 10ms, keepalive should fire at least once, got %d", after)
 	}
 
-	// fold 返回时 defer 已同步 join 保活 goroutine:之后不允许再有回调。
+	// when fold returns, the deferred join has already synchronized with the keepalive goroutine: no callback may run after that.
 	time.Sleep(50 * time.Millisecond)
 	if got := counter.Load(); got != after {
-		t.Fatalf("fold 返回后保活仍在触发: %d -> %d", after, got)
+		t.Fatalf("keepalive still fired after fold returned: %d -> %d", after, got)
 	}
 }
 
-// TestFoldKeepaliveFiresDuringCleanFirstRoundAndStops 验证首轮静默期间会发送保活，
-// 且折叠结束后保活协程会停止。
+// TestFoldKeepaliveFiresDuringCleanFirstRoundAndStops verifies that keepalive is sent during a silent first round,
+// and that the keepalive goroutine stops after folding ends.
 func TestFoldKeepaliveFiresDuringCleanFirstRoundAndStops(t *testing.T) {
 	var counter atomic.Int32
 	f := keepaliveFold(t, &counter, func() bool { return true }, 0, nil)
 	f.openRound = func([]byte) (*http.Response, error) {
-		t.Fatal("未命中指纹不应开续想轮")
+		t.Fatal("a non-matching fingerprint should not open a continuation round")
 		return nil, nil
 	}
 	resp := delayedSSEResponse(30*time.Millisecond,
 		evCreated(),
 		evReasoningAdded(1, 0),
 		evReasoningDone(2, 0, "enc-a"),
-		evCompleted(3, 100, 600, 400), // 400 不命中指纹
+		evCompleted(3, 100, 600, 400), // 400 does not match the fingerprint
 	)
 
 	res := runContinueThinkingFold(resp, f)
@@ -742,15 +742,15 @@ func TestFoldKeepaliveFiresDuringCleanFirstRoundAndStops(t *testing.T) {
 	}
 	after := counter.Load()
 	if after < 1 {
-		t.Fatalf("首轮延迟 30ms、间隔 10ms，保活至少应触发 1 次, got %d", after)
+		t.Fatalf("first round delayed 30ms, interval 10ms, keepalive should fire at least once, got %d", after)
 	}
 	time.Sleep(20 * time.Millisecond)
 	if got := counter.Load(); got != after {
-		t.Fatalf("fold 返回后保活仍在触发: %d -> %d", after, got)
+		t.Fatalf("keepalive still fired after fold returned: %d -> %d", after, got)
 	}
 }
 
-// TestFoldKeepaliveDisabledAtZeroInterval 验证保活间隔为零时不会启动心跳。
+// TestFoldKeepaliveDisabledAtZeroInterval verifies that no heartbeat starts when the keepalive interval is zero.
 func TestFoldKeepaliveDisabledAtZeroInterval(t *testing.T) {
 	var counter atomic.Int32
 	f := keepaliveFold(t, &counter, func() bool { return true }, 0, nil)
@@ -763,7 +763,7 @@ func TestFoldKeepaliveDisabledAtZeroInterval(t *testing.T) {
 		t.Fatalf("unexpected result: %+v", res)
 	}
 	if got := counter.Load(); got != 0 {
-		t.Fatalf("间隔为 0 时不应触发保活, got %d", got)
+		t.Fatalf("keepalive should not fire when the interval is 0, got %d", got)
 	}
 }
 
@@ -775,8 +775,8 @@ func TestFoldKeepaliveStopsWhenCallbackReportsDeadClient(t *testing.T) {
 	if res.StopReason != continueStopClean {
 		t.Fatalf("unexpected result: %+v", res)
 	}
-	// 回调首次返回 false 即停表:openRound 100ms 里 10ms 间隔本可触发 ~10 次。
+	// the callback returns false on its first call and the ticker stops: within openRound's 100ms, a 10ms interval could have fired about 10 times.
 	if got := counter.Load(); got != 1 {
-		t.Fatalf("回调返回 false 后保活应立即停止, got %d 次", got)
+		t.Fatalf("keepalive should stop immediately after the callback returns false, got %d times", got)
 	}
 }

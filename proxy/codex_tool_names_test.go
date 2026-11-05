@@ -26,7 +26,7 @@ func TestShortenCodexToolName(t *testing.T) {
 }
 
 func TestBuildCodexToolNameMap_ValidNamesUntouchedAndCollisionsSuffixed(t *testing.T) {
-	// "a_b" 是合法原名，必须保住；"a.b" 与 "a:b" 都会净化成 "a_b"，得让位。
+	// "a_b" is a valid original name and must be kept; "a.b" and "a:b" both sanitize to "a_b", so they have to yield.
 	names := []string{"a.b", "a_b", "a:b", "plain"}
 	m := buildCodexToolNameMap(names)
 	if _, ok := m["a_b"]; ok {
@@ -165,4 +165,3 @@ func TestNormalizeFunctionToolsInArray_ChatShapedStrictDefaultsFalse(t *testing.
 		t.Fatal("native Responses tool must keep the upstream default (no strict key)")
 	}
 }
-

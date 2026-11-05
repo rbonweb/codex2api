@@ -13,19 +13,19 @@ import (
 	"github.com/codex2api/auth"
 )
 
-// Codex 账号绑定时区：把出站请求体里由客户端生成的 <environment_context> 时区与日期
-// 改写成账号级恒定值。多人共享一个账号时，各下游客户端按本机生成
-// <timezone>/<current_date>，上游看到同一账号在多个时区之间跳动；绑定后每个账号只
-// 呈现一个时区。这是提示词正文而不是请求头，因此与设备指纹收敛（codex_fingerprint.go）
-// 相互独立：绑定即生效，不依赖收敛档位。
+// Codex account timezone binding: the timezone and date in the <environment_context> that the client generates in the outbound request body
+// are rewritten to constant account-level values. When several people share one account, each downstream client generates them from its own machine,
+// <timezone>/<current_date>, so upstream sees the same account jump between time zones; after binding, each account only
+// presents one timezone. This is prompt body text rather than a request header, so it is
+// independent of device fingerprint convergence (codex_fingerprint.go): binding takes effect immediately and does not depend on the convergence tier.
 //
-// 改写规则：
-//   - 只改已存在的标签，绝不新增；请求体没有 environment_context 时原样返回。
-//   - <current_date> 不是简单替换成"账号时区的今天"：历史轮次的 environment_context
-//     会随全量历史一起重发（store:false），把旧日期一律改成今天会篡改历史。这里按
-//     "账号时区今天 − 客户端时区今天"的天数差整体平移，旧块保持相对关系不变，同一
-//     请求内的新块恰好落在账号时区的今天。客户端时区缺失或无法加载时只改时区不动日期。
-//   - 幂等：同值二次改写得到相同结果，重试链路把改写过的载荷再送进来不会漂移。
+// Rewrite rules:
+//   - Only rewrite tags that already exist, never add new ones; if the request body has no environment_context, return it unchanged.
+//   - <current_date> is not simply replaced with "today in the account timezone": the environment_context of earlier turns
+//     is resent together with the full history (store:false), so changing every old date to today would tamper with history. Here,
+//     the whole block shifts by the day difference between "today in the account timezone" and "today in the client timezone", so old blocks keep their relative offsets, and within the
+//     same request, new blocks land exactly on today in the account timezone. If the client timezone is missing or cannot be loaded, only the timezone is changed, not the date.
+//   - Idempotent: rewriting an already-rewritten value gives the same result, so when the retry path sends a rewritten payload back in, nothing drifts.
 
 const (
 	environmentContextOpenTag = "<environment_context>"
@@ -36,7 +36,7 @@ var (
 	environmentTimezoneTagPattern = regexp.MustCompile(`<timezone>([^<]*)</timezone>`)
 	environmentDateTagPattern     = regexp.MustCompile(`<current_date>(\d{4}-\d{2}-\d{2})</current_date>`)
 
-	// time.LoadLocation 每次都读 zoneinfo，热路径上缓存已解析的位置。
+	// time.LoadLocation reads zoneinfo on every call, so the parsed location is cached on the hot path.
 	environmentLocationCache sync.Map // string -> *time.Location
 )
 
@@ -51,7 +51,7 @@ func loadLocationCached(name string) *time.Location {
 	}
 	loc, err := time.LoadLocation(name)
 	if err != nil {
-		// 也缓存失败结果，避免坏值反复触发磁盘读取。
+		// Failed results are also cached, to avoid bad values repeatedly triggering disk reads.
 		environmentLocationCache.Store(name, (*time.Location)(nil))
 		return nil
 	}
@@ -59,8 +59,8 @@ func loadLocationCached(name string) *time.Location {
 	return loc
 }
 
-// ApplyCodexTimezoneToBody 按账号绑定时区改写请求体 input 里所有 environment_context
-// 文本。账号未绑定时区、或请求体不含 environment_context 时原样返回。
+// ApplyCodexTimezoneToBody rewrites every environment_context in the request body input according to the account-bound timezone
+// text. If the account has no bound timezone, or the request body has no environment_context, it returns unchanged.
 func ApplyCodexTimezoneToBody(body []byte, account *auth.Account, now time.Time) []byte {
 	timezone := account.EffectiveCodexTimezone()
 	if timezone == "" || len(body) == 0 {
@@ -70,8 +70,8 @@ func ApplyCodexTimezoneToBody(body []byte, account *auth.Account, now time.Time)
 	if loc == nil {
 		return body
 	}
-	// 不能在原始字节上预检 "<environment_context>"：prepare 阶段已用 encoding/json 重编
-	// 请求体，"<" 落地成 \u003c。只在 gjson 解码后的文本上判断。
+	// Do not pre-check for "<environment_context>" on the raw bytes: the prepare stage has already re-encoded
+	// the request body with encoding/json, so "<" became \u003c. Only check the text after gjson decoding.
 	input := gjson.GetBytes(body, "input")
 	if !input.IsArray() {
 		return body
@@ -109,16 +109,16 @@ func setJSONStringAtPath(body []byte, path, value string) []byte {
 	return updated
 }
 
-// rewriteEnvironmentContextText 改写一段文本里的时区与日期标签。文本不含
-// environment_context 时不动；含有时才扫描标签（同一文本里可能嵌着多份，例如
-// 记忆整理提示词里引用的历史 rollout，统一改写以保持一致）。
+// rewriteEnvironmentContextText rewrites the timezone and date tags in a piece of text. If the text does not contain
+// environment_context, it is left alone; only when it does is the tags scanned (one text may embed several copies, for example
+// a historical rollout referenced in the memory-consolidation prompt, rewritten together to keep them consistent).
 func rewriteEnvironmentContextText(text, timezone string, accountToday time.Time) (string, bool) {
 	if !strings.Contains(text, environmentContextOpenTag) {
 		return text, false
 	}
 	changed := false
 
-	// 客户端时区取自文本里第一个 <timezone>；平移天数只在客户端时区可加载时计算。
+	// The client timezone is taken from the first <timezone> in the text; the day shift is computed only when the client timezone can be loaded.
 	dayDelta, haveDelta := 0, false
 	if match := environmentTimezoneTagPattern.FindStringSubmatch(text); match != nil {
 		if clientLoc := loadLocationCached(match[1]); clientLoc != nil {
@@ -149,7 +149,7 @@ func rewriteEnvironmentContextText(text, timezone string, accountToday time.Time
 	return rewritten, changed
 }
 
-// truncateToDay 把时刻截到所在时区的当日零点，再换成 UTC 表达以便相减得到整天差。
+// truncateToDay truncates the instant to midnight of its own timezone's day, then converts it to UTC so that subtraction gives whole-day differences.
 func truncateToDay(t time.Time) time.Time {
 	y, m, d := t.Date()
 	return time.Date(y, m, d, 0, 0, 0, 0, time.UTC)
