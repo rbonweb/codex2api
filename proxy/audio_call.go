@@ -11,6 +11,7 @@ import (
 	"time"
 
 	"github.com/codex2api/api"
+	"github.com/codex2api/security"
 	"github.com/gin-gonic/gin"
 	"github.com/gorilla/websocket"
 	"github.com/pion/webrtc/v4"
@@ -18,7 +19,6 @@ import (
 )
 
 const (
-	audioCallSetupTimeout   = 25 * time.Second
 	audioCallEventBuffer    = 256
 	audioCallSendDeadline   = 5 * time.Second
 	audioCallCloseDeadline  = time.Second
@@ -26,6 +26,9 @@ const (
 )
 
 var (
+	// audioCallSetupTimeout bounds the whole setup; tests shorten it.
+	audioCallSetupTimeout = 25 * time.Second
+
 	errAudioCallClosed = errors.New("the audio call is closed")
 
 	// audioCallICEServers is the STUN server set the gateway peer gathers with; tests clear it to stay on loopback.
@@ -49,7 +52,7 @@ type audioCall struct {
 	writeMu   sync.Mutex
 	closeOnce sync.Once
 	closed    atomic.Bool
-	expiry    *time.Timer
+	expiry    atomic.Pointer[time.Timer]
 	setup     time.Duration
 	opened    time.Time
 }
@@ -157,7 +160,7 @@ func (h *Handler) openAudioCall(c *gin.Context, session json.RawMessage) (*audio
 	conn, err := h.dialLiveSideband(callCtx, record)
 	if err != nil {
 		cancel()
-		log.Printf("audio call %s: sideband attach failed: %v", record.CallHash, err)
+		log.Printf("audio call %s: sideband attach failed: %s", record.CallHash, security.SanitizeLog(err.Error()))
 		return fail(http.StatusBadGateway, api.ErrCodeUpstreamError, "Failed to attach to the upstream call")
 	}
 	conn.SetReadLimit(audioCallSidebandReadMB << 20)
@@ -167,7 +170,11 @@ func (h *Handler) openAudioCall(c *gin.Context, session json.RawMessage) (*audio
 		events: make(chan []byte, audioCallEventBuffer), done: make(chan struct{}),
 		cancel: cancel, opened: started, setup: time.Since(started),
 	}
-	call.expiry = time.AfterFunc(time.Until(record.ExpiresAt), call.Close)
+	timer := time.AfterFunc(time.Until(record.ExpiresAt), call.Close)
+	call.expiry.Store(timer)
+	if call.closed.Load() {
+		timer.Stop()
+	}
 	go call.readSideband(callCtx)
 	go func() {
 		select {
@@ -246,13 +253,15 @@ func (a *audioCall) SetupDuration() time.Duration { return a.setup }
 func (a *audioCall) Close() {
 	a.closeOnce.Do(func() {
 		a.closed.Store(true)
-		if a.expiry != nil {
-			a.expiry.Stop()
+		if timer := a.expiry.Load(); timer != nil {
+			timer.Stop()
 		}
-		a.writeMu.Lock()
-		_ = a.sideband.SetWriteDeadline(time.Now().Add(audioCallCloseDeadline))
-		_ = a.sideband.WriteMessage(websocket.TextMessage, []byte(`{"type":"session.close"}`))
-		a.writeMu.Unlock()
+		// The goodbye is best effort: when a Send holds the write lock the sideband is closed instead, which also unblocks that writer, so releasing the lease, key slot and usage record is never delayed.
+		if a.writeMu.TryLock() {
+			_ = a.sideband.SetWriteDeadline(time.Now().Add(audioCallCloseDeadline))
+			_ = a.sideband.WriteMessage(websocket.TextMessage, []byte(`{"type":"session.close"}`))
+			a.writeMu.Unlock()
+		}
 		_ = a.sideband.Close()
 		a.cancel()
 		_ = a.pc.Close()
