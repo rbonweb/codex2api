@@ -79,7 +79,7 @@ func TestCompareSystemVersions(t *testing.T) {
 
 func TestValidateSystemUpdateURL(t *testing.T) {
 	allowed := []string{
-		"https://github.com/james-6-23/codex2api/releases/download/v1/codex2api.tar.gz",
+		"https://github.com/rbonweb/codex2api/releases/download/v1/codex2api.tar.gz",
 		"https://release-assets.githubusercontent.com/github-production-release-asset/file",
 		"https://objects.githubusercontent.com/github-production-release-asset/file",
 	}
@@ -90,7 +90,7 @@ func TestValidateSystemUpdateURL(t *testing.T) {
 	}
 
 	blocked := []string{
-		"http://github.com/james-6-23/codex2api/releases/download/v1/codex2api.tar.gz",
+		"http://github.com/rbonweb/codex2api/releases/download/v1/codex2api.tar.gz",
 		"https://example.com/codex2api.tar.gz",
 	}
 	for _, rawURL := range blocked {
@@ -103,7 +103,7 @@ func TestValidateSystemUpdateURL(t *testing.T) {
 func TestSystemUpdaterCheckFindsMatchingAsset(t *testing.T) {
 	client := &fakeSystemReleaseClient{release: &systemGitHubRelease{
 		TagName: "v2.4.4",
-		HTMLURL: "https://github.com/james-6-23/codex2api/releases/tag/v2.4.4",
+		HTMLURL: "https://github.com/rbonweb/codex2api/releases/tag/v2.4.4",
 		Assets: []systemGitHubAsset{
 			{Name: "codex2api_2.4.4_linux_arm64.tar.gz", BrowserDownloadURL: "https://github.com/arm64"},
 			{Name: "codex2api_2.4.4_linux_amd64.tar.gz", BrowserDownloadURL: "https://github.com/amd64"},
@@ -297,12 +297,12 @@ func TestSystemUpdaterPerformUpdateReplacesBinaryAndKeepsBackup(t *testing.T) {
 
 	archive := buildSystemUpdateTarball(t, "codex2api", []byte("new-binary"))
 	archiveHash := sha256.Sum256(archive)
-	archiveURL := "https://github.com/james-6-23/codex2api/releases/download/v2.4.4/codex2api_2.4.4_linux_amd64.tar.gz"
+	archiveURL := "https://github.com/rbonweb/codex2api/releases/download/v2.4.4/codex2api_2.4.4_linux_amd64.tar.gz"
 	restarted := make(chan string, 1)
 	client := &fakeSystemReleaseClient{
 		release: &systemGitHubRelease{
 			TagName: "v2.4.4",
-			HTMLURL: "https://github.com/james-6-23/codex2api/releases/tag/v2.4.4",
+			HTMLURL: "https://github.com/rbonweb/codex2api/releases/tag/v2.4.4",
 			Assets: []systemGitHubAsset{{
 				Name:               "codex2api_2.4.4_linux_amd64.tar.gz",
 				BrowserDownloadURL: archiveURL,
@@ -339,8 +339,8 @@ func TestSystemUpdaterPerformUpdateReplacesBinaryAndKeepsBackup(t *testing.T) {
 	}
 	select {
 	case path := <-restarted:
-		// 生产代码在替换前会 EvalSymlinks 解析真实路径(如 macOS 下 /var → /private/var),
-		// 断言期望值同样解析,避免在软链接临时目录的平台上误报。
+		// Production code resolves the real path with EvalSymlinks before replacing (for example /var to /private/var on macOS),
+		// the expected value is resolved the same way, to avoid false failures on platforms with symlinked temp directories.
 		wantPath := currentPath
 		if resolved, err := filepath.EvalSymlinks(currentPath); err == nil {
 			wantPath = resolved
@@ -361,7 +361,7 @@ func TestSystemUpdaterPerformUpdateRejectsChecksumMismatch(t *testing.T) {
 	}
 
 	archive := buildSystemUpdateTarball(t, "codex2api", []byte("new-binary"))
-	archiveURL := "https://github.com/james-6-23/codex2api/releases/download/v2.4.4/codex2api_2.4.4_linux_amd64.tar.gz"
+	archiveURL := "https://github.com/rbonweb/codex2api/releases/download/v2.4.4/codex2api_2.4.4_linux_amd64.tar.gz"
 	client := &fakeSystemReleaseClient{
 		release: &systemGitHubRelease{
 			TagName: "v2.4.4",

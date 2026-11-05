@@ -28,7 +28,7 @@ import (
 )
 
 const (
-	systemUpdateRepo             = "james-6-23/codex2api"
+	systemUpdateRepo             = "rbonweb/codex2api"
 	systemUpdateUserAgent        = "Codex2API-Updater"
 	systemUpdateMaxDownloadBytes = 200 * 1024 * 1024
 	systemUpdateRestartDelay     = 900 * time.Millisecond
@@ -36,9 +36,9 @@ const (
 )
 
 var (
-	errSystemUpdateBusy        = errors.New("已有更新任务正在执行")
-	errSystemUpdateLatest      = errors.New("当前已是最新版本")
-	errSystemUpdateUnsupported = errors.New("当前运行环境不支持在线更新")
+	errSystemUpdateBusy        = errors.New("an update is already in progress")
+	errSystemUpdateLatest      = errors.New("already on the latest version")
+	errSystemUpdateUnsupported = errors.New("online update is not supported in this environment")
 )
 
 type systemUpdater struct {
@@ -129,8 +129,8 @@ func newSystemUpdater() *systemUpdater {
 	}
 }
 
-// detectRunningInContainer 尽力判断当前进程是否运行在容器内:
-// 更新容器内的二进制在容器重建后会被镜像版本覆盖,需要提示用户改用镜像升级。
+// detectRunningInContainer makes a best-effort check of whether the current process runs inside a container:
+// a binary updated inside a container is overwritten by the image version when the container is recreated, so the user is told to upgrade through the image instead.
 func detectRunningInContainer() bool {
 	if _, err := os.Stat("/.dockerenv"); err == nil {
 		return true
@@ -150,8 +150,8 @@ func newDefaultSystemReleaseClient() *defaultSystemReleaseClient {
 	redirectPolicy := func(req *http.Request, _ []*http.Request) error {
 		return validateSystemUpdateURL(req.URL.String())
 	}
-	// GitHub 专用代理（issue #522）：配置了则优先，否则维持原行为（环境变量代理）。
-	// 每请求动态解析，设置热更新即时生效。
+	// Dedicated GitHub proxy (issue #522): used first when configured, otherwise the previous behavior (environment proxy) applies.
+	// Resolved per request, so settings changes take effect immediately.
 	proxyFunc := func(req *http.Request) (*url.URL, error) {
 		if req != nil && req.URL != nil {
 			if dedicated := proxy.GithubProxyOrDefault(req.URL.String(), ""); dedicated != "" {
@@ -178,7 +178,7 @@ func (h *Handler) GetSystemUpdate(c *gin.Context) {
 	updater := h.systemUpdater()
 	info, err := updater.Check(c.Request.Context())
 	if err != nil {
-		log.Printf("检查系统更新失败，已静默降级: %v", err)
+		log.Printf("system update check failed, silently degraded: %v", err)
 		c.JSON(http.StatusOK, updater.unavailableInfo())
 		return
 	}
@@ -194,18 +194,18 @@ func (u *systemUpdater) unavailableInfo() *systemUpdateInfo {
 		RuntimeArch:    u.goarch,
 		Mode:           "binary",
 		Supported:      true,
-		Warning:        "更新源暂时不可用，已跳过本次自动检查",
+		Warning:        "the update source is temporarily unavailable, skipping this automatic check",
 	}
 	if current == "" || current == "dev" {
 		info.Supported = false
-		info.UnsupportedReason = "开发构建未注入版本号，无法安全判断升级目标"
+		info.UnsupportedReason = "development build has no injected version, so the upgrade target cannot be determined safely"
 	} else if _, ok := parseSystemVersion(current); !ok {
 		info.Supported = false
-		info.UnsupportedReason = "当前构建版本不是语义版本，无法安全判断升级目标"
+		info.UnsupportedReason = "the current build version is not a semantic version, so the upgrade target cannot be determined safely"
 	}
 	if u.goos == "windows" {
 		info.Supported = false
-		info.UnsupportedReason = "Windows 运行时暂不支持在线替换正在运行的可执行文件"
+		info.UnsupportedReason = "online replacement of the running executable is not supported on Windows"
 	}
 	return info
 }
@@ -224,7 +224,7 @@ func (h *Handler) PerformSystemUpdate(c *gin.Context) {
 	case errors.Is(err, errSystemUpdateUnsupported):
 		writeError(c, http.StatusBadRequest, err.Error())
 	default:
-		writeError(c, http.StatusInternalServerError, "在线更新失败: "+err.Error())
+		writeError(c, http.StatusInternalServerError, "online update failed: "+err.Error())
 	}
 }
 
@@ -265,7 +265,7 @@ func (u *systemUpdater) PerformUpdate(ctx context.Context) (*systemUpdateResult,
 		return nil, errSystemUpdateLatest
 	}
 	if inspection.asset == nil {
-		return nil, fmt.Errorf("%w: 未找到适配 %s/%s 的发布资产", errSystemUpdateUnsupported, u.goos, u.goarch)
+		return nil, fmt.Errorf("%w: no release asset found for %s/%s", errSystemUpdateUnsupported, u.goos, u.goarch)
 	}
 
 	exePath, backupPath, err := u.applyBinaryUpdate(ctx, inspection)
@@ -275,7 +275,7 @@ func (u *systemUpdater) PerformUpdate(ctx context.Context) (*systemUpdateResult,
 
 	u.scheduleRestart(exePath)
 	return &systemUpdateResult{
-		Message:        "更新已应用，服务正在重启",
+		Message:        "update applied, the service is restarting",
 		CurrentVersion: inspection.info.CurrentVersion,
 		LatestVersion:  inspection.info.LatestVersion,
 		NeedRestart:    true,
@@ -298,17 +298,17 @@ func (u *systemUpdater) inspect(ctx context.Context) (*systemUpdateInspection, e
 
 	if current == "" || current == "dev" {
 		info.Supported = false
-		info.UnsupportedReason = "开发构建未注入版本号，无法安全判断升级目标"
+		info.UnsupportedReason = "development build has no injected version, so the upgrade target cannot be determined safely"
 	} else if _, ok := parseSystemVersion(current); !ok {
 		info.Supported = false
-		info.UnsupportedReason = "当前构建版本不是语义版本，无法安全判断升级目标"
+		info.UnsupportedReason = "the current build version is not a semantic version, so the upgrade target cannot be determined safely"
 	}
 	if u.goos == "windows" {
 		info.Supported = false
-		info.UnsupportedReason = "Windows 运行时暂不支持在线替换正在运行的可执行文件"
+		info.UnsupportedReason = "online replacement of the running executable is not supported on Windows"
 	}
 	if u.runningInContainer != nil && u.runningInContainer() {
-		info.Warning = "检测到容器环境:在线更新只替换当前容器内的二进制,容器重建后会恢复为镜像自带版本,建议改用拉取新镜像的方式升级"
+		info.Warning = "container environment detected: online update only replaces the binary inside this container, and the image version is restored when the container is recreated; upgrade by pulling a new image instead"
 	}
 
 	release, err := u.fetchLatestRelease(ctx)
@@ -317,7 +317,7 @@ func (u *systemUpdater) inspect(ctx context.Context) (*systemUpdateInspection, e
 	}
 	latest := normalizeSystemVersion(release.TagName)
 	if latest == "" {
-		return nil, fmt.Errorf("最新 release 缺少有效版本号")
+		return nil, fmt.Errorf("the latest release has no valid version")
 	}
 	info.LatestVersion = latest
 	info.ReleaseURL = release.HTMLURL
@@ -330,7 +330,7 @@ func (u *systemUpdater) inspect(ctx context.Context) (*systemUpdateInspection, e
 		info.AssetName = asset.Name
 	} else if info.Supported {
 		info.Supported = false
-		info.UnsupportedReason = fmt.Sprintf("未找到适配 %s/%s 的发布资产", u.goos, u.goarch)
+		info.UnsupportedReason = fmt.Sprintf("no release asset found for %s/%s", u.goos, u.goarch)
 	}
 
 	return &systemUpdateInspection{
@@ -354,7 +354,7 @@ func (u *systemUpdater) fetchLatestRelease(ctx context.Context) (*systemGitHubRe
 		return nil, err
 	}
 	if release == nil {
-		return nil, fmt.Errorf("GitHub release 响应为空")
+		return nil, fmt.Errorf("GitHub release response is empty")
 	}
 
 	u.releaseCache = cloneSystemGitHubRelease(release)
@@ -375,20 +375,20 @@ func cloneSystemGitHubRelease(release *systemGitHubRelease) *systemGitHubRelease
 func (u *systemUpdater) applyBinaryUpdate(ctx context.Context, inspection *systemUpdateInspection) (string, string, error) {
 	asset := inspection.asset
 	if asset == nil {
-		return "", "", fmt.Errorf("更新资产为空")
+		return "", "", fmt.Errorf("update asset is empty")
 	}
 	if err := validateSystemUpdateURL(asset.BrowserDownloadURL); err != nil {
-		return "", "", fmt.Errorf("发布资产 URL 不可信: %w", err)
+		return "", "", fmt.Errorf("release asset URL is not trusted: %w", err)
 	}
 	if inspection.checksumAsset != nil {
 		if err := validateSystemUpdateURL(inspection.checksumAsset.BrowserDownloadURL); err != nil {
-			return "", "", fmt.Errorf("校验和 URL 不可信: %w", err)
+			return "", "", fmt.Errorf("checksum URL is not trusted: %w", err)
 		}
 	}
 
 	exePath, err := u.executablePath()
 	if err != nil {
-		return "", "", fmt.Errorf("获取当前可执行文件路径失败: %w", err)
+		return "", "", fmt.Errorf("failed to get the current executable path: %w", err)
 	}
 	if resolved, err := filepath.EvalSymlinks(exePath); err == nil {
 		exePath = resolved
@@ -397,13 +397,13 @@ func (u *systemUpdater) applyBinaryUpdate(ctx context.Context, inspection *syste
 
 	tempDir, err := os.MkdirTemp(exeDir, ".codex2api-update-*")
 	if err != nil {
-		return "", "", fmt.Errorf("创建更新临时目录失败: %w", err)
+		return "", "", fmt.Errorf("failed to create the update temp directory: %w", err)
 	}
 	defer func() { _ = os.RemoveAll(tempDir) }()
 
 	archivePath := filepath.Join(tempDir, filepath.Base(asset.Name))
 	if err := u.client.DownloadFile(ctx, asset.BrowserDownloadURL, archivePath, systemUpdateMaxDownloadBytes); err != nil {
-		return "", "", fmt.Errorf("下载更新包失败: %w", err)
+		return "", "", fmt.Errorf("failed to download the update package: %w", err)
 	}
 	if err := verifySystemUpdateChecksum(ctx, u.client, archivePath, asset, inspection.checksumAsset); err != nil {
 		return "", "", err
@@ -411,10 +411,10 @@ func (u *systemUpdater) applyBinaryUpdate(ctx context.Context, inspection *syste
 
 	newBinaryPath := filepath.Join(tempDir, systemBinaryName(u.goos))
 	if err := extractSystemUpdateBinary(archivePath, newBinaryPath); err != nil {
-		return "", "", fmt.Errorf("解压更新包失败: %w", err)
+		return "", "", fmt.Errorf("failed to extract the update package: %w", err)
 	}
 	if err := os.Chmod(newBinaryPath, 0755); err != nil {
-		return "", "", fmt.Errorf("设置新程序执行权限失败: %w", err)
+		return "", "", fmt.Errorf("failed to set execute permission on the new binary: %w", err)
 	}
 
 	backupPath := exePath + ".backup"
@@ -436,7 +436,7 @@ func (u *systemUpdater) scheduleRestart(exePath string) {
 	go func() {
 		time.Sleep(delay)
 		if err := restart(exePath); err != nil {
-			log.Printf("在线更新后重启失败: %v", err)
+			log.Printf("restart after online update failed: %v", err)
 		}
 	}()
 }
@@ -457,7 +457,7 @@ func (c *defaultSystemReleaseClient) FetchLatestRelease(ctx context.Context) (*s
 	}
 	defer func() { _ = resp.Body.Close() }()
 	if resp.StatusCode != http.StatusOK {
-		return nil, fmt.Errorf("GitHub API 返回 HTTP %d", resp.StatusCode)
+		return nil, fmt.Errorf("GitHub API returned HTTP %d", resp.StatusCode)
 	}
 
 	var release systemGitHubRelease
@@ -483,10 +483,10 @@ func (c *defaultSystemReleaseClient) DownloadFile(ctx context.Context, rawURL, d
 	}
 	defer func() { _ = resp.Body.Close() }()
 	if resp.StatusCode != http.StatusOK {
-		return fmt.Errorf("下载返回 HTTP %d", resp.StatusCode)
+		return fmt.Errorf("download returned HTTP %d", resp.StatusCode)
 	}
 	if resp.ContentLength > maxSize {
-		return fmt.Errorf("下载文件过大: %d bytes", resp.ContentLength)
+		return fmt.Errorf("download is too large: %d bytes", resp.ContentLength)
 	}
 
 	out, err := os.Create(dest)
@@ -506,7 +506,7 @@ func (c *defaultSystemReleaseClient) DownloadFile(ctx context.Context, rawURL, d
 	}
 	if written > maxSize {
 		_ = os.Remove(dest)
-		return fmt.Errorf("下载超过大小上限: %d bytes", maxSize)
+		return fmt.Errorf("download exceeds the size limit: %d bytes", maxSize)
 	}
 	return nil
 }
@@ -527,14 +527,14 @@ func (c *defaultSystemReleaseClient) FetchText(ctx context.Context, rawURL strin
 	}
 	defer func() { _ = resp.Body.Close() }()
 	if resp.StatusCode != http.StatusOK {
-		return nil, fmt.Errorf("下载校验和返回 HTTP %d", resp.StatusCode)
+		return nil, fmt.Errorf("checksum download returned HTTP %d", resp.StatusCode)
 	}
 	data, err := io.ReadAll(io.LimitReader(resp.Body, maxSize+1))
 	if err != nil {
 		return nil, err
 	}
 	if int64(len(data)) > maxSize {
-		return nil, fmt.Errorf("校验和文件超过大小上限: %d bytes", maxSize)
+		return nil, fmt.Errorf("checksum file exceeds the size limit: %d bytes", maxSize)
 	}
 	return data, nil
 }
@@ -545,7 +545,7 @@ func validateSystemUpdateURL(rawURL string) error {
 		return err
 	}
 	if parsed.Scheme != "https" {
-		return fmt.Errorf("仅允许 HTTPS")
+		return fmt.Errorf("only HTTPS is allowed")
 	}
 	host := strings.ToLower(parsed.Hostname())
 	switch host {
@@ -555,7 +555,7 @@ func validateSystemUpdateURL(rawURL string) error {
 		if strings.HasSuffix(host, ".githubusercontent.com") {
 			return nil
 		}
-		return fmt.Errorf("不允许的下载域名: %s", host)
+		return fmt.Errorf("download host not allowed: %s", host)
 	}
 }
 
@@ -599,28 +599,28 @@ func findSystemChecksumAsset(release *systemGitHubRelease) *systemGitHubAsset {
 func verifySystemUpdateChecksum(ctx context.Context, client systemReleaseClient, filePath string, asset *systemGitHubAsset, checksumAsset *systemGitHubAsset) error {
 	actual, err := sha256File(filePath)
 	if err != nil {
-		return fmt.Errorf("计算更新包校验和失败: %w", err)
+		return fmt.Errorf("failed to compute the update package checksum: %w", err)
 	}
 	if asset != nil && strings.HasPrefix(strings.ToLower(asset.Digest), "sha256:") {
 		expected := strings.TrimPrefix(strings.ToLower(asset.Digest), "sha256:")
 		if actual != expected {
-			return fmt.Errorf("更新包校验和不匹配: expected %s, got %s", expected, actual)
+			return fmt.Errorf("update package checksum mismatch: expected %s, got %s", expected, actual)
 		}
 		return nil
 	}
 	if checksumAsset == nil {
-		return fmt.Errorf("release 未提供 SHA256 校验信息")
+		return fmt.Errorf("release provides no SHA256 checksum")
 	}
 	data, err := client.FetchText(ctx, checksumAsset.BrowserDownloadURL, 2*1024*1024)
 	if err != nil {
-		return fmt.Errorf("下载 SHA256SUMS.txt 失败: %w", err)
+		return fmt.Errorf("failed to download SHA256SUMS.txt: %w", err)
 	}
 	expected, ok := checksumForFile(data, filepath.Base(filePath))
 	if !ok {
-		return fmt.Errorf("SHA256SUMS.txt 中未找到 %s", filepath.Base(filePath))
+		return fmt.Errorf("%s not found in SHA256SUMS.txt", filepath.Base(filePath))
 	}
 	if actual != expected {
-		return fmt.Errorf("更新包校验和不匹配: expected %s, got %s", expected, actual)
+		return fmt.Errorf("update package checksum mismatch: expected %s, got %s", expected, actual)
 	}
 	return nil
 }
@@ -678,13 +678,13 @@ func extractSystemUpdateBinary(archivePath, destPath string) error {
 			continue
 		}
 		if strings.Contains(hdr.Name, "..") || filepath.IsAbs(hdr.Name) {
-			return fmt.Errorf("更新包包含不安全路径: %s", hdr.Name)
+			return fmt.Errorf("update package contains an unsafe path: %s", hdr.Name)
 		}
 		if filepath.Base(hdr.Name) != "codex2api" {
 			continue
 		}
 		if hdr.Size > systemUpdateMaxDownloadBytes {
-			return fmt.Errorf("更新包内程序过大: %d bytes", hdr.Size)
+			return fmt.Errorf("binary in the update package is too large: %d bytes", hdr.Size)
 		}
 		out, err := os.Create(destPath)
 		if err != nil {
@@ -702,19 +702,19 @@ func extractSystemUpdateBinary(archivePath, destPath string) error {
 		}
 		return nil
 	}
-	return fmt.Errorf("更新包内未找到 codex2api 程序")
+	return fmt.Errorf("codex2api binary not found in the update package")
 }
 
 func replaceExecutable(currentPath, newPath, backupPath string) error {
 	_ = os.Remove(backupPath)
 	if err := os.Rename(currentPath, backupPath); err != nil {
-		return fmt.Errorf("备份当前程序失败: %w", err)
+		return fmt.Errorf("failed to back up the current binary: %w", err)
 	}
 	if err := os.Rename(newPath, currentPath); err != nil {
 		if restoreErr := os.Rename(backupPath, currentPath); restoreErr != nil {
-			return fmt.Errorf("替换程序失败且恢复备份失败: %w (restore: %v)", err, restoreErr)
+			return fmt.Errorf("failed to replace the binary and failed to restore the backup: %w (restore: %v)", err, restoreErr)
 		}
-		return fmt.Errorf("替换程序失败，已恢复旧版本: %w", err)
+		return fmt.Errorf("failed to replace the binary, the old version was restored: %w", err)
 	}
 	return nil
 }
