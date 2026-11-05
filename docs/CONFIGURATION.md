@@ -40,6 +40,8 @@ Codex 注册表中管理员禁用的模型不会重新启用，账号清单学�
 
 Daybreak 派生别名（如 `gpt-6-sol-daybreak-blue`、`gpt-6.1-sol-daybreak-blue`）按基础型号同步完整标准、Fast 和长上下文价格，不要求参考 JSON 单独收录别名。别名有精确价目时优先采用；别名自定义价优先，基础模型自定义价也不会被别名同步价压过。未查到基础型号价格时继续按既定来源顺序回退。官方 `gpt-daybreak-blue-latest`、`gpt-daybreak-red-latest` 的默认快照目前分别是 `gpt-5.6-sol`、`gpt-5.6-cyber`；Cyber 使用独立公开定价，不再按 Sol 兜底。来源：[Daybreak 指南](https://developers.openai.com/api/docs/guides/daybreak)、[官方价格页](https://developers.openai.com/api/docs/pricing)。
 
+「立即同步官方价」只同步价格，模型发现由定时轮询执行。新协议、特殊权限或特殊计费规则仍可能需要更新程序。
+
 ## Codex 出站 attestation
 
 Codex HTTP、WebSocket 和 Live 共用出站证明服务，按最终 User-Agent 选择平台：

@@ -31,7 +31,7 @@
 API / 凭据值为 `single_machine_multi_window`。展示名称改为「会话身份收敛」，
 存储值及 ID 派生种子保留原实验实现的取值，避免已有配置失效或身份变化。
 旧的 `off`、`device`、`session`、`full` 行为不变，默认仍是 `off`。
-只作用于原生 Codex 账号，中转等账号不启用。
+只作用于 Codex 账号。
 
 ## 请求和连接
 

@@ -12,7 +12,7 @@
 
 兼容层不解密已经生成的历史密文，也不修改 Codex 二进制。它改变的是后续请求的 schema 和参数生成方式。
 
-它不改认证、账号选择、模型路由、计费、限流或 User-Agent，也不影响 v1、普通 Responses、Chat Completions、图片、reasoning、压缩、其他工具、relay 账号和非 Codex 客户端。
+它不改认证、账号选择、模型路由、计费、限流或 User-Agent，也不影响 v1、普通 Responses、Chat Completions、图片、reasoning、压缩、其他工具和非 Codex 客户端。
 
 User-Agent 判断是兼容性启发式，不是安全边界。持有 API Key 的调用方可以伪造官方 UA；改写只作用于该调用方自己的请求，但部署方不应把“仅官方客户端”当作强访问控制。
 
@@ -87,7 +87,7 @@ CODEX_MULTI_AGENT_V2_COMPAT=true
 
 - `CODEX_MULTI_AGENT_V2_COMPAT` 为真；
 - 下游 `User-Agent` 是官方 Codex 客户端（`Codex Desktop/`、`codex-tui/`、`codex_cli_rs`、`codex_exec/`）；
-- 实际选中原生 Codex 账号，relay 账号不会进入该执行器；
+- 实际选中 Codex 账号；
 - 请求包含顶层 `collaboration` namespace 下的 `spawn_agent`、`send_message` 或 `followup_task`，或顶层的扁平 `collaboration.<tool>` / `collaboration__<tool>`；
 - 这些工具中至少一个带 `parameters.properties.message.encrypted`；
 - 请求没有已存在的 `collaboration-optimize` 命名空间冲突；

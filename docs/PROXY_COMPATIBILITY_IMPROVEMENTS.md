@@ -69,7 +69,7 @@ go test ./proxy -run '^$' -bench '^BenchmarkResponseCacheReplay128Turns$' -bench
 ## 失效密文记忆的边界
 
 失效密文记忆使用下游稳定会话身份，与默认隔离模式下每次出站生成的随机 UUID 分离。
-Bearer、`x-api-key`、`anthropic-auth-token` 和合法 WebSocket 子协议鉴权均按各自 API Key 隔离。
+Bearer、`x-api-key` 和合法 WebSocket 子协议鉴权均按各自 API Key 隔离。
 内存中保留派生身份和密文摘要，不保存原始凭据；API Key 派生身份仍沿用 SHA-256 派生流程。
 
 上游 `invalid_encrypted_content` 通常不指明哪一个条目失效，因此当前恢复策略记录该失败请求中的全部

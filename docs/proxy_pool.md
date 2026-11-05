@@ -256,9 +256,7 @@ PROXY_POOL_HEALTH_CHECK_URL=http://www.google.com/generate_204
 ## 随账号导出/导入迁移代理绑定
 
 账号导出默认只写凭据，换机后代理绑定要重配一遍。导出加 `include_proxy=1`、导入加
-`import_proxy=true`，可以把「号池 + 代理绑定关系」当作一个整体迁走。三个渠道
-（Codex `/accounts/import`、Grok `/accounts/grok/import`、Antigravity
-`/accounts/antigravity/import`）都支持，参数细节见 [API.md](API.md)。
+`import_proxy=true`，可以把「号池 + 代理绑定关系」当作一个整体迁走。Codex `/accounts/import` 支持，参数细节见 [API.md](API.md)。
 
 ### 写入顺序
 

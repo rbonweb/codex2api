@@ -306,7 +306,7 @@ curl -s -H "X-Admin-Key: your-secret" \
 
 ### 症状: previous response context backend 返回 503
 
-当请求确实依赖上一响应的工具调用上下文，而共享 response-context 后端暂时不可用且没有可用 relay 后备时，会返回 HTTP 503、错误码 `service_unavailable`。
+当请求确实依赖上一响应的工具调用上下文，而共享 response-context 后端暂时不可用时，会返回 HTTP 503、错误码 `service_unavailable`。
 
 ```bash
 curl -s -H "X-Admin-Key: your-secret" \
@@ -417,11 +417,7 @@ DROP TRIGGER IF EXISTS scheduler_outbox_proxies_insert ON proxies;
 DROP TRIGGER IF EXISTS scheduler_outbox_proxies_update ON proxies;
 DROP TRIGGER IF EXISTS scheduler_outbox_proxies_delete ON proxies;
 DROP TRIGGER IF EXISTS scheduler_outbox_settings_update ON system_settings;
-DROP TRIGGER IF EXISTS grok_maintenance_accounts_insert ON accounts;
-DROP TRIGGER IF EXISTS grok_maintenance_accounts_update ON accounts;
-DROP TRIGGER IF EXISTS grok_maintenance_accounts_delete ON accounts;
 DROP FUNCTION IF EXISTS codex2api_scheduler_outbox_row();
-DROP FUNCTION IF EXISTS codex2api_grok_maintenance_account();
 DROP TABLE IF EXISTS scheduler_outbox;
 DROP TABLE IF EXISTS maintenance_jobs;
 ```

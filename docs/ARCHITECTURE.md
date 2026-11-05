@@ -217,7 +217,6 @@ type Account struct {
 2. `indexed` 按调度优先级和健康层分桶，稳态通常只检查一个候选；稀疏 API Key/分组规则按需建立有界子池缓存，密集规则直接复用全局索引。
 3. 账号并发释放、冷却恢复、outbox 变更通过 generation channel 广播。等待账号的请求订阅事件并重试，不使用固定间隔轮询全池。
 4. 数据库触发器把会改变路由的账号、API Key、分组、代理和设置写入 `scheduler_outbox`。每个实例按水位批量合并并增量更新内存投影，选号 miss 不再触发请求级全库 reconcile。
-5. Grok 事实/目录维护使用 `maintenance_jobs(job_kind, due_at, lease_until)`；工作进程只 claim 到期行。PostgreSQL 使用 `SKIP LOCKED`，SQLite 使用事务写门，替代每 30 秒扫描全账号并解析多份 JSON。
 
 `legacy` 保留旧扫描实现；`shadow` 由旧路径实际选号并对索引做 1/64 可用性抽样；`indexed` 才让索引结果成为权威。三个模式可在运行时切换，不改变 `/v1/*` 协议。
 
@@ -255,7 +254,6 @@ func TranslateStreamChunk(data []byte, model, chunkID string) ([]byte, bool)
 - `messages` → `input`
 - `max_tokens/temperature` → 删除（Codex 不支持）
 - `reasoning_effort` → `reasoning.effort`
-- Anthropic `/v1/messages` 在无可用 Claude OAuth 账号时的 `speed:"fast"` → Codex `service_tier:"priority"`（Anthropic 入参 `service_tier` 为 Priority Tier，不参与 fast mode 映射）；Claude OAuth 账号优先走原生 Anthropic Messages 透传，不进入 Codex 转换链
 - SSE 事件类型转换
 
 ---
@@ -565,9 +563,9 @@ previous_response_id 连续请求
 
 三个数据库预算分别控制 L1 总量、L1 单条准入和共享后端重建上限。只有预算实际变化的事务提交才分配递增 generation，并立即应用到写入实例；同值或空更新不递增。其他实例每 5 秒读取一次，单次最多等待 3 秒，只应用更新的 generation。读取失败时保留最后一次有效配置，并记录同步错误供运维页展示。
 
-Memory 缓存配合 SQLite 文件主库时默认以本地磁盘持久层（`cache/durable_response_context.go`）作为 L2：L1 淘汰、超过 L1 准入预算或进程重启后仍从磁盘恢复，原生 WebSocket 共享来源记录仍只在进程内。关闭持久层后只有 L1；已知超限/淘汰，或依赖的必需上下文缺失/过期且没有 relay 后备时，Responses/Compact 连续请求可返回 HTTP `409 previous_response_not_found`。Redis 值损坏或超过重建上限且没有 relay 后备时同样返回 409；共享后端传输故障且请求确实依赖该上下文时可返回 HTTP `503`。Redis 中未超过重建上限的上下文不会仅因超过 L1 准入预算而失败。
+Memory 缓存配合 SQLite 文件主库时默认以本地磁盘持久层（`cache/durable_response_context.go`）作为 L2：L1 淘汰、超过 L1 准入预算或进程重启后仍从磁盘恢复，原生 WebSocket 共享来源记录仍只在进程内。关闭持久层后只有 L1；已知超限/淘汰，或依赖的必需上下文缺失/过期时，Responses/Compact 连续请求可返回 HTTP `409 previous_response_not_found`。Redis 值损坏或超过重建上限时同样返回 409；共享后端传输故障且请求确实依赖该上下文时可返回 HTTP `503`。Redis 中未超过重建上限的上下文不会仅因超过 L1 准入预算而失败。
 
-客户端原生 Responses WebSocket 在健康连接上保留 `previous_response_id`，向上游发送当轮增量；原连接丢失后的恢复仍依赖完整的本地或共享快照，受上述预算、完整性和 409/503 错误语义约束。HTTP Responses/Compact 的原生 Codex 路径必须在当前归属内重建父引用；原生 OpenAI Responses relay 可保留父 ID 交给自己的上游恢复。
+客户端原生 Responses WebSocket 在健康连接上保留 `previous_response_id`，向上游发送当轮增量；原连接丢失后的恢复仍依赖完整的本地或共享快照，受上述预算、完整性和 409/503 错误语义约束。HTTP Responses/Compact 的原生 Codex 路径必须在当前归属内重建父引用。
 
 `GET /api/admin/ops/overview` 的 `response_cache` 从一个锁内快照返回 effective/applied generation、当前/上限/高水位/最大观测条目的逻辑字节，以及本地/远程命中与未命中、过期、条数/字节淘汰、超限旁路、Memory 超限拒绝和最终 409 计数。这里的字节是保留 JSON payload 长度之和，不包含 Go 对象、LRU、allocator 或容器开销，不是 RSS 硬上限。进程内存需要结合 Linux/Docker RSS、Go `HeapAlloc` / `HeapInuse` / `HeapReleased` 和 `NumGC` 判断。
 
