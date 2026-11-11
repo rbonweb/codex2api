@@ -434,7 +434,12 @@ CREATE TABLE accounts (
     deleted_at TIMESTAMP                 -- 软删除
 );
 
--- 用量日志表
+-- Usage log table. A finished request first enters an in-memory buffer and is written in batches
+-- (usage_log_flush_interval_seconds / usage_log_batch_size).
+-- created_at = the time the request finished. The gateway sets it when the log enters the buffer; it is
+-- not the write time, so a row written later can have an earlier created_at than rows already written.
+-- For incremental extraction, page by id (it only increases), not by created_at > the last watermark.
+-- Request start time ≈ created_at - duration_ms.
 CREATE TABLE usage_logs (
     id BIGSERIAL PRIMARY KEY,
     account_id BIGINT REFERENCES accounts(id),
