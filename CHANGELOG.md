@@ -5,6 +5,9 @@
 ### Fixes
 
 - **Image generation works again.** The ChatGPT image backend started rejecting the explicit `reasoning.effort` the gateway sent with every image request ("Complexity 'medium' is not supported for this image model."). Image requests now leave the effort to the upstream (ported from upstream `f22cbf4e`). `/v1/models` also lists image models for accounts whose text model allowlist would have hidden them (upstream `42ffd35d`). See `UPSTREAM_SYNC.md` for the full upstream review.
+- **Usage logs record when a request finished, not when the log was written.** A log waits in memory for up to one flush interval (5 seconds by default, 300 at most), and `usage_logs.created_at` took the time of the batch write. Per-second QPS showed a spike at every flush, and a request that finished just before the hour was counted in the next hour. `created_at` is now the completion time, and the QPS/TPS figures on the Operations page also count requests still waiting in memory. A row written later can now have an earlier `created_at`, so a tool that reads usage logs incrementally must page by `id` (ported from upstream `34b490f8`).
+- **Force client mode sends the configured client identity when device profile stabilization is on.** Stabilization returned the downstream client's device profile first, so force mode was skipped and the configured identity, such as Codex Desktop, was not sent (ported from upstream `24616381`).
+- **brotli and klauspost/compress are upgraded for two Go security advisories.** `GO-2026-6888` (excessive memory allocation when decompressing crafted brotli streams) and `GO-2026-6865` (panic on two-block frames) were reachable from request decompression. brotli is now v1.2.7 and klauspost/compress v1.20.2 (ported from upstream `0aa0dff6`).
 
 ### Features
 
