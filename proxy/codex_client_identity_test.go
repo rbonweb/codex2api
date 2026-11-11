@@ -82,6 +82,54 @@ func TestCodexClientIdentityPreviewMatchesOutboundAndArchitecture(t *testing.T) 
 	}
 }
 
+// Regression test for upstream 24616381: with device profile stabilization on,
+// force mode must still send the configured client identity. Before the fix the
+// stabilized device profile returned first and force mode was skipped.
+func TestCodexClientIdentityForceModeBeatsDeviceStabilization(t *testing.T) {
+	codexTestIdentityCache(t)
+	const personaConfig = `{"client_kind":"codex-desktop","os_name":"Windows","arch":"x86_64"}`
+	input := CodexClientIdentityInput{
+		Account: &auth.Account{DBID: 880101},
+		APIKey:  "force-mode-over-stabilization",
+		DeviceConfig: &DeviceProfileConfig{
+			StabilizeDeviceProfile: true,
+			UserAgent:              "codex-tui/0.164.0 (Linux Unknown; x86_64) unknown",
+			PackageVersion:         "0.164.0",
+		},
+		Headers: http.Header{},
+	}
+	settings := CurrentRuntimeSettings()
+	settings.CodexUserAgentConfig = personaConfig
+
+	// Without force mode, stabilization still decides the identity.
+	settings.ClientCompatMode = ClientCompatModePreserve
+	ApplyRuntimeSettings(settings)
+	stabilized, err := ResolveCodexOutboundClientIdentity(input)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if want := codexDeviceClientIdentity(input); stabilized != want || stabilized.Generated {
+		t.Fatalf("preserve mode identity = %+v, want the stabilized device identity %+v", stabilized, want)
+	}
+
+	settings.ClientCompatMode = ClientCompatModeForce
+	ApplyRuntimeSettings(settings)
+	forced, err := ResolveCodexOutboundClientIdentity(input)
+	if err != nil {
+		t.Fatal(err)
+	}
+	preview, err := PreviewCodexUserAgentConfig(personaConfig, "", nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !forced.Generated || forced.UserAgent != preview.Persona.UserAgent || forced.Version != preview.Persona.Version {
+		t.Fatalf("force mode identity = %+v, want the configured persona %+v", forced, preview.Persona)
+	}
+	if forced.UserAgent == stabilized.UserAgent {
+		t.Fatalf("force mode kept the stabilized device User-Agent %q", forced.UserAgent)
+	}
+}
+
 func TestCodexClientIdentityUnavailableStopsHTTPBeforeUpstream(t *testing.T) {
 	codexTestIdentityCache(t)
 	ApplyRuntimeSettings(RuntimeSettings{ClientCompatMode: ClientCompatModeAuto, CodexMinCLIVersion: "0.999.0", CodexUserAgentConfig: `{"client_kind":"codex-desktop"}`})
